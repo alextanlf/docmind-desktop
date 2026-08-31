@@ -4,7 +4,7 @@ import ipaddress
 import os
 import stat
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from app.api.errors import DomainError
@@ -170,25 +170,10 @@ class SourceInspector:
         self.downloader = downloader
 
     async def inspect(self, ref: SourceRef) -> SourcePreview:
-        if ref.kind == "url":
-            document = await self.downloader.download_url(ref.value)
-        else:
-            document = self.staged_store.load(ref.value)
-        return self._preview(ref.kind, document)
+        document = await self.load(ref)
+        return SourcePreview.from_document(ref.kind, document)
 
-    @staticmethod
-    def _preview(source_kind: Literal["url", "staged_file"], document: DownloadedDocument) -> SourcePreview:
-        title = document.title
-        if document.media_type == "text/markdown":
-            for line in document.raw_bytes.decode("utf-8-sig").splitlines():
-                if line.startswith("# "):
-                    title = line[2:].strip() or title
-                    break
-        return SourcePreview(
-            title=title,
-            source_kind=source_kind,
-            source_url=document.source_url,
-            media_type=document.media_type,
-            size_bytes=len(document.raw_bytes),
-            warnings=[],
-        )
+    async def load(self, ref: SourceRef) -> DownloadedDocument:
+        if ref.kind == "url":
+            return await self.downloader.download_url(ref.value)
+        return self.staged_store.load(ref.value)
