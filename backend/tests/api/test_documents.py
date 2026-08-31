@@ -41,6 +41,8 @@ def test_document_create_read_and_update_keep_local_index_in_sync(client, auth_h
     assert updated.json()["title"] == "State updated"
     assert updated.json()["chunkCount"] == 1
     assert client.app.state.import_service.document_store.vector_ids(document_id)
+    repositories = client.get("/api/repositories", headers=auth_headers)
+    assert repositories.json()[0]["documentCount"] == 1
 
 
 def test_delete_document_requires_confirmation(client, auth_headers) -> None:

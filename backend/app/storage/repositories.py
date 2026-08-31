@@ -37,6 +37,13 @@ class RepositoryStore:
         with self.database.session() as session:
             return session.get(RepositoryRecord, repository_id)
 
+    def set_document_count(self, repository_id: str, count: int) -> None:
+        with self.database.session() as session:
+            record = session.get(RepositoryRecord, repository_id)
+            if record is not None:
+                record.document_count = count
+                record.updated_at = utc_now()
+
     def upsert_remote(
         self, *, yuque_id: str, name: str, description: str | None, yuque_url: str | None
     ) -> RepositoryRecord:

@@ -21,6 +21,13 @@ def _store(request: Request) -> RepositoryStore:
     return cast(RepositoryStore, request.app.state.repository_store)
 
 
+def _refresh_counts(request: Request, records: list[RepositoryRecord]) -> None:
+    document_store = request.app.state.document_store
+    store = _store(request)
+    for record in records:
+        store.set_document_count(record.id, len(document_store.list_for_repository(record.id)))
+
+
 def _view(record: RepositoryRecord) -> RepositoryView:
     return RepositoryView(
         id=record.id,
@@ -51,6 +58,8 @@ async def list_repositories(request: Request) -> list[RepositoryView]:
     store = _store(request)
     for remote in await _gateway(request).list_repositories():
         _upsert(store, remote)
+    records = store.list()
+    _refresh_counts(request, records)
     return [_view(record) for record in store.list()]
 
 
