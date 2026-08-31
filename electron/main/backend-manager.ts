@@ -45,6 +45,7 @@ export class BackendManager {
     packaged?: boolean;
     backendCommand?: string;
     backendArgs?: string[];
+    backendCwd?: string;
   }) {
     this.spawn = opts.spawn ?? (nodeSpawn as SpawnFn);
     this.fetchFn = opts.fetch ?? fetch;
@@ -54,10 +55,11 @@ export class BackendManager {
     this.shutdownTimeout = opts.shutdownTimeoutMs ?? 3000;
     const packaged = opts.packaged ?? false;
     this.cwd = packaged
-      ? (opts.repoDir ?? process.cwd())
+      ? (opts.backendCwd ?? "")
       : join(opts.repoDir ?? process.cwd(), "backend");
     this.configuredPackagedCommand =
-      !packaged || Boolean(opts.backendCommand && opts.backendArgs);
+      !packaged ||
+      Boolean(opts.backendCommand && opts.backendArgs && opts.backendCwd);
     this.command = packaged ? (opts.backendCommand ?? "") : "uv";
     this.args = packaged
       ? (opts.backendArgs ?? ["-m", "app"])
@@ -90,7 +92,7 @@ export class BackendManager {
       this.stderr = (this.stderr + String(data)).slice(-2000);
     });
     child.once("error", () => {
-      startError = new BackendStartError();
+      startError = new BackendStartError(this.redactedError());
     });
     child.once("exit", () => {
       exited = true;
@@ -103,21 +105,11 @@ export class BackendManager {
         throw startError ?? new BackendStartError(diagnostic);
       }
       try {
-        const response = await Promise.race([
-          this.fetchFn("http://127.0.0.1:18900/health", {
-            headers: { "X-DocMind-Token": this.token },
-          }),
-          new Promise<Response>((_, reject) => {
-            const check = setInterval(() => {
-              if (startError || exited) {
-                clearInterval(check);
-                reject(
-                  startError ?? new BackendStartError(this.redactedError()),
-                );
-              }
-            }, 10);
-          }),
-        ]);
+        const response = await this.healthRequest(
+          () =>
+            startError ??
+            (exited ? new BackendStartError(this.redactedError()) : undefined),
+        );
         if (response.ok) {
           this.connection = {
             baseUrl: "http://127.0.0.1:18900",
@@ -133,6 +125,26 @@ export class BackendManager {
     const diagnostic = this.redactedError();
     await this.stop();
     throw new BackendStartError(diagnostic);
+  }
+  private async healthRequest(failure: () => Error | undefined) {
+    let rejectChild: (error: Error) => void = () => {};
+    const childFailure = new Promise<Response>((_, reject) => {
+      rejectChild = reject;
+    });
+    const check = setInterval(() => {
+      const error = failure();
+      if (error) rejectChild(error);
+    }, 10);
+    try {
+      return await Promise.race([
+        this.fetchFn("http://127.0.0.1:18900/health", {
+          headers: { "X-DocMind-Token": this.token },
+        }),
+        childFailure,
+      ]);
+    } finally {
+      clearInterval(check);
+    }
   }
   private redactedError() {
     const safe = this.stderr

@@ -72,6 +72,25 @@ describe("BackendManager", () => {
       code: "BACKEND_START_FAILED",
     });
   });
+  it("starts packaged backend only with configured command arguments and cwd", async () => {
+    const process = fakeProcess();
+    const spawn = vi.fn(() => process as any);
+    const manager = new BackendManager({
+      spawn,
+      fetch: vi.fn().mockResolvedValue(new Response("{}")),
+      packaged: true,
+      backendCommand: "/bundle/python",
+      backendArgs: ["-m", "app"],
+      backendCwd: "/bundle/backend",
+      healthIntervalMs: 0,
+    });
+    await manager.start();
+    expect(spawn).toHaveBeenCalledWith(
+      "/bundle/python",
+      ["-m", "app"],
+      expect.objectContaining({ cwd: "/bundle/backend" }),
+    );
+  });
 
   it("throws start failure when child exits", async () => {
     const process = fakeProcess();

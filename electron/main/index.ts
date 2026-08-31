@@ -3,12 +3,22 @@ import { BackendManager } from "./backend-manager";
 import { createWindow, showAfterDidFinishLoad } from "./window-manager";
 import { logger } from "./logger";
 let backend: BackendManager;
+let packagedArgs: unknown;
+try {
+  packagedArgs = process.env.DOCMIND_BACKEND_ARGS
+    ? JSON.parse(process.env.DOCMIND_BACKEND_ARGS)
+    : undefined;
+} catch {
+  packagedArgs = undefined;
+}
 app.whenReady().then(async () => {
   backend = new BackendManager({
     dataDir: app.getPath("userData"),
-    repoDir: app.isPackaged ? process.resourcesPath : process.cwd(),
+    repoDir: process.cwd(),
     packaged: app.isPackaged,
     backendCommand: process.env.DOCMIND_BACKEND_COMMAND,
+    backendArgs: Array.isArray(packagedArgs) ? packagedArgs : undefined,
+    backendCwd: process.env.DOCMIND_BACKEND_CWD,
   });
   try {
     await backend.start();
