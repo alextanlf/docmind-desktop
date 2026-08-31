@@ -43,9 +43,16 @@ class FakeSourceInspector:
         )
         self.load_started: asyncio.Event | None = None
         self.release_load: asyncio.Event | None = None
+        self.inspect_started: asyncio.Event | None = None
+        self.release_inspect: asyncio.Event | None = None
+        self.inspected_refs: list[SourceRef] = []
 
     async def inspect(self, ref: SourceRef) -> SourcePreview:
-        del ref
+        self.inspected_refs.append(ref)
+        if self.inspect_started is not None:
+            self.inspect_started.set()
+        if self.release_inspect is not None:
+            await self.release_inspect.wait()
         return SourcePreview.from_document("url", self.document)
 
     async def load(self, ref: SourceRef) -> DownloadedDocument:
@@ -192,17 +199,19 @@ def make_service(
     source: FakeSourceInspector | None = None,
     vector_store: FakeVectorStore | None = None,
     gateway: FakeYuqueGateway | None = None,
+    seed_repository: bool = True,
 ) -> tuple[ImportService, FakeSourceInspector, FakeVectorStore, FakeYuqueGateway]:
     settings = AppSettings(session_token="token", data_dir=tmp_path / "data", environment="test")
     source = source or FakeSourceInspector()
     vector_store = vector_store or FakeVectorStore()
     gateway = gateway or FakeYuqueGateway()
-    with database.session() as session:
-        session.add(
-            RepositoryRecord(
-                id="repository-1", yuque_id="remote-repository-1", name="Knowledge"
+    if seed_repository:
+        with database.session() as session:
+            session.add(
+                RepositoryRecord(
+                    id="repository-1", yuque_id="remote-repository-1", name="Knowledge"
+                )
             )
-        )
     service = ImportService(
         settings=settings,
         source_inspector=source,
@@ -633,6 +642,79 @@ async def test_cancel_after_vector_upsert_compensates_new_vectors(database, tmp_
     assert service.document_store.vector_ids(job.document_id or "") == []
 
 
+async def test_cancelled_created_vector_cleanup_is_recovered_by_new_service(
+    database, tmp_path
+) -> None:
+    vector_store = FakeVectorStore(delete_fail_count=1)
+    service, source, _, gateway = make_service(
+        database, tmp_path, vector_store=vector_store
+    )
+    job = create_indexing_job(
+        service,
+        tmp_path,
+        job_id="cancel-created-cleanup",
+        markdown="# New\n\ncontent",
+        old_vector_ids=[],
+    )
+    vector_store.on_upsert = lambda: service.job_store.request_cancel(job.id)
+
+    await service.run(job.id)
+
+    cancelled = service.job_store.get(job.id)
+    metadata = json.loads(cancelled.source_value)  # type: ignore[union-attr]
+    pending = metadata["pending_created_vector_ids"]
+    assert cancelled.state == ImportStatus.CANCELLED  # type: ignore[union-attr]
+    assert set(pending) == vector_store.ids
+    assert service.document_store.vector_ids(job.document_id or "") == []
+
+    recovered, _, _, _ = make_service(
+        database,
+        tmp_path,
+        source=source,
+        vector_store=vector_store,
+        gateway=gateway,
+        seed_repository=False,
+    )
+    assert await recovered.recover_pending_vector_cleanup() == 1
+    assert vector_store.ids == set()
+    recovered_metadata = json.loads(recovered.job_store.get(job.id).source_value)  # type: ignore[union-attr]
+    assert recovered_metadata["pending_created_vector_ids"] == []
+
+
+async def test_failed_cancelled_cleanup_remains_pending_for_next_recovery(
+    database, tmp_path
+) -> None:
+    vector_store = FakeVectorStore(delete_fail_count=2)
+    service, source, _, gateway = make_service(
+        database, tmp_path, vector_store=vector_store
+    )
+    job = create_indexing_job(
+        service,
+        tmp_path,
+        job_id="cancel-cleanup-retry",
+        markdown="# New\n\ncontent",
+        old_vector_ids=[],
+    )
+    vector_store.on_upsert = lambda: service.job_store.request_cancel(job.id)
+    await service.run(job.id)
+    pending = json.loads(service.job_store.get(job.id).source_value)[  # type: ignore[union-attr]
+        "pending_created_vector_ids"
+    ]
+
+    recovered, _, _, _ = make_service(
+        database,
+        tmp_path,
+        source=source,
+        vector_store=vector_store,
+        gateway=gateway,
+        seed_repository=False,
+    )
+    assert await recovered.recover_pending_vector_cleanup() == 0
+    persisted = json.loads(recovered.job_store.get(job.id).source_value)  # type: ignore[union-attr]
+    assert persisted["pending_created_vector_ids"] == pending
+    assert set(pending) == vector_store.ids
+
+
 async def test_failed_overlapping_upsert_does_not_delete_existing_vectors(
     database, tmp_path
 ) -> None:
@@ -722,6 +804,56 @@ async def test_task_cancel_during_stale_delete_finishes_coherent_cancel(
     persisted_ids = service.document_store.vector_ids(job.document_id or "")
     assert service.job_store.get(job.id).state == ImportStatus.CANCELLED  # type: ignore[union-attr]
     assert set(persisted_ids) <= vector_store.ids
+
+
+async def test_cancelled_stale_cleanup_is_recovered_without_deleting_current_vectors(
+    database, tmp_path
+) -> None:
+    vector_store = FakeVectorStore(delete_fail_count=2)
+    vector_store.delete_started = threading.Event()
+    vector_store.release_delete = threading.Event()
+    service, source, _, gateway = make_service(
+        database, tmp_path, vector_store=vector_store
+    )
+    job = create_indexing_job(
+        service,
+        tmp_path,
+        job_id="cancel-stale-cleanup",
+        markdown="# Replacement\n\ncontent",
+        old_vector_ids=["old-vector"],
+    )
+    vector_store.ids.add("old-vector")
+    task = asyncio.create_task(service.run(job.id))
+    for _ in range(100):
+        if vector_store.delete_started.is_set():
+            break
+        await asyncio.sleep(0.001)
+    assert vector_store.delete_started.is_set()
+
+    service.job_store.request_cancel(job.id)
+    task.cancel()
+    vector_store.release_delete.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    persisted_ids = service.document_store.vector_ids(job.document_id or "")
+    metadata = json.loads(service.job_store.get(job.id).source_value)  # type: ignore[union-attr]
+    assert service.job_store.get(job.id).state == ImportStatus.CANCELLED  # type: ignore[union-attr]
+    assert metadata["stale_vector_ids"] == ["old-vector"]
+    assert set(persisted_ids) <= vector_store.ids
+
+    recovered, _, _, _ = make_service(
+        database,
+        tmp_path,
+        source=source,
+        vector_store=vector_store,
+        gateway=gateway,
+        seed_repository=False,
+    )
+    assert await recovered.recover_pending_vector_cleanup() == 1
+    assert vector_store.ids == set(persisted_ids)
+    recovered_metadata = json.loads(recovered.job_store.get(job.id).source_value)  # type: ignore[union-attr]
+    assert recovered_metadata["stale_vector_ids"] == []
 
 
 async def test_sqlite_replacement_failure_compensates_new_vectors(
@@ -889,6 +1021,78 @@ async def test_legacy_plain_source_retry_refreshes_metadata_before_parsing(
     assert persisted.state == ImportStatus.COMPLETED  # type: ignore[union-attr]
     assert metadata["fingerprint"] == SourcePreview.from_document("url", source.document).fingerprint
     assert metadata["version"] == 2
+
+
+async def test_plain_legacy_terminal_then_retry_preserves_source_and_sequence(
+    database, tmp_path
+) -> None:
+    service, source, _, _ = make_service(database, tmp_path)
+    source_value = source.document.source_url
+    job = service.job_store.create(
+        ImportJobRecord(
+            id="legacy-terminal-retry",
+            source_kind="url",
+            source_value=source_value,
+            repository_id="repository-1",
+            state=ImportStatus.FAILED,
+            current_stage=ImportStatus.PARSING.value,
+            retryable=True,
+        )
+    )
+
+    await service.ensure_terminal_event(job.id, service.get(job.id))
+    await service.retry(job.id)
+
+    assert source.inspected_refs[-1] == SourceRef(kind="url", value=source_value)
+    metadata = json.loads(service.job_store.get(job.id).source_value)  # type: ignore[union-attr]
+    assert (metadata["version"], metadata["value"], metadata["last_event_sequence"]) == (
+        2,
+        source_value,
+        1,
+    )
+
+    await service._publish_event(job.id, "progress", {"progress": 0})
+    next_event = service.event_broker.subscribe(job.id, 1)
+    event = await asyncio.wait_for(anext(next_event), timeout=0.1)
+    await next_event.aclose()
+    assert event.sequence == 2
+
+
+async def test_retry_merge_preserves_sequence_allocated_while_inspect_waits(
+    database, tmp_path
+) -> None:
+    service, source, _, _ = make_service(database, tmp_path)
+    source.inspect_started = asyncio.Event()
+    source.release_inspect = asyncio.Event()
+    source_value = source.document.source_url
+    job = service.job_store.create(
+        ImportJobRecord(
+            id="legacy-concurrent-sequence",
+            source_kind="url",
+            source_value=source_value,
+            repository_id="repository-1",
+            state=ImportStatus.FAILED,
+            current_stage=ImportStatus.PARSING.value,
+            retryable=True,
+        )
+    )
+    retry = asyncio.create_task(service.retry(job.id))
+    await source.inspect_started.wait()
+
+    assert service.job_store.allocate_event_sequence(job.id) == 1
+    source.release_inspect.set()
+    await retry
+
+    metadata = json.loads(service.job_store.get(job.id).source_value)  # type: ignore[union-attr]
+    assert (metadata["version"], metadata["value"], metadata["last_event_sequence"]) == (
+        2,
+        source_value,
+        1,
+    )
+    await service._publish_event(job.id, "progress", {"progress": 0})
+    assert json.loads(service.job_store.get(job.id).source_value)[  # type: ignore[union-attr]
+        "last_event_sequence"
+    ] == 2
 
 
 async def test_uploading_job_with_attached_document_never_creates_remote_again(

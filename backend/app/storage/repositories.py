@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import delete, select
 
@@ -260,12 +261,27 @@ class ImportJobStore:
             session.flush()
             return job
 
-    def update_source_value(self, job_id: str, source_value: str) -> ImportJobRecord:
+    def merge_source_metadata(
+        self, job_id: str, updates: dict[str, Any]
+    ) -> ImportJobRecord:
         with self.database.session() as session:
             job = session.get(ImportJobRecord, job_id)
             if job is None:
                 raise DomainError("IMPORT_STATE_CONFLICT", "导入任务状态冲突", 409)
-            job.source_value = source_value
+            metadata = _normalized_source_metadata(job)
+            requested_sequence = updates.get("last_event_sequence")
+            if isinstance(requested_sequence, int) and not isinstance(
+                requested_sequence, bool
+            ):
+                updates = {
+                    **updates,
+                    "last_event_sequence": max(
+                        metadata["last_event_sequence"], requested_sequence
+                    ),
+                }
+            metadata.update(updates)
+            metadata["version"] = 2
+            job.source_value = _dump_source_metadata(metadata)
             job.updated_at = utc_now()
             session.flush()
             return job
@@ -275,20 +291,11 @@ class ImportJobStore:
             job = session.get(ImportJobRecord, job_id)
             if job is None:
                 raise DomainError("IMPORT_STATE_CONFLICT", "导入任务状态冲突", 409)
-            try:
-                metadata = json.loads(job.source_value)
-            except (json.JSONDecodeError, TypeError):
-                metadata = None
-            if not isinstance(metadata, dict):
-                metadata = {"version": 1, "value": job.source_value}
-            current = metadata.get("last_event_sequence", 0)
-            if not isinstance(current, int) or isinstance(current, bool) or current < 0:
-                current = 0
+            metadata = _normalized_source_metadata(job)
+            current = metadata["last_event_sequence"]
             sequence = current + 1
             metadata["last_event_sequence"] = sequence
-            job.source_value = json.dumps(
-                metadata, ensure_ascii=False, separators=(",", ":")
-            )
+            job.source_value = _dump_source_metadata(metadata)
             job.updated_at = utc_now()
             session.flush()
             return sequence
@@ -298,16 +305,9 @@ class ImportJobStore:
             job = session.get(ImportJobRecord, job_id)
             if job is None:
                 raise DomainError("IMPORT_STATE_CONFLICT", "导入任务状态冲突", 409)
-            try:
-                metadata = json.loads(job.source_value)
-            except (json.JSONDecodeError, TypeError):
-                metadata = None
-            if not isinstance(metadata, dict):
-                metadata = {"version": 1, "value": job.source_value}
+            metadata = _normalized_source_metadata(job)
             metadata["stale_vector_ids"] = list(dict.fromkeys(vector_ids))
-            job.source_value = json.dumps(
-                metadata, ensure_ascii=False, separators=(",", ":")
-            )
+            job.source_value = _dump_source_metadata(metadata)
             job.updated_at = utc_now()
             session.flush()
 
@@ -410,6 +410,67 @@ def _source_fingerprint(source_value: str) -> str | None:
         return None
     fingerprint = metadata.get("fingerprint")
     return fingerprint if isinstance(fingerprint, str) else None
+
+
+def _normalized_source_metadata(job: ImportJobRecord) -> dict[str, Any]:
+    try:
+        decoded = json.loads(job.source_value)
+    except (json.JSONDecodeError, TypeError):
+        decoded = None
+    if (
+        isinstance(decoded, dict)
+        and decoded.get("version") in {1, 2}
+        and isinstance(decoded.get("value"), str)
+    ):
+        metadata = dict(decoded)
+        value = decoded["value"]
+    else:
+        metadata = {}
+        value = job.source_value
+    fingerprint = metadata.get("fingerprint")
+    duplicate_decision = metadata.get("duplicate_decision")
+    intent = metadata.get("upload_intent")
+    marker = (
+        intent["marker"]
+        if isinstance(intent, dict) and isinstance(intent.get("marker"), str)
+        else f"docmind-import:{job.id}"
+    )
+    last_event_sequence = metadata.get("last_event_sequence", 0)
+    if (
+        not isinstance(last_event_sequence, int)
+        or isinstance(last_event_sequence, bool)
+        or last_event_sequence < 0
+    ):
+        last_event_sequence = 0
+    stale_vector_ids = metadata.get("stale_vector_ids", [])
+    if not isinstance(stale_vector_ids, list) or not all(
+        isinstance(identifier, str) for identifier in stale_vector_ids
+    ):
+        stale_vector_ids = []
+    pending_created_vector_ids = metadata.get("pending_created_vector_ids", [])
+    if not isinstance(pending_created_vector_ids, list) or not all(
+        isinstance(identifier, str) for identifier in pending_created_vector_ids
+    ):
+        pending_created_vector_ids = []
+    return {
+        **metadata,
+        "version": 2,
+        "value": value,
+        "fingerprint": fingerprint if isinstance(fingerprint, str) else "",
+        "duplicate_decision": (
+            duplicate_decision if isinstance(duplicate_decision, str) else "create"
+        ),
+        "upload_intent": {"marker": marker},
+        "last_event_sequence": last_event_sequence,
+        "stale_vector_ids": list(dict.fromkeys(stale_vector_ids)),
+        "pending_created_vector_ids": list(
+            dict.fromkeys(pending_created_vector_ids)
+        ),
+    }
+
+
+def _dump_source_metadata(metadata: dict[str, Any]) -> str:
+    return json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
 
 
 class ConversationStore:
