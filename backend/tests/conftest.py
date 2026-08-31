@@ -4,7 +4,10 @@ from collections.abc import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
+from app.config import AppSettings
+from app.core.secrets import MemorySecretStore
 from app.storage.database import Database
 
 RUNTIME_TOKEN = "test-runtime-token"
@@ -18,13 +21,26 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[TestClient]:
 
     from app.main import create_app
 
-    with TestClient(create_app()) as test_client:
+    settings = AppSettings(
+        session_token=SecretStr(RUNTIME_TOKEN), data_dir=tmp_path / "docmind-data", environment="test"
+    )
+    with TestClient(create_app(settings, secret_store=MemorySecretStore())) as test_client:
         yield test_client
 
 
 @pytest.fixture
 def auth_headers() -> dict[str, str]:
     return {"X-DocMind-Token": RUNTIME_TOKEN}
+
+
+@pytest.fixture
+def app_settings(client: TestClient) -> AppSettings:
+    return client.app.state.settings
+
+
+@pytest.fixture
+def app_secret_store(client: TestClient) -> MemorySecretStore:
+    return client.app.state.secret_store
 
 
 @pytest.fixture
