@@ -44,6 +44,10 @@ class FixtureLocator:
         self.page.values[self.selector] = value
 
     async def all(self) -> list[FixtureLocator]:
+        if self.selector == "[data-testid=document-link]" and self.page.document_list_visibility_after is not None:
+            self.page.document_list_calls += 1
+            if self.page.document_list_calls <= self.page.document_list_visibility_after:
+                return []
         return [self] if self.visible else []
 
     async def inner_text(self) -> str:
@@ -74,6 +78,10 @@ class FixturePage:
         self.wait_hook = None
         self.mask_styles: list[str] = []
         self.resource_goto_failures = 0
+        self.login_goto_failures = 0
+        self.goto_attempts: list[str] = []
+        self.document_list_visibility_after: int | None = None
+        self.document_list_calls = 0
 
     def locator(self, selector: str) -> FixtureLocator:
         return FixtureLocator(self, selector, selector in self.available)
@@ -98,6 +106,10 @@ class FixturePage:
 
     async def goto(self, url: str, wait_until: str = "load") -> None:
         del wait_until
+        self.goto_attempts.append(url)
+        if url == "https://www.yuque.com/login" and self.login_goto_failures:
+            self.login_goto_failures -= 1
+            raise TimeoutError("login navigation timeout")
         if url != "https://www.yuque.com/dashboard" and self.resource_goto_failures:
             self.resource_goto_failures -= 1
             raise TimeoutError("navigation timeout")
@@ -461,3 +473,97 @@ async def test_dashboard_without_stable_selector_maps_to_page_changed(tmp_path: 
         await gateway.login_status()
 
     assert error.value.code == "YUQUE_PAGE_CHANGED"
+
+
+async def test_visible_login_navigation_retries_before_capturing_masked_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    page = FixturePage(set())
+    page.login_goto_failures = 4
+
+    async def no_delay(_: float) -> None:
+        return None
+
+    monkeypatch.setattr("app.yuque.base_page.asyncio.sleep", no_delay)
+
+    @asynccontextmanager
+    async def fake_new_page(*, visible_login: bool):
+        assert visible_login is True
+        yield page
+
+    gateway._new_page = fake_new_page  # type: ignore[method-assign]
+
+    with pytest.raises(DomainError) as error:
+        await gateway.begin_login()
+
+    assert error.value.code == "YUQUE_PAGE_CHANGED"
+    assert page.goto_attempts == ["https://www.yuque.com/login"] * 4
+    assert page.mask_styles
+    assert len(page.screenshots) == 1
+
+
+async def test_repository_creation_missing_from_list_retries_as_page_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    page = FixturePage(
+        {
+            "[data-testid=create-repository]",
+            "[data-testid=repository-name]",
+            "[data-testid=create-repository-submit]",
+            "[data-testid=repository-link]",
+        }
+    )
+    page.text["[data-testid=repository-link]"] = "Other"
+    dashboard = DashboardPage(page, screenshots_dir=tmp_path, request_id="request")
+
+    async def no_delay(_: float) -> None:
+        return None
+
+    monkeypatch.setattr("app.yuque.base_page.asyncio.sleep", no_delay)
+
+    with pytest.raises(DomainError) as error:
+        await dashboard.with_retry("create-repository", lambda: dashboard.create_repository("SwiftUI"))
+
+    assert error.value.code == "YUQUE_PAGE_CHANGED"
+    assert page.clicked.count("[data-testid=create-repository-submit]") == 4
+    assert len(page.screenshots) == 1
+
+
+async def test_document_creation_retries_visibility_without_saving_twice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    page = FixturePage(
+        {
+            "[data-testid=dashboard]",
+            "[data-testid=create-document]",
+            "[data-testid=editor-title]",
+            "[data-testid=editor-markdown]",
+            "[data-testid=editor-save]",
+            "[data-testid=save-confirmation]",
+            "[data-testid=document-link]",
+        }
+    )
+    page.text["[data-testid=document-link]"] = "State"
+    page.document_list_visibility_after = 1
+
+    async def no_delay(_: float) -> None:
+        return None
+
+    monkeypatch.setattr("app.yuque.base_page.asyncio.sleep", no_delay)
+
+    @asynccontextmanager
+    async def fake_new_page(*, visible_login: bool):
+        assert visible_login is False
+        yield page
+
+    gateway._new_page = fake_new_page  # type: ignore[method-assign]
+
+    created = await gateway.create_document(
+        CreateYuqueDocumentRequest(repository_id="swiftui", title="State", content="# State")
+    )
+
+    assert created.title == "State"
+    assert page.document_list_calls == 2
+    assert page.clicked.count("[data-testid=editor-save]") == 1

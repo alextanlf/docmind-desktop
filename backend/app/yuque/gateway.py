@@ -204,8 +204,12 @@ class PlaywrightYuqueGateway:
             raise DomainError("YUQUE_LOGIN_IN_PROGRESS", "语雀登录正在进行", 409, False)
         try:
             async with self._login_lock, self._new_page(visible_login=True) as page:
-                await page.goto("https://www.yuque.com/login", wait_until="domcontentloaded")
                 login = LoginPage(page, self.settings.screenshots_dir, self._request_id)
+
+                async def open_login_page() -> None:
+                    await page.goto("https://www.yuque.com/login", wait_until="domcontentloaded")
+
+                await login.with_retry("open-login", open_login_page)
                 if not await login.wait_until_logged_in(timeout=600_000):
                     await login._capture_failure("login-timeout")
                     raise DomainError("YUQUE_LOGIN_REQUIRED", "语雀登录超时或已取消", 408, True, "重新登录语雀")
@@ -245,18 +249,21 @@ class PlaywrightYuqueGateway:
             repository = RepositoryPage(page, self.settings.screenshots_dir, self._request_id)
             editor = EditorPage(page, self.settings.screenshots_dir, self._request_id)
 
-            async def create() -> YuqueDocument:
+            async def create() -> None:
                 await _open_yuque_resource(page, request.repository_id)
                 await repository.open_new_document()
                 await editor.set_title(request.title)
                 await editor.import_markdown(request.content)
+
+            async def find_created_document() -> YuqueDocument:
                 documents = await repository.list_documents(request.repository_id)
                 created = next((document for document in documents if document.title == request.title), None)
                 if created is None:
                     raise DomainError("YUQUE_PAGE_CHANGED", "新建文档后未找到文档，请重新登录后重试", 503, True)
                 return created
 
-            return await editor.with_retry("create-document", create)
+            await editor.with_retry("create-document", create)
+            return await repository.with_retry("confirm-created-document", find_created_document)
 
     async def read_document(self, document_id: str) -> YuqueDocumentContent:
         async with self._background_page("read-document") as page:
