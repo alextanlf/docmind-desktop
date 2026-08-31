@@ -6,12 +6,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI
+from fastapi.exceptions import RequestValidationError
 
 from app.api.auth import require_runtime_token
 from app.api.chat import router as chat_router
 from app.api.documents import router as documents_router
 from app.api.embedding import router as embedding_router
-from app.api.errors import DomainError, domain_error_handler
+from app.api.errors import DomainError, domain_error_handler, request_validation_handler
 from app.api.imports import router as imports_router
 from app.api.repositories import router as repositories_router
 from app.api.sessions import router as sessions_router
@@ -162,7 +163,9 @@ def create_app(
     app.state.embedding_prepare_task = None
     app.state.yuque_gateway = runtime_yuque_gateway
     app.state.import_tasks = set()
+    app.state.pending_vector_cleanup = {}
     app.add_exception_handler(DomainError, domain_error_handler)
+    app.add_exception_handler(RequestValidationError, request_validation_handler)
     app.include_router(settings_router)
     app.include_router(embedding_router)
     app.include_router(yuque_router)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.schemas.common import ErrorBody, ErrorEnvelope
@@ -33,3 +34,8 @@ async def domain_error_handler(_: Request, error: DomainError) -> JSONResponse:
         )
     )
     return JSONResponse(status_code=error.status_code, content=envelope.model_dump(by_alias=True))
+
+
+async def request_validation_handler(_: Request, __: RequestValidationError) -> JSONResponse:
+    error = DomainError("INVALID_REQUEST", "请求参数无效", 422)
+    return await domain_error_handler(_, error)
