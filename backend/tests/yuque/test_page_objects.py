@@ -40,10 +40,13 @@ class FixtureLocator:
         if not self.visible:
             raise TimeoutError(self.selector)
         self.page.clicked.append(self.selector)
+        if self.selector == "[data-testid=create-repository-submit]" and self.page.repository_submit_error:
+            raise self.page.repository_submit_error
 
     async def fill(self, value: str) -> None:
         if not self.visible:
             raise TimeoutError(self.selector)
+        self.page.fill_attempts.append((self.selector, value))
         self.page.filled[self.selector] = value
         self.page.values[self.selector] = value
 
@@ -73,6 +76,7 @@ class FixturePage:
         self.available = available
         self.fixture = fixture
         self.clicked: list[str] = []
+        self.fill_attempts: list[tuple[str, str]] = []
         self.filled: dict[str, str] = {}
         self.text: dict[str, str] = {}
         self.attributes: dict[tuple[str, str], str] = {}
@@ -92,6 +96,7 @@ class FixturePage:
         self.document_list_calls = 0
         self.repository_list_visibility_after: int | None = None
         self.repository_list_calls = 0
+        self.repository_submit_error: Exception | None = None
 
     def locator(self, selector: str) -> FixtureLocator:
         return FixtureLocator(self, selector, selector in self.available)
@@ -546,6 +551,50 @@ async def test_repository_creation_retries_visibility_without_submitting_twice(
     assert created.name == "SwiftUI"
     assert page.repository_list_calls == 2
     assert page.clicked.count("[data-testid=create-repository-submit]") == 1
+
+
+@pytest.mark.parametrize(
+    "submit_error",
+    [
+        TimeoutError("repository create response timed out"),
+        DomainError("YUQUE_PAGE_CHANGED", "repository create response unavailable", 503, True),
+    ],
+    ids=["timeout", "retryable-domain-error"],
+)
+async def test_repository_creation_submit_error_is_not_replayed(
+    tmp_path: Path, submit_error: Exception
+) -> None:
+    page = FixturePage(
+        {
+            "[data-testid=dashboard]",
+            "[data-testid=create-repository]",
+            "[data-testid=repository-name]",
+            "[data-testid=create-repository-submit]",
+        }
+    )
+    page.repository_submit_error = submit_error
+    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+
+    @asynccontextmanager
+    async def fake_new_page(*, visible_login: bool):
+        assert visible_login is False
+        yield page
+
+    gateway._new_page = fake_new_page  # type: ignore[method-assign]
+
+    with pytest.raises(DomainError) as error:
+        await gateway.create_repository(CreateRepositoryRequest(name="SwiftUI"))
+
+    assert error.value.code == "YUQUE_PAGE_CHANGED"
+    assert error.value.retryable is True
+    assert page.clicked == [
+        "[data-testid=create-repository]",
+        "[data-testid=create-repository-submit]",
+    ]
+    assert page.fill_attempts == [("[data-testid=repository-name]", "SwiftUI")]
+    assert [path.name for path in page.screenshots] == [
+        f"{gateway._request_id}-create-repository.png"
+    ]
 
 
 async def test_document_creation_retries_visibility_without_saving_twice(
