@@ -33,6 +33,7 @@ export class BackendManager {
   private readonly cwd: string;
   private readonly command: string;
   private readonly args: string[];
+  private readonly configuredPackagedCommand: boolean;
   constructor(opts: {
     spawn?: SpawnFn;
     fetch?: typeof fetch;
@@ -55,13 +56,16 @@ export class BackendManager {
     this.cwd = packaged
       ? (opts.repoDir ?? process.cwd())
       : join(opts.repoDir ?? process.cwd(), "backend");
-    this.command = packaged ? (opts.backendCommand ?? "python") : "uv";
+    this.configuredPackagedCommand =
+      !packaged || Boolean(opts.backendCommand && opts.backendArgs);
+    this.command = packaged ? (opts.backendCommand ?? "") : "uv";
     this.args = packaged
       ? (opts.backendArgs ?? ["-m", "app"])
       : ["run", "python", "-m", "app"];
   }
   async start(): Promise<BackendConnection> {
     if (this.connection) return this.connection;
+    if (!this.configuredPackagedCommand) throw new BackendStartError();
     this.token = randomBytes(32).toString("hex");
     const env = {
       ...process.env,
@@ -94,13 +98,26 @@ export class BackendManager {
     const started = Date.now();
     while (Date.now() - started < this.timeout) {
       if (startError || exited) {
+        const diagnostic = this.redactedError();
         await this.stop();
-        throw startError ?? new BackendStartError(this.redactedError());
+        throw startError ?? new BackendStartError(diagnostic);
       }
       try {
-        const response = await this.fetchFn("http://127.0.0.1:18900/health", {
-          headers: { "X-DocMind-Token": this.token },
-        });
+        const response = await Promise.race([
+          this.fetchFn("http://127.0.0.1:18900/health", {
+            headers: { "X-DocMind-Token": this.token },
+          }),
+          new Promise<Response>((_, reject) => {
+            const check = setInterval(() => {
+              if (startError || exited) {
+                clearInterval(check);
+                reject(
+                  startError ?? new BackendStartError(this.redactedError()),
+                );
+              }
+            }, 10);
+          }),
+        ]);
         if (response.ok) {
           this.connection = {
             baseUrl: "http://127.0.0.1:18900",
@@ -113,8 +130,9 @@ export class BackendManager {
       }
       await new Promise((resolve) => setTimeout(resolve, this.interval));
     }
+    const diagnostic = this.redactedError();
     await this.stop();
-    throw new BackendStartError(this.redactedError());
+    throw new BackendStartError(diagnostic);
   }
   private redactedError() {
     const safe = this.stderr
@@ -147,21 +165,23 @@ export class BackendManager {
     const child = this.child;
     this.reset();
     if (!child?.pid) return;
-    try {
-      child.kill("SIGTERM");
-    } catch {
-      return;
-    }
     const exited = await new Promise<boolean>((resolve) => {
       let settled = false;
+      const timer = setTimeout(() => finish(false), this.shutdownTimeout);
       const finish = (value: boolean) => {
         if (!settled) {
           settled = true;
+          clearTimeout(timer);
           resolve(value);
         }
       };
       child.once("exit", () => finish(true));
-      setTimeout(() => finish(false), this.shutdownTimeout);
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        finish(true);
+        return;
+      }
     });
     if (!exited) {
       try {
