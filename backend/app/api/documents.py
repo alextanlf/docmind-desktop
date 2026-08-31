@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
 from contextlib import suppress
 from hashlib import sha256
 from pathlib import Path
@@ -17,7 +19,7 @@ from app.schemas.documents import DocumentDelete, DocumentDetail, DocumentInput,
 from app.schemas.imports import DownloadedDocument
 from app.schemas.yuque import CreateYuqueDocumentRequest, UpdateYuqueDocumentRequest, YuqueDocument
 from app.storage.models import DocumentChunkRecord, DocumentRecord
-from app.storage.repositories import DocumentStore, RepositoryStore
+from app.storage.repositories import DocumentStore, ImportJobStore, RepositoryStore
 from app.storage.vectorstore import PersistentVectorStore
 from app.yuque.gateway import YuqueGateway
 
@@ -50,6 +52,10 @@ def _parser(request: Request) -> DocumentParser:
 
 def _chunker(request: Request) -> SemanticChunker:
     return cast(SemanticChunker, request.app.state.document_chunker)
+
+
+def _job_store(request: Request) -> ImportJobStore:
+    return cast(ImportJobStore, request.app.state.import_job_store)
 
 
 def _not_found() -> DomainError:
@@ -165,7 +171,16 @@ def _persist_content(request: Request, document: DocumentRecord, content: str) -
     directory = request.app.state.settings.documents_dir / document.id
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     markdown_path = directory / "document.md"
-    markdown_path.write_text(content, encoding="utf-8")
+    fd, temporary = tempfile.mkstemp(dir=directory, prefix="document.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, markdown_path)
+    finally:
+        with suppress(FileNotFoundError):
+            os.unlink(temporary)
     _document_store(request).update_editor(
         document.id,
         title=document.title,
@@ -229,8 +244,14 @@ async def create_document(request: Request, repository_id: str, body: DocumentIn
             yuque_url=remote.url,
         )
     )
-    indexed = await _index(request, _document_store(request).get(document.id) or document, body.content)
-    _persist_content(request, indexed, body.content)
+    try:
+        indexed = await _index(request, _document_store(request).get(document.id) or document, body.content)
+        _persist_content(request, indexed, body.content)
+    except Exception:
+        with suppress(Exception):
+            await _gateway(request).delete_document(remote.yuque_id)
+        _document_store(request).delete_local(document.id)
+        raise
     return _detail(indexed)
 
 
@@ -253,15 +274,24 @@ async def update_document(request: Request, document_id: str, body: DocumentInpu
         )
     except Exception as error:  # noqa: BLE001 - gateway boundary maps all failures
         raise _remote_failure(error) from None
-    document.title = remote.title
-    document.yuque_url = remote.url
-    indexed = await _index(request, document, body.content)
-    indexed.title = remote.title
-    document = _document_store(request).update_editor(
-        document.id, title=remote.title, yuque_id=remote.yuque_id,
-        yuque_url=remote.url, markdown_path=document.markdown_path or "", source_url=remote.url,
-    )
-    _persist_content(request, document, body.content)
+    old_content = _detail(document).content
+    old_title = document.title
+    try:
+        document.title = remote.title
+        document.yuque_url = remote.url
+        indexed = await _index(request, document, body.content)
+        indexed.title = remote.title
+        document = _document_store(request).update_editor(
+            document.id, title=remote.title, yuque_id=remote.yuque_id,
+            yuque_url=remote.url, markdown_path=document.markdown_path or "", source_url=remote.url,
+        )
+        _persist_content(request, document, body.content)
+    except Exception:
+        with suppress(Exception):
+            await _gateway(request).update_document(
+                UpdateYuqueDocumentRequest(document_id=document.yuque_id, title=old_title, content=old_content)
+            )
+        raise
     return _detail(indexed)
 
 
@@ -269,12 +299,14 @@ async def update_document(request: Request, document_id: str, body: DocumentInpu
 async def delete_document(request: Request, document_id: str, body: DocumentDelete) -> None:
     document = _document_store(request).get(document_id)
     if document is None:
-        pending = request.app.state.pending_vector_cleanup.pop(document_id, None)
-        if pending:
+        import json
+        pending = next((job for job in _job_store(request).list_cleanups() if json.loads(job.source_value).get("document_id") == document_id), None)
+        if pending is not None:
             try:
-                await asyncio.to_thread(_vector_store(request).delete, pending[0], pending[1])
+                metadata = json.loads(pending.source_value)
+                await asyncio.to_thread(_vector_store(request).delete, metadata["repository_id"], metadata["vector_ids"])
+                _job_store(request).delete_job(pending.id)
             except Exception as error:
-                request.app.state.pending_vector_cleanup[document_id] = pending
                 raise DomainError("INDEX_FAILED", "清理文档索引失败", 503, True) from error
             return
         raise _not_found()
@@ -290,5 +322,5 @@ async def delete_document(request: Request, document_id: str, body: DocumentDele
     try:
         await asyncio.to_thread(_vector_store(request).delete, document.repository_id, vector_ids)
     except Exception:  # noqa: BLE001 - local cleanup must continue after remote success
-        request.app.state.pending_vector_cleanup[document.id] = (document.repository_id, vector_ids)
+        _job_store(request).create_cleanup(repository_id=document.repository_id, document_id=document.id, vector_ids=vector_ids)
     _document_store(request).delete_local(document.id)

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import Depends, FastAPI
@@ -126,9 +127,15 @@ def create_app(
         )
         app.state.repository_store = repository_store
         app.state.document_store = document_store
+        app.state.import_job_store = ImportJobStore(database)
         app.state.vector_store = vector_store
         app.state.document_parser = DocumentParser()
         app.state.document_chunker = SemanticChunker()
+        for cleanup in app.state.import_job_store.list_cleanups():
+            with suppress(Exception):
+                metadata = json.loads(cleanup.source_value)
+                await asyncio.to_thread(vector_store.delete, metadata["repository_id"], metadata["vector_ids"])
+                app.state.import_job_store.delete_job(cleanup.id)
         app.state.conversation_store = conversation_store
         chat_service = ChatService(
             retriever=HybridRetriever(
@@ -163,7 +170,6 @@ def create_app(
     app.state.embedding_prepare_task = None
     app.state.yuque_gateway = runtime_yuque_gateway
     app.state.import_tasks = set()
-    app.state.pending_vector_cleanup = {}
     app.add_exception_handler(DomainError, domain_error_handler)
     app.add_exception_handler(RequestValidationError, request_validation_handler)
     app.include_router(settings_router)
