@@ -200,6 +200,13 @@ class DocumentStore:
             chunks = list(session.scalars(statement))
             return [chunk.vector_id or chunk.id for chunk in chunks]
 
+    def list_chunks(self, document_id: str) -> list[DocumentChunkRecord]:
+        with self.database.session() as session:
+            statement = select(DocumentChunkRecord).where(
+                DocumentChunkRecord.document_id == document_id
+            ).order_by(DocumentChunkRecord.chunk_index)
+            return list(session.scalars(statement))
+
     def delete_local(self, document_id: str) -> None:
         with self.database.session() as session:
             document = session.get(DocumentRecord, document_id)

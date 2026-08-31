@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from hashlib import sha256
 from pathlib import Path
 from typing import cast
@@ -108,7 +109,17 @@ async def _index(request: Request, document: DocumentRecord, content: str) -> Do
     ]
     for record in records:
         record.vector_id = record.id
-    old_ids = _document_store(request).vector_ids(document.id)
+    old_chunks = _document_store(request).list_chunks(document.id)
+    old_snapshot = [
+        DocumentChunkRecord(
+            id=chunk.id, document_id=chunk.document_id, repository_id=chunk.repository_id,
+            chunk_index=chunk.chunk_index, text=chunk.text, section_path=chunk.section_path,
+            page_number=chunk.page_number, token_count=chunk.token_count,
+            source_url=chunk.source_url, vector_id=chunk.vector_id,
+        )
+        for chunk in old_chunks
+    ]
+    old_ids = [chunk.vector_id or chunk.id for chunk in old_chunks]
     new_ids = [record.id for record in records]
     vector_store = _vector_store(request)
     try:
@@ -131,13 +142,18 @@ async def _index(request: Request, document: DocumentRecord, content: str) -> Do
                 for record in records
             ],
         )
-        _document_store(request).replace_chunks(document.id, records)
         stale_ids = [identifier for identifier in old_ids if identifier not in new_ids]
+        _document_store(request).replace_chunks(document.id, records)
         if stale_ids:
             await asyncio.to_thread(vector_store.delete, document.repository_id, stale_ids)
     except DomainError:
         raise
     except Exception as error:  # pragma: no cover - defensive boundary for storage drivers
+        with suppress(Exception):
+            await asyncio.to_thread(vector_store.delete, document.repository_id, new_ids)
+        if old_snapshot:
+            with suppress(Exception):
+                _document_store(request).replace_chunks(document.id, old_snapshot)
         raise DomainError("INDEX_FAILED", "写入文档索引失败", 503, True) from error
     indexed = _document_store(request).get(document.id)
     if indexed is None:  # pragma: no cover - database state cannot disappear in a request
@@ -213,8 +229,8 @@ async def create_document(request: Request, repository_id: str, body: DocumentIn
             yuque_url=remote.url,
         )
     )
-    _persist_content(request, document, body.content)
     indexed = await _index(request, _document_store(request).get(document.id) or document, body.content)
+    _persist_content(request, indexed, body.content)
     return _detail(indexed)
 
 
@@ -237,16 +253,15 @@ async def update_document(request: Request, document_id: str, body: DocumentInpu
         )
     except Exception as error:  # noqa: BLE001 - gateway boundary maps all failures
         raise _remote_failure(error) from None
+    document.title = remote.title
+    document.yuque_url = remote.url
+    indexed = await _index(request, document, body.content)
+    indexed.title = remote.title
     document = _document_store(request).update_editor(
-        document.id,
-        title=remote.title,
-        yuque_id=remote.yuque_id,
-        yuque_url=remote.url,
-        markdown_path=document.markdown_path or "",
-        source_url=remote.url,
+        document.id, title=remote.title, yuque_id=remote.yuque_id,
+        yuque_url=remote.url, markdown_path=document.markdown_path or "", source_url=remote.url,
     )
     _persist_content(request, document, body.content)
-    indexed = await _index(request, _document_store(request).get(document.id) or document, body.content)
     return _detail(indexed)
 
 
@@ -254,6 +269,14 @@ async def update_document(request: Request, document_id: str, body: DocumentInpu
 async def delete_document(request: Request, document_id: str, body: DocumentDelete) -> None:
     document = _document_store(request).get(document_id)
     if document is None:
+        pending = request.app.state.pending_vector_cleanup.pop(document_id, None)
+        if pending:
+            try:
+                await asyncio.to_thread(_vector_store(request).delete, pending[0], pending[1])
+            except Exception as error:
+                request.app.state.pending_vector_cleanup[document_id] = pending
+                raise DomainError("INDEX_FAILED", "清理文档索引失败", 503, True) from error
+            return
         raise _not_found()
     if not body.confirm:
         raise DomainError("CONFIRMATION_REQUIRED", "请确认删除文档", 400)
@@ -264,5 +287,8 @@ async def delete_document(request: Request, document_id: str, body: DocumentDele
     except Exception as error:  # noqa: BLE001 - gateway boundary maps all failures
         raise _remote_failure(error) from None
     vector_ids = _document_store(request).vector_ids(document.id)
-    await asyncio.to_thread(_vector_store(request).delete, document.repository_id, vector_ids)
+    try:
+        await asyncio.to_thread(_vector_store(request).delete, document.repository_id, vector_ids)
+    except Exception:  # noqa: BLE001 - local cleanup must continue after remote success
+        request.app.state.pending_vector_cleanup[document.id] = (document.repository_id, vector_ids)
     _document_store(request).delete_local(document.id)
