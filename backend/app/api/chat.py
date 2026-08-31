@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from app.api.errors import DomainError
 from app.chat.service import ChatService
-from app.schemas.chat import ChatMessageBody, ChatStreamRequest, CitationRef, MessageView
+from app.schemas.chat import ChatMessageBody, ChatStreamRequest
 from app.storage.models import SessionRecord
 from app.storage.repositories import ConversationStore, RepositoryStore
 
@@ -87,27 +87,3 @@ async def stream_message(request: Request, session_id: str) -> StreamingResponse
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-
-
-@router.get("/{session_id}/messages", response_model=list[MessageView])
-async def list_messages(request: Request, session_id: str) -> list[MessageView]:
-    store = _conversation_store(request)
-    _session(store, session_id)
-    views: list[MessageView] = []
-    for message in store.list_messages(session_id):
-        try:
-            citations = [CitationRef.model_validate(item) for item in json.loads(message.citations_json)]
-        except (TypeError, ValueError, ValidationError):
-            citations = []
-        views.append(
-            MessageView(
-                id=message.id,
-                session_id=message.session_id,
-                role=message.role,
-                content=message.content,
-                citations=citations,
-                generation_status=message.generation_status,
-                created_at=message.created_at,
-            )
-        )
-    return views
