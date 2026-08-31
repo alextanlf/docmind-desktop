@@ -1,0 +1,113 @@
+from __future__ import annotations
+
+import pytest
+from sqlalchemy import inspect
+from sqlalchemy.exc import IntegrityError
+
+from app.storage.database import Database
+from app.storage.models import DocumentChunkRecord, DocumentRecord, RepositoryRecord
+from app.storage.repositories import DocumentStore
+
+
+def test_upgrade_creates_all_phase_one_tables() -> None:
+    database = Database("sqlite+pysqlite:///:memory:")
+    database.upgrade()
+
+    names = set(inspect(database.engine).get_table_names())
+
+    assert names == {
+        "alembic_version",
+        "repositories",
+        "documents",
+        "document_chunks",
+        "import_jobs",
+        "sessions",
+        "messages",
+        "settings",
+    }
+    database.engine.dispose()
+
+
+def test_upgrade_is_idempotent(database: Database) -> None:
+    database.upgrade()
+
+    assert inspect(database.engine).get_table_names().count("documents") == 1
+
+
+def test_upgrade_creates_exact_phase_one_columns(database: Database) -> None:
+    inspector = inspect(database.engine)
+
+    assert {column["name"] for column in inspector.get_columns("repositories")} == {
+        "id", "yuque_id", "name", "description", "yuque_url", "sync_status", "document_count",
+        "created_at", "updated_at",
+    }
+    assert {column["name"] for column in inspector.get_columns("documents")} == {
+        "id", "repository_id", "yuque_id", "title", "source_url", "raw_path", "markdown_path",
+        "source_type", "content_hash", "chunk_count", "status", "yuque_url", "created_at", "updated_at",
+    }
+    assert {column["name"] for column in inspector.get_columns("document_chunks")} == {
+        "id", "document_id", "repository_id", "chunk_index", "text", "section_path", "page_number",
+        "token_count", "source_url", "vector_id", "created_at",
+    }
+    assert {column["name"] for column in inspector.get_columns("import_jobs")} == {
+        "id", "source_kind", "source_value", "repository_id", "state", "current_stage", "progress",
+        "message", "error_code", "error_message", "retryable", "document_id", "cancel_requested",
+        "created_at", "started_at", "completed_at", "updated_at",
+    }
+    assert {column["name"] for column in inspector.get_columns("sessions")} == {
+        "id", "title", "repository_scope_json", "created_at", "updated_at",
+    }
+    assert {column["name"] for column in inspector.get_columns("messages")} == {
+        "id", "session_id", "role", "content", "citations_json", "generation_status", "created_at",
+    }
+    assert {column["name"] for column in inspector.get_columns("settings")} == {
+        "key", "value", "updated_at",
+    }
+
+
+def test_document_delete_cascades_chunks(database: Database) -> None:
+    with database.session() as session:
+        repo = RepositoryRecord(id="repo-1", name="SwiftUI")
+        doc = DocumentRecord(id="doc-1", repository_id=repo.id, title="State")
+        chunk = DocumentChunkRecord(
+            id="chunk-1",
+            document_id=doc.id,
+            repository_id=repo.id,
+            chunk_index=0,
+            text="@State",
+            token_count=1,
+        )
+        session.add_all([repo, doc, chunk])
+
+    DocumentStore(database).delete_local("doc-1")
+
+    with database.session() as session:
+        assert session.get(DocumentChunkRecord, "chunk-1") is None
+
+
+def test_foreign_keys_reject_chunk_for_missing_document(database: Database) -> None:
+    with pytest.raises(IntegrityError), database.session() as session:
+        session.add(RepositoryRecord(id="repo-1", name="SwiftUI"))
+        session.add(
+            DocumentChunkRecord(
+                id="orphan",
+                document_id="missing-document",
+                repository_id="repo-1",
+                chunk_index=0,
+                text="orphan",
+                token_count=1,
+            )
+        )
+
+
+def test_session_commits_successful_work_and_rolls_back_failures(database: Database) -> None:
+    with database.session() as session:
+        session.add(RepositoryRecord(id="committed", name="Committed"))
+
+    with pytest.raises(RuntimeError), database.session() as session:
+        session.add(RepositoryRecord(id="rolled-back", name="Rolled back"))
+        raise RuntimeError("stop")
+
+    with database.session() as session:
+        assert session.get(RepositoryRecord, "committed") is not None
+        assert session.get(RepositoryRecord, "rolled-back") is None

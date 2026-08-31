@@ -5,6 +5,8 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
+from app.storage.database import Database
+
 RUNTIME_TOKEN = "test-runtime-token"
 
 
@@ -23,3 +25,11 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[TestClient]:
 @pytest.fixture
 def auth_headers() -> dict[str, str]:
     return {"X-DocMind-Token": RUNTIME_TOKEN}
+
+
+@pytest.fixture
+def database() -> Iterator[Database]:
+    database = Database("sqlite+pysqlite:///:memory:")
+    database.upgrade()
+    yield database
+    database.engine.dispose()
