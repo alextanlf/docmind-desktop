@@ -1,3 +1,5 @@
+import pytest
+
 from app.chat.citations import URLStreamSanitizer, parse_citations, strip_model_urls
 from app.schemas.chat import CitationRef
 
@@ -50,3 +52,34 @@ def test_url_sanitizer_removes_case_insensitive_url_split_across_chunks() -> Non
     )
 
     assert answer == "依据  回答 [S1]"
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        ("https://evil.test/path,随后说明 [S1]", ",随后说明 [S1]"),
+        ('引文 "https://evil.test/path".说明 [S1]', '引文 "".说明 [S1]'),
+        ("参见 (https://evil.test/path).说明 [S1]", "参见 ().说明 [S1]"),
+        ("来源 https://evil.test/path. 随后说明 [S1]", "来源 . 随后说明 [S1]"),
+        ("来源 https://evil.test/path；随后说明 [S1]", "来源 ；随后说明 [S1]"),
+    ],
+)
+def test_url_sanitizer_preserves_trailing_punctuation_and_following_text(
+    answer: str, expected: str
+) -> None:
+    assert strip_model_urls(answer) == expected
+
+
+def test_url_sanitizer_preserves_punctuation_arriving_at_chunk_boundary() -> None:
+    sanitizer = URLStreamSanitizer()
+
+    answer = "".join(
+        [
+            sanitizer.feed("依据 HTTPS://evil.test/path"),
+            sanitizer.feed(","),
+            sanitizer.feed("随后说明 [S1]"),
+            sanitizer.finish(),
+        ]
+    )
+
+    assert answer == "依据 ,随后说明 [S1]"

@@ -39,21 +39,26 @@ class ImportEventBroker(Protocol):
 
 @dataclass
 class _JobEvents:
+    events: deque[EventEnvelope]
     request_id: UUID = field(default_factory=uuid4)
-    events: deque[EventEnvelope] = field(default_factory=lambda: deque(maxlen=100))
     sequence: int = 0
     terminal: EventEnvelope | None = None
     condition: asyncio.Condition = field(default_factory=asyncio.Condition)
 
 
 class InMemoryEventBroker:
-    def __init__(self) -> None:
+    def __init__(self, retention: int | None = 100) -> None:
+        if retention is not None and retention <= 0:
+            raise ValueError("event retention must be positive or None")
+        self._retention = retention
         self._jobs: dict[str, _JobEvents] = {}
         self._jobs_lock = asyncio.Lock()
 
     async def _job(self, job_id: str) -> _JobEvents:
         async with self._jobs_lock:
-            return self._jobs.setdefault(job_id, _JobEvents())
+            return self._jobs.setdefault(
+                job_id, _JobEvents(events=deque(maxlen=self._retention))
+            )
 
     async def publish(
         self,

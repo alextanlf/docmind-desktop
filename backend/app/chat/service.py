@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from typing import Any
 
 from app.api.errors import DomainError
@@ -33,15 +34,61 @@ class ChatService:
         self.conversation_store = conversation_store
         self.event_broker = event_broker
         self.tasks: set[asyncio.Task[None]] = set()
+        self.task_errors: list[BaseException] = []
         self._started_request_ids: set[str] = set()
+        self._last_sequences: dict[str, int] = {}
+        self._fallback_terminals: dict[str, EventEnvelope] = {}
+        self._fallback_ready: dict[str, asyncio.Event] = {}
         self._start_lock = asyncio.Lock()
         self._stopped = False
 
     async def stream(self, request: ChatStreamRequest) -> AsyncIterator[EventEnvelope]:
         key = str(request.request_id)
         await self._ensure_producer(key, request)
-        async for event in self.event_broker.subscribe(key, 0):
-            yield event.model_copy(update={"request_id": request.request_id})
+        subscription = self.event_broker.subscribe(key, 0)
+        next_event = asyncio.create_task(anext(subscription))
+        cursor = 0
+        try:
+            while True:
+                fallback = self._fallback_terminals.get(key)
+                if fallback is not None and cursor >= fallback.sequence - 1:
+                    next_event.cancel()
+                    with suppress(asyncio.CancelledError, StopAsyncIteration):
+                        await next_event
+                    await asyncio.sleep(0)
+                    yield fallback
+                    return
+
+                if fallback is None:
+                    fallback_ready = asyncio.create_task(
+                        self._fallback_ready[key].wait()
+                    )
+                    completed, _ = await asyncio.wait(
+                        {next_event, fallback_ready},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if next_event not in completed:
+                        continue
+                    fallback_ready.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await fallback_ready
+
+                try:
+                    event = await next_event
+                except StopAsyncIteration:
+                    return
+                cursor = event.sequence
+                yield event.model_copy(update={"request_id": request.request_id})
+                if event.type in {"done", "error"}:
+                    return
+                next_event = asyncio.create_task(anext(subscription))
+        finally:
+            if not next_event.done():
+                next_event.cancel()
+                with suppress(asyncio.CancelledError, StopAsyncIteration):
+                    await next_event
+            with suppress(RuntimeError):
+                await subscription.aclose()
 
     async def wait_for_idle(self) -> None:
         while self.tasks:
@@ -62,6 +109,7 @@ class ChatService:
             if self._stopped:
                 raise RuntimeError("chat service is stopped")
             self._started_request_ids.add(key)
+            self._fallback_ready[key] = asyncio.Event()
             task = asyncio.create_task(self._produce(key, request))
             self.tasks.add(task)
             task.add_done_callback(self._producer_finished)
@@ -69,19 +117,24 @@ class ChatService:
     def _producer_finished(self, task: asyncio.Task[None]) -> None:
         self.tasks.discard(task)
         if not task.cancelled():
-            task.exception()
+            error = task.exception()
+            if error is not None:
+                self.task_errors.append(error)
 
     async def _produce(self, key: str, request: ChatStreamRequest) -> None:
-        user_message = self.conversation_store.add_message(
-            MessageRecord(
-                session_id=request.session_id,
-                role="user",
-                content=request.message,
-                generation_status="completed",
-            )
-        )
         answer_parts: list[str] = []
+        user_persisted = False
+        assistant_persistence_attempted = False
         try:
+            user_message = self.conversation_store.add_message(
+                MessageRecord(
+                    session_id=request.session_id,
+                    role="user",
+                    content=request.message,
+                    generation_status="completed",
+                )
+            )
+            user_persisted = True
             history = self.conversation_store.list_messages(request.session_id)[-20:]
             result = await self.retriever.search(
                 request.message, request.repository_ids, top_k=5
@@ -97,6 +150,7 @@ class ChatService:
                 },
             )
             if not sources:
+                assistant_persistence_attempted = True
                 assistant = self._persist_assistant(
                     request.session_id, _GAP_ANSWER, [], "completed"
                 )
@@ -122,6 +176,7 @@ class ChatService:
 
             answer = "".join(answer_parts)
             citations = parse_citations(answer, sources)
+            assistant_persistence_attempted = True
             assistant = self._persist_assistant(
                 request.session_id, answer, citations, "completed"
             )
@@ -130,13 +185,28 @@ class ChatService:
             raise
         except Exception as error:  # noqa: BLE001 - producer owns the operation error boundary
             details = _error_details(error)
-            self._persist_assistant(
-                request.session_id,
-                "".join(answer_parts),
-                [],
-                "error",
-            )
-            await self._publish(key, "error", details)
+            if user_persisted and not assistant_persistence_attempted:
+                try:
+                    self._persist_assistant(
+                        request.session_id,
+                        "".join(answer_parts),
+                        [],
+                        "error",
+                    )
+                except Exception:  # noqa: BLE001, S110 - terminal must survive storage failure
+                    pass
+            try:
+                await self._publish(key, "error", details)
+            except Exception:
+                fallback = EventEnvelope(
+                    request_id=request.request_id,
+                    type="error",
+                    sequence=self._last_sequences.get(key, 0) + 1,
+                    payload=details,
+                )
+                self._fallback_terminals[key] = fallback
+                self._fallback_ready[key].set()
+                raise
 
     def _persist_assistant(
         self,
@@ -162,7 +232,8 @@ class ChatService:
     async def _publish(
         self, key: str, event_type: EventType, payload: dict[str, Any]
     ) -> None:
-        await self.event_broker.publish(key, event_type, payload)
+        event = await self.event_broker.publish(key, event_type, payload)
+        self._last_sequences[key] = event.sequence
 
 
 def _source_map(hits: list[RetrievalHit]) -> dict[str, CitationRef]:

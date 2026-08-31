@@ -49,6 +49,30 @@ class FakeConversationStore:
         return [message for message in self.messages if message.session_id == session_id]
 
 
+class FailingConversationStore(FakeConversationStore):
+    def __init__(
+        self,
+        *,
+        fail_user: bool = False,
+        fail_assistant_status: str | None = None,
+    ) -> None:
+        super().__init__()
+        self.fail_user = fail_user
+        self.fail_assistant_status = fail_assistant_status
+        self.add_attempts: list[tuple[str, str | None]] = []
+
+    def add_message(self, message: MessageRecord) -> MessageRecord:
+        self.add_attempts.append((message.role, message.generation_status))
+        if message.role == "user" and self.fail_user:
+            raise RuntimeError("user persistence failed")
+        if (
+            message.role == "assistant"
+            and message.generation_status == self.fail_assistant_status
+        ):
+            raise RuntimeError("assistant persistence failed")
+        return super().add_message(message)
+
+
 def _hit() -> RetrievalHit:
     return RetrievalHit(
         chunk_id="chunk-1",
@@ -70,9 +94,28 @@ def _service(result: RetrievalResult, llm: FakeLLM) -> tuple[ChatService, FakeCo
         retriever=FakeRetriever(result),
         llm=llm,
         conversation_store=store,
-        event_broker=InMemoryEventBroker(),
+        event_broker=InMemoryEventBroker(retention=None),
     )
     return service, store
+
+
+def _service_with_store(
+    result: RetrievalResult,
+    llm: FakeLLM,
+    store: FakeConversationStore,
+    *,
+    unlimited_events: bool = False,
+) -> ChatService:
+    return ChatService(
+        retriever=FakeRetriever(result),
+        llm=llm,
+        conversation_store=store,
+        event_broker=(
+            InMemoryEventBroker(retention=None)
+            if unlimited_events
+            else InMemoryEventBroker()
+        ),
+    )
 
 
 def _request(request_id: UUID | None = None) -> ChatStreamRequest:
@@ -175,6 +218,118 @@ async def test_provider_failure_persists_error_and_emits_one_structured_error() 
         "retryable": True,
     }
     assert store.messages[-1].generation_status == "error"
+
+
+async def test_slow_and_late_subscribers_replay_lossless_long_answer() -> None:
+    deltas = [f"片段{index}|" for index in range(150)] + ["结论 [S1]"]
+    llm = FakeLLM(deltas)
+    store = FakeConversationStore()
+    service = _service_with_store(
+        RetrievalResult(hits=[_hit()], max_score=0.9),
+        llm,
+        store,
+        unlimited_events=True,
+    )
+    request = _request()
+    slow_stream = service.stream(request)
+
+    first = await anext(slow_stream)
+    assert first.type == "citations"
+    await service.wait_for_idle()
+    slow_events = [first, *[event async for event in slow_stream]]
+    replayed_events = [event async for event in service.stream(request)]
+
+    expected_sequences = list(range(1, len(deltas) + 3))
+    assert [event.sequence for event in slow_events] == expected_sequences
+    assert [event.sequence for event in replayed_events] == expected_sequences
+    assert slow_events[0].type == replayed_events[0].type == "citations"
+    streamed = "".join(
+        event.payload["content"] for event in slow_events if event.type == "delta"
+    )
+    replayed = "".join(
+        event.payload["content"] for event in replayed_events if event.type == "delta"
+    )
+    assert streamed == replayed == store.messages[-1].content
+    assert slow_events[-1].type == replayed_events[-1].type == "done"
+
+
+async def test_user_persistence_failure_emits_terminal_error_without_hanging() -> None:
+    store = FailingConversationStore(fail_user=True)
+    service = _service_with_store(
+        RetrievalResult(hits=[_hit()], max_score=0.9), FakeLLM(["回答"]), store
+    )
+
+    events = await asyncio.wait_for(_collect(service, _request()), timeout=0.2)
+
+    assert [event.type for event in events] == ["error"]
+    assert events[0].payload["code"] == "CHAT_GENERATION_FAILED"
+    assert store.add_attempts == [("user", "completed")]
+
+
+async def test_completed_assistant_persistence_failure_terminalizes_after_partial_delta() -> None:
+    store = FailingConversationStore(fail_assistant_status="completed")
+    service = _service_with_store(
+        RetrievalResult(hits=[_hit()], max_score=0.9), FakeLLM(["部分回答 [S1]"]), store
+    )
+
+    events = await asyncio.wait_for(_collect(service, _request()), timeout=0.2)
+
+    assert [event.type for event in events] == ["citations", "delta", "error"]
+    assert events[-1].payload["code"] == "CHAT_GENERATION_FAILED"
+    assert store.add_attempts == [
+        ("user", "completed"),
+        ("assistant", "completed"),
+    ]
+
+
+async def test_provider_error_stays_canonical_when_error_persistence_fails() -> None:
+    store = FailingConversationStore(fail_assistant_status="error")
+    service = _service_with_store(
+        RetrievalResult(hits=[_hit()], max_score=0.9),
+        FakeLLM(error=DomainError("MODEL_TIMEOUT", "模型服务响应超时", 504, True)),
+        store,
+    )
+
+    events = await asyncio.wait_for(_collect(service, _request()), timeout=0.2)
+
+    assert [event.type for event in events] == ["citations", "error"]
+    assert events[-1].payload == {
+        "code": "MODEL_TIMEOUT",
+        "message": "模型服务响应超时",
+        "retryable": True,
+    }
+    assert store.add_attempts == [
+        ("user", "completed"),
+        ("assistant", "error"),
+    ]
+
+
+async def test_error_publish_failure_is_observable_and_does_not_hang_subscriber() -> None:
+    class ErrorPublishFailingBroker(InMemoryEventBroker):
+        async def publish(self, job_id, event_type, payload, *, sequence=None):  # type: ignore[no-untyped-def]
+            if event_type == "error":
+                raise RuntimeError("broker error publish failed")
+            return await super().publish(
+                job_id, event_type, payload, sequence=sequence
+            )
+
+    store = FailingConversationStore(fail_user=True)
+    service = ChatService(
+        retriever=FakeRetriever(RetrievalResult(hits=[_hit()], max_score=0.9)),
+        llm=FakeLLM(["回答"]),
+        conversation_store=store,
+        event_broker=ErrorPublishFailingBroker(retention=None),
+    )
+    request = _request()
+
+    events = await asyncio.wait_for(_collect(service, request), timeout=0.2)
+    replayed = await asyncio.wait_for(_collect(service, request), timeout=0.2)
+
+    assert [event.type for event in events] == ["error"]
+    assert [event.sequence for event in events] == [1]
+    assert replayed == events
+    assert len(service.task_errors) == 1
+    assert str(service.task_errors[0]) == "broker error publish failed"
 
 
 async def _collect(service: ChatService, request: ChatStreamRequest):  # type: ignore[no-untyped-def]
