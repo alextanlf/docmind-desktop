@@ -80,14 +80,18 @@ class HybridRetriever:
     async def search(
         self, query: str, repository_ids: list[str], top_k: int = 5
     ) -> RetrievalResult:
-        if not query.strip() or not repository_ids:
+        limit = min(max(top_k, 0), 5)
+        if not query.strip() or not repository_ids or limit == 0:
             return RetrievalResult(hits=[], max_score=0.0)
         query_embedding = await self.embedding_provider.embed_query(query)
-        vector_hits = [
+        vector_hits = sorted(
+            [
             hit
             for repository_id in repository_ids
             for hit in self.vector_store.query(repository_id, query_embedding, top_k=10)
-        ]
+            ],
+            key=lambda hit: (-hit.similarity, hit.id),
+        )[:10]
         max_score = max((hit.similarity for hit in vector_hits), default=0.0)
         keyword_hits = self.bm25.search(query, repository_ids, top_k=10)
         fused = reciprocal_rank_fusion(
@@ -118,7 +122,7 @@ class HybridRetriever:
                     fused_score=item.score,
                 )
             )
-            if len(hits) == top_k:
+            if len(hits) == limit:
                 break
         return RetrievalResult(hits=hits, max_score=max_score)
 

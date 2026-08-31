@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import SecretStr
 
-from app.config import EmbeddingSettings
+from app.config import AppSettings, EmbeddingSettings
 from app.core.embedding import BGEEmbeddingProvider, FakeEmbeddingProvider
 
 
@@ -17,6 +18,16 @@ async def test_fake_embedding_is_deterministic(fake_embedding: FakeEmbeddingProv
 
     assert first == second
     assert len(first) == 8
+
+
+def test_embedding_defaults_use_bge_base_zh_dimension(tmp_path) -> None:
+    app_settings = AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
+
+    assert EmbeddingSettings().model_name == "BAAI/bge-base-zh-v1.5"
+    assert EmbeddingSettings().dimension == 768
+    assert app_settings.embedding_model_name == "BAAI/bge-base-zh-v1.5"
+    assert app_settings.embedding_dimension == 768
+    assert app_settings.embedding_settings.dimension == 768
 
 
 async def test_bge_provider_defers_model_import_until_explicit_preparation(monkeypatch) -> None:
