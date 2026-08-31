@@ -215,6 +215,20 @@ class VectorCleanupRecord(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default())
 
 
+class DocumentMutationRecord(Base):
+    """Durable compensation intent for a document API mutation."""
+
+    __tablename__ = "document_mutations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    operation: Mapped[str] = mapped_column(String(32), nullable=False)
+    repository_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    document_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default())
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default())
+
+
 class SettingRecord(Base):
     __tablename__ = "settings"
 

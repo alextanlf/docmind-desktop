@@ -12,6 +12,7 @@ from app.imports.state_machine import ensure_transition_allowed
 from app.storage.database import Database
 from app.storage.models import (
     DocumentChunkRecord,
+    DocumentMutationRecord,
     DocumentRecord,
     ImportJobRecord,
     ImportStatus,
@@ -202,6 +203,16 @@ class DocumentStore:
             chunks = list(session.scalars(statement))
             return [chunk.vector_id or chunk.id for chunk in chunks]
 
+    def shared_vector_ids(self, document_id: str, vector_ids: list[str]) -> set[str]:
+        if not vector_ids:
+            return set()
+        with self.database.session() as session:
+            statement = select(DocumentChunkRecord.vector_id).where(
+                DocumentChunkRecord.document_id != document_id,
+                DocumentChunkRecord.vector_id.in_(vector_ids),
+            )
+            return {identifier for identifier in session.scalars(statement) if identifier is not None}
+
     def list_chunks(self, document_id: str) -> list[DocumentChunkRecord]:
         with self.database.session() as session:
             statement = select(DocumentChunkRecord).where(
@@ -214,6 +225,35 @@ class DocumentStore:
             document = session.get(DocumentRecord, document_id)
             if document is not None:
                 session.delete(document)
+
+    def restore_snapshot(
+        self,
+        document: dict[str, Any],
+        chunks: list[DocumentChunkRecord],
+    ) -> DocumentRecord:
+        """Restore document metadata and chunks in one SQLite transaction."""
+        with self.database.session() as session:
+            record = session.get(DocumentRecord, document["id"])
+            if record is None:
+                record = DocumentRecord(id=document["id"], repository_id=document["repository_id"], title=document["title"])
+                session.add(record)
+            for field in (
+                "repository_id", "yuque_id", "title", "source_url", "raw_path", "markdown_path",
+                "source_type", "content_hash", "chunk_count", "status", "yuque_url",
+            ):
+                if field in document:
+                    setattr(record, field, document[field])
+            for field in ("created_at", "updated_at"):
+                value = document.get(field)
+                if isinstance(value, str):
+                    value = datetime.fromisoformat(value)
+                if value is not None:
+                    setattr(record, field, value)
+            session.execute(delete(DocumentChunkRecord).where(DocumentChunkRecord.document_id == record.id))
+            for chunk in chunks:
+                session.add(chunk)
+            session.flush()
+            return record
 
 
 class ImportJobStore:
@@ -579,6 +619,69 @@ class VectorCleanupStore:
     def delete(self, cleanup_id: str) -> None:
         with self.database.session() as session:
             record = session.get(VectorCleanupRecord, cleanup_id)
+            if record is not None:
+                session.delete(record)
+
+
+class DocumentMutationStore:
+    """Small durable store for API mutation compensation intents."""
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def create(
+        self,
+        *,
+        operation: str,
+        repository_id: str,
+        document_id: str | None,
+        payload: dict[str, Any],
+    ) -> DocumentMutationRecord:
+        with self.database.session() as session:
+            record = DocumentMutationRecord(
+                operation=operation,
+                repository_id=repository_id,
+                document_id=document_id,
+                payload_json=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            )
+            session.add(record)
+            session.flush()
+            return record
+
+    def list(self) -> list[DocumentMutationRecord]:
+        with self.database.session() as session:
+            return list(
+                session.scalars(
+                    select(DocumentMutationRecord).order_by(DocumentMutationRecord.created_at)
+                )
+            )
+
+    def get(self, mutation_id: str) -> DocumentMutationRecord | None:
+        with self.database.session() as session:
+            return session.get(DocumentMutationRecord, mutation_id)
+
+    def update(
+        self,
+        mutation_id: str,
+        *,
+        document_id: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> DocumentMutationRecord:
+        with self.database.session() as session:
+            record = session.get(DocumentMutationRecord, mutation_id)
+            if record is None:
+                raise DomainError("MUTATION_NOT_FOUND", "文档变更意图不存在", 409)
+            if document_id is not None:
+                record.document_id = document_id
+            if payload is not None:
+                record.payload_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+            record.updated_at = utc_now()
+            session.flush()
+            return record
+
+    def delete(self, mutation_id: str) -> None:
+        with self.database.session() as session:
+            record = session.get(DocumentMutationRecord, mutation_id)
             if record is not None:
                 session.delete(record)
 

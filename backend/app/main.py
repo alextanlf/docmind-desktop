@@ -11,6 +11,7 @@ from fastapi.exceptions import RequestValidationError
 
 from app.api.auth import require_runtime_token
 from app.api.chat import router as chat_router
+from app.api.documents import recover_document_mutations
 from app.api.documents import router as documents_router
 from app.api.embedding import router as embedding_router
 from app.api.errors import DomainError, domain_error_handler, request_validation_handler
@@ -42,6 +43,7 @@ from app.schemas.common import HealthResponse
 from app.storage.database import Database
 from app.storage.repositories import (
     ConversationStore,
+    DocumentMutationStore,
     DocumentStore,
     ImportJobStore,
     RepositoryStore,
@@ -130,9 +132,11 @@ def create_app(
         app.state.document_store = document_store
         app.state.import_job_store = ImportJobStore(database)
         app.state.vector_cleanup_store = VectorCleanupStore(database)
+        app.state.document_mutation_store = DocumentMutationStore(database)
         app.state.vector_store = vector_store
         app.state.document_parser = DocumentParser()
         app.state.document_chunker = SemanticChunker()
+        await recover_document_mutations(app)
         for cleanup in app.state.vector_cleanup_store.list():
             with suppress(Exception):
                 await asyncio.to_thread(vector_store.delete, cleanup.repository_id, json.loads(cleanup.vector_ids_json))
