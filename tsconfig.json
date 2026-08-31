@@ -1,1 +1,20 @@
-{ "compilerOptions": { "target": "ES2022", "useDefineForClassFields": true, "lib": ["ES2022", "DOM"], "module": "ESNext", "moduleResolution": "Bundler", "strict": true, "jsx": "react-jsx", "esModuleInterop": true, "skipLibCheck": true, "types": ["vitest/globals", "node"] }, "include": ["electron/renderer/src", "electron/tests", "electron/main", "electron/preload"] }
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["vitest/globals", "node"]
+  },
+  "include": [
+    "electron/renderer/src",
+    "electron/tests",
+    "electron/main",
+    "electron/preload"
+  ]
+}

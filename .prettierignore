@@ -1,0 +1,6 @@
+backend/
+docs/
+.superpowers/
+out/
+node_modules/
+package-lock.json
