@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 
 from app.storage.database import Database
@@ -62,6 +62,116 @@ def test_upgrade_creates_exact_phase_one_columns(database: Database) -> None:
     }
     assert {column["name"] for column in inspector.get_columns("settings")} == {
         "key", "value", "updated_at",
+    }
+
+
+def test_migrated_schema_supplies_defaults_for_raw_inserts(database: Database) -> None:
+    with database.session() as session:
+        session.execute(text("INSERT INTO repositories (id, name) VALUES ('repo-defaults', 'Repository')"))
+        session.execute(
+            text(
+                "INSERT INTO documents (id, repository_id, title) "
+                "VALUES ('document-defaults', 'repo-defaults', 'Document')"
+            )
+        )
+        session.execute(
+            text(
+                "INSERT INTO document_chunks "
+                "(id, document_id, repository_id, chunk_index, text, token_count) "
+                "VALUES ('chunk-defaults', 'document-defaults', 'repo-defaults', 0, 'chunk', 1)"
+            )
+        )
+        session.execute(
+            text(
+                "INSERT INTO import_jobs (id, source_kind, source_value) "
+                "VALUES ('job-defaults', 'url', 'https://example.test')"
+            )
+        )
+        session.execute(text("INSERT INTO sessions (id) VALUES ('session-defaults')"))
+        session.execute(
+            text(
+                "INSERT INTO messages (id, session_id, role, content) "
+                "VALUES ('message-defaults', 'session-defaults', 'user', 'Hello')"
+            )
+        )
+        session.execute(text("INSERT INTO settings (key, value) VALUES ('language', 'en')"))
+
+        repository = session.execute(
+            text("SELECT sync_status, document_count, created_at, updated_at FROM repositories")
+        ).one()
+        document = session.execute(
+            text("SELECT source_type, chunk_count, status, created_at, updated_at FROM documents")
+        ).one()
+        job = session.execute(
+            text(
+                "SELECT state, progress, message, retryable, cancel_requested, created_at, updated_at "
+                "FROM import_jobs"
+            )
+        ).one()
+        conversation = session.execute(
+            text("SELECT repository_scope_json, created_at, updated_at FROM sessions")
+        ).one()
+        message = session.execute(
+            text("SELECT citations_json, generation_status, created_at FROM messages")
+        ).one()
+        chunk_created_at = session.scalar(text("SELECT created_at FROM document_chunks"))
+        setting_updated_at = session.scalar(text("SELECT updated_at FROM settings"))
+
+    assert repository[:2] == ("unknown", 0)
+    assert document[:3] == ("remote", 0, "pending")
+    assert job[:5] == ("pending", 0, "", 0, 0)
+    assert conversation[0] == "[]"
+    assert message[:2] == ("[]", "completed")
+    assert all(value is not None for value in (*repository[2:], *document[3:], *job[5:]))
+    assert all(value is not None for value in (*conversation[1:], *message[2:], chunk_created_at, setting_updated_at))
+
+
+def test_migration_declares_defaults_indexes_and_foreign_key_actions(database: Database) -> None:
+    inspector = inspect(database.engine)
+    defaultable_columns = {
+        "repositories": {"sync_status", "document_count", "created_at", "updated_at"},
+        "documents": {"source_type", "chunk_count", "status", "created_at", "updated_at"},
+        "document_chunks": {"created_at"},
+        "import_jobs": {
+            "state", "progress", "message", "retryable", "cancel_requested", "created_at", "updated_at"
+        },
+        "sessions": {"repository_scope_json", "created_at", "updated_at"},
+        "messages": {"citations_json", "generation_status", "created_at"},
+        "settings": {"updated_at"},
+    }
+
+    for table_name, column_names in defaultable_columns.items():
+        columns = {column["name"]: column for column in inspector.get_columns(table_name)}
+        assert all(columns[name]["default"] is not None for name in column_names)
+
+    index_columns = {
+        "documents": {
+            "ix_documents_repository_id": ["repository_id"],
+            "ix_documents_source_url": ["source_url"],
+        },
+        "document_chunks": {
+            "ix_document_chunks_document_id": ["document_id"],
+            "ix_document_chunks_repository_id": ["repository_id"],
+        },
+        "import_jobs": {"ix_import_jobs_state": ["state"]},
+        "messages": {"ix_messages_session_id": ["session_id"]},
+    }
+    for table_name, expected_indexes in index_columns.items():
+        indexes = {index["name"]: index["column_names"] for index in inspector.get_indexes(table_name)}
+        assert indexes == expected_indexes
+
+    foreign_keys = {
+        table_name: {
+            foreign_key["constrained_columns"][0]: foreign_key["options"].get("ondelete")
+            for foreign_key in inspector.get_foreign_keys(table_name)
+        }
+        for table_name in ("documents", "document_chunks", "import_jobs", "messages")
+    }
+    assert foreign_keys == {
+        "documents": {"repository_id": "CASCADE"},
+        "document_chunks": {"document_id": "CASCADE", "repository_id": "CASCADE"},
+        "import_jobs": {"repository_id": "SET NULL", "document_id": "SET NULL"},
+        "messages": {"session_id": "CASCADE"},
     }
 
 
