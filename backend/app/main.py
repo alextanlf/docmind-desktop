@@ -10,24 +10,28 @@ from app.api.embedding import router as embedding_router
 from app.api.errors import DomainError, domain_error_handler
 from app.api.settings import SettingsService
 from app.api.settings import router as settings_router
+from app.api.yuque import router as yuque_router
 from app.config import AppSettings, get_settings
 from app.core.embedding import EmbeddingProvider, create_embedding_provider
 from app.core.secrets import KeyringSecretStore, SecretStore
 from app.schemas.common import HealthResponse
 from app.storage.database import Database
 from app.storage.repositories import ImportJobStore, SettingStore
+from app.yuque.gateway import PlaywrightYuqueGateway, YuqueGateway
 
 
 def create_app(
     settings: AppSettings | None = None,
     secret_store: SecretStore | None = None,
     embedding_provider: EmbeddingProvider | None = None,
+    yuque_gateway: YuqueGateway | None = None,
 ) -> FastAPI:
     runtime_settings = settings or get_settings()
     runtime_secret_store = secret_store or KeyringSecretStore()
     runtime_embedding_provider = embedding_provider or create_embedding_provider(
         runtime_settings.embedding_settings
     )
+    runtime_yuque_gateway = yuque_gateway or PlaywrightYuqueGateway(runtime_settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -42,6 +46,7 @@ def create_app(
         try:
             yield
         finally:
+            await runtime_yuque_gateway.close()
             database.engine.dispose()
 
     app = FastAPI(dependencies=[Depends(require_runtime_token)], lifespan=lifespan)
@@ -50,9 +55,11 @@ def create_app(
     app.state.secret_store = runtime_secret_store
     app.state.embedding_provider = runtime_embedding_provider
     app.state.embedding_prepare_task = None
+    app.state.yuque_gateway = runtime_yuque_gateway
     app.add_exception_handler(DomainError, domain_error_handler)
     app.include_router(settings_router)
     app.include_router(embedding_router)
+    app.include_router(yuque_router)
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:

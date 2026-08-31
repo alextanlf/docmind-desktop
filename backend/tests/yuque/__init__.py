@@ -1,0 +1,1 @@
+"""Yuque gateway tests."""

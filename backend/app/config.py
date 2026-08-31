@@ -64,6 +64,10 @@ class AppSettings(BaseSettings):
         return self.data_dir / "logs" / "screenshots"
 
     @property
+    def browser_data_dir(self) -> Path:
+        return self.data_dir / "browser-data"
+
+    @property
     def staging_dir(self) -> Path:
         return self.data_dir / "imports" / "staging"
 
