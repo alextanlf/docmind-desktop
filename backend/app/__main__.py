@@ -8,8 +8,8 @@ from app.main import create_app
 
 def main() -> None:
     settings = get_settings()
-    if settings.host != "127.0.0.1":
-        raise RuntimeError("DocMind 后端只能绑定到 127.0.0.1")
+    if settings.host != "127.0.0.1" or settings.port != 18900:
+        raise RuntimeError("DocMind 后端只能绑定到 127.0.0.1:18900")
     uvicorn.run(create_app(settings), host=settings.host, port=settings.port, reload=False)
 
 
