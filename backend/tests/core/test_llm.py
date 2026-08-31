@@ -72,21 +72,28 @@ async def test_openai_compatible_provider_handles_fragmented_sse_events(
 
 
 @pytest.mark.parametrize(
-    ("response", "code"),
+    ("response", "code", "retryable", "message"),
     [
-        (httpx.Response(401), "MODEL_AUTH_FAILED"),
-        (httpx.Response(403), "MODEL_AUTH_FAILED"),
-        (httpx.Response(404), "MODEL_NOT_FOUND"),
-        (httpx.Response(429), "MODEL_RATE_LIMITED"),
-        (httpx.Response(500), "MODEL_UNAVAILABLE"),
-        (httpx.Response(502), "MODEL_UNAVAILABLE"),
-        (httpx.Response(503), "MODEL_UNAVAILABLE"),
-        (httpx.Response(504), "MODEL_UNAVAILABLE"),
+        (httpx.Response(400), "MODEL_PROTOCOL_ERROR", False, "模型服务返回了无法识别的数据"),
+        (httpx.Response(401), "MODEL_AUTH_FAILED", False, "模型服务认证失败，请检查 API Key"),
+        (httpx.Response(403), "MODEL_AUTH_FAILED", False, "模型服务认证失败，请检查 API Key"),
+        (httpx.Response(404), "MODEL_NOT_FOUND", False, "未找到指定模型，请检查模型名称"),
+        (httpx.Response(415), "MODEL_PROTOCOL_ERROR", False, "模型服务返回了无法识别的数据"),
+        (httpx.Response(429), "MODEL_RATE_LIMITED", True, "模型服务请求过于频繁，请稍后重试"),
+        (httpx.Response(500), "MODEL_UNAVAILABLE", True, "模型服务暂时不可用，请稍后重试"),
+        (httpx.Response(502), "MODEL_UNAVAILABLE", True, "模型服务暂时不可用，请稍后重试"),
+        (httpx.Response(503), "MODEL_UNAVAILABLE", True, "模型服务暂时不可用，请稍后重试"),
+        (httpx.Response(504), "MODEL_UNAVAILABLE", True, "模型服务暂时不可用，请稍后重试"),
     ],
 )
 @respx.mock
 async def test_openai_compatible_provider_maps_http_failures(
-    config: ModelConfig, chat_request: ChatRequest, response: httpx.Response, code: str
+    config: ModelConfig,
+    chat_request: ChatRequest,
+    response: httpx.Response,
+    code: str,
+    retryable: bool,
+    message: str,
 ) -> None:
     respx.post("https://example.test/v1/chat/completions").mock(return_value=response)
 
@@ -94,6 +101,8 @@ async def test_openai_compatible_provider_maps_http_failures(
         _ = [delta async for delta in OpenAICompatibleProvider(config, "test-key").stream_chat(chat_request)]
 
     assert error.value.code == code
+    assert error.value.retryable is retryable
+    assert error.value.message == message
 
 
 @respx.mock
@@ -108,6 +117,8 @@ async def test_openai_compatible_provider_maps_timeout_without_exposing_key(
         _ = [delta async for delta in OpenAICompatibleProvider(config, "secret-value").stream_chat(chat_request)]
 
     assert error.value.code == "MODEL_TIMEOUT"
+    assert error.value.retryable is True
+    assert error.value.message == "模型服务响应超时，请稍后重试"
     assert "secret-value" not in caplog.text
     assert "Authorization" not in caplog.text
 
@@ -133,6 +144,8 @@ async def test_openai_compatible_provider_rejects_invalid_or_empty_sse(
         _ = [delta async for delta in OpenAICompatibleProvider(config, "test-key").stream_chat(chat_request)]
 
     assert error.value.code == "MODEL_PROTOCOL_ERROR"
+    assert error.value.retryable is False
+    assert error.value.message == "模型服务返回了无法识别的数据"
 
 
 @respx.mock
@@ -153,3 +166,27 @@ async def test_model_connection_uses_non_streaming_minimal_prompt_and_reports_la
         "temperature": 0,
         "stream": False,
     }
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(200, json={}),
+        httpx.Response(200, text="not-json"),
+        httpx.Response(200, json={"choices": []}),
+        httpx.Response(200, json={"choices": [{"message": {"content": ""}}]}),
+        httpx.Response(200, json={"choices": [{"message": {}}]}),
+    ],
+)
+@respx.mock
+async def test_model_connection_rejects_empty_or_malformed_success_response(
+    config: ModelConfig, response: httpx.Response
+) -> None:
+    respx.post("https://example.test/v1/chat/completions").mock(return_value=response)
+
+    with pytest.raises(DomainError) as error:
+        await OpenAICompatibleProvider(config, "test-key").test_connection()
+
+    assert error.value.code == "MODEL_PROTOCOL_ERROR"
+    assert error.value.retryable is False
+    assert error.value.message == "模型服务返回了无法识别的数据"

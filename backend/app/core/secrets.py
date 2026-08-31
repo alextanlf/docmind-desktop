@@ -17,16 +17,30 @@ class SecretStore(Protocol):
 
 class KeyringSecretStore:
     def get(self, name: str) -> str | None:
-        return keyring.get_password(KEYRING_SERVICE, name)
+        try:
+            return keyring.get_password(KEYRING_SERVICE, name)
+        except Exception:  # noqa: BLE001 - Keyring backends expose provider-specific exceptions.
+            raise _secret_store_error() from None
 
     def set(self, name: str, value: str) -> None:
-        keyring.set_password(KEYRING_SERVICE, name, value)
+        try:
+            keyring.set_password(KEYRING_SERVICE, name, value)
+        except Exception:  # noqa: BLE001 - Keyring backends expose provider-specific exceptions.
+            raise _secret_store_error() from None
 
     def delete(self, name: str) -> None:
         try:
             keyring.delete_password(KEYRING_SERVICE, name)
         except keyring.errors.PasswordDeleteError:
             pass
+        except Exception:  # noqa: BLE001 - Keyring backends expose provider-specific exceptions.
+            raise _secret_store_error() from None
+
+
+def _secret_store_error():
+    from app.api.errors import DomainError
+
+    return DomainError("SECRET_STORE_FAILED", "无法访问系统钥匙串，请稍后重试", 503, True, "稍后重试")
 
 
 class MemorySecretStore:

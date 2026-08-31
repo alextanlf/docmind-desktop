@@ -82,7 +82,10 @@ class SettingsService:
         )
 
     def clear_diagnostics(self, settings: AppSettings) -> None:
-        root = settings.screenshots_dir.resolve()
+        directory = settings.screenshots_dir
+        if directory.is_symlink():
+            return
+        root = directory.resolve()
         for child in root.iterdir():
             if child.is_symlink() or child.parent.resolve() != root:
                 continue
@@ -91,6 +94,8 @@ class SettingsService:
 
 
 def _screenshot_count(directory: Path) -> int:
+    if directory.is_symlink() or not directory.is_dir():
+        return 0
     return sum(
         1
         for child in directory.iterdir()
