@@ -63,6 +63,15 @@ describe("BackendManager", () => {
       expect.objectContaining({ cwd: "/repo/backend" }),
     );
   });
+  it("fails fast when packaged backend command is not explicitly configured", async () => {
+    const manager = new BackendManager({
+      packaged: true,
+      dataDir: "/tmp/docmind",
+    });
+    await expect(manager.start()).rejects.toMatchObject({
+      code: "BACKEND_START_FAILED",
+    });
+  });
 
   it("throws start failure when child exits", async () => {
     const process = fakeProcess();
@@ -125,6 +134,21 @@ describe("BackendManager", () => {
       code: "BACKEND_START_FAILED",
     });
   });
+
+  it("rejects promptly when child errors during a hanging health request", async () => {
+    const process = fakeProcess();
+    const manager = new BackendManager({
+      spawn: () => process as any,
+      fetch: () => new Promise<Response>(() => {}),
+      healthIntervalMs: 0,
+      shutdownTimeoutMs: 0,
+    });
+    const pending = manager.start();
+    process.__error(new Error("spawn failed"));
+    await expect(pending).rejects.toMatchObject({
+      code: "BACKEND_START_FAILED",
+    });
+  }, 100);
 
   it("cleans up timed-out child before a retry can spawn another backend", async () => {
     const process = fakeProcess();

@@ -58,6 +58,13 @@ export class StagedFileService {
     source: string,
     kind: "pdf" | "markdown",
   ): Promise<StagedSource> {
+    const noFollow = (constants as NodeJS.Dict<number>).O_NOFOLLOW;
+    if (typeof noFollow !== "number") {
+      throw new StagedFileError(
+        "SOURCE_UNSUPPORTED",
+        "Secure file access unavailable",
+      );
+    }
     const stat = await lstat(source).catch(() => {
       throw new StagedFileError("SOURCE_UNSUPPORTED", "Source unavailable");
     });
@@ -82,23 +89,33 @@ export class StagedFileService {
     const final = join(directory, `${id}${extension}`);
     try {
       await mkdir(directory, { recursive: true });
-      const sourceHandle = await open(
-        source,
-        constants.O_RDONLY | (constants as any).O_NOFOLLOW,
-      );
-      const openedStat = await sourceHandle.stat();
-      if (!openedStat.isFile() || openedStat.size !== stat.size)
-        throw new Error("source changed");
-      const contents = await readFile(sourceHandle);
-      await sourceHandle.close();
-      const destination = await open(
-        partial,
-        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
-        0o600,
-      );
-      await destination.write(contents);
-      await destination.sync();
-      await destination.close();
+      const sourceHandle = await open(source, constants.O_RDONLY | noFollow);
+      try {
+        const openedStat = await sourceHandle.stat();
+        if (
+          !openedStat.isFile() ||
+          openedStat.size !== stat.size ||
+          openedStat.size > limit
+        )
+          throw new Error("source changed");
+        const contents = await readFile(sourceHandle);
+        const finalStat = await sourceHandle.stat();
+        if (finalStat.size !== openedStat.size || contents.byteLength > limit)
+          throw new Error("source changed");
+        const destination = await open(
+          partial,
+          constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+          0o600,
+        );
+        try {
+          await destination.write(contents);
+          await destination.sync();
+        } finally {
+          await destination.close().catch(() => {});
+        }
+      } finally {
+        await sourceHandle.close().catch(() => {});
+      }
       await rename(partial, final);
     } catch {
       await unlink(partial).catch(() => {});
