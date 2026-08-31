@@ -6,7 +6,8 @@ from app.schemas.chat import CitationRef
 
 _CITATION_PATTERN = re.compile(r"(?<!\[)\[(S[1-9]\d*)\](?!\])")
 _URL_PREFIXES = ("http://", "https://")
-_URL_TERMINATORS = frozenset("，。！？、；;）)]}>")
+_URL_TERMINATORS = frozenset("，。！？、；;）)]}>,'\"‘’“”")
+_URL_TRAILING_CANDIDATES = frozenset(".:")
 
 
 def parse_citations(answer: str, sources: dict[str, CitationRef]) -> list[CitationRef]:
@@ -28,14 +29,29 @@ class URLStreamSanitizer:
     def __init__(self) -> None:
         self._pending = ""
         self._inside_url = False
+        self._trailing_candidate = ""
 
     def feed(self, text: str) -> str:
         output: list[str] = []
         for character in text:
-            if self._inside_url:
-                if character.isspace() or character in _URL_TERMINATORS:
+            consumed_as_terminator = False
+            while self._inside_url:
+                if self._trailing_candidate:
+                    if _continues_url_after(self._trailing_candidate, character):
+                        self._trailing_candidate = ""
+                    else:
+                        output.append(self._trailing_candidate)
+                        self._trailing_candidate = ""
+                        self._inside_url = False
+                        continue
+                if character in _URL_TRAILING_CANDIDATES:
+                    self._trailing_candidate = character
+                elif character.isspace() or character in _URL_TERMINATORS:
                     self._inside_url = False
                     output.append(character)
+                    consumed_as_terminator = True
+                break
+            if self._inside_url or consumed_as_terminator:
                 continue
 
             self._pending += character
@@ -55,7 +71,8 @@ class URLStreamSanitizer:
         if self._inside_url:
             self._inside_url = False
             self._pending = ""
-            return ""
+            trailing, self._trailing_candidate = self._trailing_candidate, ""
+            return trailing
         pending, self._pending = self._pending, ""
         return pending
 
@@ -63,3 +80,9 @@ class URLStreamSanitizer:
 def strip_model_urls(answer: str) -> str:
     sanitizer = URLStreamSanitizer()
     return sanitizer.feed(answer) + sanitizer.finish()
+
+
+def _continues_url_after(candidate: str, character: str) -> bool:
+    if candidate == ":":
+        return character.isascii() and character.isdigit()
+    return character.isascii() and (character.isalnum() or character in "_-/")

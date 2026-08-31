@@ -130,7 +130,7 @@ def create_app(
             ),
             llm=runtime_llm_provider,
             conversation_store=conversation_store,
-            event_broker=InMemoryEventBroker(),
+            event_broker=InMemoryEventBroker(retention=None),
         )
         app.state.chat_service = chat_service
         await app.state.import_service.recover_pending_vector_cleanup()

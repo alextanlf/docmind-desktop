@@ -88,6 +88,22 @@ async def test_broker_retains_only_last_one_hundred_events() -> None:
     assert events[-1].sequence == 106
 
 
+async def test_event_broker_supports_unlimited_retention_without_changing_default() -> None:
+    bounded = InMemoryEventBroker()
+    unlimited = InMemoryEventBroker(retention=None)
+    for sequence in range(1, 106):
+        await bounded.publish("bounded", "delta", {"content": str(sequence)})
+        await unlimited.publish("unlimited", "delta", {"content": str(sequence)})
+    await bounded.publish("bounded", "done", {})
+    await unlimited.publish("unlimited", "done", {})
+
+    bounded_events = [event async for event in bounded.subscribe("bounded", 0)]
+    unlimited_events = [event async for event in unlimited.subscribe("unlimited", 0)]
+
+    assert [event.sequence for event in bounded_events] == list(range(7, 107))
+    assert [event.sequence for event in unlimited_events] == list(range(1, 107))
+
+
 async def test_reopen_retains_prior_attempt_and_starts_new_request() -> None:
     broker = InMemoryEventBroker()
     first_progress = await broker.publish("job-retry", "progress", {"progress": 25})
