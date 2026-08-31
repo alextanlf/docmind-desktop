@@ -34,6 +34,14 @@ class AppSettings(BaseSettings):
                 directory.chmod(0o700)
         return self
 
+    @property
+    def documents_dir(self) -> Path:
+        return self.data_dir / "documents"
+
+    @property
+    def screenshots_dir(self) -> Path:
+        return self.data_dir / "logs" / "screenshots"
+
 
 def get_settings() -> AppSettings:
     return AppSettings()

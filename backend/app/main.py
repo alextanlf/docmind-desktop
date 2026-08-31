@@ -7,14 +7,18 @@ from fastapi import Depends, FastAPI
 
 from app.api.auth import require_runtime_token
 from app.api.errors import DomainError, domain_error_handler
+from app.api.settings import SettingsService
+from app.api.settings import router as settings_router
 from app.config import AppSettings, get_settings
+from app.core.secrets import KeyringSecretStore, SecretStore
 from app.schemas.common import HealthResponse
 from app.storage.database import Database
-from app.storage.repositories import ImportJobStore
+from app.storage.repositories import ImportJobStore, SettingStore
 
 
-def create_app(settings: AppSettings | None = None) -> FastAPI:
+def create_app(settings: AppSettings | None = None, secret_store: SecretStore | None = None) -> FastAPI:
     runtime_settings = settings or get_settings()
+    runtime_secret_store = secret_store or KeyringSecretStore()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -23,6 +27,9 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         database.upgrade()
         ImportJobStore(database).recover_interrupted()
         app.state.database = database
+        app.state.settings_service = SettingsService(
+            SettingStore(database), runtime_secret_store
+        )
         try:
             yield
         finally:
@@ -30,7 +37,10 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
     app = FastAPI(dependencies=[Depends(require_runtime_token)], lifespan=lifespan)
     app.dependency_overrides[get_settings] = lambda: runtime_settings
+    app.state.settings = runtime_settings
+    app.state.secret_store = runtime_secret_store
     app.add_exception_handler(DomainError, domain_error_handler)
+    app.include_router(settings_router)
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
