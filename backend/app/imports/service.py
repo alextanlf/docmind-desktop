@@ -168,16 +168,13 @@ class ImportService:
                     "last_event_sequence": metadata["last_event_sequence"],
                     "stale_vector_ids": metadata["stale_vector_ids"],
                 }
-            self.job_store.update_source_value(
+            self.job_store.merge_source_metadata(
                 job_id,
-                _encode_source_metadata(
-                    value=metadata["value"],
-                    fingerprint=metadata["fingerprint"],
-                    duplicate_decision=metadata["duplicate_decision"],
-                    job_id=job_id,
-                    last_event_sequence=metadata["last_event_sequence"],
-                    stale_vector_ids=metadata["stale_vector_ids"],
-                ),
+                {
+                    "value": metadata["value"],
+                    "fingerprint": metadata["fingerprint"],
+                    "duplicate_decision": metadata["duplicate_decision"],
+                },
             )
             job = self.job_store.reset_for_retry(job_id)
             await self.event_broker.reopen(job_id)
@@ -387,7 +384,9 @@ class ImportService:
                     ],
                 )
                 if self._job(job_id).cancel_requested:
-                    await self._delete_vectors(job.repository_id or "", created_ids)
+                    await self._cleanup_created_vectors(
+                        job_id, job.repository_id or "", created_ids
+                    )
                     await self._cancel_if_requested(job_id)
                     return
                 self.job_store.update_stale_vector_ids(job_id, stale_ids)
@@ -404,7 +403,9 @@ class ImportService:
                     return
             except asyncio.CancelledError:
                 if self._job(job_id).cancel_requested and not commit_state["sqlite_replaced"]:
-                    await self._delete_vectors(job.repository_id or "", created_ids)
+                    await self._cleanup_created_vectors(
+                        job_id, job.repository_id or "", created_ids
+                    )
                 raise
             except Exception:  # noqa: BLE001 - storage backends map to a stable workflow code
                 if not commit_started or not commit_state["sqlite_replaced"]:
@@ -481,6 +482,68 @@ class ImportService:
     async def _delete_vectors(self, repository_id: str, vector_ids: list[str]) -> None:
         with suppress(Exception):
             await self._vector_mutation(self.vector_store.delete, repository_id, vector_ids)
+
+    async def _cleanup_created_vectors(
+        self, job_id: str, repository_id: str, vector_ids: list[str]
+    ) -> bool:
+        if not vector_ids:
+            return True
+        metadata = _source_metadata(self._job(job_id))
+        pending = list(
+            dict.fromkeys([*metadata["pending_created_vector_ids"], *vector_ids])
+        )
+        self.job_store.merge_source_metadata(
+            job_id, {"pending_created_vector_ids": pending}
+        )
+        try:
+            await self._vector_mutation(self.vector_store.delete, repository_id, pending)
+        except Exception:  # noqa: BLE001 - pending cleanup must remain durable on backend failure
+            return False
+        self.job_store.merge_source_metadata(job_id, {"pending_created_vector_ids": []})
+        return True
+
+    async def recover_pending_vector_cleanup(self) -> int:
+        recovered = 0
+        terminal_states = {
+            ImportStatus.FAILED,
+            ImportStatus.COMPLETED,
+            ImportStatus.CANCELLED,
+        }
+        for job in self.job_store.list():
+            if job.state not in terminal_states:
+                continue
+            metadata = _source_metadata(job)
+            pending = list(
+                dict.fromkeys(
+                    [
+                        *metadata["pending_created_vector_ids"],
+                        *metadata["stale_vector_ids"],
+                    ]
+                )
+            )
+            if not pending:
+                continue
+            referenced = set(
+                self.document_store.vector_ids(job.document_id)
+                if job.document_id is not None
+                else []
+            )
+            cleanup_ids = [identifier for identifier in pending if identifier not in referenced]
+            try:
+                if cleanup_ids:
+                    await self._vector_mutation(
+                        self.vector_store.delete,
+                        job.repository_id or "",
+                        cleanup_ids,
+                    )
+            except Exception:  # noqa: BLE001, S112 - preserve cleanup for the next recovery
+                continue
+            self.job_store.merge_source_metadata(
+                job.id,
+                {"pending_created_vector_ids": [], "stale_vector_ids": []},
+            )
+            recovered += 1
+        return recovered
 
     def _persist_parsed_document(
         self, job_id: str, downloaded: DownloadedDocument, parsed: ParsedDocument
@@ -697,6 +760,7 @@ def _encode_source_metadata(
     job_id: str,
     last_event_sequence: int = 0,
     stale_vector_ids: list[str] | None = None,
+    pending_created_vector_ids: list[str] | None = None,
 ) -> str:
     return json.dumps(
         {
@@ -707,6 +771,7 @@ def _encode_source_metadata(
             "upload_intent": {"marker": f"docmind-import:{job_id}"},
             "last_event_sequence": last_event_sequence,
             "stale_vector_ids": stale_vector_ids or [],
+            "pending_created_vector_ids": pending_created_vector_ids or [],
         },
         ensure_ascii=False,
         separators=(",", ":"),
@@ -722,8 +787,6 @@ def _source_metadata(job: ImportJobRecord) -> dict[str, Any]:
         isinstance(metadata, dict)
         and metadata.get("version") in {1, 2}
         and isinstance(metadata.get("value"), str)
-        and isinstance(metadata.get("fingerprint"), str)
-        and isinstance(metadata.get("duplicate_decision"), str)
     ):
         marker = f"docmind-import:{job.id}"
         intent = metadata.get("upload_intent")
@@ -741,13 +804,27 @@ def _source_metadata(job: ImportJobRecord) -> dict[str, Any]:
             isinstance(identifier, str) for identifier in stale_vector_ids
         ):
             stale_vector_ids = []
+        pending_created_vector_ids = metadata.get("pending_created_vector_ids", [])
+        if not isinstance(pending_created_vector_ids, list) or not all(
+            isinstance(identifier, str) for identifier in pending_created_vector_ids
+        ):
+            pending_created_vector_ids = []
         return {
             "value": metadata["value"],
-            "fingerprint": metadata["fingerprint"],
-            "duplicate_decision": metadata["duplicate_decision"],
+            "fingerprint": (
+                metadata["fingerprint"]
+                if isinstance(metadata.get("fingerprint"), str)
+                else ""
+            ),
+            "duplicate_decision": (
+                metadata["duplicate_decision"]
+                if isinstance(metadata.get("duplicate_decision"), str)
+                else "create"
+            ),
             "marker": marker,
             "last_event_sequence": last_event_sequence,
             "stale_vector_ids": stale_vector_ids,
+            "pending_created_vector_ids": pending_created_vector_ids,
         }
     return {
         "value": job.source_value,
@@ -756,4 +833,5 @@ def _source_metadata(job: ImportJobRecord) -> dict[str, Any]:
         "marker": f"docmind-import:{job.id}",
         "last_event_sequence": 0,
         "stale_vector_ids": [],
+        "pending_created_vector_ids": [],
     }

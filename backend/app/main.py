@@ -69,6 +69,7 @@ def create_app(
             job_store=ImportJobStore(database),
             event_broker=InMemoryEventBroker(),
         )
+        await app.state.import_service.recover_pending_vector_cleanup()
         try:
             yield
         finally:

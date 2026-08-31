@@ -12,6 +12,7 @@ from sqlalchemy.exc import StatementError
 
 from app.api.errors import DomainError
 from app.config import AppSettings
+from app.core.secrets import MemorySecretStore
 from app.main import create_app
 from app.storage.database import Database
 from app.storage.models import (
@@ -366,4 +367,64 @@ def test_app_lifespan_migrates_and_recovers_interrupted_jobs(tmp_path: Path) -> 
         "APP_RESTARTED",
         True,
     )
+    database.engine.dispose()
+
+
+def test_app_lifespan_recovers_terminal_vector_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class StartupVectorStore:
+        def __init__(self) -> None:
+            self.ids = {"orphan-vector"}
+
+        def delete(self, repository_id: str, ids: list[str]) -> None:
+            assert repository_id == "repository-1"
+            self.ids.difference_update(ids)
+
+    data_dir = tmp_path / "docmind-cleanup"
+    settings = AppSettings(
+        session_token=SecretStr("test-runtime-token"), data_dir=data_dir, environment="test"
+    )
+    database = Database(f"sqlite+pysqlite:///{data_dir / 'database' / 'docmind.sqlite3'}")
+    database.upgrade()
+    with database.session() as session:
+        session.add(
+            RepositoryRecord(
+                id="repository-1",
+                yuque_id="remote-repository-1",
+                name="Knowledge",
+            )
+        )
+    ImportJobStore(database).create(
+        ImportJobRecord(
+            id="cancelled-cleanup",
+            source_kind="url",
+            source_value=json.dumps(
+                {
+                    "version": 2,
+                    "value": "https://example.test/source.md",
+                    "fingerprint": "fingerprint",
+                    "duplicate_decision": "create",
+                    "upload_intent": {"marker": "docmind-import:cancelled-cleanup"},
+                    "last_event_sequence": 1,
+                    "stale_vector_ids": [],
+                    "pending_created_vector_ids": ["orphan-vector"],
+                }
+            ),
+            repository_id="repository-1",
+            state=ImportStatus.CANCELLED,
+            current_stage=ImportStatus.INDEXING.value,
+        )
+    )
+    vector_store = StartupVectorStore()
+    monkeypatch.setattr("app.main.PersistentVectorStore", lambda settings: vector_store)
+
+    with TestClient(
+        create_app(settings, secret_store=MemorySecretStore())
+    ) as client:
+        assert client.app.state.import_service is not None
+
+    persisted = ImportJobStore(database).get("cancelled-cleanup")
+    assert vector_store.ids == set()
+    assert json.loads(persisted.source_value)["pending_created_vector_ids"] == []  # type: ignore[union-attr]
     database.engine.dispose()
