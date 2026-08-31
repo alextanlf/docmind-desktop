@@ -1,0 +1,37 @@
+[project]
+name = "docmind-backend"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "alembic>=1.16,<2",
+  "beautifulsoup4>=4.13,<5",
+  "chromadb>=1.0,<2",
+  "fastapi>=0.116,<1",
+  "httpx>=0.28,<1",
+  "keyring>=25.6,<26",
+  "markdownify>=1.2,<2",
+  "pydantic-settings>=2.10,<3",
+  "pymupdf>=1.26,<2",
+  "playwright>=1.55,<2",
+  "rank-bm25>=0.2.2,<1",
+  "sentence-transformers>=5.1,<6",
+  "sqlalchemy>=2.0.40,<3",
+  "uvicorn>=0.35,<1",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.4,<9",
+  "pytest-asyncio>=1.1,<2",
+  "respx>=0.22,<1",
+  "ruff>=0.12,<1",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
