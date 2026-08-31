@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import text
+from sqlalchemy.exc import StatementError
 
 from app.api.errors import DomainError
 from app.config import AppSettings
@@ -19,6 +21,8 @@ from app.storage.models import (
     ImportStatus,
     MessageRecord,
     RepositoryRecord,
+    SessionRecord,
+    SettingRecord,
 )
 from app.storage.repositories import (
     ConversationStore,
@@ -123,6 +127,69 @@ def test_import_job_persists_status_enum_values(database: Database) -> None:
         state = session.scalar(text("SELECT state FROM import_jobs WHERE id = 'job-status'"))
 
     assert state == "pending"
+
+
+def test_timestamp_records_round_trip_as_utc_aware_values(database: Database) -> None:
+    offset_time = datetime(2026, 8, 31, 20, 0, tzinfo=timezone(timedelta(hours=8)))
+    with database.session() as session:
+        repository = RepositoryRecord(id="repo-times", name="Repository")
+        document = DocumentRecord(id="document-times", repository_id=repository.id, title="Document")
+        session_record = SessionRecord(id="session-times")
+        session.add_all([repository, document, session_record])
+        session.flush()
+        session.add_all(
+            [
+                DocumentChunkRecord(
+                    id="chunk-times",
+                    document_id=document.id,
+                    repository_id=repository.id,
+                    chunk_index=0,
+                    text="chunk",
+                    token_count=1,
+                ),
+                ImportJobRecord(
+                    id="job-times",
+                    source_kind="url",
+                    source_value="https://example.test",
+                    started_at=offset_time,
+                    completed_at=offset_time,
+                ),
+                MessageRecord(id="message-times", session_id=session_record.id, role="user", content="Hello"),
+                SettingRecord(key="timezone", value="UTC"),
+            ]
+        )
+
+    with database.session() as session:
+        timestamp_values = [
+            session.get(RepositoryRecord, "repo-times").created_at,
+            session.get(RepositoryRecord, "repo-times").updated_at,
+            session.get(DocumentRecord, "document-times").created_at,
+            session.get(DocumentRecord, "document-times").updated_at,
+            session.get(DocumentChunkRecord, "chunk-times").created_at,
+            session.get(ImportJobRecord, "job-times").created_at,
+            session.get(ImportJobRecord, "job-times").started_at,
+            session.get(ImportJobRecord, "job-times").completed_at,
+            session.get(ImportJobRecord, "job-times").updated_at,
+            session.get(SessionRecord, "session-times").created_at,
+            session.get(SessionRecord, "session-times").updated_at,
+            session.get(MessageRecord, "message-times").created_at,
+            session.get(SettingRecord, "timezone").updated_at,
+        ]
+
+    assert all(value.tzinfo is UTC and value.utcoffset() == timedelta(0) for value in timestamp_values)
+    assert timestamp_values[6] == datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
+    assert timestamp_values[7] == datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
+
+
+def test_timestamp_records_reject_naive_values(database: Database) -> None:
+    with pytest.raises(StatementError, match="timezone-aware"), database.session() as session:
+        session.add(
+            RepositoryRecord(
+                id="repo-naive-time",
+                name="Repository",
+                created_at=datetime.fromisoformat("2026-08-31T12:00:00"),
+            )
+        )
 
 
 def test_import_job_failure_cancel_and_restart_recovery(database: Database) -> None:
