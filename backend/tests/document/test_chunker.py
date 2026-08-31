@@ -60,6 +60,36 @@ def test_chunker_keeps_a_fenced_code_block_intact_when_nearby_prose_requires_a_b
     assert all(chunk.token_count <= 800 for chunk in chunks)
 
 
+def test_chunker_limits_a_multi_unit_chunk_after_adding_overlap() -> None:
+    first = " ".join(f"first{index}" for index in range(750))
+    second = " ".join(f"second{index}" for index in range(750))
+    document = ParsedDocument(
+        title="Paragraphs",
+        source_url="https://docs.test/paragraphs",
+        markdown=f"{first}\n\n{second}",
+        sections=[ParsedSection(heading_path=["Paragraphs"], markdown=f"{first}\n\n{second}")],
+    )
+    chunks = SemanticChunker().chunk(document)
+    assert all(chunk.token_count <= 800 for chunk in chunks)
+    assert chunks[0].text.split()[-50:] == chunks[1].text.split()[:50]
+
+
+def test_chunker_splits_oversized_fenced_code_into_valid_indented_fences() -> None:
+    code_lines = [f"    value_{index} = {index}" for index in range(900)]
+    code = "```python\n" + "\n".join(code_lines) + "\n```"
+    document = ParsedDocument(
+        title="Large code",
+        source_url="https://docs.test/code",
+        markdown=code,
+        sections=[ParsedSection(heading_path=["Code"], markdown=code)],
+    )
+    chunks = SemanticChunker().chunk(document)
+    assert len(chunks) > 1
+    assert all(chunk.text.startswith("```python\n") and chunk.text.endswith("\n```") for chunk in chunks)
+    assert all(line.startswith("    ") for chunk in chunks for line in chunk.text.splitlines()[1:-1])
+    assert all(chunk.token_count <= 800 for chunk in chunks)
+
+
 def test_chunker_drops_empty_sections() -> None:
     document = ParsedDocument(
         title="Empty", source_url="x", markdown="", sections=[ParsedSection(heading_path=[], markdown="\n\t ")]

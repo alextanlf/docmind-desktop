@@ -61,7 +61,8 @@ class SemanticChunker:
                 continue
             if current and current_tokens + unit_tokens > self.max_tokens:
                 result.append("\n\n".join(current))
-                overlap = self._tail_tokens("\n\n".join(current), self.overlap_tokens)
+                overlap_size = min(self.overlap_tokens, self.max_tokens - unit_tokens)
+                overlap = self._tail_tokens("\n\n".join(current), overlap_size)
                 current = [overlap] if overlap else []
                 current_tokens = self.counter.count(overlap)
             current.append(unit)
@@ -71,6 +72,8 @@ class SemanticChunker:
         return result
 
     def _split_oversized_text(self, text: str) -> list[str]:
+        if fenced_chunks := self._split_fenced_code(text):
+            return fenced_chunks
         tokens = self._token_units(text)
         result: list[str] = []
         start = 0
@@ -80,6 +83,31 @@ class SemanticChunker:
             if end == len(tokens):
                 break
             start = end - self.overlap_tokens
+        return result
+
+    def _split_fenced_code(self, text: str) -> list[str] | None:
+        match = re.fullmatch(r"(?P<open>`{3,}|~{3,})(?P<language>[^\n]*)\n(?P<body>.*)\n(?P<close>`{3,}|~{3,})", text, re.DOTALL)
+        if not match or match.group("open")[0] != match.group("close")[0]:
+            return None
+        opening = f"{match.group('open')}{match.group('language')}"
+        closing = match.group("close")
+        capacity = self.max_tokens - self.counter.count(f"{opening}\n{closing}")
+        if capacity <= 0:
+            return None
+        result: list[str] = []
+        lines: list[str] = []
+        token_count = 0
+        for line in match.group("body").splitlines():
+            line_tokens = self.counter.count(line)
+            if lines and token_count + line_tokens > capacity:
+                result.append(opening + "\n" + "\n".join(lines) + "\n" + closing)
+                lines, token_count = [], 0
+            if line_tokens > capacity:
+                return None
+            lines.append(line)
+            token_count += line_tokens
+        if lines:
+            result.append(opening + "\n" + "\n".join(lines) + "\n" + closing)
         return result
 
     @staticmethod

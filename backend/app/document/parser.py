@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-import fitz
+import pymupdf
 from bs4 import BeautifulSoup
 from markdownify import markdownify
 
@@ -31,7 +31,8 @@ class DocumentParser:
         for node in soup.select("script, style, nav, footer, aside, template, [hidden], [aria-hidden='true']"):
             node.decompose()
         for node in soup.select("[style]"):
-            if "display:none" in node.get("style", "").replace(" ", "").lower():
+            style = re.sub(r"\s+", "", node.get("style", "").lower())
+            if re.search(r"(?:^|;)(?:display:none|visibility:hidden)(?:!important)?(?:;|$)", style):
                 node.decompose()
         for node in soup.find_all():
             if not node.get_text(" ", strip=True) and not node.find(["img", "br", "hr"]):
@@ -65,7 +66,7 @@ class DocumentParser:
         if not document.raw_bytes.startswith(b"%PDF-"):
             raise DomainError("SOURCE_UNSUPPORTED", "PDF 文件签名无效", 400, False)
         try:
-            pdf = fitz.open(stream=document.raw_bytes, filetype="pdf")
+            pdf = pymupdf.open(stream=document.raw_bytes, filetype="pdf")
         except (RuntimeError, ValueError):
             raise DomainError("SOURCE_UNSUPPORTED", "PDF 文件无效", 400, False) from None
         try:

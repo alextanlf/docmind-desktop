@@ -33,6 +33,9 @@ testpaths = ["tests"]
 pythonpath = ["."]
 filterwarnings = [
   'ignore:Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead\.:starlette.exceptions.StarletteDeprecationWarning:fastapi\.testclient',
+  'ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning',
+  'ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning',
+  'ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning',
 ]
 
 [tool.ruff]

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import fitz
+import pymupdf
 import pytest
 
 from app.api.errors import DomainError
@@ -24,7 +24,7 @@ def html_document() -> DownloadedDocument:
 
 
 def make_pdf(pages: list[str]) -> DownloadedDocument:
-    pdf = fitz.open()
+    pdf = pymupdf.open()
     for text in pages:
         page = pdf.new_page()
         if text:
@@ -45,6 +45,22 @@ def test_html_parser_preserves_heading_code_table_and_source(html_document: Down
     assert "模板内容" not in parsed.markdown
     assert parsed.markdown.count("SwiftUI 状态管理") == 1
     assert parsed.source_url == "https://docs.test/article"
+
+
+def test_html_parser_removes_case_and_whitespace_insensitive_hidden_styles(parser: DocumentParser) -> None:
+    document = DownloadedDocument(
+        title="hidden.html",
+        source_url="https://docs.test/hidden",
+        media_type="text/html",
+        raw_bytes=(
+            b"<h1>Visible</h1><p style='DISPLAY : none'>display hidden</p>"
+            b"<p style='visibility : HIDDEN'>visibility hidden</p><p>kept</p>"
+        ),
+    )
+    parsed = parser.parse(document)
+    assert "display hidden" not in parsed.markdown
+    assert "visibility hidden" not in parsed.markdown
+    assert "kept" in parsed.markdown
 
 
 def test_pdf_parser_records_only_nonempty_pages_with_one_based_page_numbers(parser: DocumentParser) -> None:
