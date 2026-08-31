@@ -67,6 +67,9 @@ class FakeVectorStore:
         self.on_upsert: Callable[[], None] | None = None
         self.upsert_started: threading.Event | None = None
         self.release_upsert: threading.Event | None = None
+        self.delete_started: threading.Event | None = None
+        self.release_delete: threading.Event | None = None
+        self.on_delete: Callable[[], None] | None = None
 
     def upsert(
         self,
@@ -99,10 +102,16 @@ class FakeVectorStore:
     def delete(self, repository_id: str, ids: list[str]) -> None:
         del repository_id
         self.deletes.append(list(ids))
+        if self.delete_started is not None:
+            self.delete_started.set()
+        if self.release_delete is not None:
+            self.release_delete.wait(timeout=2)
         if self.delete_fail_count:
             self.delete_fail_count -= 1
             raise DomainError("INDEX_FAILED", "delete unavailable", 503, True)
         self.ids.difference_update(ids)
+        if self.on_delete is not None:
+            self.on_delete()
 
 
 class FakeYuqueGateway:
@@ -112,6 +121,8 @@ class FakeYuqueGateway:
         self.documents: dict[str, YuqueDocumentContent] = {}
         self.lose_create_responses = 0
         self.before_create: Callable[[], None] | None = None
+        self.after_list: Callable[[], None] | None = None
+        self.after_read: Callable[[], None] | None = None
 
     async def create_document(self, request):  # type: ignore[no-untyped-def]
         self.create_calls += 1
@@ -147,14 +158,20 @@ class FakeYuqueGateway:
         return YuqueDocument(**content.model_dump(exclude={"content"}))
 
     async def list_documents(self, repository_id: str) -> list[YuqueDocument]:
-        return [
+        documents = [
             YuqueDocument(**document.model_dump(exclude={"content"}))
             for document in self.documents.values()
             if document.repository_id == repository_id
         ]
+        if self.after_list is not None:
+            self.after_list()
+        return documents
 
     async def read_document(self, document_id: str) -> YuqueDocumentContent:
-        return self.documents[document_id]
+        document = self.documents[document_id]
+        if self.after_read is not None:
+            self.after_read()
+        return document
 
 
 class CancellingParser(DocumentParser):
@@ -349,6 +366,8 @@ async def test_run_completes_full_import_with_exact_progress(database, tmp_path)
     assert completed.state == ImportStatus.COMPLETED  # type: ignore[union-attr]
     assert [event.payload["progress"] for event in events] == [0, 20, 45, 70, 90, 100]
     assert events[-1].type == "done"
+    metadata = json.loads(completed.source_value)  # type: ignore[union-attr]
+    assert metadata["last_event_sequence"] == events[-1].sequence == 6
     assert gateway.create_calls == 1
     assert len(vector_store.upserts) == 1
     document = service.document_store.get(completed.document_id)  # type: ignore[union-attr]
@@ -514,6 +533,37 @@ async def test_cancel_requested_after_parsing_prevents_next_external_write(datab
     assert list(service.settings.documents_dir.iterdir()) == []
 
 
+async def test_cancel_during_remote_list_prevents_create(database, tmp_path) -> None:
+    service, source, _, gateway = make_service(database, tmp_path)
+    job = await create_job(service, source)
+    gateway.after_list = lambda: service.job_store.request_cancel(job.id)
+
+    await service.run(job.id)
+
+    cancelled = service.job_store.get(job.id)
+    assert (cancelled.state, cancelled.progress) == (ImportStatus.CANCELLED, 45)  # type: ignore[union-attr]
+    assert gateway.create_calls == 0
+
+
+async def test_cancel_during_remote_read_prevents_create(database, tmp_path) -> None:
+    service, source, _, gateway = make_service(database, tmp_path)
+    gateway.documents["unrelated"] = YuqueDocumentContent(
+        yuque_id="unrelated",
+        repository_id="remote-repository-1",
+        title="Unrelated",
+        content="# No import marker",
+        url="https://yuque.test/unrelated",
+    )
+    job = await create_job(service, source)
+    gateway.after_read = lambda: service.job_store.request_cancel(job.id)
+
+    await service.run(job.id)
+
+    cancelled = service.job_store.get(job.id)
+    assert (cancelled.state, cancelled.progress) == (ImportStatus.CANCELLED, 45)  # type: ignore[union-attr]
+    assert gateway.create_calls == 0
+
+
 async def test_retry_resumes_indexing_without_creating_second_remote_document(
     database, tmp_path
 ) -> None:
@@ -583,6 +633,36 @@ async def test_cancel_after_vector_upsert_compensates_new_vectors(database, tmp_
     assert service.document_store.vector_ids(job.document_id or "") == []
 
 
+async def test_failed_overlapping_upsert_does_not_delete_existing_vectors(
+    database, tmp_path
+) -> None:
+    vector_store = FakeVectorStore(fail_count=1)
+    service, _, _, _ = make_service(database, tmp_path, vector_store=vector_store)
+    job = create_indexing_job(
+        service,
+        tmp_path,
+        job_id="overlap-failure",
+        markdown="# Same\n\ncontent",
+        old_vector_ids=[],
+    )
+    document = service.document_store.get(job.document_id or "")
+    assert document is not None
+    records = service._chunk_records(
+        job.id,
+        document,
+        service.chunker.chunk(service._parsed_from_persisted(document)),
+    )
+    service.document_store.replace_chunks(document.id, records)
+    old_ids = [record.vector_id or record.id for record in records]
+    vector_store.ids.update(old_ids)
+
+    await service.run(job.id)
+
+    assert service.job_store.get(job.id).state == ImportStatus.FAILED  # type: ignore[union-attr]
+    assert vector_store.ids == set(old_ids)
+    assert not any(set(old_ids) & set(deleted) for deleted in vector_store.deletes)
+
+
 async def test_cancel_after_sqlite_replacement_does_not_complete(
     database, tmp_path, monkeypatch
 ) -> None:
@@ -609,6 +689,39 @@ async def test_cancel_after_sqlite_replacement_does_not_complete(
     persisted_ids = service.document_store.vector_ids(job.document_id or "")
     assert service.job_store.get(job.id).state == ImportStatus.CANCELLED  # type: ignore[union-attr]
     assert vector_store.ids == set(persisted_ids)
+
+
+async def test_task_cancel_during_stale_delete_finishes_coherent_cancel(
+    database, tmp_path
+) -> None:
+    vector_store = FakeVectorStore()
+    vector_store.delete_started = threading.Event()
+    vector_store.release_delete = threading.Event()
+    service, _, _, _ = make_service(database, tmp_path, vector_store=vector_store)
+    job = create_indexing_job(
+        service,
+        tmp_path,
+        job_id="cancel-stale-delete",
+        markdown="# Replacement\n\ncontent",
+        old_vector_ids=["old-vector"],
+    )
+    vector_store.ids.add("old-vector")
+    task = asyncio.create_task(service.run(job.id))
+    for _ in range(100):
+        if vector_store.delete_started.is_set():
+            break
+        await asyncio.sleep(0.001)
+    assert vector_store.delete_started.is_set()
+
+    service.job_store.request_cancel(job.id)
+    task.cancel()
+    vector_store.release_delete.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    persisted_ids = service.document_store.vector_ids(job.document_id or "")
+    assert service.job_store.get(job.id).state == ImportStatus.CANCELLED  # type: ignore[union-attr]
+    assert set(persisted_ids) <= vector_store.ids
 
 
 async def test_sqlite_replacement_failure_compensates_new_vectors(
@@ -638,14 +751,14 @@ async def test_sqlite_replacement_failure_compensates_new_vectors(
         ImportStatus.FAILED,
         ImportStatus.INDEXING.value,
     )
-    assert vector_store.ids == set()
+    assert vector_store.ids == {"old-vector"}
     assert service.document_store.vector_ids(job.document_id or "") == ["old-vector"]
 
 
-async def test_stale_vector_delete_failure_keeps_sqlite_and_removes_new_vectors(
+async def test_stale_vector_cleanup_is_durable_and_idempotent_after_sqlite_commit(
     database, tmp_path
 ) -> None:
-    vector_store = FakeVectorStore(delete_fail_count=1)
+    vector_store = FakeVectorStore(delete_fail_count=2)
     service, _, _, _ = make_service(database, tmp_path, vector_store=vector_store)
     job = create_indexing_job(
         service,
@@ -658,9 +771,20 @@ async def test_stale_vector_delete_failure_keeps_sqlite_and_removes_new_vectors(
 
     await service.run(job.id)
 
-    assert service.job_store.get(job.id).state == ImportStatus.FAILED  # type: ignore[union-attr]
-    assert service.document_store.vector_ids(job.document_id or "") == ["old-vector"]
-    assert vector_store.ids == {"old-vector"}
+    failed = service.job_store.get(job.id)
+    first_persisted_ids = service.document_store.vector_ids(job.document_id or "")
+    assert failed.state == ImportStatus.FAILED  # type: ignore[union-attr]
+    assert set(first_persisted_ids) <= vector_store.ids
+    assert json.loads(failed.source_value)["stale_vector_ids"] == ["old-vector"]  # type: ignore[union-attr]
+
+    await service.retry(job.id)
+    await service.run(job.id)
+
+    persisted_ids = service.document_store.vector_ids(job.document_id or "")
+    assert service.job_store.get(job.id).state == ImportStatus.COMPLETED  # type: ignore[union-attr]
+    assert persisted_ids != ["old-vector"]
+    assert vector_store.ids == set(persisted_ids)
+    assert vector_store.deletes == [["old-vector"], ["old-vector"], ["old-vector"]]
 
 
 async def test_reindex_with_fewer_chunks_deletes_stale_tail_vectors(database, tmp_path) -> None:

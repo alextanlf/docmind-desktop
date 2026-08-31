@@ -270,6 +270,47 @@ class ImportJobStore:
             session.flush()
             return job
 
+    def allocate_event_sequence(self, job_id: str) -> int:
+        with self.database.session() as session:
+            job = session.get(ImportJobRecord, job_id)
+            if job is None:
+                raise DomainError("IMPORT_STATE_CONFLICT", "导入任务状态冲突", 409)
+            try:
+                metadata = json.loads(job.source_value)
+            except (json.JSONDecodeError, TypeError):
+                metadata = None
+            if not isinstance(metadata, dict):
+                metadata = {"version": 1, "value": job.source_value}
+            current = metadata.get("last_event_sequence", 0)
+            if not isinstance(current, int) or isinstance(current, bool) or current < 0:
+                current = 0
+            sequence = current + 1
+            metadata["last_event_sequence"] = sequence
+            job.source_value = json.dumps(
+                metadata, ensure_ascii=False, separators=(",", ":")
+            )
+            job.updated_at = utc_now()
+            session.flush()
+            return sequence
+
+    def update_stale_vector_ids(self, job_id: str, vector_ids: list[str]) -> None:
+        with self.database.session() as session:
+            job = session.get(ImportJobRecord, job_id)
+            if job is None:
+                raise DomainError("IMPORT_STATE_CONFLICT", "导入任务状态冲突", 409)
+            try:
+                metadata = json.loads(job.source_value)
+            except (json.JSONDecodeError, TypeError):
+                metadata = None
+            if not isinstance(metadata, dict):
+                metadata = {"version": 1, "value": job.source_value}
+            metadata["stale_vector_ids"] = list(dict.fromkeys(vector_ids))
+            job.source_value = json.dumps(
+                metadata, ensure_ascii=False, separators=(",", ":")
+            )
+            job.updated_at = utc_now()
+            session.flush()
+
     def fail(self, job_id: str, *, code: str, message: str, retryable: bool) -> ImportJobRecord:
         with self.database.session() as session:
             job = session.get(ImportJobRecord, job_id)

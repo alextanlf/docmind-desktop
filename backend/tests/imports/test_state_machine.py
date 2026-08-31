@@ -107,10 +107,12 @@ async def test_reopen_retains_prior_attempt_and_starts_new_request() -> None:
     assert second_progress.request_id == second_terminal.request_id
 
 
-async def test_broker_advances_sequence_before_publishing_restart_terminal() -> None:
+async def test_broker_publishes_explicit_durable_restart_sequence() -> None:
     broker = InMemoryEventBroker()
 
-    await broker.advance("job-restarted", 6)
-    terminal = await broker.publish("job-restarted", "error", {"code": "APP_RESTARTED"})
+    terminal = await broker.publish(
+        "job-restarted", "error", {"code": "APP_RESTARTED"}, sequence=7
+    )
 
     assert terminal.sequence == 7
+    assert await broker.terminal("job-restarted") == terminal

@@ -32,6 +32,7 @@ class StubImportService:
     def __init__(self) -> None:
         self.event_broker = InMemoryEventBroker()
         self.jobs = {"job-api-1": job_view()}
+        self.last_event_sequences = {"job-api-1": 0}
         self.run_started = asyncio.Event()
         self.release_run = asyncio.Event()
         self.inspect_calls = 0
@@ -70,6 +71,22 @@ class StubImportService:
     async def cancel(self, job_id: str) -> ImportJobView:
         self.jobs[job_id] = job_view("cancelled", 20)
         return self.jobs[job_id]
+
+    async def ensure_terminal_event(self, job_id: str, job: ImportJobView) -> None:
+        terminal = await self.event_broker.terminal(job_id)
+        if terminal is not None:
+            return
+        sequence = self.last_event_sequences[job_id] + 1
+        self.last_event_sequences[job_id] = sequence
+        event_type = "error" if job.state == "failed" else "done"
+        payload = {
+            "progress": job.progress,
+            "state": job.state,
+            "message": job.error_message or job.message,
+        }
+        if event_type == "error":
+            payload.update({"code": job.error_code, "retryable": job.retryable})
+        await self.event_broker.publish(job_id, event_type, payload, sequence=sequence)
 
 
 def test_import_routes_require_runtime_token(client) -> None:
@@ -183,25 +200,30 @@ async def test_events_close_for_persisted_failure_after_broker_restart(client) -
         await anext(response.body_iterator)
 
 
-async def test_persisted_terminal_advances_past_last_event_id_after_broker_restart(client) -> None:
+@pytest.mark.parametrize("cursors", [("6", "100"), ("100", "6")])
+async def test_persisted_terminal_uses_durable_sequence_after_broker_restart(
+    client, cursors: tuple[str, str]
+) -> None:
     service = StubImportService()
     service.jobs["job-api-1"] = job_view("failed", 70)
+    service.last_event_sequences["job-api-1"] = 100
     client.app.state.import_service = service
-    request = Request(
-        {
-            "type": "http",
-            "method": "GET",
-            "path": "/api/imports/job-api-1/events",
-            "headers": [(b"last-event-id", b"6")],
-            "app": client.app,
-        }
-    )
+    for cursor in cursors:
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/api/imports/job-api-1/events",
+                "headers": [(b"last-event-id", cursor.encode())],
+                "app": client.app,
+            }
+        )
 
-    response = await import_events(request, "job-api-1", "6")
-    frame = await asyncio.wait_for(anext(response.body_iterator), timeout=0.1)
+        response = await import_events(request, "job-api-1", cursor)
+        frame = await asyncio.wait_for(anext(response.body_iterator), timeout=0.1)
 
-    assert frame.startswith("id: 7\n")
-    assert '"sequence":7' in frame
-    assert '"type":"error"' in frame
-    with pytest.raises(StopAsyncIteration):
-        await anext(response.body_iterator)
+        assert frame.startswith("id: 101\n")
+        assert '"sequence":101' in frame
+        assert '"type":"error"' in frame
+        with pytest.raises(StopAsyncIteration):
+            await anext(response.body_iterator)
