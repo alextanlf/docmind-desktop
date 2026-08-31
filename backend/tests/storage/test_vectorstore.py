@@ -44,7 +44,9 @@ def test_vector_store_persists_and_normalizes_repository_collection_name(tmp_pat
     assert second.query("repo/id with spaces", [1.0, 0.0], top_k=1)[0].id == "chunk-1"
 
 
-def test_vector_store_filters_low_similarity_and_delete_is_idempotent(vector_store: PersistentVectorStore) -> None:
+def test_vector_store_returns_low_similarity_candidates_and_delete_is_idempotent(
+    vector_store: PersistentVectorStore,
+) -> None:
     vector_store.upsert(
         "repo-1",
         ["chunk-1"],
@@ -53,7 +55,8 @@ def test_vector_store_filters_low_similarity_and_delete_is_idempotent(vector_sto
         [{"doc_id": "doc-1", "doc_title": "Title", "ignored": "discard"}],
     )
 
-    assert vector_store.query("repo-1", [0.0, 1.0], top_k=1) == []
+    low_confidence = vector_store.query("repo-1", [0.0, 1.0], top_k=1)
+    assert [(hit.id, hit.similarity) for hit in low_confidence] == [("chunk-1", 0.0)]
     vector_store.delete("repo-1", ["missing", "chunk-1"])
     vector_store.delete("repo-1", ["chunk-1"])
     assert vector_store.query("repo-1", [1.0, 0.0], top_k=1) == []

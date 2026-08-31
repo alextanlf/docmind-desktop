@@ -9,10 +9,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class EmbeddingSettings(BaseModel):
-    model_name: str = "BAAI/bge-small-zh-v1.5"
+    model_name: str = "BAAI/bge-base-zh-v1.5"
     device: str = "cpu"
     cache_dir: Path | None = None
-    dimension: int = Field(default=512, gt=0)
+    dimension: int = Field(default=768, gt=0)
 
 
 class VectorStoreSettings(BaseModel):
@@ -31,9 +31,9 @@ class AppSettings(BaseSettings):
     source_read_timeout_seconds: float = 30.0
     html_markdown_max_bytes: int = 20 * 1024 * 1024
     pdf_max_bytes: int = 100 * 1024 * 1024
-    embedding_model_name: str = "BAAI/bge-small-zh-v1.5"
+    embedding_model_name: str = "BAAI/bge-base-zh-v1.5"
     embedding_device: str = "cpu"
-    embedding_dimension: int = Field(default=512, gt=0)
+    embedding_dimension: int = Field(default=768, gt=0)
     rag_similarity_threshold: float = Field(default=0.65, ge=-1.0, le=1.0)
 
     model_config = SettingsConfigDict(env_prefix="DOCMIND_", extra="ignore")

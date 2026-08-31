@@ -19,9 +19,6 @@ _METADATA_KEYS = {
     "source_type",
     "page_number",
 }
-_MIN_SIMILARITY = 0.65
-
-
 @dataclass(frozen=True)
 class VectorHit:
     id: str
@@ -93,12 +90,11 @@ class PersistentVectorStore:
             result.get("distances", [[]])[0],
         ):
             similarity = max(-1.0, min(1.0, 1.0 - float(distance)))
-            if similarity >= _MIN_SIMILARITY:
-                hits.append(
-                    VectorHit(
-                        id=str(identifier), text=str(text), metadata=dict(metadata or {}), similarity=similarity
-                    )
+            hits.append(
+                VectorHit(
+                    id=str(identifier), text=str(text), metadata=dict(metadata or {}), similarity=similarity
                 )
+            )
         return hits
 
     def delete(self, repository_id: str, ids: list[str]) -> None:
