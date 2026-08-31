@@ -73,6 +73,12 @@ class OpenAICompatibleProvider:
         except httpx.HTTPError as error:
             raise _model_error("MODEL_UNAVAILABLE") from error
         _raise_for_status(response)
+        try:
+            content = response.json()["choices"][0]["message"]["content"]
+        except (IndexError, KeyError, TypeError, json.JSONDecodeError) as error:
+            raise _model_error("MODEL_PROTOCOL_ERROR") from error
+        if not isinstance(content, str) or not content:
+            raise _model_error("MODEL_PROTOCOL_ERROR")
         return ModelConnectionResult(connected=True, latency_ms=round((time.perf_counter() - started) * 1000))
 
     async def stream_chat(self, request: ChatRequest) -> AsyncIterator[ChatDelta]:
@@ -144,6 +150,8 @@ def _raise_for_status(response: httpx.Response) -> None:
         raise _model_error("MODEL_NOT_FOUND")
     if response.status_code == 429:
         raise _model_error("MODEL_RATE_LIMITED")
+    if 400 <= response.status_code <= 499:
+        raise _model_error("MODEL_PROTOCOL_ERROR")
     if 500 <= response.status_code <= 599:
         raise _model_error("MODEL_UNAVAILABLE")
     raise _model_error("MODEL_UNAVAILABLE")

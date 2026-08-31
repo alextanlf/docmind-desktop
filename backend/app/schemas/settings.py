@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pydantic import Field
-
 from app.core.llm import ModelConfig, ModelConnectionResult
 from app.schemas.common import WireModel
 
@@ -14,7 +12,7 @@ MODEL_PRESETS = {
 
 
 class ModelSettingsUpdate(ModelConfig):
-    api_key: str | None = Field(default=None, max_length=1024)
+    api_key: str | None = None
 
 
 class ModelSettingsView(ModelConfig):
