@@ -22,14 +22,19 @@ class EventEnvelope(BaseModel):
 
 class ImportEventBroker(Protocol):
     async def publish(
-        self, job_id: str, event_type: EventType, payload: dict[str, Any]
+        self,
+        job_id: str,
+        event_type: EventType,
+        payload: dict[str, Any],
+        *,
+        sequence: int | None = None,
     ) -> EventEnvelope: ...
 
     def subscribe(self, job_id: str, after_sequence: int) -> AsyncIterator[EventEnvelope]: ...
 
     async def reopen(self, job_id: str) -> None: ...
 
-    async def advance(self, job_id: str, minimum_sequence: int) -> None: ...
+    async def terminal(self, job_id: str) -> EventEnvelope | None: ...
 
 
 @dataclass
@@ -51,17 +56,26 @@ class InMemoryEventBroker:
             return self._jobs.setdefault(job_id, _JobEvents())
 
     async def publish(
-        self, job_id: str, event_type: EventType, payload: dict[str, Any]
+        self,
+        job_id: str,
+        event_type: EventType,
+        payload: dict[str, Any],
+        *,
+        sequence: int | None = None,
     ) -> EventEnvelope:
         job = await self._job(job_id)
         async with job.condition:
             if job.terminal is not None:
                 return job.terminal
-            job.sequence += 1
+            if sequence is None:
+                sequence = job.sequence + 1
+            elif sequence <= job.sequence:
+                raise ValueError("event sequence must increase")
+            job.sequence = sequence
             event = EventEnvelope(
                 request_id=job.request_id,
                 type=event_type,
-                sequence=job.sequence,
+                sequence=sequence,
                 payload=payload,
             )
             job.events.append(event)
@@ -76,10 +90,10 @@ class InMemoryEventBroker:
             job.terminal = None
             job.request_id = uuid4()
 
-    async def advance(self, job_id: str, minimum_sequence: int) -> None:
+    async def terminal(self, job_id: str) -> EventEnvelope | None:
         job = await self._job(job_id)
         async with job.condition:
-            job.sequence = max(job.sequence, minimum_sequence)
+            return job.terminal
 
     async def subscribe(
         self, job_id: str, after_sequence: int

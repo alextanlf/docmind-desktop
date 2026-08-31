@@ -278,7 +278,20 @@ class PlaywrightYuqueGateway:
                     raise DomainError("YUQUE_PAGE_CHANGED", "新建文档后未找到文档，请重新登录后重试", 503, True)
                 return created
 
-            await editor.with_retry("create-document", create)
+            try:
+                await create()
+            except DomainError as error:
+                if not error.retryable:
+                    raise
+                await editor._capture_failure("create-document")
+                raise DomainError(
+                    "YUQUE_PAGE_CHANGED", "语雀页面响应异常，请重新登录后重试", 503, True
+                ) from None
+            except (PlaywrightError, TimeoutError, ConnectionError, OSError):
+                await editor._capture_failure("create-document")
+                raise DomainError(
+                    "YUQUE_PAGE_CHANGED", "语雀页面响应异常，请重新登录后重试", 503, True
+                ) from None
             return await repository.with_retry("confirm-created-document", find_created_document)
 
     async def read_document(self, document_id: str) -> YuqueDocumentContent:

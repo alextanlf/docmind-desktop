@@ -13,7 +13,7 @@ from app.config import AppSettings
 from app.core.embedding import EmbeddingProvider
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
-from app.imports.events import ImportEventBroker
+from app.imports.events import EventType, ImportEventBroker
 from app.schemas.imports import (
     DownloadedDocument,
     ImportCreateRequest,
@@ -66,6 +66,7 @@ class ImportService:
         self.job_store = job_store
         self.event_broker = event_broker
         self._job_locks: dict[str, asyncio.Lock] = {}
+        self._event_locks: dict[str, asyncio.Lock] = {}
         self._reservation_lock = asyncio.Lock()
 
     async def inspect(self, ref: SourceRef) -> SourcePreview:
@@ -164,6 +165,8 @@ class ImportService:
                     "value": ref.value,
                     "fingerprint": preview.fingerprint,
                     "duplicate_decision": decision,
+                    "last_event_sequence": metadata["last_event_sequence"],
+                    "stale_vector_ids": metadata["stale_vector_ids"],
                 }
             self.job_store.update_source_value(
                 job_id,
@@ -172,6 +175,8 @@ class ImportService:
                     fingerprint=metadata["fingerprint"],
                     duplicate_decision=metadata["duplicate_decision"],
                     job_id=job_id,
+                    last_event_sequence=metadata["last_event_sequence"],
+                    stale_vector_ids=metadata["stale_vector_ids"],
                 ),
             )
             job = self.job_store.reset_for_retry(job_id)
@@ -185,10 +190,38 @@ class ImportService:
         lock = self._job_locks.setdefault(job_id, asyncio.Lock())
         if job.state == ImportStatus.PENDING and not lock.locked():
             job = self.job_store.cancel(job_id)
-            await self.event_broker.publish(
+            await self._publish_event(
                 job_id, "done", {"progress": job.progress, "state": job.state.value}
             )
         return _job_view(job)
+
+    async def ensure_terminal_event(self, job_id: str, job: ImportJobView) -> None:
+        lock = self._event_locks.setdefault(job_id, asyncio.Lock())
+        async with lock:
+            if await self.event_broker.terminal(job_id) is not None:
+                return
+            if job.state == "failed":
+                event_type: EventType = "error"
+                payload = {
+                    "progress": job.progress,
+                    "state": job.state,
+                    "code": job.error_code,
+                    "message": job.error_message or job.message,
+                    "retryable": job.retryable,
+                }
+            elif job.state in {"completed", "cancelled"}:
+                event_type = "done"
+                payload = {
+                    "progress": job.progress,
+                    "state": job.state,
+                    "message": job.message,
+                }
+            else:
+                return
+            sequence = self.job_store.allocate_event_sequence(job_id)
+            await self.event_broker.publish(
+                job_id, event_type, payload, sequence=sequence
+            )
 
     async def _run_parsing(self, job_id: str) -> bool:
         job = self._job(job_id)
@@ -256,8 +289,10 @@ class ImportService:
                     )
                 else:
                     remote = await self._reconcile_remote_document(
-                        repository.yuque_id, metadata["marker"]
+                        job_id, repository.yuque_id, metadata["marker"]
                     )
+                    if await self._cancel_if_requested(job_id):
+                        return False
                     if remote is None:
                         if job.document_id is not None:
                             raise DomainError(
@@ -266,6 +301,8 @@ class ImportService:
                                 409,
                                 True,
                             )
+                        if await self._cancel_if_requested(job_id):
+                            return False
                         remote = await self.yuque_gateway.create_document(
                             CreateYuqueDocumentRequest(
                                 repository_id=repository.yuque_id,
@@ -319,7 +356,16 @@ class ImportService:
             old_ids = self.document_store.vector_ids(document.id)
             records = self._chunk_records(job_id, document, chunks)
             new_ids = [record.vector_id or record.id for record in records]
-            sqlite_replaced = False
+            created_ids = [identifier for identifier in new_ids if identifier not in old_ids]
+            stale_ids = list(
+                dict.fromkeys(
+                    identifier
+                    for identifier in [*old_ids, *metadata["stale_vector_ids"]]
+                    if identifier not in new_ids
+                )
+            )
+            commit_state = {"sqlite_replaced": False}
+            commit_started = False
             try:
                 await self._vector_mutation(
                     self.vector_store.upsert,
@@ -341,23 +387,28 @@ class ImportService:
                     ],
                 )
                 if self._job(job_id).cancel_requested:
-                    await self._delete_vectors(job.repository_id or "", new_ids)
+                    await self._delete_vectors(job.repository_id or "", created_ids)
                     await self._cancel_if_requested(job_id)
                     return
-                stale_ids = [identifier for identifier in old_ids if identifier not in new_ids]
-                await self._vector_mutation(
-                    self.vector_store.delete, job.repository_id or "", stale_ids
+                self.job_store.update_stale_vector_ids(job_id, stale_ids)
+                commit_started = True
+                await self._commit_index(
+                    document.id,
+                    records,
+                    job.repository_id or "",
+                    stale_ids,
+                    commit_state,
                 )
-                self.document_store.replace_chunks(document.id, records)
-                sqlite_replaced = True
+                self.job_store.update_stale_vector_ids(job_id, [])
                 if await self._cancel_if_requested(job_id):
                     return
             except asyncio.CancelledError:
-                if self._job(job_id).cancel_requested and not sqlite_replaced:
-                    await self._delete_vectors(job.repository_id or "", new_ids)
+                if self._job(job_id).cancel_requested and not commit_state["sqlite_replaced"]:
+                    await self._delete_vectors(job.repository_id or "", created_ids)
                 raise
             except Exception:  # noqa: BLE001 - storage backends map to a stable workflow code
-                await self._delete_vectors(job.repository_id or "", new_ids)
+                if not commit_started or not commit_state["sqlite_replaced"]:
+                    await self._delete_vectors(job.repository_id or "", created_ids)
                 await self._fail(job_id, "INDEX_FAILED", "写入文档索引失败", True)
                 return
 
@@ -368,24 +419,58 @@ class ImportService:
             progress=100,
             message="导入完成",
         )
-        await self.event_broker.publish(
+        await self._publish_event(
             job_id,
             "done",
             {"progress": 100, "state": completed.state.value, "message": completed.message},
         )
 
     async def _reconcile_remote_document(
-        self, repository_id: str, marker: str
+        self, job_id: str, repository_id: str, marker: str
     ) -> YuqueDocument | None:
         marker_comment = f"<!-- {marker} -->"
-        for candidate in await self.yuque_gateway.list_documents(repository_id):
+        candidates = await self.yuque_gateway.list_documents(repository_id)
+        if self._job(job_id).cancel_requested:
+            return None
+        for candidate in candidates:
             content = await self.yuque_gateway.read_document(candidate.yuque_id)
+            if self._job(job_id).cancel_requested:
+                return None
             if marker_comment in content.content:
                 return candidate
         return None
 
     async def _vector_mutation(self, operation: Any, *args: Any) -> None:
         mutation = asyncio.create_task(asyncio.to_thread(operation, *args))
+        try:
+            await asyncio.shield(mutation)
+        except asyncio.CancelledError:
+            with suppress(Exception):
+                await mutation
+            raise
+
+    async def _commit_index(
+        self,
+        document_id: str,
+        records: list[DocumentChunkRecord],
+        repository_id: str,
+        stale_ids: list[str],
+        state: dict[str, bool],
+    ) -> None:
+        async def commit() -> None:
+            await asyncio.to_thread(self.document_store.replace_chunks, document_id, records)
+            state["sqlite_replaced"] = True
+            if not stale_ids:
+                return
+            for attempt in range(2):
+                try:
+                    await asyncio.to_thread(self.vector_store.delete, repository_id, stale_ids)
+                    return
+                except Exception:
+                    if attempt == 1:
+                        raise
+
+        mutation = asyncio.create_task(commit())
         try:
             await asyncio.shield(mutation)
         except asyncio.CancelledError:
@@ -488,7 +573,7 @@ class ImportService:
             progress=progress,
             message=message,
         )
-        await self.event_broker.publish(
+        await self._publish_event(
             job_id,
             "progress",
             {"progress": progress, "state": target.value, "message": message},
@@ -501,7 +586,7 @@ class ImportService:
         job = self.job_store.update_progress(
             job_id, expected=state, progress=progress, message=message
         )
-        await self.event_broker.publish(
+        await self._publish_event(
             job_id,
             "progress",
             {"progress": progress, "state": state.value, "message": message},
@@ -513,7 +598,7 @@ class ImportService:
         if not job.cancel_requested:
             return False
         cancelled = self.job_store.cancel(job_id)
-        await self.event_broker.publish(
+        await self._publish_event(
             job_id,
             "done",
             {
@@ -528,7 +613,7 @@ class ImportService:
         failed = self.job_store.fail(
             job_id, code=code, message=message, retryable=retryable
         )
-        await self.event_broker.publish(
+        await self._publish_event(
             job_id,
             "error",
             {
@@ -558,6 +643,16 @@ class ImportService:
         }
         code, message, retryable = failures[job.state]
         await self._fail(job_id, code, message, retryable)
+
+    async def _publish_event(
+        self, job_id: str, event_type: EventType, payload: dict[str, Any]
+    ) -> None:
+        lock = self._event_locks.setdefault(job_id, asyncio.Lock())
+        async with lock:
+            sequence = self.job_store.allocate_event_sequence(job_id)
+            await self.event_broker.publish(
+                job_id, event_type, payload, sequence=sequence
+            )
 
     def _job(self, job_id: str) -> ImportJobRecord:
         job = self.job_store.get(job_id)
@@ -595,7 +690,13 @@ def _job_view(job: ImportJobRecord) -> ImportJobView:
 
 
 def _encode_source_metadata(
-    *, value: str, fingerprint: str, duplicate_decision: str, job_id: str
+    *,
+    value: str,
+    fingerprint: str,
+    duplicate_decision: str,
+    job_id: str,
+    last_event_sequence: int = 0,
+    stale_vector_ids: list[str] | None = None,
 ) -> str:
     return json.dumps(
         {
@@ -604,13 +705,15 @@ def _encode_source_metadata(
             "fingerprint": fingerprint,
             "duplicate_decision": duplicate_decision,
             "upload_intent": {"marker": f"docmind-import:{job_id}"},
+            "last_event_sequence": last_event_sequence,
+            "stale_vector_ids": stale_vector_ids or [],
         },
         ensure_ascii=False,
         separators=(",", ":"),
     )
 
 
-def _source_metadata(job: ImportJobRecord) -> dict[str, str]:
+def _source_metadata(job: ImportJobRecord) -> dict[str, Any]:
     try:
         metadata = json.loads(job.source_value)
     except (json.JSONDecodeError, TypeError):
@@ -626,15 +729,31 @@ def _source_metadata(job: ImportJobRecord) -> dict[str, str]:
         intent = metadata.get("upload_intent")
         if isinstance(intent, dict) and isinstance(intent.get("marker"), str):
             marker = intent["marker"]
+        last_event_sequence = metadata.get("last_event_sequence", 0)
+        if (
+            not isinstance(last_event_sequence, int)
+            or isinstance(last_event_sequence, bool)
+            or last_event_sequence < 0
+        ):
+            last_event_sequence = 0
+        stale_vector_ids = metadata.get("stale_vector_ids", [])
+        if not isinstance(stale_vector_ids, list) or not all(
+            isinstance(identifier, str) for identifier in stale_vector_ids
+        ):
+            stale_vector_ids = []
         return {
             "value": metadata["value"],
             "fingerprint": metadata["fingerprint"],
             "duplicate_decision": metadata["duplicate_decision"],
             "marker": marker,
+            "last_event_sequence": last_event_sequence,
+            "stale_vector_ids": stale_vector_ids,
         }
     return {
         "value": job.source_value,
         "fingerprint": "",
         "duplicate_decision": "create",
         "marker": f"docmind-import:{job.id}",
+        "last_event_sequence": 0,
+        "stale_vector_ids": [],
     }

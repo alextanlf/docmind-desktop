@@ -42,6 +42,8 @@ class FixtureLocator:
         self.page.clicked.append(self.selector)
         if self.selector == "[data-testid=create-repository-submit]" and self.page.repository_submit_error:
             raise self.page.repository_submit_error
+        if self.selector == "[data-testid=editor-save]" and self.page.document_save_error:
+            raise self.page.document_save_error
 
     async def fill(self, value: str) -> None:
         if not self.visible:
@@ -97,6 +99,7 @@ class FixturePage:
         self.repository_list_visibility_after: int | None = None
         self.repository_list_calls = 0
         self.repository_submit_error: Exception | None = None
+        self.document_save_error: Exception | None = None
 
     def locator(self, selector: str) -> FixtureLocator:
         return FixtureLocator(self, selector, selector in self.available)
@@ -664,3 +667,78 @@ async def test_document_creation_retries_visibility_without_saving_twice(
     assert created.title == "State"
     assert page.document_list_calls == 2
     assert page.clicked.count("[data-testid=editor-save]") == 1
+
+
+@pytest.mark.parametrize(
+    ("save_error", "private_values"),
+    [
+        (
+            TimeoutError("document save response timed out"),
+            ("document save response timed out",),
+        ),
+        (
+            DomainError(
+                "YUQUE_INTERNAL_SAVE_FAILURE",
+                "document save failed for secret=session-cookie-123",
+                418,
+                True,
+                "retry with session-cookie-123",
+            ),
+            (
+                "YUQUE_INTERNAL_SAVE_FAILURE",
+                "document save failed for secret=session-cookie-123",
+                "session-cookie-123",
+            ),
+        ),
+    ],
+    ids=["timeout", "retryable-domain-error"],
+)
+async def test_document_creation_save_error_is_not_replayed(
+    tmp_path: Path, save_error: Exception, private_values: tuple[str, ...]
+) -> None:
+    page = FixturePage(
+        {
+            "[data-testid=dashboard]",
+            "[data-testid=create-document]",
+            "[data-testid=editor-title]",
+            "[data-testid=editor-markdown]",
+            "[data-testid=editor-save]",
+        }
+    )
+    page.document_save_error = save_error
+    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+
+    @asynccontextmanager
+    async def fake_new_page(*, visible_login: bool):
+        assert visible_login is False
+        yield page
+
+    gateway._new_page = fake_new_page  # type: ignore[method-assign]
+
+    with pytest.raises(DomainError) as error:
+        await gateway.create_document(
+            CreateYuqueDocumentRequest(repository_id="swiftui", title="State", content="# State")
+        )
+
+    public_error = {
+        "code": error.value.code,
+        "message": error.value.message,
+        "status_code": error.value.status_code,
+        "retryable": error.value.retryable,
+        "action": error.value.action,
+    }
+    assert public_error == {
+        "code": "YUQUE_PAGE_CHANGED",
+        "message": "语雀页面响应异常，请重新登录后重试",
+        "status_code": 503,
+        "retryable": True,
+        "action": None,
+    }
+    serialized_error = repr(public_error)
+    assert all(private_value not in serialized_error for private_value in private_values)
+    assert page.clicked.count("[data-testid=create-document]") == 1
+    assert page.fill_attempts.count(("[data-testid=editor-title]", "State")) == 1
+    assert page.clicked.count("[data-testid=editor-save]") == 1
+    assert [path.name for path in page.screenshots] == [
+        f"{gateway._request_id}-create-document.png"
+    ]
