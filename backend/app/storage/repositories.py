@@ -159,6 +159,16 @@ class DocumentStore:
             document.chunk_count = len(chunks)
             document.updated_at = utc_now()
 
+    def vector_ids(self, document_id: str) -> list[str]:
+        with self.database.session() as session:
+            statement = (
+                select(DocumentChunkRecord)
+                .where(DocumentChunkRecord.document_id == document_id)
+                .order_by(DocumentChunkRecord.chunk_index)
+            )
+            chunks = list(session.scalars(statement))
+            return [chunk.vector_id or chunk.id for chunk in chunks]
+
     def delete_local(self, document_id: str) -> None:
         with self.database.session() as session:
             document = session.get(DocumentRecord, document_id)
@@ -168,12 +178,26 @@ class DocumentStore:
 
 class ImportJobStore:
     _INTERRUPTED_STATES = (ImportStatus.PARSING, ImportStatus.UPLOADING, ImportStatus.INDEXING)
+    _ACTIVE_STATES = (ImportStatus.PENDING, *_INTERRUPTED_STATES)
 
     def __init__(self, database: Database) -> None:
         self.database = database
 
     def create(self, job: ImportJobRecord) -> ImportJobRecord:
         with self.database.session() as session:
+            session.add(job)
+            session.flush()
+            return job
+
+    def reserve(self, job: ImportJobRecord, *, fingerprint: str) -> ImportJobRecord:
+        with self.database.session() as session:
+            statement = select(ImportJobRecord).where(
+                ImportJobRecord.repository_id == job.repository_id,
+                ImportJobRecord.state.in_(self._ACTIVE_STATES),
+            )
+            for active in session.scalars(statement):
+                if _source_fingerprint(active.source_value) == fingerprint:
+                    raise DomainError("IMPORT_ALREADY_RUNNING", "导入任务正在运行", 409)
             session.add(job)
             session.flush()
             return job
@@ -236,6 +260,16 @@ class ImportJobStore:
             session.flush()
             return job
 
+    def update_source_value(self, job_id: str, source_value: str) -> ImportJobRecord:
+        with self.database.session() as session:
+            job = session.get(ImportJobRecord, job_id)
+            if job is None:
+                raise DomainError("IMPORT_STATE_CONFLICT", "导入任务状态冲突", 409)
+            job.source_value = source_value
+            job.updated_at = utc_now()
+            session.flush()
+            return job
+
     def fail(self, job_id: str, *, code: str, message: str, retryable: bool) -> ImportJobRecord:
         with self.database.session() as session:
             job = session.get(ImportJobRecord, job_id)
@@ -284,7 +318,10 @@ class ImportJobStore:
             job = session.get(ImportJobRecord, job_id)
             if job is None or job.state != ImportStatus.FAILED or not job.retryable:
                 raise DomainError("IMPORT_STATE_CONFLICT", "导入任务不可重试", 409)
-            resume_stage = ImportStatus(job.current_stage or ImportStatus.PARSING.value)
+            try:
+                resume_stage = ImportStatus(job.current_stage or ImportStatus.PARSING.value)
+            except ValueError:
+                resume_stage = ImportStatus.PARSING
             if resume_stage not in self._INTERRUPTED_STATES:
                 resume_stage = ImportStatus.PARSING
             job.state = (
@@ -306,14 +343,32 @@ class ImportJobStore:
             now = utc_now()
             for job in jobs:
                 job.current_stage = job.current_stage or job.state.value
-                job.state = ImportStatus.FAILED
-                job.message = "应用重启导致任务中断"
-                job.error_code = "APP_RESTARTED"
-                job.error_message = "应用重启导致任务中断"
-                job.retryable = True
+                if job.cancel_requested:
+                    job.state = ImportStatus.CANCELLED
+                    job.message = "导入已取消"
+                    job.error_code = None
+                    job.error_message = None
+                    job.retryable = False
+                else:
+                    job.state = ImportStatus.FAILED
+                    job.message = "应用重启导致任务中断"
+                    job.error_code = "APP_RESTARTED"
+                    job.error_message = "应用重启导致任务中断"
+                    job.retryable = True
                 job.completed_at = now
                 job.updated_at = now
             return len(jobs)
+
+
+def _source_fingerprint(source_value: str) -> str | None:
+    try:
+        metadata = json.loads(source_value)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(metadata, dict):
+        return None
+    fingerprint = metadata.get("fingerprint")
+    return fingerprint if isinstance(fingerprint, str) else None
 
 
 class ConversationStore:

@@ -86,3 +86,31 @@ async def test_broker_retains_only_last_one_hundred_events() -> None:
     assert len(events) == 100
     assert events[0].sequence == 7
     assert events[-1].sequence == 106
+
+
+async def test_reopen_retains_prior_attempt_and_starts_new_request() -> None:
+    broker = InMemoryEventBroker()
+    first_progress = await broker.publish("job-retry", "progress", {"progress": 25})
+    first_terminal = await broker.publish("job-retry", "error", {"code": "FAILED"})
+
+    await broker.reopen("job-retry")
+    second_progress = await broker.publish("job-retry", "progress", {"progress": 75})
+    second_terminal = await broker.publish("job-retry", "done", {"progress": 100})
+
+    first_attempt = [event async for event in broker.subscribe("job-retry", 0)]
+    second_attempt = [event async for event in broker.subscribe("job-retry", 2)]
+
+    assert first_attempt == [first_progress, first_terminal]
+    assert second_attempt == [second_progress, second_terminal]
+    assert [event.sequence for event in second_attempt] == [3, 4]
+    assert first_terminal.request_id != second_progress.request_id
+    assert second_progress.request_id == second_terminal.request_id
+
+
+async def test_broker_advances_sequence_before_publishing_restart_terminal() -> None:
+    broker = InMemoryEventBroker()
+
+    await broker.advance("job-restarted", 6)
+    terminal = await broker.publish("job-restarted", "error", {"code": "APP_RESTARTED"})
+
+    assert terminal.sequence == 7

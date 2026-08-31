@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import suppress
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
@@ -20,7 +22,11 @@ from app.schemas.imports import (
     SourcePreview,
     SourceRef,
 )
-from app.schemas.yuque import CreateYuqueDocumentRequest, UpdateYuqueDocumentRequest
+from app.schemas.yuque import (
+    CreateYuqueDocumentRequest,
+    UpdateYuqueDocumentRequest,
+    YuqueDocument,
+)
 from app.storage.models import (
     DocumentChunkRecord,
     DocumentRecord,
@@ -60,6 +66,7 @@ class ImportService:
         self.job_store = job_store
         self.event_broker = event_broker
         self._job_locks: dict[str, asyncio.Lock] = {}
+        self._reservation_lock = asyncio.Lock()
 
     async def inspect(self, ref: SourceRef) -> SourcePreview:
         return await self.source_inspector.inspect(ref)
@@ -72,27 +79,33 @@ class ImportService:
         if preview.fingerprint != request.fingerprint:
             raise DomainError("SOURCE_CHANGED", "文档内容已变更，请重新预览", 409)
 
-        duplicate = self.document_store.find_by_hash(
-            request.repository_id, request.fingerprint
-        )
-        if duplicate is not None and request.duplicate_decision is None:
-            raise DomainError(
-                "DUPLICATE_DECISION_REQUIRED", "请选择跳过或更新重复文档", 409
+        async with self._reservation_lock:
+            duplicate = self.document_store.find_by_hash(
+                request.repository_id, request.fingerprint
             )
-        if duplicate is None and request.duplicate_decision is not None:
-            raise DomainError(
-                "DUPLICATE_DECISION_INVALID", "当前文档不是重复项，不需要重复处理决策", 409
-            )
+            if duplicate is not None and request.duplicate_decision is None:
+                raise DomainError(
+                    "DUPLICATE_DECISION_REQUIRED", "请选择跳过或更新重复文档", 409
+                )
+            if duplicate is None and request.duplicate_decision is not None:
+                raise DomainError(
+                    "DUPLICATE_DECISION_INVALID", "当前文档不是重复项，不需要重复处理决策", 409
+                )
 
-        job = self.job_store.create(
-            ImportJobRecord(
+            job_record = ImportJobRecord(
+                id=str(uuid4()),
                 source_kind=request.source.kind,
-                source_value=_encode_source_metadata(request),
                 repository_id=request.repository_id,
                 document_id=duplicate.id if duplicate is not None else None,
                 message="等待导入",
             )
-        )
+            job_record.source_value = _encode_source_metadata(
+                value=request.source.value,
+                fingerprint=request.fingerprint,
+                duplicate_decision=request.duplicate_decision or "create",
+                job_id=job_record.id,
+            )
+            job = self.job_store.reserve(job_record, fingerprint=request.fingerprint)
         return _job_view(job)
 
     def get(self, job_id: str) -> ImportJobView:
@@ -104,22 +117,29 @@ class ImportService:
             raise DomainError("IMPORT_ALREADY_RUNNING", "导入任务正在运行", 409)
         await lock.acquire()
         try:
-            job = self._job(job_id)
-            if job.state == ImportStatus.PENDING:
-                await self._transition(
-                    job_id, {ImportStatus.PENDING}, ImportStatus.PARSING, 0, "正在解析文档"
-                )
+            try:
                 job = self._job(job_id)
-            if job.state == ImportStatus.PARSING:
-                if not await self._run_parsing(job_id):
-                    return
-                job = self._job(job_id)
-            if job.state == ImportStatus.UPLOADING:
-                if not await self._run_upload(job_id):
-                    return
-                job = self._job(job_id)
-            if job.state == ImportStatus.INDEXING:
-                await self._run_index(job_id)
+                if job.state == ImportStatus.PENDING:
+                    await self._transition(
+                        job_id, {ImportStatus.PENDING}, ImportStatus.PARSING, 0, "正在解析文档"
+                    )
+                    job = self._job(job_id)
+                if job.state == ImportStatus.PARSING:
+                    if not await self._run_parsing(job_id):
+                        return
+                    job = self._job(job_id)
+                if job.state == ImportStatus.UPLOADING:
+                    if not await self._run_upload(job_id):
+                        return
+                    job = self._job(job_id)
+                if job.state == ImportStatus.INDEXING:
+                    await self._run_index(job_id)
+            except asyncio.CancelledError:
+                with suppress(DomainError):
+                    await asyncio.shield(self._cancel_if_requested(job_id))
+                raise
+            except Exception:  # noqa: BLE001 - runner is the workflow's final error boundary
+                await self._fail_unhandled(job_id)
         finally:
             lock.release()
 
@@ -127,9 +147,38 @@ class ImportService:
         lock = self._job_locks.setdefault(job_id, asyncio.Lock())
         if lock.locked():
             raise DomainError("IMPORT_ALREADY_RUNNING", "导入任务正在运行", 409)
-        job = self.job_store.reset_for_retry(job_id)
-        await self.event_broker.reopen(job_id)
-        return _job_view(job)
+        await lock.acquire()
+        try:
+            job = self._job(job_id)
+            metadata = _source_metadata(job)
+            if not metadata["fingerprint"]:
+                ref = SourceRef(kind=job.source_kind, value=metadata["value"])
+                preview = await self.inspect(ref)
+                duplicate = self.document_store.find_by_hash(
+                    job.repository_id or "", preview.fingerprint
+                )
+                if job.document_id is None and duplicate is not None:
+                    job = self.job_store.attach_document(job_id, duplicate.id)
+                decision = "update" if job.document_id or duplicate is not None else "create"
+                metadata = {
+                    "value": ref.value,
+                    "fingerprint": preview.fingerprint,
+                    "duplicate_decision": decision,
+                }
+            self.job_store.update_source_value(
+                job_id,
+                _encode_source_metadata(
+                    value=metadata["value"],
+                    fingerprint=metadata["fingerprint"],
+                    duplicate_decision=metadata["duplicate_decision"],
+                    job_id=job_id,
+                ),
+            )
+            job = self.job_store.reset_for_retry(job_id)
+            await self.event_broker.reopen(job_id)
+            return _job_view(job)
+        finally:
+            lock.release()
 
     async def cancel(self, job_id: str) -> ImportJobView:
         job = self.job_store.request_cancel(job_id)
@@ -168,6 +217,8 @@ class ImportService:
             return False
         if metadata["duplicate_decision"] != "skip":
             self._persist_parsed_document(job_id, downloaded, parsed)
+        if await self._cancel_if_requested(job_id):
+            return False
         await self._transition(
             job_id, {ImportStatus.PARSING}, ImportStatus.UPLOADING, 45, "准备写入语雀"
         )
@@ -181,14 +232,6 @@ class ImportService:
         if metadata["duplicate_decision"] != "skip":
             if job.document_id:
                 document = self._document(job)
-                if not document.yuque_id:
-                    await self._fail(
-                        job_id,
-                        "UPLOAD_FAILED",
-                        "已绑定文档缺少远端标识，为避免重复创建已停止",
-                        True,
-                    )
-                    return False
             else:
                 document = self.document_store.find_by_hash(
                     job.repository_id or "", metadata["fingerprint"]
@@ -202,30 +245,45 @@ class ImportService:
                 return False
             try:
                 markdown = Path(document.markdown_path or "").read_text(encoding="utf-8")
+                remote_markdown = f"{markdown.rstrip()}\n\n<!-- {metadata['marker']} -->\n"
                 if document.yuque_id:
                     remote = await self.yuque_gateway.update_document(
                         UpdateYuqueDocumentRequest(
                             document_id=document.yuque_id,
                             title=document.title,
-                            content=markdown,
+                            content=remote_markdown,
                         )
                     )
                 else:
-                    remote = await self.yuque_gateway.create_document(
-                        CreateYuqueDocumentRequest(
-                            repository_id=repository.yuque_id,
-                            title=document.title,
-                            content=markdown,
-                        )
+                    remote = await self._reconcile_remote_document(
+                        repository.yuque_id, metadata["marker"]
                     )
+                    if remote is None:
+                        if job.document_id is not None:
+                            raise DomainError(
+                                "UPLOAD_FAILED",
+                                "已绑定文档缺少远端标识，为避免重复创建已停止",
+                                409,
+                                True,
+                            )
+                        remote = await self.yuque_gateway.create_document(
+                            CreateYuqueDocumentRequest(
+                                repository_id=repository.yuque_id,
+                                title=document.title,
+                                content=remote_markdown,
+                            )
+                        )
+                self.document_store.update_remote(
+                    document.id, yuque_id=remote.yuque_id, yuque_url=remote.url
+                )
+                if job.document_id is None:
+                    self.job_store.attach_document(job_id, document.id)
             except Exception:  # noqa: BLE001 - gateway failures map to a stable workflow code
                 await self._fail(job_id, "UPLOAD_FAILED", "写入语雀失败", True)
                 return False
-            self.document_store.update_remote(
-                document.id, yuque_id=remote.yuque_id, yuque_url=remote.url
-            )
-            if job.document_id is None:
-                self.job_store.attach_document(job_id, document.id)
+
+        if await self._cancel_if_requested(job_id):
+            return False
 
         await self._transition(
             job_id, {ImportStatus.UPLOADING}, ImportStatus.INDEXING, 70, "正在创建索引"
@@ -239,6 +297,8 @@ class ImportService:
             return
         if metadata["duplicate_decision"] == "skip":
             await self._progress(job_id, ImportStatus.INDEXING, 90, "已跳过重复文档")
+            if await self._cancel_if_requested(job_id):
+                return
         else:
             document = self._document(job)
             try:
@@ -256,12 +316,15 @@ class ImportService:
             await self._progress(job_id, ImportStatus.INDEXING, 90, "向量生成完成")
             if await self._cancel_if_requested(job_id):
                 return
-            records = self._chunk_records(document, chunks)
+            old_ids = self.document_store.vector_ids(document.id)
+            records = self._chunk_records(job_id, document, chunks)
+            new_ids = [record.vector_id or record.id for record in records]
+            sqlite_replaced = False
             try:
-                await asyncio.to_thread(
+                await self._vector_mutation(
                     self.vector_store.upsert,
                     job.repository_id,
-                    [record.vector_id for record in records],
+                    new_ids,
                     [record.text for record in records],
                     embeddings,
                     [
@@ -277,8 +340,24 @@ class ImportService:
                         for record in records
                     ],
                 )
+                if self._job(job_id).cancel_requested:
+                    await self._delete_vectors(job.repository_id or "", new_ids)
+                    await self._cancel_if_requested(job_id)
+                    return
+                stale_ids = [identifier for identifier in old_ids if identifier not in new_ids]
+                await self._vector_mutation(
+                    self.vector_store.delete, job.repository_id or "", stale_ids
+                )
                 self.document_store.replace_chunks(document.id, records)
+                sqlite_replaced = True
+                if await self._cancel_if_requested(job_id):
+                    return
+            except asyncio.CancelledError:
+                if self._job(job_id).cancel_requested and not sqlite_replaced:
+                    await self._delete_vectors(job.repository_id or "", new_ids)
+                raise
             except Exception:  # noqa: BLE001 - storage backends map to a stable workflow code
+                await self._delete_vectors(job.repository_id or "", new_ids)
                 await self._fail(job_id, "INDEX_FAILED", "写入文档索引失败", True)
                 return
 
@@ -294,6 +373,29 @@ class ImportService:
             "done",
             {"progress": 100, "state": completed.state.value, "message": completed.message},
         )
+
+    async def _reconcile_remote_document(
+        self, repository_id: str, marker: str
+    ) -> YuqueDocument | None:
+        marker_comment = f"<!-- {marker} -->"
+        for candidate in await self.yuque_gateway.list_documents(repository_id):
+            content = await self.yuque_gateway.read_document(candidate.yuque_id)
+            if marker_comment in content.content:
+                return candidate
+        return None
+
+    async def _vector_mutation(self, operation: Any, *args: Any) -> None:
+        mutation = asyncio.create_task(asyncio.to_thread(operation, *args))
+        try:
+            await asyncio.shield(mutation)
+        except asyncio.CancelledError:
+            with suppress(Exception):
+                await mutation
+            raise
+
+    async def _delete_vectors(self, repository_id: str, vector_ids: list[str]) -> None:
+        with suppress(Exception):
+            await self._vector_mutation(self.vector_store.delete, repository_id, vector_ids)
 
     def _persist_parsed_document(
         self, job_id: str, downloaded: DownloadedDocument, parsed: ParsedDocument
@@ -346,10 +448,15 @@ class ImportService:
         )
 
     @staticmethod
-    def _chunk_records(document: DocumentRecord, chunks: list[Any]) -> list[DocumentChunkRecord]:
+    def _chunk_records(
+        job_id: str, document: DocumentRecord, chunks: list[Any]
+    ) -> list[DocumentChunkRecord]:
         records: list[DocumentChunkRecord] = []
         for chunk in chunks:
-            identifier = str(uuid5(NAMESPACE_URL, f"{document.id}:{chunk.chunk_index}"))
+            digest = sha256(chunk.text.encode("utf-8")).hexdigest()
+            identifier = str(
+                uuid5(NAMESPACE_URL, f"{document.id}:{job_id}:{chunk.chunk_index}:{digest}")
+            )
             records.append(
                 DocumentChunkRecord(
                     id=identifier,
@@ -433,6 +540,25 @@ class ImportService:
             },
         )
 
+    async def _fail_unhandled(self, job_id: str) -> None:
+        job = self._job(job_id)
+        if job.state not in {
+            ImportStatus.PARSING,
+            ImportStatus.UPLOADING,
+            ImportStatus.INDEXING,
+        }:
+            return
+        if job.cancel_requested:
+            await self._cancel_if_requested(job_id)
+            return
+        failures = {
+            ImportStatus.PARSING: ("PARSE_FAILED", "文档解析失败", False),
+            ImportStatus.UPLOADING: ("UPLOAD_FAILED", "写入语雀失败", True),
+            ImportStatus.INDEXING: ("INDEX_FAILED", "写入文档索引失败", True),
+        }
+        code, message, retryable = failures[job.state]
+        await self._fail(job_id, code, message, retryable)
+
     def _job(self, job_id: str) -> ImportJobRecord:
         job = self.job_store.get(job_id)
         if job is None:
@@ -468,13 +594,16 @@ def _job_view(job: ImportJobRecord) -> ImportJobView:
     )
 
 
-def _encode_source_metadata(request: ImportCreateRequest) -> str:
+def _encode_source_metadata(
+    *, value: str, fingerprint: str, duplicate_decision: str, job_id: str
+) -> str:
     return json.dumps(
         {
-            "version": 1,
-            "value": request.source.value,
-            "fingerprint": request.fingerprint,
-            "duplicate_decision": request.duplicate_decision or "create",
+            "version": 2,
+            "value": value,
+            "fingerprint": fingerprint,
+            "duplicate_decision": duplicate_decision,
+            "upload_intent": {"marker": f"docmind-import:{job_id}"},
         },
         ensure_ascii=False,
         separators=(",", ":"),
@@ -488,14 +617,24 @@ def _source_metadata(job: ImportJobRecord) -> dict[str, str]:
         metadata = None
     if (
         isinstance(metadata, dict)
-        and metadata.get("version") == 1
+        and metadata.get("version") in {1, 2}
         and isinstance(metadata.get("value"), str)
         and isinstance(metadata.get("fingerprint"), str)
         and isinstance(metadata.get("duplicate_decision"), str)
     ):
+        marker = f"docmind-import:{job.id}"
+        intent = metadata.get("upload_intent")
+        if isinstance(intent, dict) and isinstance(intent.get("marker"), str):
+            marker = intent["marker"]
         return {
             "value": metadata["value"],
             "fingerprint": metadata["fingerprint"],
             "duplicate_decision": metadata["duplicate_decision"],
+            "marker": marker,
         }
-    return {"value": job.source_value, "fingerprint": "", "duplicate_decision": "create"}
+    return {
+        "value": job.source_value,
+        "fingerprint": "",
+        "duplicate_decision": "create",
+        "marker": f"docmind-import:{job.id}",
+    }

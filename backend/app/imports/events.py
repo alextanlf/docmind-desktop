@@ -29,6 +29,8 @@ class ImportEventBroker(Protocol):
 
     async def reopen(self, job_id: str) -> None: ...
 
+    async def advance(self, job_id: str, minimum_sequence: int) -> None: ...
+
 
 @dataclass
 class _JobEvents:
@@ -71,9 +73,13 @@ class InMemoryEventBroker:
     async def reopen(self, job_id: str) -> None:
         job = await self._job(job_id)
         async with job.condition:
-            if job.terminal is not None and job.events and job.events[-1] == job.terminal:
-                job.events.pop()
             job.terminal = None
+            job.request_id = uuid4()
+
+    async def advance(self, job_id: str, minimum_sequence: int) -> None:
+        job = await self._job(job_id)
+        async with job.condition:
+            job.sequence = max(job.sequence, minimum_sequence)
 
     async def subscribe(
         self, job_id: str, after_sequence: int
