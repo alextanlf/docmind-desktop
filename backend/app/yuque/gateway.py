@@ -232,7 +232,17 @@ class PlaywrightYuqueGateway:
     async def create_repository(self, request: CreateRepositoryRequest) -> YuqueRepository:
         async with self._background_page("create-repository") as page:
             dashboard = DashboardPage(page, self.settings.screenshots_dir, self._request_id)
-            await dashboard.with_retry("create-repository", lambda: dashboard.submit_new_repository(request.name))
+            try:
+                await dashboard.submit_new_repository(request.name)
+            except DomainError as error:
+                if error.retryable:
+                    await dashboard._capture_failure("create-repository")
+                raise
+            except (PlaywrightError, TimeoutError, ConnectionError, OSError):
+                await dashboard._capture_failure("create-repository")
+                raise DomainError(
+                    "YUQUE_PAGE_CHANGED", "语雀页面响应异常，请重新登录后重试", 503, True
+                ) from None
             return await dashboard.with_retry(
                 "confirm-created-repository", lambda: dashboard.find_repository(request.name)
             )
