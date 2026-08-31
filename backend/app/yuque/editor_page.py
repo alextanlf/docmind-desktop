@@ -15,3 +15,7 @@ class EditorPage(BasePage):
     async def read_markdown(self) -> str:
         locator = await self.wait_for_any(("testid=editor-markdown", "[data-testid=editor-markdown]"))
         return await locator.input_value()
+
+    async def read_title(self) -> str:
+        locator = await self.wait_for_any(("testid=editor-title", "[data-testid=editor-title]"))
+        return (await locator.input_value()).strip()

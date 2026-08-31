@@ -36,3 +36,4 @@ class RepositoryPage(BasePage):
     async def delete_current_document(self) -> None:
         await self.click_any(("role=button[name=删除]", "testid=delete-document", "text=删除"))
         await self.click_any(("role=button[name=确认删除]", "testid=confirm-delete", "text=确认"))
+        await self.wait_for_any(("role=status[name=已删除]", "testid=delete-confirmation", "text=已删除"))
