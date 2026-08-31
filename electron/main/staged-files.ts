@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { basename, extname, join } from "node:path";
 
@@ -98,17 +98,29 @@ export class StagedFileService {
           openedStat.size > limit
         )
           throw new Error("source changed");
-        const contents = await readFile(sourceHandle);
-        const finalStat = await sourceHandle.stat();
-        if (finalStat.size !== openedStat.size || contents.byteLength > limit)
-          throw new Error("source changed");
         const destination = await open(
           partial,
           constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
           0o600,
         );
         try {
-          await destination.write(contents);
+          const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, limit));
+          let position = 0;
+          while (position < openedStat.size) {
+            const { bytesRead } = await sourceHandle.read(
+              buffer,
+              0,
+              Math.min(buffer.length, openedStat.size - position),
+              position,
+            );
+            if (bytesRead === 0) throw new Error("source changed");
+            await destination.write(buffer, 0, bytesRead);
+            position += bytesRead;
+            if (position > limit) throw new Error("source changed");
+          }
+          const finalStat = await sourceHandle.stat();
+          if (finalStat.size !== openedStat.size)
+            throw new Error("source changed");
           await destination.sync();
         } finally {
           await destination.close().catch(() => {});
