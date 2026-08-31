@@ -49,6 +49,10 @@ def downloader(document_settings: AppSettings) -> DocumentDownloader:
         "https://169.254.0.4/private",
         "https://172.16.0.4/private",
         "https://192.168.0.4/private",
+        "https://2130706433/private",
+        "https://0177.0.0.1/private",
+        "https://09.0.0.1/private",
+        "https://0x7f000001/private",
         "https://[::1]/private",
         "https://[fc00::1]/private",
     ],
@@ -102,6 +106,16 @@ def test_staged_source_rejects_symlink_that_resolves_outside_root(
     with pytest.raises(DomainError) as error:
         staged_store.resolve(staged_id)
     assert error.value.code == "SOURCE_UNSUPPORTED"
+
+
+def test_staged_source_reads_through_a_bounded_file_descriptor(
+    staged_store: StagedFileStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    staged_id = str(uuid4())
+    (staged_store.staging_dir / f"{staged_id}.md").write_text("# Guide", encoding="utf-8")
+    monkeypatch.setattr(Path, "read_bytes", lambda _: (_ for _ in ()).throw(AssertionError("unbounded read")))
+
+    assert staged_store.load(staged_id).raw_bytes == b"# Guide"
 
 
 @pytest.mark.parametrize(
@@ -171,6 +185,18 @@ async def test_downloader_rejects_unsafe_absolute_redirect_before_requesting_it(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["https://2130706433/private", "https://0177.0.0.1/private", "https://0x7f000001/private"])
+async def test_downloader_rejects_legacy_numeric_loopback_redirect_before_requesting_it(
+    downloader: DocumentDownloader, target: str
+) -> None:
+    with respx.mock(assert_all_called=True) as router:
+        router.get("https://docs.test/start").mock(return_value=httpx.Response(302, headers={"location": target}))
+        with pytest.raises(DomainError) as error:
+            await downloader.download_url("https://docs.test/start")
+    assert (error.value.code, error.value.retryable) == ("SOURCE_UNSUPPORTED", False)
+
+
+@pytest.mark.asyncio
 async def test_downloader_enforces_five_redirect_limit(downloader: DocumentDownloader) -> None:
     with respx.mock(assert_all_called=True) as router:
         for index in range(6):
@@ -220,6 +246,39 @@ async def test_downloader_stops_streaming_as_soon_as_size_limit_is_exceeded(
         with pytest.raises(DomainError) as error:
             await downloader.download_url("https://docs.test/large.md")
     assert (error.value.code, error.value.retryable) == ("DOCUMENT_TOO_LARGE", False)
+
+
+@pytest.mark.asyncio
+async def test_downloader_rejects_pdf_mime_without_signature_before_reading_later_chunks(
+    downloader: DocumentDownloader,
+) -> None:
+    async def body():
+        yield b"not a PDF"
+        raise AssertionError("invalid PDF signature must abort the stream")
+
+    with respx.mock(assert_all_called=True) as router:
+        router.get("https://docs.test/bad.pdf").mock(
+            return_value=httpx.Response(200, content=body(), headers={"content-type": "application/pdf"})
+        )
+        with pytest.raises(DomainError) as error:
+            await downloader.download_url("https://docs.test/bad.pdf")
+    assert (error.value.code, error.value.retryable) == ("SOURCE_UNSUPPORTED", False)
+
+
+@pytest.mark.asyncio
+async def test_downloader_uses_pdf_cap_for_pdf_signature_then_rejects_markdown_mime_conflict(
+    downloader: DocumentDownloader, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(downloader, "html_markdown_max_bytes", 10)
+    monkeypatch.setattr(downloader, "pdf_max_bytes", 100)
+    raw_pdf = b"%PDF-" + b"x" * 20
+    with respx.mock(assert_all_called=True) as router:
+        router.get("https://docs.test/mislabeled").mock(
+            return_value=httpx.Response(200, content=raw_pdf, headers={"content-type": "text/markdown"})
+        )
+        with pytest.raises(DomainError) as error:
+            await downloader.download_url("https://docs.test/mislabeled")
+    assert (error.value.code, error.value.retryable) == ("SOURCE_UNSUPPORTED", False)
 
 
 @pytest.mark.asyncio

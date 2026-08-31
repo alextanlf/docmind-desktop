@@ -40,8 +40,7 @@ class DocumentDownloader:
                             redirects += 1
                             continue
                         self._raise_for_status(response)
-                        media_type = self._media_type(response.headers.get("content-type", ""))
-                        raw_bytes = await self._read_limited(response, media_type)
+                        media_type, raw_bytes = await self._read_limited(response)
                         self._validate_payload(media_type, raw_bytes)
                         return DownloadedDocument(
                             title=self._title_from_url(current_url),
@@ -53,6 +52,10 @@ class DocumentDownloader:
             raise
         except httpx.TimeoutException:
             raise DomainError("SOURCE_TIMEOUT", "下载文档超时", 504, True) from None
+        except httpx.RemoteProtocolError as error:
+            if "location header" in str(error).lower():
+                raise DomainError("SOURCE_UNSUPPORTED", "重定向地址无效", 400, False) from None
+            raise DomainError("SOURCE_DOWNLOAD_FAILED", "下载文档失败", 502, True) from None
         except httpx.HTTPError:
             raise DomainError("SOURCE_DOWNLOAD_FAILED", "下载文档失败", 502, True) from None
 
@@ -73,23 +76,56 @@ class DocumentDownloader:
             return "text/markdown"
         raise DomainError("SOURCE_UNSUPPORTED", "不支持的文档类型", 400, False)
 
-    async def _read_limited(self, response: httpx.Response, media_type: str) -> bytes:
-        max_bytes = self.pdf_max_bytes if media_type == "application/pdf" else self.html_markdown_max_bytes
+    async def _read_limited(self, response: httpx.Response) -> tuple[str, bytes]:
+        declared_media_type = self._media_type(response.headers.get("content-type", ""))
         content_length = response.headers.get("content-length")
+        declared_size: int | None = None
         if content_length:
             try:
-                if int(content_length) > max_bytes:
+                declared_size = int(content_length)
+                if declared_size > self.pdf_max_bytes:
                     raise DomainError("DOCUMENT_TOO_LARGE", "文档超过大小限制", 413, False)
             except ValueError:
                 pass
         chunks: list[bytes] = []
         size = 0
+        prefix = b""
+        media_type: str | None = None
         async for chunk in response.aiter_bytes():
-            size += len(chunk)
-            if size > max_bytes:
+            next_size = size + len(chunk)
+            if next_size > self.pdf_max_bytes:
                 raise DomainError("DOCUMENT_TOO_LARGE", "文档超过大小限制", 413, False)
+            prefix = (prefix + chunk)[:5]
+            if media_type is None:
+                if b"%PDF-".startswith(prefix):
+                    if prefix == b"%PDF-":
+                        media_type = "application/pdf"
+                else:
+                    media_type = declared_media_type
+                    if declared_media_type == "application/pdf":
+                        raise DomainError("SOURCE_UNSUPPORTED", "PDF 文件签名无效", 400, False)
+                if media_type is not None and media_type != declared_media_type:
+                    raise DomainError("SOURCE_UNSUPPORTED", "文档类型与文件签名不匹配", 400, False)
+            if media_type is not None:
+                max_bytes = self.pdf_max_bytes if media_type == "application/pdf" else self.html_markdown_max_bytes
+                if declared_size is not None and declared_size > max_bytes:
+                    raise DomainError("DOCUMENT_TOO_LARGE", "文档超过大小限制", 413, False)
+                if next_size > max_bytes:
+                    raise DomainError("DOCUMENT_TOO_LARGE", "文档超过大小限制", 413, False)
+            size = next_size
             chunks.append(chunk)
-        return b"".join(chunks)
+
+        media_type = media_type or declared_media_type
+        if media_type == "application/pdf" and prefix != b"%PDF-":
+            raise DomainError("SOURCE_UNSUPPORTED", "PDF 文件签名无效", 400, False)
+        if media_type != declared_media_type:
+            raise DomainError("SOURCE_UNSUPPORTED", "文档类型与文件签名不匹配", 400, False)
+        max_bytes = self.pdf_max_bytes if media_type == "application/pdf" else self.html_markdown_max_bytes
+        if declared_size is not None and declared_size > max_bytes:
+            raise DomainError("DOCUMENT_TOO_LARGE", "文档超过大小限制", 413, False)
+        if size > max_bytes:
+            raise DomainError("DOCUMENT_TOO_LARGE", "文档超过大小限制", 413, False)
+        return media_type, b"".join(chunks)
 
     @staticmethod
     def _validate_payload(media_type: str, raw_bytes: bytes) -> None:
