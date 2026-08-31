@@ -36,6 +36,8 @@ class ImportEventBroker(Protocol):
 
     async def terminal(self, job_id: str) -> EventEnvelope | None: ...
 
+    async def discard(self, job_id: str) -> None: ...
+
 
 @dataclass
 class _JobEvents:
@@ -99,6 +101,10 @@ class InMemoryEventBroker:
         job = await self._job(job_id)
         async with job.condition:
             return job.terminal
+
+    async def discard(self, job_id: str) -> None:
+        async with self._jobs_lock:
+            self._jobs.pop(job_id, None)
 
     async def subscribe(
         self, job_id: str, after_sequence: int
