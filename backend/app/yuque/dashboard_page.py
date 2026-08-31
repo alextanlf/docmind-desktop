@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.api.errors import DomainError
 from app.schemas.yuque import YuqueRepository
 from app.yuque.base_page import BasePage, maybe_await
 
@@ -31,4 +32,4 @@ class DashboardPage(BasePage):
         for repository in repositories:
             if repository.name == name:
                 return repository
-        raise RuntimeError("created repository was not visible")
+        raise DomainError("YUQUE_PAGE_CHANGED", "新建知识库后未找到知识库，请重新登录后重试", 503, True)
