@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -8,15 +9,27 @@ from fastapi import Depends, FastAPI
 from app.api.auth import require_runtime_token
 from app.api.embedding import router as embedding_router
 from app.api.errors import DomainError, domain_error_handler
+from app.api.imports import router as imports_router
 from app.api.settings import SettingsService
 from app.api.settings import router as settings_router
 from app.api.yuque import router as yuque_router
 from app.config import AppSettings, get_settings
 from app.core.embedding import EmbeddingProvider, create_embedding_provider
 from app.core.secrets import KeyringSecretStore, SecretStore
+from app.document.chunker import SemanticChunker
+from app.document.parser import DocumentParser
+from app.document.sources import SourceInspector
+from app.imports.events import InMemoryEventBroker
+from app.imports.service import ImportService
 from app.schemas.common import HealthResponse
 from app.storage.database import Database
-from app.storage.repositories import ImportJobStore, SettingStore
+from app.storage.repositories import (
+    DocumentStore,
+    ImportJobStore,
+    RepositoryStore,
+    SettingStore,
+)
+from app.storage.vectorstore import PersistentVectorStore
 from app.yuque.gateway import PlaywrightYuqueGateway, YuqueGateway
 
 
@@ -43,9 +56,27 @@ def create_app(
         app.state.settings_service = SettingsService(
             SettingStore(database), runtime_secret_store
         )
+        app.state.import_service = ImportService(
+            settings=runtime_settings,
+            source_inspector=SourceInspector(runtime_settings),
+            parser=DocumentParser(),
+            chunker=SemanticChunker(),
+            embedding_provider=runtime_embedding_provider,
+            vector_store=PersistentVectorStore(runtime_settings.vectorstore_settings),
+            yuque_gateway=runtime_yuque_gateway,
+            repository_store=RepositoryStore(database),
+            document_store=DocumentStore(database),
+            job_store=ImportJobStore(database),
+            event_broker=InMemoryEventBroker(),
+        )
         try:
             yield
         finally:
+            tasks = list(app.state.import_tasks)
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
             await runtime_yuque_gateway.close()
             database.engine.dispose()
 
@@ -56,10 +87,12 @@ def create_app(
     app.state.embedding_provider = runtime_embedding_provider
     app.state.embedding_prepare_task = None
     app.state.yuque_gateway = runtime_yuque_gateway
+    app.state.import_tasks = set()
     app.add_exception_handler(DomainError, domain_error_handler)
     app.include_router(settings_router)
     app.include_router(embedding_router)
     app.include_router(yuque_router)
+    app.include_router(imports_router)
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:

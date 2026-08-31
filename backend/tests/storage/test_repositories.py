@@ -194,7 +194,15 @@ def test_timestamp_records_reject_naive_values(database: Database) -> None:
 
 def test_import_job_failure_cancel_and_restart_recovery(database: Database) -> None:
     store = ImportJobStore(database)
-    failed = store.create(ImportJobRecord(id="failed", source_kind="url", source_value="https://failed"))
+    failed = store.create(
+        ImportJobRecord(
+            id="failed",
+            source_kind="url",
+            source_value="https://failed",
+            state=ImportStatus.PARSING,
+            current_stage=ImportStatus.PARSING.value,
+        )
+    )
     active = store.create(
         ImportJobRecord(
             id="active",
@@ -217,6 +225,24 @@ def test_import_job_failure_cancel_and_restart_recovery(database: Database) -> N
         True,
     )
     assert store.recover_interrupted() == 0
+
+
+def test_import_job_retry_falls_back_from_legacy_failed_stage(database: Database) -> None:
+    store = ImportJobStore(database)
+    store.create(
+        ImportJobRecord(
+            id="legacy-failed",
+            source_kind="url",
+            source_value="https://failed",
+            state=ImportStatus.FAILED,
+            current_stage=ImportStatus.FAILED.value,
+            retryable=True,
+        )
+    )
+
+    retried = store.reset_for_retry("legacy-failed")
+
+    assert retried.state == ImportStatus.PENDING
 
 
 def test_conversations_preserve_scope_and_message_order(database: Database) -> None:
