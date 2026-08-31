@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import suppress
 from typing import Any
 
@@ -18,6 +18,7 @@ from app.storage.models import MessageRecord
 from app.storage.repositories import ConversationStore
 
 _GAP_ANSWER = "当前文档未覆盖该问题，无法基于现有资料作答。"
+_DEFAULT_TERMINAL_REPLAY_TTL_SECONDS = 30.0
 
 
 class ChatService:
@@ -28,12 +29,18 @@ class ChatService:
         llm: LLMProvider,
         conversation_store: ConversationStore,
         event_broker: ImportEventBroker,
+        terminal_replay_ttl_seconds: float = _DEFAULT_TERMINAL_REPLAY_TTL_SECONDS,
     ) -> None:
         self.retriever = retriever
         self.llm = llm
         self.conversation_store = conversation_store
         self.event_broker = event_broker
         self.tasks: set[asyncio.Task[None]] = set()
+        self._subscription_helpers: set[asyncio.Task[Any]] = set()
+        self._cleanup_tasks: dict[str, asyncio.Task[None]] = {}
+        self._active_subscribers: dict[str, int] = {}
+        self._lifecycle_lock = asyncio.Lock()
+        self._terminal_replay_ttl_seconds = terminal_replay_ttl_seconds
         self.task_errors: list[BaseException] = []
         self._started_request_ids: set[str] = set()
         self._last_sequences: dict[str, int] = {}
@@ -44,9 +51,24 @@ class ChatService:
 
     async def stream(self, request: ChatStreamRequest) -> AsyncIterator[EventEnvelope]:
         key = str(request.request_id)
-        await self._ensure_producer(key, request)
         subscription = self.event_broker.subscribe(key, 0)
-        next_event = asyncio.create_task(anext(subscription))
+        helper_tasks: set[asyncio.Task[Any]] = set()
+
+        def create_helper_locked(
+            awaitable: Awaitable[Any], label: str
+        ) -> asyncio.Task[Any]:
+            task = asyncio.create_task(
+                awaitable, name=f"chat-stream:{key}:{label}"
+            )
+            helper_tasks.add(task)
+            self._subscription_helpers.add(task)
+            task.add_done_callback(self._subscription_helpers.discard)
+            return task
+
+        async with self._lifecycle_lock:
+            await self._ensure_producer(key, request)
+            self._active_subscribers[key] = self._active_subscribers.get(key, 0) + 1
+            next_event = create_helper_locked(anext(subscription), "next-event")
         cursor = 0
         try:
             while True:
@@ -60,14 +82,18 @@ class ChatService:
                     return
 
                 if fallback is None:
-                    fallback_ready = asyncio.create_task(
-                        self._fallback_ready[key].wait()
-                    )
+                    async with self._lifecycle_lock:
+                        if self._stopped:
+                            raise asyncio.CancelledError
+                        fallback_ready = create_helper_locked(
+                            self._fallback_ready[key].wait(), "fallback-ready"
+                        )
                     completed, _ = await asyncio.wait(
                         {next_event, fallback_ready},
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     if next_event not in completed:
+                        await fallback_ready
                         continue
                     fallback_ready.cancel()
                     with suppress(asyncio.CancelledError):
@@ -81,26 +107,60 @@ class ChatService:
                 yield event.model_copy(update={"request_id": request.request_id})
                 if event.type in {"done", "error"}:
                     return
-                next_event = asyncio.create_task(anext(subscription))
+                async with self._lifecycle_lock:
+                    if self._stopped:
+                        raise asyncio.CancelledError
+                    next_event = create_helper_locked(
+                        anext(subscription), "next-event"
+                    )
         finally:
-            if not next_event.done():
-                next_event.cancel()
-                with suppress(asyncio.CancelledError, StopAsyncIteration):
-                    await next_event
+            for task in helper_tasks:
+                if not task.done():
+                    task.cancel()
+            if helper_tasks:
+                await asyncio.gather(*helper_tasks, return_exceptions=True)
+            self._subscription_helpers.difference_update(helper_tasks)
             with suppress(RuntimeError):
                 await subscription.aclose()
+            async with self._lifecycle_lock:
+                remaining = self._active_subscribers.get(key, 1) - 1
+                if remaining > 0:
+                    self._active_subscribers[key] = remaining
+                else:
+                    self._active_subscribers.pop(key, None)
 
     async def wait_for_idle(self) -> None:
         while self.tasks:
             await asyncio.gather(*tuple(self.tasks), return_exceptions=True)
 
     async def stop(self) -> None:
-        self._stopped = True
-        tasks = tuple(self.tasks)
-        for task in tasks:
+        async with self._lifecycle_lock:
+            self._stopped = True
+            tasks = tuple(self.tasks)
+            helpers = tuple(self._subscription_helpers)
+            cleanup_tasks = tuple(self._cleanup_tasks.values())
+        for task in (*tasks, *helpers):
             task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        if tasks or helpers:
+            await asyncio.gather(*tasks, *helpers, return_exceptions=True)
+        for task in cleanup_tasks:
+            task.cancel()
+        if cleanup_tasks:
+            await asyncio.gather(*cleanup_tasks, return_exceptions=True)
+        async with self._lifecycle_lock:
+            keys = set(self._started_request_ids)
+            keys.update(self._last_sequences)
+            keys.update(self._fallback_terminals)
+            keys.update(self._fallback_ready)
+            keys.update(self._active_subscribers)
+            for key in keys:
+                await self.event_broker.discard(key)
+            self._started_request_ids.clear()
+            self._last_sequences.clear()
+            self._fallback_terminals.clear()
+            self._fallback_ready.clear()
+            self._active_subscribers.clear()
+            self._cleanup_tasks.clear()
 
     async def _ensure_producer(self, key: str, request: ChatStreamRequest) -> None:
         async with self._start_lock:
@@ -120,6 +180,28 @@ class ChatService:
             error = task.exception()
             if error is not None:
                 self.task_errors.append(error)
+
+    async def _schedule_cleanup(self, key: str) -> None:
+        await asyncio.sleep(self._terminal_replay_ttl_seconds)
+        while True:
+            async with self._lifecycle_lock:
+                if self._active_subscribers.get(key, 0) == 0:
+                    await self.event_broker.discard(key)
+                    self._started_request_ids.discard(key)
+                    self._last_sequences.pop(key, None)
+                    self._fallback_terminals.pop(key, None)
+                    self._fallback_ready.pop(key, None)
+                    self._cleanup_tasks.pop(key, None)
+                    return
+            await asyncio.sleep(self._terminal_replay_ttl_seconds)
+
+    async def _start_cleanup(self, key: str) -> None:
+        async with self._lifecycle_lock:
+            task = self._cleanup_tasks.get(key)
+            if not self._stopped and (task is None or task.done()):
+                self._cleanup_tasks[key] = asyncio.create_task(
+                    self._schedule_cleanup(key), name=f"chat-cleanup:{key}"
+                )
 
     async def _produce(self, key: str, request: ChatStreamRequest) -> None:
         answer_parts: list[str] = []
@@ -156,6 +238,7 @@ class ChatService:
                 )
                 await self._publish(key, "delta", {"content": _GAP_ANSWER})
                 await self._publish(key, "done", {"messageId": assistant.id})
+                await self._start_cleanup(key)
                 return
 
             chat_request = ChatRequest(
@@ -181,6 +264,7 @@ class ChatService:
                 request.session_id, answer, citations, "completed"
             )
             await self._publish(key, "done", {"messageId": assistant.id})
+            await self._start_cleanup(key)
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 - producer owns the operation error boundary
@@ -197,6 +281,7 @@ class ChatService:
                     pass
             try:
                 await self._publish(key, "error", details)
+                await self._start_cleanup(key)
             except Exception:
                 fallback = EventEnvelope(
                     request_id=request.request_id,
@@ -206,6 +291,7 @@ class ChatService:
                 )
                 self._fallback_terminals[key] = fallback
                 self._fallback_ready[key].set()
+                await self._start_cleanup(key)
                 raise
 
     def _persist_assistant(

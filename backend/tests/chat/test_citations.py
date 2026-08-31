@@ -62,6 +62,9 @@ def test_url_sanitizer_removes_case_insensitive_url_split_across_chunks() -> Non
         ("参见 (https://evil.test/path).说明 [S1]", "参见 ().说明 [S1]"),
         ("来源 https://evil.test/path. 随后说明 [S1]", "来源 . 随后说明 [S1]"),
         ("来源 https://evil.test/path；随后说明 [S1]", "来源 ；随后说明 [S1]"),
+        ("https://evil.test/path.Next sentence", ".Next sentence"),
+        ("https://evil.test/path:123 后续", ":123 后续"),
+        ("https://evil.test:8443/file.html 后续", " 后续"),
     ],
 )
 def test_url_sanitizer_preserves_trailing_punctuation_and_following_text(
@@ -83,3 +86,20 @@ def test_url_sanitizer_preserves_punctuation_arriving_at_chunk_boundary() -> Non
     )
 
     assert answer == "依据 ,随后说明 [S1]"
+
+
+def test_url_sanitizer_tracks_scheme_authority_path_and_punctuation_across_chunks() -> None:
+    sanitizer = URLStreamSanitizer()
+
+    answer = "".join(
+        [
+            sanitizer.feed("依据 HTTPS"),
+            sanitizer.feed("://evil"),
+            sanitizer.feed(".test:8443/fi"),
+            sanitizer.feed("le.html"),
+            sanitizer.feed(".Next sentence [S1]"),
+            sanitizer.finish(),
+        ]
+    )
+
+    assert answer == "依据 .Next sentence [S1]"

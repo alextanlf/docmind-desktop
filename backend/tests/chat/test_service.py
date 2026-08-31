@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import suppress
 from uuid import UUID, uuid4
 
 from app.api.errors import DomainError
@@ -166,6 +167,26 @@ async def test_cited_chat_streams_nonempty_sanitized_deltas_and_persists_exact_a
     assert len(llm.calls[0].messages) <= 20
 
 
+async def test_url_path_punctuation_is_identical_in_stream_and_persisted_answer() -> None:
+    llm = FakeLLM(
+        [
+            "https://evil.test/path",
+            ".Next sentence [S1] ",
+            "https://evil.test/path",
+            ":123 后续",
+        ]
+    )
+    service, store = _service(RetrievalResult(hits=[_hit()], max_score=0.9), llm)
+
+    events = [event async for event in service.stream(_request())]
+
+    streamed = "".join(
+        event.payload["content"] for event in events if event.type == "delta"
+    )
+    assert streamed == ".Next sentence [S1] :123 后续"
+    assert store.messages[-1].content == streamed
+
+
 async def test_duplicate_request_id_starts_one_producer_and_persists_one_user_message() -> None:
     llm = FakeLLM(["回答 [S1]"])
     service, store = _service(RetrievalResult(hits=[_hit()], max_score=0.9), llm)
@@ -205,6 +226,51 @@ async def test_closing_subscriber_does_not_cancel_owned_producer() -> None:
     assert store.messages[-1].content == "完成 [S1]"
 
 
+async def test_stop_reaps_named_subscription_helpers_for_active_subscriber() -> None:
+    release = asyncio.Event()
+
+    class SlowLLM(FakeLLM):
+        async def stream_chat(self, request):  # type: ignore[no-untyped-def]
+            self.calls.append(request)
+            await release.wait()
+            yield ChatDelta(content="完成 [S1]")
+
+    service, _ = _service(
+        RetrievalResult(hits=[_hit()], max_score=0.9), SlowLLM()
+    )
+    request = _request()
+    stream = service.stream(request)
+    assert (await anext(stream)).type == "citations"
+    reader = asyncio.create_task(anext(stream), name="test-chat-stream-reader")
+    await asyncio.sleep(0)
+    helpers = _pending_stream_helpers(exclude={reader})
+
+    try:
+        assert {task.get_name() for task in helpers} == {
+            f"chat-stream:{request.request_id}:next-event",
+            f"chat-stream:{request.request_id}:fallback-ready",
+        }
+
+        await service.stop()
+        with suppress(asyncio.CancelledError, StopAsyncIteration):
+            await asyncio.wait_for(reader, timeout=0.2)
+
+        assert reader.done()
+        assert _pending_stream_helpers(exclude={reader}) == []
+    finally:
+        release.set()
+        if not reader.done():
+            reader.cancel()
+        with suppress(asyncio.CancelledError, StopAsyncIteration):
+            await reader
+        leaked = _pending_stream_helpers()
+        for task in leaked:
+            task.cancel()
+        if leaked:
+            await asyncio.gather(*leaked, return_exceptions=True)
+        await service.stop()
+
+
 async def test_provider_failure_persists_error_and_emits_one_structured_error() -> None:
     llm = FakeLLM(error=DomainError("MODEL_TIMEOUT", "模型服务响应超时", 504, True))
     service, store = _service(RetrievalResult(hits=[_hit()], max_score=0.9), llm)
@@ -224,11 +290,13 @@ async def test_slow_and_late_subscribers_replay_lossless_long_answer() -> None:
     deltas = [f"片段{index}|" for index in range(150)] + ["结论 [S1]"]
     llm = FakeLLM(deltas)
     store = FakeConversationStore()
-    service = _service_with_store(
-        RetrievalResult(hits=[_hit()], max_score=0.9),
-        llm,
-        store,
-        unlimited_events=True,
+    broker = InMemoryEventBroker(retention=None)
+    service = ChatService(
+        retriever=FakeRetriever(RetrievalResult(hits=[_hit()], max_score=0.9)),
+        llm=llm,
+        conversation_store=store,
+        event_broker=broker,
+        terminal_replay_ttl_seconds=0.05,
     )
     request = _request()
     slow_stream = service.stream(request)
@@ -236,6 +304,11 @@ async def test_slow_and_late_subscribers_replay_lossless_long_answer() -> None:
     first = await anext(slow_stream)
     assert first.type == "citations"
     await service.wait_for_idle()
+    cleanup = service._cleanup_tasks[str(request.request_id)]
+    await asyncio.sleep(0.06)
+    assert not cleanup.done()
+    assert str(request.request_id) in broker._jobs
+
     slow_events = [first, *[event async for event in slow_stream]]
     replayed_events = [event async for event in service.stream(request)]
 
@@ -251,6 +324,29 @@ async def test_slow_and_late_subscribers_replay_lossless_long_answer() -> None:
     )
     assert streamed == replayed == store.messages[-1].content
     assert slow_events[-1].type == replayed_events[-1].type == "done"
+    assert len(llm.calls) == 1
+
+    await asyncio.wait_for(cleanup, timeout=0.3)
+    _assert_chat_archives_empty(service, broker)
+
+
+async def test_stop_cancels_terminal_cleanup_and_clears_chat_archives() -> None:
+    broker = InMemoryEventBroker(retention=None)
+    service = ChatService(
+        retriever=FakeRetriever(RetrievalResult(hits=[_hit()], max_score=0.9)),
+        llm=FakeLLM(["回答 [S1]"]),
+        conversation_store=FakeConversationStore(),
+        event_broker=broker,
+        terminal_replay_ttl_seconds=60,
+    )
+    request = _request()
+
+    await _collect(service, request)
+    cleanup = service._cleanup_tasks[str(request.request_id)]
+    await service.stop()
+
+    assert cleanup.cancelled()
+    _assert_chat_archives_empty(service, broker)
 
 
 async def test_user_persistence_failure_emits_terminal_error_without_hanging() -> None:
@@ -330,7 +426,42 @@ async def test_error_publish_failure_is_observable_and_does_not_hang_subscriber(
     assert replayed == events
     assert len(service.task_errors) == 1
     assert str(service.task_errors[0]) == "broker error publish failed"
+    await asyncio.sleep(0)
+    assert _pending_stream_helpers() == []
+    await service.stop()
+    _assert_chat_archives_empty(service, service.event_broker)
 
 
 async def _collect(service: ChatService, request: ChatStreamRequest):  # type: ignore[no-untyped-def]
     return [event async for event in service.stream(request)]
+
+
+def _pending_stream_helpers(
+    *, exclude: set[asyncio.Task[object]] | None = None
+) -> list[asyncio.Task[object]]:
+    excluded = exclude or set()
+    current = asyncio.current_task()
+    helpers: list[asyncio.Task[object]] = []
+    for task in asyncio.all_tasks():
+        if task is current or task in excluded or task.done():
+            continue
+        coroutine = task.get_coro()
+        if (
+            task.get_name().startswith("chat-stream:")
+            or type(coroutine).__name__ == "async_generator_asend"
+            or getattr(coroutine, "__qualname__", "") == "Event.wait"
+        ):
+            helpers.append(task)
+    return helpers
+
+
+def _assert_chat_archives_empty(
+    service: ChatService, broker: InMemoryEventBroker
+) -> None:
+    assert broker._jobs == {}
+    assert service._started_request_ids == set()
+    assert service._last_sequences == {}
+    assert service._fallback_terminals == {}
+    assert service._fallback_ready == {}
+    assert service._active_subscribers == {}
+    assert service._cleanup_tasks == {}

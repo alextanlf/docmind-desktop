@@ -104,6 +104,18 @@ async def test_event_broker_supports_unlimited_retention_without_changing_defaul
     assert [event.sequence for event in unlimited_events] == list(range(1, 107))
 
 
+async def test_broker_discard_drops_archive_and_allows_fresh_sequence() -> None:
+    broker = InMemoryEventBroker(retention=None)
+    terminal = await broker.publish("discarded", "done", {})
+
+    await broker.discard("discarded")
+    fresh = await broker.publish("discarded", "delta", {"content": "fresh"})
+
+    assert broker._jobs.keys() == {"discarded"}
+    assert fresh.sequence == 1
+    assert fresh.request_id != terminal.request_id
+
+
 async def test_reopen_retains_prior_attempt_and_starts_new_request() -> None:
     broker = InMemoryEventBroker()
     first_progress = await broker.publish("job-retry", "progress", {"progress": 25})
