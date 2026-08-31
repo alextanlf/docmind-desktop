@@ -1,0 +1,3 @@
+import { app } from 'electron'; import { BackendManager } from './backend-manager'; import { createWindow } from './window-manager';
+let backend: BackendManager
+app.whenReady().then(async()=>{ backend = new BackendManager({dataDir:app.getPath('userData')}); try { await backend.start(); const win=createWindow(process.env.ELECTRON_RENDERER_URL ?? 'file://'); win.once('ready-to-show',()=>win.show()); await win.loadURL(process.env.ELECTRON_RENDERER_URL ?? `file://${__dirname}/../renderer/index.html`) } catch (error) { console.error(error); app.quit() } }); app.on('before-quit',()=>{ void backend?.stop() }); app.on('window-all-closed',()=>{if(process.platform!=='darwin') app.quit()})
