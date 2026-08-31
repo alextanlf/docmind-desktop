@@ -15,6 +15,12 @@ class AppSettings(BaseSettings):
     data_dir: Path = Path.home() / ".docmind"
     environment: Literal["development", "test", "production"] = "development"
 
+    max_source_redirects: int = 5
+    source_connect_timeout_seconds: float = 10.0
+    source_read_timeout_seconds: float = 30.0
+    html_markdown_max_bytes: int = 20 * 1024 * 1024
+    pdf_max_bytes: int = 100 * 1024 * 1024
+
     model_config = SettingsConfigDict(env_prefix="DOCMIND_", extra="ignore")
 
     @model_validator(mode="after")
@@ -41,6 +47,10 @@ class AppSettings(BaseSettings):
     @property
     def screenshots_dir(self) -> Path:
         return self.data_dir / "logs" / "screenshots"
+
+    @property
+    def staging_dir(self) -> Path:
+        return self.data_dir / "imports" / "staging"
 
 
 def get_settings() -> AppSettings:
