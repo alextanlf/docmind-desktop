@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import delete, select
 
@@ -226,6 +227,22 @@ class ImportJobStore:
             session.add(job)
             session.flush()
             return job
+
+    def create_cleanup(self, *, repository_id: str, document_id: str, vector_ids: list[str]) -> ImportJobRecord:
+        payload = json.dumps({"repository_id": repository_id, "document_id": document_id, "vector_ids": vector_ids})
+        return self.create(
+            ImportJobRecord(id=str(uuid4()), source_kind="api_cleanup", source_value=payload, repository_id=repository_id, document_id=document_id)
+        )
+
+    def list_cleanups(self) -> list[ImportJobRecord]:
+        with self.database.session() as session:
+            return list(session.scalars(select(ImportJobRecord).where(ImportJobRecord.source_kind == "api_cleanup")))
+
+    def delete_job(self, job_id: str) -> None:
+        with self.database.session() as session:
+            record = session.get(ImportJobRecord, job_id)
+            if record is not None:
+                session.delete(record)
 
     def reserve(self, job: ImportJobRecord, *, fingerprint: str) -> ImportJobRecord:
         with self.database.session() as session:
