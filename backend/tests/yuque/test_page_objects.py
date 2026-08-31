@@ -669,6 +669,49 @@ async def test_document_creation_retries_visibility_without_saving_twice(
     assert page.clicked.count("[data-testid=editor-save]") == 1
 
 
+async def test_document_recovery_lookup_reads_marker_without_submitting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Playwright recovery can discover the exact marked page without replaying create."""
+    gateway = PlaywrightYuqueGateway(
+        AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
+    )
+    page = FixturePage(
+        {
+            "[data-testid=dashboard]",
+            "[data-testid=document-link]",
+            "[data-testid=editor-title]",
+            "[data-testid=editor-markdown]",
+        }
+    )
+    page.text["[data-testid=document-link]"] = "State"
+    page.attributes[("[data-testid=document-link]", "href")] = "/swiftui/state"
+    page.values["[data-testid=editor-title]"] = "State"
+    page.values["[data-testid=editor-markdown]"] = (
+        "# State\n\n<!-- docmind-mutation:recovery -->"
+    )
+    page.document_list_visibility_after = 1
+
+    async def no_delay(_: float) -> None:
+        return None
+
+    monkeypatch.setattr("app.yuque.gateway.asyncio.sleep", no_delay)
+
+    @asynccontextmanager
+    async def fake_new_page(*, visible_login: bool):
+        assert visible_login is False
+        yield page
+
+    gateway._new_page = fake_new_page  # type: ignore[method-assign]
+
+    found = await gateway.find_document_by_marker("swiftui", "docmind-mutation:recovery")
+
+    assert found is not None and found.yuque_id == "/swiftui/state"
+    assert await gateway.document_exists("swiftui", "/swiftui/state") is True
+    assert page.document_list_calls == 3
+    assert page.clicked == []
+
+
 @pytest.mark.parametrize(
     ("save_error", "private_values"),
     [
