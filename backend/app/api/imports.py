@@ -77,6 +77,9 @@ async def import_events(
     except ValueError:
         raise DomainError("IMPORT_EVENT_CURSOR_INVALID", "导入事件序号无效", 400) from None
 
+    if job.state in {"failed", "completed", "cancelled"}:
+        await service.event_broker.advance(job_id, after_sequence)
+
     if job.state == "failed":
         await service.event_broker.publish(
             job_id,

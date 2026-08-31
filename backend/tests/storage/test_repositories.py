@@ -89,6 +89,7 @@ def test_document_store_replaces_chunks_and_finds_source(database: Database) -> 
     with database.session() as session:
         assert session.get(DocumentChunkRecord, "chunk-1") is None
         assert session.get(DocumentChunkRecord, "chunk-2").text == "replacement"  # type: ignore[union-attr]
+    assert store.vector_ids(document.id) == ["chunk-2"]
 
 
 def test_import_job_transitions_only_from_expected_state(database: Database) -> None:
@@ -127,6 +128,38 @@ def test_import_job_persists_status_enum_values(database: Database) -> None:
         state = session.scalar(text("SELECT state FROM import_jobs WHERE id = 'job-status'"))
 
     assert state == "pending"
+
+
+def test_import_job_reservation_rejects_matching_active_fingerprint(database: Database) -> None:
+    with database.session() as session:
+        session.add(RepositoryRecord(id="repo-reserve", name="Repository"))
+    store = ImportJobStore(database)
+    metadata = json.dumps({"version": 1, "value": "source", "fingerprint": "same-hash"})
+
+    first = store.reserve(
+        ImportJobRecord(
+            id="reserved-first",
+            source_kind="url",
+            source_value=metadata,
+            repository_id="repo-reserve",
+        ),
+        fingerprint="same-hash",
+    )
+
+    with pytest.raises(DomainError) as error:
+        store.reserve(
+            ImportJobRecord(
+                id="reserved-second",
+                source_kind="url",
+                source_value=metadata,
+                repository_id="repo-reserve",
+            ),
+            fingerprint="same-hash",
+        )
+
+    assert first.id == "reserved-first"
+    assert error.value.code == "IMPORT_ALREADY_RUNNING"
+    assert [job.id for job in store.list()] == ["reserved-first"]
 
 
 def test_timestamp_records_round_trip_as_utc_aware_values(database: Database) -> None:
@@ -243,6 +276,48 @@ def test_import_job_retry_falls_back_from_legacy_failed_stage(database: Database
     retried = store.reset_for_retry("legacy-failed")
 
     assert retried.state == ImportStatus.PENDING
+
+
+def test_import_job_retry_falls_back_from_unknown_stage(database: Database) -> None:
+    store = ImportJobStore(database)
+    store.create(
+        ImportJobRecord(
+            id="unknown-stage",
+            source_kind="url",
+            source_value="https://failed",
+            state=ImportStatus.FAILED,
+            current_stage="legacy-transforming",
+            retryable=True,
+        )
+    )
+
+    retried = store.reset_for_retry("unknown-stage")
+
+    assert retried.state == ImportStatus.PENDING
+
+
+def test_restart_recovery_finishes_requested_cancellation(database: Database) -> None:
+    store = ImportJobStore(database)
+    store.create(
+        ImportJobRecord(
+            id="cancel-on-restart",
+            source_kind="url",
+            source_value="https://cancelled",
+            state=ImportStatus.INDEXING,
+            current_stage=ImportStatus.INDEXING.value,
+            progress=90,
+            cancel_requested=True,
+        )
+    )
+
+    assert store.recover_interrupted() == 1
+    recovered = store.get("cancel-on-restart")
+
+    assert recovered is not None
+    assert recovered.state == ImportStatus.CANCELLED
+    assert recovered.message == "导入已取消"
+    assert recovered.error_code is None
+    assert recovered.retryable is False
 
 
 def test_conversations_preserve_scope_and_message_order(database: Database) -> None:

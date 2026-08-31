@@ -181,3 +181,27 @@ async def test_events_close_for_persisted_failure_after_broker_restart(client) -
     assert '"type":"error"' in frame
     with pytest.raises(StopAsyncIteration):
         await anext(response.body_iterator)
+
+
+async def test_persisted_terminal_advances_past_last_event_id_after_broker_restart(client) -> None:
+    service = StubImportService()
+    service.jobs["job-api-1"] = job_view("failed", 70)
+    client.app.state.import_service = service
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/imports/job-api-1/events",
+            "headers": [(b"last-event-id", b"6")],
+            "app": client.app,
+        }
+    )
+
+    response = await import_events(request, "job-api-1", "6")
+    frame = await asyncio.wait_for(anext(response.body_iterator), timeout=0.1)
+
+    assert frame.startswith("id: 7\n")
+    assert '"sequence":7' in frame
+    assert '"type":"error"' in frame
+    with pytest.raises(StopAsyncIteration):
+        await anext(response.body_iterator)
