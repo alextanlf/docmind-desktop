@@ -232,7 +232,10 @@ class PlaywrightYuqueGateway:
     async def create_repository(self, request: CreateRepositoryRequest) -> YuqueRepository:
         async with self._background_page("create-repository") as page:
             dashboard = DashboardPage(page, self.settings.screenshots_dir, self._request_id)
-            return await dashboard.with_retry("create-repository", lambda: dashboard.create_repository(request.name))
+            await dashboard.with_retry("create-repository", lambda: dashboard.submit_new_repository(request.name))
+            return await dashboard.with_retry(
+                "confirm-created-repository", lambda: dashboard.find_repository(request.name)
+            )
 
     async def list_documents(self, repository_id: str) -> list[YuqueDocument]:
         async with self._background_page("list-documents") as page:
