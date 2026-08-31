@@ -9,7 +9,11 @@ from pydantic import SecretStr
 
 from app.api.errors import DomainError
 from app.config import AppSettings
-from app.schemas.yuque import CreateYuqueDocumentRequest, UpdateYuqueDocumentRequest
+from app.schemas.yuque import (
+    CreateRepositoryRequest,
+    CreateYuqueDocumentRequest,
+    UpdateYuqueDocumentRequest,
+)
 from app.yuque.base_page import BasePage
 from app.yuque.dashboard_page import DashboardPage
 from app.yuque.editor_page import EditorPage
@@ -48,6 +52,10 @@ class FixtureLocator:
             self.page.document_list_calls += 1
             if self.page.document_list_calls <= self.page.document_list_visibility_after:
                 return []
+        if self.selector == "[data-testid=repository-link]" and self.page.repository_list_visibility_after is not None:
+            self.page.repository_list_calls += 1
+            if self.page.repository_list_calls <= self.page.repository_list_visibility_after:
+                return []
         return [self] if self.visible else []
 
     async def inner_text(self) -> str:
@@ -82,6 +90,8 @@ class FixturePage:
         self.goto_attempts: list[str] = []
         self.document_list_visibility_after: int | None = None
         self.document_list_calls = 0
+        self.repository_list_visibility_after: int | None = None
+        self.repository_list_calls = 0
 
     def locator(self, selector: str) -> FixtureLocator:
         return FixtureLocator(self, selector, selector in self.available)
@@ -503,31 +513,39 @@ async def test_visible_login_navigation_retries_before_capturing_masked_failure(
     assert len(page.screenshots) == 1
 
 
-async def test_repository_creation_missing_from_list_retries_as_page_error(
+async def test_repository_creation_retries_visibility_without_submitting_twice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     page = FixturePage(
         {
+            "[data-testid=dashboard]",
             "[data-testid=create-repository]",
             "[data-testid=repository-name]",
             "[data-testid=create-repository-submit]",
             "[data-testid=repository-link]",
         }
     )
-    page.text["[data-testid=repository-link]"] = "Other"
-    dashboard = DashboardPage(page, screenshots_dir=tmp_path, request_id="request")
+    page.text["[data-testid=repository-link]"] = "SwiftUI"
+    page.repository_list_visibility_after = 1
+    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
 
     async def no_delay(_: float) -> None:
         return None
 
     monkeypatch.setattr("app.yuque.base_page.asyncio.sleep", no_delay)
 
-    with pytest.raises(DomainError) as error:
-        await dashboard.with_retry("create-repository", lambda: dashboard.create_repository("SwiftUI"))
+    @asynccontextmanager
+    async def fake_new_page(*, visible_login: bool):
+        assert visible_login is False
+        yield page
 
-    assert error.value.code == "YUQUE_PAGE_CHANGED"
-    assert page.clicked.count("[data-testid=create-repository-submit]") == 4
-    assert len(page.screenshots) == 1
+    gateway._new_page = fake_new_page  # type: ignore[method-assign]
+
+    created = await gateway.create_repository(CreateRepositoryRequest(name="SwiftUI"))
+
+    assert created.name == "SwiftUI"
+    assert page.repository_list_calls == 2
+    assert page.clicked.count("[data-testid=create-repository-submit]") == 1
 
 
 async def test_document_creation_retries_visibility_without_saving_twice(

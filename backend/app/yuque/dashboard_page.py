@@ -25,9 +25,15 @@ class DashboardPage(BasePage):
         return repositories
 
     async def create_repository(self, name: str) -> YuqueRepository:
+        await self.submit_new_repository(name)
+        return await self.find_repository(name)
+
+    async def submit_new_repository(self, name: str) -> None:
         await self.click_any(("role=button[name=新建知识库]", "testid=create-repository", "text=新建知识库"))
         await self.fill_any(("role=textbox[name=知识库名称]", "testid=repository-name", "text=知识库名称"), name)
         await self.click_any(("role=button[name=创建]", "testid=create-repository-submit", "text=创建"))
+
+    async def find_repository(self, name: str) -> YuqueRepository:
         repositories = await self.list_repositories()
         for repository in repositories:
             if repository.name == name:
