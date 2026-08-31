@@ -19,7 +19,7 @@ from app.schemas.documents import DocumentDelete, DocumentDetail, DocumentInput,
 from app.schemas.imports import DownloadedDocument
 from app.schemas.yuque import CreateYuqueDocumentRequest, UpdateYuqueDocumentRequest, YuqueDocument
 from app.storage.models import DocumentChunkRecord, DocumentRecord
-from app.storage.repositories import DocumentStore, ImportJobStore, RepositoryStore
+from app.storage.repositories import DocumentStore, RepositoryStore, VectorCleanupStore
 from app.storage.vectorstore import PersistentVectorStore
 from app.yuque.gateway import YuqueGateway
 
@@ -54,8 +54,8 @@ def _chunker(request: Request) -> SemanticChunker:
     return cast(SemanticChunker, request.app.state.document_chunker)
 
 
-def _job_store(request: Request) -> ImportJobStore:
-    return cast(ImportJobStore, request.app.state.import_job_store)
+def _cleanup_store(request: Request) -> VectorCleanupStore:
+    return cast(VectorCleanupStore, request.app.state.vector_cleanup_store)
 
 
 def _not_found() -> DomainError:
@@ -252,7 +252,10 @@ async def create_document(request: Request, repository_id: str, body: DocumentIn
             await _gateway(request).delete_document(remote.yuque_id)
         _document_store(request).delete_local(document.id)
         raise
-    return _detail(indexed)
+    persisted = _document_store(request).get(document.id)
+    if persisted is None:
+        raise _not_found()
+    return _detail(persisted)
 
 
 @router.get("/api/documents/{document_id}", response_model=DocumentDetail)
@@ -300,12 +303,11 @@ async def delete_document(request: Request, document_id: str, body: DocumentDele
     document = _document_store(request).get(document_id)
     if document is None:
         import json
-        pending = next((job for job in _job_store(request).list_cleanups() if json.loads(job.source_value).get("document_id") == document_id), None)
+        pending = next((item for item in _cleanup_store(request).list() if item.document_id == document_id), None)
         if pending is not None:
             try:
-                metadata = json.loads(pending.source_value)
-                await asyncio.to_thread(_vector_store(request).delete, metadata["repository_id"], metadata["vector_ids"])
-                _job_store(request).delete_job(pending.id)
+                await asyncio.to_thread(_vector_store(request).delete, pending.repository_id, json.loads(pending.vector_ids_json))
+                _cleanup_store(request).delete(pending.id)
             except Exception as error:
                 raise DomainError("INDEX_FAILED", "清理文档索引失败", 503, True) from error
             return
@@ -322,5 +324,5 @@ async def delete_document(request: Request, document_id: str, body: DocumentDele
     try:
         await asyncio.to_thread(_vector_store(request).delete, document.repository_id, vector_ids)
     except Exception:  # noqa: BLE001 - local cleanup must continue after remote success
-        _job_store(request).create_cleanup(repository_id=document.repository_id, document_id=document.id, vector_ids=vector_ids)
+        _cleanup_store(request).create(document.repository_id, document.id, vector_ids)
     _document_store(request).delete_local(document.id)

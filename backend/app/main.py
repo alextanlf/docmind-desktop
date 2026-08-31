@@ -46,6 +46,7 @@ from app.storage.repositories import (
     ImportJobStore,
     RepositoryStore,
     SettingStore,
+    VectorCleanupStore,
 )
 from app.storage.vectorstore import PersistentVectorStore
 from app.yuque.gateway import PlaywrightYuqueGateway, YuqueGateway
@@ -128,14 +129,14 @@ def create_app(
         app.state.repository_store = repository_store
         app.state.document_store = document_store
         app.state.import_job_store = ImportJobStore(database)
+        app.state.vector_cleanup_store = VectorCleanupStore(database)
         app.state.vector_store = vector_store
         app.state.document_parser = DocumentParser()
         app.state.document_chunker = SemanticChunker()
-        for cleanup in app.state.import_job_store.list_cleanups():
+        for cleanup in app.state.vector_cleanup_store.list():
             with suppress(Exception):
-                metadata = json.loads(cleanup.source_value)
-                await asyncio.to_thread(vector_store.delete, metadata["repository_id"], metadata["vector_ids"])
-                app.state.import_job_store.delete_job(cleanup.id)
+                await asyncio.to_thread(vector_store.delete, cleanup.repository_id, json.loads(cleanup.vector_ids_json))
+                app.state.vector_cleanup_store.delete(cleanup.id)
         app.state.conversation_store = conversation_store
         chat_service = ChatService(
             retriever=HybridRetriever(

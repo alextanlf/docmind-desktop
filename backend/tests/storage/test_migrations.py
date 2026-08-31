@@ -24,6 +24,7 @@ def test_upgrade_creates_all_phase_one_tables() -> None:
         "sessions",
         "messages",
         "settings",
+        "vector_cleanups",
     }
     database.engine.dispose()
 

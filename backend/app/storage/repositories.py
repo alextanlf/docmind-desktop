@@ -19,6 +19,7 @@ from app.storage.models import (
     RepositoryRecord,
     SessionRecord,
     SettingRecord,
+    VectorCleanupRecord,
 )
 
 
@@ -561,6 +562,25 @@ class ConversationStore:
                 parent.updated_at = utc_now()
             session.flush()
             return message
+
+
+class VectorCleanupStore:
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def create(self, repository_id: str, document_id: str, vector_ids: list[str]) -> None:
+        with self.database.session() as session:
+            session.add(VectorCleanupRecord(repository_id=repository_id, document_id=document_id, vector_ids_json=json.dumps(vector_ids)))
+
+    def list(self) -> list[VectorCleanupRecord]:
+        with self.database.session() as session:
+            return list(session.scalars(select(VectorCleanupRecord)))
+
+    def delete(self, cleanup_id: str) -> None:
+        with self.database.session() as session:
+            record = session.get(VectorCleanupRecord, cleanup_id)
+            if record is not None:
+                session.delete(record)
 
 
 class SettingStore:

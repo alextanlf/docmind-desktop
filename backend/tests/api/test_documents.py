@@ -216,3 +216,11 @@ def test_delete_vector_failure_still_removes_local_and_retry_cleans_pending(clie
     assert second.status_code == 204
     assert client.app.state.document_store.get(document_id) is None
     assert document_id not in {item.yuque_id for item in asyncio.run(gateway.list_documents("repo-remote"))}
+
+
+def test_document_create_response_contains_submitted_markdown(client, auth_headers) -> None:
+    """Catches returning a detached document before its Markdown path is persisted."""
+    repository_id, _ = _seed_repository(client)
+    response = client.post(f"/api/repositories/{repository_id}/documents", headers=auth_headers, json={"title": "State", "content": "# State\n\n内容"})
+    assert response.status_code == 201
+    assert response.json()["content"] == "# State\n\n内容"

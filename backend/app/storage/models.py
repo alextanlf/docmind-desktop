@@ -205,6 +205,16 @@ class MessageRecord(Base):
     )
 
 
+class VectorCleanupRecord(Base):
+    __tablename__ = "vector_cleanups"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    repository_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    document_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    vector_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default())
+
+
 class SettingRecord(Base):
     __tablename__ = "settings"
 
