@@ -550,19 +550,37 @@ async def test_repository_creation_retries_visibility_without_submitting_twice(
 
     assert created.name == "SwiftUI"
     assert page.repository_list_calls == 2
+    assert page.clicked.count("[data-testid=create-repository]") == 1
+    assert page.fill_attempts.count(("[data-testid=repository-name]", "SwiftUI")) == 1
     assert page.clicked.count("[data-testid=create-repository-submit]") == 1
 
 
 @pytest.mark.parametrize(
-    "submit_error",
+    ("submit_error", "private_values"),
     [
-        TimeoutError("repository create response timed out"),
-        DomainError("YUQUE_PAGE_CHANGED", "repository create response unavailable", 503, True),
+        (
+            TimeoutError("repository create response timed out"),
+            ("repository create response timed out",),
+        ),
+        (
+            DomainError(
+                "YUQUE_INTERNAL_SUBMIT_FAILURE",
+                "repository create failed for secret=session-cookie-123",
+                418,
+                True,
+                "retry with session-cookie-123",
+            ),
+            (
+                "YUQUE_INTERNAL_SUBMIT_FAILURE",
+                "repository create failed for secret=session-cookie-123",
+                "session-cookie-123",
+            ),
+        ),
     ],
     ids=["timeout", "retryable-domain-error"],
 )
 async def test_repository_creation_submit_error_is_not_replayed(
-    tmp_path: Path, submit_error: Exception
+    tmp_path: Path, submit_error: Exception, private_values: tuple[str, ...]
 ) -> None:
     page = FixturePage(
         {
@@ -585,13 +603,25 @@ async def test_repository_creation_submit_error_is_not_replayed(
     with pytest.raises(DomainError) as error:
         await gateway.create_repository(CreateRepositoryRequest(name="SwiftUI"))
 
-    assert error.value.code == "YUQUE_PAGE_CHANGED"
-    assert error.value.retryable is True
-    assert page.clicked == [
-        "[data-testid=create-repository]",
-        "[data-testid=create-repository-submit]",
-    ]
-    assert page.fill_attempts == [("[data-testid=repository-name]", "SwiftUI")]
+    public_error = {
+        "code": error.value.code,
+        "message": error.value.message,
+        "status_code": error.value.status_code,
+        "retryable": error.value.retryable,
+        "action": error.value.action,
+    }
+    assert public_error == {
+        "code": "YUQUE_PAGE_CHANGED",
+        "message": "语雀页面响应异常，请重新登录后重试",
+        "status_code": 503,
+        "retryable": True,
+        "action": None,
+    }
+    serialized_error = repr(public_error)
+    assert all(private_value not in serialized_error for private_value in private_values)
+    assert page.clicked.count("[data-testid=create-repository]") == 1
+    assert page.fill_attempts.count(("[data-testid=repository-name]", "SwiftUI")) == 1
+    assert page.clicked.count("[data-testid=create-repository-submit]") == 1
     assert [path.name for path in page.screenshots] == [
         f"{gateway._request_id}-create-repository.png"
     ]

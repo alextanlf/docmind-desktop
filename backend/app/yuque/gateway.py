@@ -235,9 +235,12 @@ class PlaywrightYuqueGateway:
             try:
                 await dashboard.submit_new_repository(request.name)
             except DomainError as error:
-                if error.retryable:
-                    await dashboard._capture_failure("create-repository")
-                raise
+                if not error.retryable:
+                    raise
+                await dashboard._capture_failure("create-repository")
+                raise DomainError(
+                    "YUQUE_PAGE_CHANGED", "语雀页面响应异常，请重新登录后重试", 503, True
+                ) from None
             except (PlaywrightError, TimeoutError, ConnectionError, OSError):
                 await dashboard._capture_failure("create-repository")
                 raise DomainError(
