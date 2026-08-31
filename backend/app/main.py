@@ -5,6 +5,7 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
+from threading import Lock
 
 from fastapi import Depends, FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -139,7 +140,15 @@ def create_app(
         await recover_document_mutations(app)
         for cleanup in app.state.vector_cleanup_store.list():
             with suppress(Exception):
-                await asyncio.to_thread(vector_store.delete, cleanup.repository_id, json.loads(cleanup.vector_ids_json))
+                pending_ids = list(json.loads(cleanup.vector_ids_json))
+                owned_ids = document_store.owned_vector_ids(pending_ids)
+                deletable_ids = [
+                    identifier for identifier in pending_ids if identifier not in owned_ids
+                ]
+                if deletable_ids:
+                    await asyncio.to_thread(
+                        vector_store.delete, cleanup.repository_id, deletable_ids
+                    )
                 app.state.vector_cleanup_store.delete(cleanup.id)
         app.state.conversation_store = conversation_store
         chat_service = ChatService(
@@ -175,6 +184,8 @@ def create_app(
     app.state.embedding_prepare_task = None
     app.state.yuque_gateway = runtime_yuque_gateway
     app.state.import_tasks = set()
+    app.state.active_document_mutations = set()
+    app.state.document_mutation_registry_lock = Lock()
     app.add_exception_handler(DomainError, domain_error_handler)
     app.add_exception_handler(RequestValidationError, request_validation_handler)
     app.include_router(settings_router)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import tempfile
+from base64 import b64decode, b64encode
 from contextlib import suppress
 from hashlib import sha256
 from pathlib import Path
@@ -94,6 +94,19 @@ def _mutation_store(request: Request) -> DocumentMutationStore:
     return cast(DocumentMutationStore, request.app.state.document_mutation_store)
 
 
+def _claim_mutation(app, mutation_id: str) -> bool:  # type: ignore[no-untyped-def]
+    with app.state.document_mutation_registry_lock:
+        if mutation_id in app.state.active_document_mutations:
+            return False
+        app.state.active_document_mutations.add(mutation_id)
+        return True
+
+
+def _release_mutation(app, mutation_id: str) -> None:  # type: ignore[no-untyped-def]
+    with app.state.document_mutation_registry_lock:
+        app.state.active_document_mutations.discard(mutation_id)
+
+
 def _chunk_snapshot(chunk: DocumentChunkRecord) -> dict[str, object]:
     return {
         "id": chunk.id,
@@ -110,12 +123,30 @@ def _chunk_snapshot(chunk: DocumentChunkRecord) -> dict[str, object]:
 
 
 def _document_snapshot(request: Request, document: DocumentRecord) -> dict[str, object]:
+    file_state = "unconfigured"
+    file_bytes = b""
     content = ""
     if document.markdown_path:
         try:
-            content = Path(document.markdown_path).read_text(encoding="utf-8")
-        except OSError:
-            content = ""
+            file_bytes = Path(document.markdown_path).read_bytes()
+        except FileNotFoundError:
+            file_state = "missing"
+        except OSError as error:
+            raise DomainError(
+                "DOCUMENT_FILE_UNREADABLE",
+                "读取文档文件失败",
+                503,
+                True,
+                "检查文件权限后重试",
+            ) from error
+        else:
+            file_state = "present"
+            try:
+                content = file_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                # File rollback remains byte-exact even if the prior local file is
+                # not valid Markdown. Remote rollback has no safe text equivalent.
+                content = ""
     return {
         "id": document.id,
         "repository_id": document.repository_id,
@@ -132,6 +163,8 @@ def _document_snapshot(request: Request, document: DocumentRecord) -> dict[str, 
         "created_at": document.created_at.isoformat() if document.created_at else None,
         "updated_at": document.updated_at.isoformat() if document.updated_at else None,
         "content": content,
+        "file_state": file_state,
+        "file_bytes_b64": b64encode(file_bytes).decode("ascii") if file_state == "present" else None,
         "chunks": [_chunk_snapshot(chunk) for chunk in _document_store(request).list_chunks(document.id)],
     }
 
@@ -155,6 +188,12 @@ def _snapshot_chunks(snapshot: dict[str, object]) -> list[DocumentChunkRecord]:
     return [_record_from_snapshot(item) for item in cast(list[dict[str, object]], snapshot.get("chunks", []))]
 
 
+def _unowned_vector_ids(request: Request, vector_ids: list[str]) -> list[str]:
+    unique_ids = list(dict.fromkeys(vector_ids))
+    owned_ids = _document_store(request).owned_vector_ids(unique_ids)
+    return [identifier for identifier in unique_ids if identifier not in owned_ids]
+
+
 async def _vector_call(operation, *args):  # type: ignore[no-untyped-def]
     """Run a vector operation to completion even if its caller is cancelled."""
     task = asyncio.create_task(asyncio.to_thread(operation, *args))
@@ -167,23 +206,20 @@ async def _vector_call(operation, *args):  # type: ignore[no-untyped-def]
 
 
 async def _restore_index(request: Request, snapshot: dict[str, object], current_ids: list[str]) -> bool:
-    """Restore vectors from the durable snapshot, preserving IDs shared with new data."""
+    """Restore vectors from the durable snapshot without deleting active ownership."""
     document_id = str(snapshot["id"])
     repository_id = str(snapshot["repository_id"])
     old_chunks = _snapshot_chunks(snapshot)
     old_ids = [chunk.vector_id or chunk.id for chunk in old_chunks]
-    shared_ids = _document_store(request).shared_vector_ids(document_id, current_ids)
-    new_owned = [
-        identifier
-        for identifier in current_ids
-        if identifier not in old_ids and identifier not in shared_ids
-    ]
+    new_owned = _unowned_vector_ids(request, current_ids)
     vector_store = _vector_store(request)
     complete = True
     if new_owned:
         try:
             await _vector_call(vector_store.delete, repository_id, new_owned)
-        except BaseException:  # noqa: BLE001 - compensation must survive cancellation
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - retain intent for retry
             complete = False
     if old_chunks:
         try:
@@ -211,7 +247,9 @@ async def _restore_index(request: Request, snapshot: dict[str, object], current_
                     for chunk in old_chunks
                 ],
             )
-        except BaseException:  # noqa: BLE001 - compensation must survive cancellation
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - retain intent for retry
             complete = False
     return complete
 
@@ -289,8 +327,11 @@ async def _index(
         )
         stale_ids = [identifier for identifier in old_ids if identifier not in new_ids]
         _document_store(request).replace_chunks(document.id, records)
-        if stale_ids:
-            await _vector_call(vector_store.delete, document.repository_id, stale_ids)
+        deletable_stale_ids = _unowned_vector_ids(request, stale_ids)
+        if deletable_stale_ids:
+            await _vector_call(
+                vector_store.delete, document.repository_id, deletable_stale_ids
+            )
     except BaseException as error:
         # Restore SQLite first, then vectors. Shared IDs are never deleted; they are
         # re-upserted from the old snapshot to restore metadata exactly.
@@ -310,20 +351,31 @@ async def _index(
     return indexed
 
 
-def _persist_content(request: Request, document: DocumentRecord, content: str) -> None:
+def _persist_content(
+    request: Request,
+    document: DocumentRecord,
+    content: str,
+    *,
+    mutation_id: str,
+) -> None:
     directory = request.app.state.settings.documents_dir / document.id
-    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     markdown_path = directory / "document.md"
-    fd, temporary = tempfile.mkstemp(dir=directory, prefix="document.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, markdown_path)
-    finally:
-        with suppress(FileNotFoundError):
-            os.unlink(temporary)
+    staged_path = directory / f".document.{mutation_id}.stage"
+    _update_intent(
+        request,
+        mutation_id,
+        phase="file_staging",
+        staged_path=str(staged_path),
+        target_path=str(markdown_path),
+    )
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with staged_path.open("wb") as handle:
+        handle.write(content.encode("utf-8"))
+        handle.flush()
+        os.fsync(handle.fileno())
+    _update_intent(request, mutation_id, phase="file_replace_pending")
+    os.replace(staged_path, markdown_path)
+    _update_intent(request, mutation_id, phase="file_metadata_pending")
     _document_store(request).update_editor(
         document.id,
         title=document.title,
@@ -369,19 +421,64 @@ def _update_intent(request: Request, mutation_id: str, **updates: object) -> dic
     return payload
 
 
-def _restore_file(snapshot: dict[str, object]) -> None:
+def _marked_create_content(content: str, marker: str) -> str:
+    return f"{content}\n\n<!-- {marker} -->"
+
+
+async def _delete_remote_idempotently(
+    request: Request,
+    *,
+    repository_id: str,
+    document_id: str,
+) -> None:
+    """Delete once, accepting NOT_FOUND only after a separate absence check."""
+    gateway = _gateway(request)
+    try:
+        await gateway.delete_document(document_id)
+    except asyncio.CancelledError:
+        raise
+    except DomainError as error:
+        if error.status_code != 404:
+            raise
+        if await gateway.document_exists(repository_id, document_id):
+            raise
+
+
+def _restore_file(snapshot: dict[str, object], target_path: str | None = None) -> None:
     path_value = snapshot.get("markdown_path")
-    if not isinstance(path_value, str) or not path_value:
-        return
-    path = Path(path_value)
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    content = snapshot.get("content", "")
-    # Compensation intentionally uses a direct write fallback: staged os.replace
-    # may itself be the injected failing boundary.
-    path.write_text(str(content), encoding="utf-8")
+    old_path = Path(path_value) if isinstance(path_value, str) and path_value else None
+    current_path = Path(target_path) if target_path else None
+    file_state = snapshot.get("file_state")
+    if file_state == "present" and old_path is not None:
+        encoded = snapshot.get("file_bytes_b64")
+        if not isinstance(encoded, str):
+            raise ValueError("missing file snapshot bytes")
+        old_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # Direct writes remain retryable from the durable byte snapshot even if
+        # os.replace is the injected failing boundary.
+        old_path.write_bytes(b64decode(encoded, validate=True))
+    elif file_state in {"missing", "unconfigured"}:
+        if old_path is not None:
+            with suppress(FileNotFoundError):
+                old_path.unlink()
+    elif old_path is not None:
+        # Backward-compatible restoration for intents written before byte-state
+        # snapshots existed.
+        old_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        old_path.write_text(str(snapshot.get("content", "")), encoding="utf-8")
+    if current_path is not None and current_path != old_path:
+        with suppress(FileNotFoundError):
+            current_path.unlink()
 
 
-async def _compensate_mutation(request: Request, mutation_id: str) -> bool:
+def _cleanup_staged_file(payload: dict[str, object]) -> None:
+    staged_path = payload.get("staged_path")
+    if isinstance(staged_path, str) and staged_path:
+        with suppress(FileNotFoundError):
+            Path(staged_path).unlink()
+
+
+async def _compensate_mutation_unshielded(request: Request, mutation_id: str) -> bool:
     record = _mutation_store(request).get(mutation_id)
     if record is None:
         return True
@@ -391,10 +488,45 @@ async def _compensate_mutation(request: Request, mutation_id: str) -> bool:
     complete = True
     remote_applied = bool(payload.get("remote_applied"))
     remote_id = payload.get("remote_id")
+    remote_repository_id = payload.get("remote_repository_id")
+    if record.operation == "create" and not isinstance(remote_id, str):
+        marker = payload.get("marker")
+        if isinstance(remote_repository_id, str) and isinstance(marker, str):
+            try:
+                discovered = await _await_shielded(
+                    _gateway(request).find_document_by_marker(
+                        remote_repository_id, marker
+                    )
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - preserve uncertain create intent
+                complete = False
+            else:
+                if discovered is not None:
+                    remote_id = discovered.yuque_id
+                    remote_applied = True
+                    payload.update(
+                        remote_id=remote_id,
+                        remote_url=discovered.url,
+                        remote_applied=True,
+                    )
+                    _mutation_store(request).update(mutation_id, payload=payload)
+        else:
+            complete = False
     if isinstance(remote_id, str) and (remote_applied or record.operation == "update"):
         try:
             if record.operation == "create":
-                await _await_shielded(_gateway(request).delete_document(remote_id))
+                if not isinstance(remote_repository_id, str):
+                    complete = False
+                else:
+                    await _await_shielded(
+                        _delete_remote_idempotently(
+                            request,
+                            repository_id=remote_repository_id,
+                            document_id=remote_id,
+                        )
+                    )
             else:
                 old = cast(dict[str, object], payload.get("old_snapshot") or {})
                 await _await_shielded(
@@ -406,7 +538,9 @@ async def _compensate_mutation(request: Request, mutation_id: str) -> bool:
                         )
                     )
                 )
-        except BaseException:  # noqa: BLE001 - preserve intent across every failure
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - preserve intent across every failure
             complete = False
     old_snapshot = payload.get("old_snapshot")
     document_id = record.document_id or payload.get("document_id")
@@ -415,11 +549,6 @@ async def _compensate_mutation(request: Request, mutation_id: str) -> bool:
             current_ids = list(cast(list[str], payload.get("new_vector_ids") or []))
             if not current_ids:
                 current_ids = _document_store(request).vector_ids(document_id)
-            if current_ids:
-                try:
-                    await _vector_call(_vector_store(request).delete, record.repository_id, current_ids)
-                except BaseException:  # noqa: BLE001 - preserve intent across every failure
-                    complete = False
             try:
                 current = _document_store(request).get(document_id)
                 path_value = (
@@ -431,26 +560,68 @@ async def _compensate_mutation(request: Request, mutation_id: str) -> bool:
                     with suppress(FileNotFoundError):
                         Path(path_value).unlink()
                 _document_store(request).delete_local(document_id)
-            except BaseException:  # noqa: BLE001 - preserve intent across every failure
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - preserve intent across every failure
                 complete = False
+            deletable_ids = _unowned_vector_ids(request, current_ids)
+            if deletable_ids:
+                try:
+                    await _vector_call(
+                        _vector_store(request).delete,
+                        record.repository_id,
+                        deletable_ids,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 - preserve intent across every failure
+                    complete = False
     else:
         try:
-            _restore_file(old_snapshot)
-        except BaseException:  # noqa: BLE001 - preserve intent across every failure
+            target_path = payload.get("target_path")
+            _restore_file(
+                old_snapshot,
+                target_path if isinstance(target_path, str) else None,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - preserve intent across every failure
             complete = False
         try:
             _document_store(request).restore_snapshot(old_snapshot, _snapshot_chunks(old_snapshot))
-        except BaseException:  # noqa: BLE001 - preserve intent across every failure
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - preserve intent across every failure
             complete = False
         try:
             current_ids = list(cast(list[str], payload.get("new_vector_ids") or []))
             if await _restore_index(request, old_snapshot, current_ids) is False:
                 complete = False
-        except BaseException:  # noqa: BLE001 - preserve intent across every failure
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - preserve intent across every failure
+            complete = False
+    if complete:
+        try:
+            _cleanup_staged_file(payload)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - retain intent until stage cleanup converges
             complete = False
     if complete:
         _mutation_store(request).delete(mutation_id)
     return complete
+
+
+async def _compensate_mutation(request: Request, mutation_id: str) -> bool:
+    """Finish compensation even when the recovery caller is cancelled."""
+    task = asyncio.create_task(_compensate_mutation_unshielded(request, mutation_id))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        with suppress(BaseException):
+            await asyncio.shield(task)
+        raise
 
 
 async def recover_document_mutations(app) -> int:  # type: ignore[no-untyped-def]
@@ -458,13 +629,19 @@ async def recover_document_mutations(app) -> int:  # type: ignore[no-untyped-def
     request = Request({"type": "http", "app": app})
     recovered = 0
     for record in _mutation_store(request).list():
+        if not _claim_mutation(app, record.id):
+            continue
         try:
             if await _compensate_mutation(request, record.id):
                 recovered += 1
-        except BaseException:  # noqa: BLE001, S112 - keep durable intent for next retry
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001, S112 - keep durable intent for next retry
             # Keep the intent durable for the next request/startup. Cancellation
             # cannot make a partially compensated mutation disappear.
             continue
+        finally:
+            _release_mutation(app, record.id)
     return recovered
 
 
@@ -500,16 +677,30 @@ async def create_document(request: Request, repository_id: str, body: DocumentIn
     repository = _repository_store(request).get(repository_id)
     if repository is None or not repository.yuque_id:
         raise _not_found()
+    mutation_id = str(uuid4())
+    marker = f"docmind-mutation:{mutation_id}"
     intent = _mutation_store(request).create(
+        mutation_id=mutation_id,
         operation="create",
         repository_id=repository.id,
         document_id=None,
-        payload={"phase": "remote_pending", "remote_applied": False},
+        payload={
+            "phase": "remote_pending",
+            "remote_applied": False,
+            "remote_repository_id": repository.yuque_id,
+            "requested_title": body.title,
+            "requested_content": body.content,
+            "marker": marker,
+        },
     )
+    if not _claim_mutation(request.app, intent.id):  # pragma: no cover - UUID collision
+        raise DomainError("MUTATION_CONFLICT", "文档变更正在进行", 409)
     try:
         remote = await _gateway(request).create_document(
             CreateYuqueDocumentRequest(
-                repository_id=repository.yuque_id, title=body.title, content=body.content
+                repository_id=repository.yuque_id,
+                title=body.title,
+                content=_marked_create_content(body.content, marker),
             )
         )
         _update_intent(
@@ -543,7 +734,7 @@ async def create_document(request: Request, repository_id: str, body: DocumentIn
             mutation_id=intent.id,
         )
         _update_intent(request, intent.id, phase="file_pending")
-        _persist_content(request, indexed, body.content)
+        _persist_content(request, indexed, body.content, mutation_id=intent.id)
         _mutation_store(request).delete(intent.id)
     except BaseException as error:
         mutation = _mutation_store(request).get(intent.id)
@@ -556,6 +747,8 @@ async def create_document(request: Request, repository_id: str, body: DocumentIn
         if not remote_was_applied:
             raise _remote_failure(error) from error
         raise DomainError("INDEX_FAILED", "写入文档索引失败", 503, True) from error
+    finally:
+        _release_mutation(request.app, intent.id)
     persisted = _document_store(request).get(document.id)
     if persisted is None:
         raise _not_found()
@@ -591,6 +784,8 @@ async def update_document(request: Request, document_id: str, body: DocumentInpu
             "new_content": body.content,
         },
     )
+    if not _claim_mutation(request.app, intent.id):  # pragma: no cover - UUID collision
+        raise DomainError("MUTATION_CONFLICT", "文档变更正在进行", 409)
     try:
         remote = await _gateway(request).update_document(
             UpdateYuqueDocumentRequest(document_id=document.yuque_id, title=body.title, content=body.content)
@@ -614,7 +809,7 @@ async def update_document(request: Request, document_id: str, body: DocumentInpu
         )
         indexed.title = remote.title
         _update_intent(request, intent.id, phase="file_pending")
-        _persist_content(request, indexed, body.content)
+        _persist_content(request, indexed, body.content, mutation_id=intent.id)
         _mutation_store(request).delete(intent.id)
     except BaseException as error:
         mutation = _mutation_store(request).get(intent.id)
@@ -627,6 +822,8 @@ async def update_document(request: Request, document_id: str, body: DocumentInpu
         if not remote_was_applied:
             raise _remote_failure(error) from error
         raise DomainError("INDEX_FAILED", "写入文档索引失败", 503, True) from error
+    finally:
+        _release_mutation(request.app, intent.id)
     return _detail(indexed)
 
 
@@ -638,7 +835,15 @@ async def delete_document(request: Request, document_id: str, body: DocumentDele
         pending = next((item for item in _cleanup_store(request).list() if item.document_id == document_id), None)
         if pending is not None:
             try:
-                await asyncio.to_thread(_vector_store(request).delete, pending.repository_id, json.loads(pending.vector_ids_json))
+                pending_ids = _unowned_vector_ids(
+                    request, list(json.loads(pending.vector_ids_json))
+                )
+                if pending_ids:
+                    await asyncio.to_thread(
+                        _vector_store(request).delete,
+                        pending.repository_id,
+                        pending_ids,
+                    )
                 _cleanup_store(request).delete(pending.id)
             except Exception as error:
                 raise DomainError("INDEX_FAILED", "清理文档索引失败", 503, True) from error
@@ -653,8 +858,14 @@ async def delete_document(request: Request, document_id: str, body: DocumentDele
     except Exception as error:  # noqa: BLE001 - gateway boundary maps all failures
         raise _remote_failure(error) from None
     vector_ids = _document_store(request).vector_ids(document.id)
-    try:
-        await asyncio.to_thread(_vector_store(request).delete, document.repository_id, vector_ids)
-    except Exception:  # noqa: BLE001 - local cleanup must continue after remote success
-        _cleanup_store(request).create(document.repository_id, document.id, vector_ids)
     _document_store(request).delete_local(document.id)
+    deletable_ids = _unowned_vector_ids(request, vector_ids)
+    try:
+        if deletable_ids:
+            await asyncio.to_thread(
+                _vector_store(request).delete, document.repository_id, deletable_ids
+            )
+    except Exception:  # noqa: BLE001 - local cleanup must continue after remote success
+        _cleanup_store(request).create(
+            document.repository_id, document.id, deletable_ids
+        )

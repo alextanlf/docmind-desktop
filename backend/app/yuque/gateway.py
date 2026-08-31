@@ -23,6 +23,7 @@ from app.schemas.yuque import (
     YuqueDocumentContent,
     YuqueRepository,
 )
+from app.yuque.base_page import RETRY_DELAYS
 from app.yuque.dashboard_page import DashboardPage
 from app.yuque.editor_page import EditorPage
 from app.yuque.login_page import LoginPage
@@ -41,6 +42,12 @@ class YuqueGateway(Protocol):
     async def list_documents(self, repository_id: str) -> list[YuqueDocument]: ...
 
     async def create_document(self, request: CreateYuqueDocumentRequest) -> YuqueDocument: ...
+
+    async def find_document_by_marker(
+        self, repository_id: str, marker: str
+    ) -> YuqueDocument | None: ...
+
+    async def document_exists(self, repository_id: str, document_id: str) -> bool: ...
 
     async def read_document(self, document_id: str) -> YuqueDocumentContent: ...
 
@@ -114,6 +121,28 @@ class FakeYuqueGateway:
             )
             self._documents[document_id] = document
             return _document_summary(document)
+
+    async def find_document_by_marker(
+        self, repository_id: str, marker: str
+    ) -> YuqueDocument | None:
+        async with self._serialized():
+            self._require_login(allow_first_use=True)
+            self._repository(repository_id)
+            return next(
+                (
+                    _document_summary(document)
+                    for document in self._documents.values()
+                    if document.repository_id == repository_id and marker in document.content
+                ),
+                None,
+            )
+
+    async def document_exists(self, repository_id: str, document_id: str) -> bool:
+        async with self._serialized():
+            self._require_login(allow_first_use=True)
+            self._repository(repository_id)
+            document = self._documents.get(document_id)
+            return document is not None and document.repository_id == repository_id
 
     async def read_document(self, document_id: str) -> YuqueDocumentContent:
         async with self._serialized():
@@ -294,6 +323,28 @@ class PlaywrightYuqueGateway:
                 ) from None
             return await repository.with_retry("confirm-created-document", find_created_document)
 
+    async def find_document_by_marker(
+        self, repository_id: str, marker: str
+    ) -> YuqueDocument | None:
+        for delay in (*RETRY_DELAYS, None):
+            documents = await self.list_documents(repository_id)
+            for document in documents:
+                content = await self.read_document(document.yuque_id)
+                if marker in content.content:
+                    return document
+            if delay is None:
+                return None
+            await asyncio.sleep(delay)
+        return None
+
+    async def document_exists(self, repository_id: str, document_id: str) -> bool:
+        documents = await self.list_documents(repository_id)
+        target = _resource_identity(document_id)
+        return any(
+            target in {_resource_identity(document.yuque_id), _resource_identity(document.url)}
+            for document in documents
+        )
+
     async def read_document(self, document_id: str) -> YuqueDocumentContent:
         async with self._background_page("read-document") as page:
             editor = EditorPage(page, self.settings.screenshots_dir, self._request_id)
@@ -412,3 +463,10 @@ def _repository_id_from_document_url(url: str) -> str:
     path = urlparse(url).path.strip("/")
     repository_id, separator, _ = path.rpartition("/")
     return repository_id if separator else ""
+
+
+def _resource_identity(value: str | None) -> str:
+    if not value:
+        return ""
+    parsed = urlparse(value)
+    return (parsed.path or value).strip("/")

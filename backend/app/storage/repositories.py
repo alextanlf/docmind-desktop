@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, or_, select
 
 from app.api.errors import DomainError
 from app.imports.state_machine import ensure_transition_allowed
@@ -203,15 +203,21 @@ class DocumentStore:
             chunks = list(session.scalars(statement))
             return [chunk.vector_id or chunk.id for chunk in chunks]
 
-    def shared_vector_ids(self, document_id: str, vector_ids: list[str]) -> set[str]:
+    def owned_vector_ids(self, vector_ids: list[str]) -> set[str]:
+        """Return vector IDs still referenced by any active chunk."""
         if not vector_ids:
             return set()
         with self.database.session() as session:
-            statement = select(DocumentChunkRecord.vector_id).where(
-                DocumentChunkRecord.document_id != document_id,
-                DocumentChunkRecord.vector_id.in_(vector_ids),
+            statement = select(DocumentChunkRecord.id, DocumentChunkRecord.vector_id).where(
+                or_(
+                    DocumentChunkRecord.vector_id.in_(vector_ids),
+                    and_(
+                        DocumentChunkRecord.vector_id.is_(None),
+                        DocumentChunkRecord.id.in_(vector_ids),
+                    ),
+                )
             )
-            return {identifier for identifier in session.scalars(statement) if identifier is not None}
+            return {vector_id or chunk_id for chunk_id, vector_id in session.execute(statement)}
 
     def list_chunks(self, document_id: str) -> list[DocumentChunkRecord]:
         with self.database.session() as session:
@@ -632,6 +638,7 @@ class DocumentMutationStore:
     def create(
         self,
         *,
+        mutation_id: str | None = None,
         operation: str,
         repository_id: str,
         document_id: str | None,
@@ -639,6 +646,7 @@ class DocumentMutationStore:
     ) -> DocumentMutationRecord:
         with self.database.session() as session:
             record = DocumentMutationRecord(
+                id=mutation_id or str(uuid4()),
                 operation=operation,
                 repository_id=repository_id,
                 document_id=document_id,

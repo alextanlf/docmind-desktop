@@ -69,3 +69,27 @@ async def test_fake_gateway_rejects_unknown_document(fake_yuque: FakeYuqueGatewa
         await fake_yuque.read_document("doc-missing")
 
     assert getattr(error.value, "code", None) == "YUQUE_PAGE_CHANGED"
+
+
+async def test_fake_gateway_discovers_marker_and_verifies_document_absence(
+    fake_yuque: FakeYuqueGateway,
+) -> None:
+    """Recovery lookup is content-specific and absence checks are explicit."""
+    repository = await fake_yuque.create_repository(CreateRepositoryRequest(name="SwiftUI"))
+    created = await fake_yuque.create_document(
+        CreateYuqueDocumentRequest(
+            repository_id=repository.yuque_id,
+            title="State",
+            content="# State\n\n<!-- docmind-mutation:abc -->",
+        )
+    )
+
+    found = await fake_yuque.find_document_by_marker(
+        repository.yuque_id, "docmind-mutation:abc"
+    )
+
+    assert found == created
+    assert await fake_yuque.find_document_by_marker(repository.yuque_id, "missing") is None
+    assert await fake_yuque.document_exists(repository.yuque_id, created.yuque_id) is True
+    await fake_yuque.delete_document(created.yuque_id)
+    assert await fake_yuque.document_exists(repository.yuque_id, created.yuque_id) is False
