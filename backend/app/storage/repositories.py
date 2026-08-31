@@ -136,6 +136,29 @@ class DocumentStore:
             session.flush()
             return document
 
+    def update_editor(
+        self,
+        document_id: str,
+        *,
+        title: str,
+        yuque_id: str | None,
+        yuque_url: str | None,
+        markdown_path: str,
+        source_url: str | None,
+    ) -> DocumentRecord:
+        with self.database.session() as session:
+            document = session.get(DocumentRecord, document_id)
+            if document is None:
+                raise DomainError("NOT_FOUND", "资源不存在", 404)
+            document.title = title
+            document.yuque_id = yuque_id
+            document.yuque_url = yuque_url
+            document.markdown_path = markdown_path
+            document.source_url = source_url
+            document.updated_at = utc_now()
+            session.flush()
+            return document
+
     def save_with_chunks(self, document: DocumentRecord, chunks: list[DocumentChunkRecord]) -> None:
         with self.database.session() as session:
             saved_document = session.merge(document)
@@ -477,12 +500,16 @@ class ConversationStore:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    def create_session(self, repository_ids: list[str]) -> SessionRecord:
+    def create_session(self, repository_ids: list[str], *, title: str | None = None) -> SessionRecord:
         with self.database.session() as session:
-            record = SessionRecord(repository_scope_json=json.dumps(repository_ids))
+            record = SessionRecord(title=title, repository_scope_json=json.dumps(repository_ids))
             session.add(record)
             session.flush()
             return record
+
+    def get_session(self, session_id: str) -> SessionRecord | None:
+        with self.database.session() as session:
+            return session.get(SessionRecord, session_id)
 
     def list_sessions(self) -> list[SessionRecord]:
         with self.database.session() as session:
@@ -498,6 +525,9 @@ class ConversationStore:
     def add_message(self, message: MessageRecord) -> MessageRecord:
         with self.database.session() as session:
             session.add(message)
+            parent = session.get(SessionRecord, message.session_id)
+            if parent is not None:
+                parent.updated_at = utc_now()
             session.flush()
             return message
 

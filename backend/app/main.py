@@ -9,9 +9,12 @@ from fastapi import Depends, FastAPI
 
 from app.api.auth import require_runtime_token
 from app.api.chat import router as chat_router
+from app.api.documents import router as documents_router
 from app.api.embedding import router as embedding_router
 from app.api.errors import DomainError, domain_error_handler
 from app.api.imports import router as imports_router
+from app.api.repositories import router as repositories_router
+from app.api.sessions import router as sessions_router
 from app.api.settings import SettingsService
 from app.api.settings import router as settings_router
 from app.api.yuque import router as yuque_router
@@ -102,6 +105,7 @@ def create_app(
         repository_store = RepositoryStore(database)
         conversation_store = ConversationStore(database)
         vector_store = PersistentVectorStore(runtime_settings.vectorstore_settings)
+        document_store = DocumentStore(database)
         app.state.import_service = ImportService(
             settings=runtime_settings,
             source_inspector=SourceInspector(runtime_settings),
@@ -111,7 +115,7 @@ def create_app(
             vector_store=vector_store,
             yuque_gateway=runtime_yuque_gateway,
             repository_store=repository_store,
-            document_store=DocumentStore(database),
+            document_store=document_store,
             job_store=ImportJobStore(database),
             event_broker=InMemoryEventBroker(),
         )
@@ -120,6 +124,10 @@ def create_app(
             runtime_secret_store,
         )
         app.state.repository_store = repository_store
+        app.state.document_store = document_store
+        app.state.vector_store = vector_store
+        app.state.document_parser = DocumentParser()
+        app.state.document_chunker = SemanticChunker()
         app.state.conversation_store = conversation_store
         chat_service = ChatService(
             retriever=HybridRetriever(
@@ -159,6 +167,9 @@ def create_app(
     app.include_router(embedding_router)
     app.include_router(yuque_router)
     app.include_router(imports_router)
+    app.include_router(repositories_router)
+    app.include_router(documents_router)
+    app.include_router(sessions_router)
     app.include_router(chat_router)
 
     @app.get("/health", response_model=HealthResponse)
