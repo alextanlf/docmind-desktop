@@ -25,6 +25,7 @@ def test_upgrade_creates_all_phase_one_tables() -> None:
         "messages",
         "settings",
         "vector_cleanups",
+        "document_mutations",
     }
     database.engine.dispose()
 
