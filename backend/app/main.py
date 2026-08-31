@@ -1,20 +1,32 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI
 
 from app.api.auth import require_runtime_token
+from app.api.chat import router as chat_router
 from app.api.embedding import router as embedding_router
 from app.api.errors import DomainError, domain_error_handler
 from app.api.imports import router as imports_router
 from app.api.settings import SettingsService
 from app.api.settings import router as settings_router
 from app.api.yuque import router as yuque_router
+from app.chat.service import ChatService
 from app.config import AppSettings, get_settings
 from app.core.embedding import EmbeddingProvider, create_embedding_provider
+from app.core.llm import (
+    ChatDelta,
+    ChatRequest,
+    LLMProvider,
+    ModelConfig,
+    ModelConnectionResult,
+    OpenAICompatibleProvider,
+)
+from app.core.retrieval import HybridRetriever
 from app.core.secrets import KeyringSecretStore, SecretStore
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
@@ -24,6 +36,7 @@ from app.imports.service import ImportService
 from app.schemas.common import HealthResponse
 from app.storage.database import Database
 from app.storage.repositories import (
+    ConversationStore,
     DocumentStore,
     ImportJobStore,
     RepositoryStore,
@@ -33,11 +46,41 @@ from app.storage.vectorstore import PersistentVectorStore
 from app.yuque.gateway import PlaywrightYuqueGateway, YuqueGateway
 
 
+class _RuntimeLLMProvider:
+    def __init__(
+        self, settings_service: SettingsService, secret_store: SecretStore
+    ) -> None:
+        self.settings_service = settings_service
+        self.secret_store = secret_store
+
+    async def test_connection(self) -> ModelConnectionResult:
+        return await self._provider().test_connection()
+
+    async def stream_chat(self, request: ChatRequest) -> AsyncIterator[ChatDelta]:
+        async for delta in self._provider().stream_chat(request):
+            yield delta
+
+    def _provider(self) -> LLMProvider:
+        api_key = self.secret_store.get("model-api-key")
+        if not api_key:
+            raise DomainError(
+                "MODEL_AUTH_FAILED",
+                "请先配置 API Key",
+                400,
+                False,
+                "保存 API Key 后重试",
+            )
+        return OpenAICompatibleProvider(
+            ModelConfig(**self.settings_service.model().model_dump()), api_key
+        )
+
+
 def create_app(
     settings: AppSettings | None = None,
     secret_store: SecretStore | None = None,
     embedding_provider: EmbeddingProvider | None = None,
     yuque_gateway: YuqueGateway | None = None,
+    llm_provider: LLMProvider | None = None,
 ) -> FastAPI:
     runtime_settings = settings or get_settings()
     runtime_secret_store = secret_store or KeyringSecretStore()
@@ -56,19 +99,40 @@ def create_app(
         app.state.settings_service = SettingsService(
             SettingStore(database), runtime_secret_store
         )
+        repository_store = RepositoryStore(database)
+        conversation_store = ConversationStore(database)
+        vector_store = PersistentVectorStore(runtime_settings.vectorstore_settings)
         app.state.import_service = ImportService(
             settings=runtime_settings,
             source_inspector=SourceInspector(runtime_settings),
             parser=DocumentParser(),
             chunker=SemanticChunker(),
             embedding_provider=runtime_embedding_provider,
-            vector_store=PersistentVectorStore(runtime_settings.vectorstore_settings),
+            vector_store=vector_store,
             yuque_gateway=runtime_yuque_gateway,
-            repository_store=RepositoryStore(database),
+            repository_store=repository_store,
             document_store=DocumentStore(database),
             job_store=ImportJobStore(database),
             event_broker=InMemoryEventBroker(),
         )
+        runtime_llm_provider = llm_provider or _RuntimeLLMProvider(
+            app.state.settings_service,
+            runtime_secret_store,
+        )
+        app.state.repository_store = repository_store
+        app.state.conversation_store = conversation_store
+        chat_service = ChatService(
+            retriever=HybridRetriever(
+                database=database,
+                vector_store=vector_store,
+                embedding_provider=runtime_embedding_provider,
+                similarity_threshold=runtime_settings.rag_similarity_threshold,
+            ),
+            llm=runtime_llm_provider,
+            conversation_store=conversation_store,
+            event_broker=InMemoryEventBroker(),
+        )
+        app.state.chat_service = chat_service
         await app.state.import_service.recover_pending_vector_cleanup()
         try:
             yield
@@ -78,6 +142,7 @@ def create_app(
                 task.cancel()
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
+            await chat_service.stop()
             await runtime_yuque_gateway.close()
             database.engine.dispose()
 
@@ -94,6 +159,7 @@ def create_app(
     app.include_router(embedding_router)
     app.include_router(yuque_router)
     app.include_router(imports_router)
+    app.include_router(chat_router)
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
