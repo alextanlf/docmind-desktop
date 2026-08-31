@@ -4,8 +4,19 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import SecretStr, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class EmbeddingSettings(BaseModel):
+    model_name: str = "BAAI/bge-small-zh-v1.5"
+    device: str = "cpu"
+    cache_dir: Path | None = None
+    dimension: int = Field(default=512, gt=0)
+
+
+class VectorStoreSettings(BaseModel):
+    directory: Path
 
 
 class AppSettings(BaseSettings):
@@ -20,6 +31,10 @@ class AppSettings(BaseSettings):
     source_read_timeout_seconds: float = 30.0
     html_markdown_max_bytes: int = 20 * 1024 * 1024
     pdf_max_bytes: int = 100 * 1024 * 1024
+    embedding_model_name: str = "BAAI/bge-small-zh-v1.5"
+    embedding_device: str = "cpu"
+    embedding_dimension: int = Field(default=512, gt=0)
+    rag_similarity_threshold: float = Field(default=0.65, ge=-1.0, le=1.0)
 
     model_config = SettingsConfigDict(env_prefix="DOCMIND_", extra="ignore")
 
@@ -51,6 +66,23 @@ class AppSettings(BaseSettings):
     @property
     def staging_dir(self) -> Path:
         return self.data_dir / "imports" / "staging"
+
+    @property
+    def vectorstore_dir(self) -> Path:
+        return self.data_dir / "vectorstore"
+
+    @property
+    def embedding_settings(self) -> EmbeddingSettings:
+        return EmbeddingSettings(
+            model_name=self.embedding_model_name,
+            device=self.embedding_device,
+            cache_dir=self.data_dir / "models",
+            dimension=self.embedding_dimension,
+        )
+
+    @property
+    def vectorstore_settings(self) -> VectorStoreSettings:
+        return VectorStoreSettings(directory=self.vectorstore_dir)
 
 
 def get_settings() -> AppSettings:
