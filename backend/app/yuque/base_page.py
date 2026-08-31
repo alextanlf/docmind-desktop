@@ -49,8 +49,13 @@ class BasePage:
         for attempt, delay in enumerate((*RETRY_DELAYS, None)):
             try:
                 return await operation()
-            except DomainError:
-                raise
+            except DomainError as error:
+                if not error.retryable:
+                    raise
+                if delay is None:
+                    await self._capture_failure(operation_name)
+                    raise
+                await asyncio.sleep(delay)
             except _RETRYABLE_ERRORS:
                 if delay is None:
                     await self._capture_failure(operation_name)
@@ -66,6 +71,8 @@ class BasePage:
         self.screenshots_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         filename = f"{_safe_filename(self.request_id)}-{_safe_filename(operation_name)}.png"
         try:
+            if hasattr(self.page, "add_style_tag"):
+                await self.page.add_style_tag(content=_SCREENSHOT_MASK_CSS)
             await self.page.screenshot(path=str(self.screenshots_dir / filename))
         except _RETRYABLE_ERRORS:
             return
@@ -88,6 +95,15 @@ async def maybe_await(value: T | Awaitable[T]) -> T:
 
 
 _RETRYABLE_ERRORS = (PlaywrightError, TimeoutError, ConnectionError, OSError)
+
+
+_SCREENSHOT_MASK_CSS = """
+input, textarea, [contenteditable='true'],
+[data-testid*='qr'], [data-testid*='account'], [data-testid*='session'],
+img[src*='qrcode'], img[src*='qr'], canvas {
+  visibility: hidden !important;
+}
+"""
 
 
 def _safe_filename(value: str) -> str:
