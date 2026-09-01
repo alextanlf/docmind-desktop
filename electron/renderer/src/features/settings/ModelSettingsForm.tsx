@@ -21,12 +21,14 @@ type Props = {
   settings: SettingsView;
   testButtonLabel?: string;
   onConnectionSuccess?: () => void;
+  onConnectionInvalidated?: () => void;
 };
 
 export function ModelSettingsForm({
   settings,
   testButtonLabel = "测试连接",
   onConnectionSuccess,
+  onConnectionInvalidated,
 }: Props) {
   const initialPreset =
     settings.model.preset in PRESETS ? (settings.model.preset as Preset) : "custom";
@@ -39,17 +41,26 @@ export function ModelSettingsForm({
   const [hasSavedKey, setHasSavedKey] = useState(settings.hasApiKey);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [needsSave, setNeedsSave] = useState(false);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+
+  function invalidateConnection() {
+    setNeedsSave(true);
+    setMessage(null);
+    onConnectionInvalidated?.();
+  }
 
   function changePreset(nextPreset: Preset) {
     const next = PRESETS[nextPreset];
     setPreset(nextPreset);
     setBaseUrl(next.baseUrl);
     setModel(next.model);
+    invalidateConnection();
   }
 
   async function save(event: FormEvent) {
     event.preventDefault();
+    onConnectionInvalidated?.();
     setSaving(true);
     setMessage(null);
     try {
@@ -64,6 +75,7 @@ export function ModelSettingsForm({
       setHasSavedKey(saved.hasApiKey);
       setApiKey("");
       setClearKey(false);
+      setNeedsSave(false);
       setMessage({ tone: "success", text: "设置已保存" });
     } catch (error) {
       setMessage({ tone: "error", text: clientErrorMessage(error) });
@@ -105,18 +117,34 @@ export function ModelSettingsForm({
         </label>
         <label className="form-field-wide">
           <span>Base URL</span>
-          <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} type="url" />
+          <input
+            value={baseUrl}
+            onChange={(event) => {
+              setBaseUrl(event.target.value);
+              invalidateConnection();
+            }}
+            type="url"
+          />
         </label>
         <label>
           <span>模型名称</span>
-          <input value={model} onChange={(event) => setModel(event.target.value)} />
+          <input
+            value={model}
+            onChange={(event) => {
+              setModel(event.target.value);
+              invalidateConnection();
+            }}
+          />
         </label>
         <label>
           <span>超时时间（秒）</span>
           <input
             max={300}
             min={1}
-            onChange={(event) => setTimeoutSeconds(Number(event.target.value))}
+            onChange={(event) => {
+              setTimeoutSeconds(Number(event.target.value));
+              invalidateConnection();
+            }}
             type="number"
             value={timeoutSeconds}
           />
@@ -126,7 +154,10 @@ export function ModelSettingsForm({
           <input
             autoComplete="off"
             disabled={clearKey}
-            onChange={(event) => setApiKey(event.target.value)}
+            onChange={(event) => {
+              setApiKey(event.target.value);
+              invalidateConnection();
+            }}
             placeholder={hasSavedKey ? "已安全保存，留空可保留" : "请输入 API Key"}
             type="password"
             value={apiKey}
@@ -137,7 +168,10 @@ export function ModelSettingsForm({
         <label className="checkbox-row">
           <input
             checked={clearKey}
-            onChange={(event) => setClearKey(event.target.checked)}
+            onChange={(event) => {
+              setClearKey(event.target.checked);
+              invalidateConnection();
+            }}
             type="checkbox"
           />
           <span>清除已保存的 API Key</span>
@@ -163,7 +197,7 @@ export function ModelSettingsForm({
         </button>
         <button
           className="button button-primary"
-          disabled={!hasSavedKey || testing || saving}
+          disabled={!hasSavedKey || needsSave || testing || saving}
           onClick={testConnection}
           type="button"
         >

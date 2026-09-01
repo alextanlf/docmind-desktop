@@ -1,14 +1,16 @@
 import { LoaderCircle, Trash2, X } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { SettingsView } from "../../../../shared/contracts";
 import { appQueryClient } from "../../app/query-client";
 import { IconButton } from "../../components/IconButton";
+import { Modal } from "../../components/Modal";
 import { clientErrorMessage, settingsKeys } from "./settings.queries";
 
 export function DiagnosticsSection({ settings }: { settings: SettingsView }) {
   const [confirming, setConfirming] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   async function clearScreenshots() {
     setClearing(true);
@@ -44,49 +46,45 @@ export function DiagnosticsSection({ settings }: { settings: SettingsView }) {
         </div>
       </div>
       {confirming ? (
-        <div className="dialog-backdrop dialog-backdrop-nested">
-          <section
-            aria-labelledby="diagnostics-confirm-title"
-            aria-modal="true"
-            className="confirm-dialog"
-            role="dialog"
-          >
-            <div className="dialog-title-row">
-              <h3 id="diagnostics-confirm-title">确认清理失败截图</h3>
-              <IconButton
-                icon={<X aria-hidden="true" size={18} />}
-                label="关闭确认窗口"
-                onClick={() => setConfirming(false)}
-                size="small"
-              />
-            </div>
-            <p>
-              将删除 {settings.screenshotCount} 张语雀失败诊断截图，不影响文档、索引或其他本地数据。
+        <Modal
+          backdropClassName="dialog-backdrop-nested"
+          className="confirm-dialog"
+          initialFocusRef={closeButtonRef}
+          labelledBy="diagnostics-confirm-title"
+          onEscape={() => setConfirming(false)}
+        >
+          <div className="dialog-title-row">
+            <h3 id="diagnostics-confirm-title">确认清理失败截图</h3>
+            <IconButton
+              icon={<X aria-hidden="true" size={18} />}
+              label="关闭确认窗口"
+              onClick={() => setConfirming(false)}
+              ref={closeButtonRef}
+              size="small"
+            />
+          </div>
+          <p>
+            将删除 {settings.screenshotCount} 张语雀失败诊断截图，不影响文档、索引或其他本地数据。
+          </p>
+          {error ? (
+            <p className="error-copy" role="alert">
+              {error}
             </p>
-            {error ? (
-              <p className="error-copy" role="alert">
-                {error}
-              </p>
-            ) : null}
-            <div className="dialog-actions">
-              <button className="button button-secondary" onClick={() => setConfirming(false)}>
-                取消
-              </button>
-              <button
-                className="button button-danger"
-                disabled={clearing}
-                onClick={clearScreenshots}
-              >
-                {clearing ? (
-                  <LoaderCircle aria-hidden="true" className="spin" size={16} />
-                ) : (
-                  <Trash2 aria-hidden="true" size={16} />
-                )}
-                确认清理
-              </button>
-            </div>
-          </section>
-        </div>
+          ) : null}
+          <div className="dialog-actions">
+            <button className="button button-secondary" onClick={() => setConfirming(false)}>
+              取消
+            </button>
+            <button className="button button-danger" disabled={clearing} onClick={clearScreenshots}>
+              {clearing ? (
+                <LoaderCircle aria-hidden="true" className="spin" size={16} />
+              ) : (
+                <Trash2 aria-hidden="true" size={16} />
+              )}
+              确认清理
+            </button>
+          </div>
+        </Modal>
       ) : null}
     </>
   );
