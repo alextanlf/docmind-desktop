@@ -5,10 +5,21 @@ import { ReferencePanel } from "../../renderer/src/features/references/Reference
 import { useUiStore } from "../../renderer/src/stores/ui-store";
 import { citation, installDocMindApi } from "./test-docmind-api";
 
-function ReferenceSurface({ content = "答案 [S1]" }: { content?: string }) {
+function ReferenceSurface({
+  content = "答案 [S1]",
+  messageKey,
+}: {
+  content?: string;
+  messageKey?: string;
+}) {
   return (
     <>
-      <MarkdownMessage citationScope="message-1" content={content} citations={[citation]} />
+      <MarkdownMessage
+        key={messageKey}
+        citationScope="message-1"
+        content={content}
+        citations={[citation]}
+      />
       <aside className="workspace-reference">
         <ReferencePanel citations={[citation]} />
       </aside>
@@ -164,5 +175,39 @@ describe("引用资料", () => {
     expect(focusStates).toEqual(["false"]);
     expect(citationButton).toHaveFocus();
     Object.defineProperty(window, "matchMedia", { configurable: true, value: originalMatchMedia });
+  });
+
+  it("returns focus to the current citation trigger after the original trigger remounts", async () => {
+    const { rerender } = render(
+      <>
+        <ReferenceSurface messageKey="original" />
+        <ReferenceOpenMarker />
+      </>,
+    );
+    const originalTrigger = screen.getByRole("button", { name: "查看引用 S1" });
+
+    fireEvent.click(originalTrigger);
+    rerender(
+      <>
+        <ReferenceSurface messageKey="replacement" />
+        <ReferenceOpenMarker />
+      </>,
+    );
+    const currentTrigger = screen.getByRole("button", { name: "查看引用 S1" });
+
+    expect(originalTrigger.isConnected).toBe(false);
+    expect(currentTrigger.isConnected).toBe(true);
+    expect(currentTrigger).not.toBe(originalTrigger);
+    expect(currentTrigger.dataset.citationId).toBe(originalTrigger.dataset.citationId);
+    expect(useUiStore.getState().activeCitationTrigger).toBe(originalTrigger);
+
+    fireEvent.click(screen.getByRole("button", { name: "关闭引用资料" }));
+
+    await waitFor(() => expect(currentTrigger).toHaveFocus());
+    expect(useUiStore.getState()).toMatchObject({
+      activeCitationId: null,
+      activeCitationTrigger: null,
+      referencePanelOpen: false,
+    });
   });
 });
