@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import math
+import re
 from typing import Protocol
 
 from app.api.errors import DomainError
@@ -143,9 +144,10 @@ class FakeEmbeddingProvider:
 
     def _vector(self, text: str) -> list[float]:
         buckets = [0.0] * self.settings.dimension
-        for byte in text.encode("utf-8"):
-            digest = hashlib.blake2b(bytes([byte]), digest_size=2).digest()
-            buckets[int.from_bytes(digest, "big") % self.settings.dimension] += 1.0
+        for token in re.findall(r"@[A-Za-z0-9_]+|[A-Za-z0-9_]+|[\u4e00-\u9fff]", text.lower()):
+            digest = hashlib.blake2b(token.encode("utf-8"), digest_size=2).digest()
+            weight = 12.0 if token.startswith("@") else 1.0
+            buckets[int.from_bytes(digest, "big") % self.settings.dimension] += weight
         length = math.sqrt(sum(value * value for value in buckets))
         return [value / length for value in buckets] if length else buckets
 

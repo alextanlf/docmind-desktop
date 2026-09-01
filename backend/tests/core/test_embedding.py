@@ -20,6 +20,15 @@ async def test_fake_embedding_is_deterministic(fake_embedding: FakeEmbeddingProv
     assert len(first) == 8
 
 
+async def test_fake_embedding_scores_shared_state_token_above_retrieval_threshold() -> None:
+    provider = FakeEmbeddingProvider(EmbeddingSettings(dimension=768))
+
+    query = await provider.embed_query("@State 有什么作用？")
+    document = (await provider.embed_documents(["# 状态管理\n## @State\n@State 管理视图拥有的状态。"]))[0]
+
+    assert sum(left * right for left, right in zip(query, document, strict=True)) >= 0.65
+
+
 def test_embedding_defaults_use_bge_base_zh_dimension(tmp_path) -> None:
     app_settings = AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
 

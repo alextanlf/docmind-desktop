@@ -5,20 +5,27 @@ import { registerIpcHandlers } from "./ipc-handlers";
 import { StagedFileService } from "./staged-files";
 import { createWindow, showAfterDidFinishLoad } from "./window-manager";
 import { logger } from "./logger";
+import { isE2ERuntime, readE2EDialogPath } from "./e2e-runtime";
 let backend: BackendManager;
 let proxy: BackendProxy;
+const e2eRuntime = isE2ERuntime(process.env, app.isPackaged);
+let waitingForBackendExit = false;
 
-if (process.env.DOCMIND_E2E === "1" && process.env.DOCMIND_E2E_DATA_DIR) {
+if (e2eRuntime && process.env.DOCMIND_E2E_DATA_DIR) {
   app.setPath("userData", process.env.DOCMIND_E2E_DATA_DIR);
 }
 
 function stagedFilesForRuntime(dataDir: string) {
-  const fixture = process.env.DOCMIND_E2E === "1" ? process.env.DOCMIND_E2E_DIALOG_PATH : undefined;
   return new StagedFileService({
     dataDir,
-    ...(fixture
+    ...(e2eRuntime
       ? {
-          showOpenDialog: async () => ({ canceled: false, filePaths: [fixture] }),
+          showOpenDialog: async () => {
+            const path = await readE2EDialogPath(dataDir);
+            return path
+              ? { canceled: false, filePaths: [path] }
+              : { canceled: true, filePaths: [] };
+          },
         }
       : {}),
   });
@@ -65,9 +72,18 @@ app.whenReady().then(async () => {
     app.quit();
   }
 });
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
+  if (waitingForBackendExit) return;
+  event.preventDefault();
+  waitingForBackendExit = true;
   proxy?.cleanup();
-  void backend?.stop();
+  void backend
+    ?.stop()
+    .then((exited) => {
+      if (!exited) logger.error(new Error("Backend did not exit after shutdown signals"));
+    })
+    .catch((error) => logger.error(error))
+    .finally(() => app.quit());
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

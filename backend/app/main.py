@@ -25,7 +25,7 @@ from app.api.settings import router as settings_router
 from app.api.yuque import router as yuque_router
 from app.chat.service import ChatService
 from app.config import AppSettings, get_settings
-from app.core.embedding import EmbeddingProvider, create_embedding_provider
+from app.core.embedding import EmbeddingProvider, FakeEmbeddingProvider, create_embedding_provider
 from app.core.llm import (
     ChatDelta,
     ChatRequest,
@@ -104,10 +104,14 @@ def create_app(
             FakeYuqueGateway,
         )
 
-        e2e_control = E2EControl(runtime_settings.data_dir)
+        e2e_control = E2EControl(runtime_settings.data_dir) if os.getenv("DOCMIND_E2E") == "1" else None
         runtime_secret_store = secret_store or MemorySecretStore()
-        runtime_embedding_provider = embedding_provider or E2EControlledFakeEmbeddingProvider(
-            runtime_settings.embedding_settings, control=e2e_control
+        runtime_embedding_provider = embedding_provider or (
+            E2EControlledFakeEmbeddingProvider(
+                runtime_settings.embedding_settings, control=e2e_control
+            )
+            if e2e_control is not None
+            else FakeEmbeddingProvider(runtime_settings.embedding_settings)
         )
         runtime_yuque_gateway = yuque_gateway or FakeYuqueGateway()
         fake_llm_provider: LLMProvider | None = llm_provider or FakeLLMProvider(control=e2e_control)
@@ -184,7 +188,7 @@ def create_app(
                 database=database,
                 vector_store=vector_store,
                 embedding_provider=runtime_embedding_provider,
-                similarity_threshold=-1.0 if fake_services else runtime_settings.rag_similarity_threshold,
+                similarity_threshold=runtime_settings.rag_similarity_threshold,
             ),
             llm=runtime_llm_provider,
             conversation_store=conversation_store,

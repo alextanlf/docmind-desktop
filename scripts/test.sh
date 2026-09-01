@@ -10,4 +10,5 @@ npm run desktop:test
 npm run typecheck
 npm run lint
 npm run format:check
+npm run desktop:build
 npm run test:e2e
