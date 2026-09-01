@@ -90,6 +90,25 @@ describe("流式对话", () => {
     expect(stream.cancel).toHaveBeenCalledOnce();
   });
 
+  it("detaches its listener on unmount without cancelling the backend stream", () => {
+    const api = installDocMindApi();
+    const stream = installChatStreamMock(api.chat);
+    const view = render(
+      <AppProviders>
+        <ChatPanel
+          sessionId="00000000-0000-0000-0000-000000000025"
+          repositoryIds={[repository.id]}
+        />
+      </AppProviders>,
+    );
+
+    sendMessage("卸载时保留生成");
+    view.unmount();
+
+    expect(stream.detach).toHaveBeenCalledOnce();
+    expect(stream.cancel).not.toHaveBeenCalled();
+  });
+
   it("cancels the active request when the user switches sessions", async () => {
     const secondSession = {
       id: "00000000-0000-0000-0000-000000000028",

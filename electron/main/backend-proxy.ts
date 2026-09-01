@@ -19,12 +19,7 @@ export class DocMindClientError extends Error {
   readonly retryable: boolean;
   readonly action?: string;
 
-  constructor(
-    code: string,
-    message: string,
-    retryable = false,
-    action?: string | null,
-  ) {
+  constructor(code: string, message: string, retryable = false, action?: string | null) {
     super(message);
     this.name = "DocMindClientError";
     this.code = code;
@@ -68,11 +63,7 @@ const STREAM_ROUTE =
 
 export class BackendProxy {
   private readonly requestFn: RequestFn;
-  private readonly sendFn?: (
-    sender: StreamSender,
-    channel: string,
-    payload: unknown,
-  ) => void;
+  private readonly sendFn?: (sender: StreamSender, channel: string, payload: unknown) => void;
   private readonly active = new Map<string, ActiveStream>();
   private readonly chatSessions = new Map<string, string>();
 
@@ -83,8 +74,7 @@ export class BackendProxy {
     };
     send?: (sender: StreamSender, channel: string, payload: unknown) => void;
   }) {
-    const request =
-      opts.request ?? opts.backendManager?.request.bind(opts.backendManager);
+    const request = opts.request ?? opts.backendManager?.request.bind(opts.backendManager);
     if (!request) throw new Error("BackendProxy requires a request function");
     this.requestFn = request;
     this.sendFn = opts.send;
@@ -109,22 +99,14 @@ export class BackendProxy {
       response = await this.requestFn(route, init);
     } catch (error) {
       if (error instanceof DocMindClientError) throw error;
-      throw new DocMindClientError(
-        "BACKEND_UNAVAILABLE",
-        "后端暂不可用，请稍后重试",
-        true,
-      );
+      throw new DocMindClientError("BACKEND_UNAVAILABLE", "后端暂不可用，请稍后重试", true);
     }
     const parsed = await this.parseResponse(response);
     if (!parser) return parsed as T;
     try {
       return parser.parse(parsed);
     } catch {
-      throw new DocMindClientError(
-        "BACKEND_PROTOCOL_ERROR",
-        "后端响应格式无效",
-        true,
-      );
+      throw new DocMindClientError("BACKEND_PROTOCOL_ERROR", "后端响应格式无效", true);
     }
   }
 
@@ -134,11 +116,7 @@ export class BackendProxy {
       response = await this.requestFn(route, init);
     } catch (error) {
       if (error instanceof DocMindClientError) throw error;
-      throw new DocMindClientError(
-        "BACKEND_UNAVAILABLE",
-        "后端暂不可用，请稍后重试",
-        true,
-      );
+      throw new DocMindClientError("BACKEND_UNAVAILABLE", "后端暂不可用，请稍后重试", true);
     }
     if (response.ok || response.status === 204) return;
     await this.throwResponseError(response);
@@ -150,17 +128,12 @@ export class BackendProxy {
     if (this.active.has(options.requestId))
       throw new DocMindClientError("STREAM_ACTIVE", "该请求已有活动流");
     const isChat = options.route.includes("/messages/stream");
-    const routeSession = options.route.match(
-      /^\/api\/sessions\/([^/]+)\/messages\/stream$/,
-    )?.[1];
+    const routeSession = options.route.match(/^\/api\/sessions\/([^/]+)\/messages\/stream$/)?.[1];
     const sessionId = options.sessionId ?? routeSession;
     if (isChat && sessionId) {
       const current = this.chatSessions.get(sessionId);
       if (current && this.active.has(current))
-        throw new DocMindClientError(
-          "CHAT_STREAM_ACTIVE",
-          "该会话已有活动聊天流",
-        );
+        throw new DocMindClientError("CHAT_STREAM_ACTIVE", "该会话已有活动聊天流");
       this.chatSessions.set(sessionId, options.requestId);
     }
     const controller = options.controller ?? new AbortController();
@@ -175,15 +148,10 @@ export class BackendProxy {
     stream.destroyed = destroyed;
     if (options.sender.once) options.sender.once("destroyed", destroyed);
     else options.sender.on?.("destroyed", destroyed);
-    void this.consume(
-      options.requestId,
-      options.route,
-      options.body,
-      stream,
-      options.headers,
-    );
+    void this.consume(options.requestId, options.route, options.body, stream, options.headers);
     return {
       requestId: options.requestId,
+      detach: () => undefined,
       cancel: () => this.cancel(options.requestId),
     };
   }
@@ -217,13 +185,9 @@ export class BackendProxy {
   private remove(requestId: string, stream: ActiveStream): void {
     if (this.active.get(requestId) !== stream) return;
     this.active.delete(requestId);
-    if (
-      stream.sessionId &&
-      this.chatSessions.get(stream.sessionId) === requestId
-    )
+    if (stream.sessionId && this.chatSessions.get(stream.sessionId) === requestId)
       this.chatSessions.delete(stream.sessionId);
-    if (stream.destroyed)
-      stream.sender.removeListener?.("destroyed", stream.destroyed);
+    if (stream.destroyed) stream.sender.removeListener?.("destroyed", stream.destroyed);
   }
 
   private async parseResponse(response: Response): Promise<unknown> {
@@ -232,11 +196,7 @@ export class BackendProxy {
     try {
       return await response.json();
     } catch {
-      throw new DocMindClientError(
-        "BACKEND_PROTOCOL_ERROR",
-        "后端响应格式无效",
-        true,
-      );
+      throw new DocMindClientError("BACKEND_PROTOCOL_ERROR", "后端响应格式无效", true);
     }
   }
 
@@ -277,11 +237,7 @@ export class BackendProxy {
       if (this.active.get(requestId) !== stream) return;
       if (!response.ok) await this.throwResponseError(response);
       if (!response.body)
-        throw new DocMindClientError(
-          "BACKEND_PROTOCOL_ERROR",
-          "后端流式响应为空",
-          true,
-        );
+        throw new DocMindClientError("BACKEND_PROTOCOL_ERROR", "后端流式响应为空", true);
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -295,11 +251,7 @@ export class BackendProxy {
         buffer = frames.pop() ?? "";
         for (const frame of frames) {
           const event = parseSseFrame(frame);
-          if (
-            !event ||
-            (event.requestId !== requestId &&
-              route.includes("/messages/stream"))
-          )
+          if (!event || (event.requestId !== requestId && route.includes("/messages/stream")))
             continue;
           if (event.sequence <= stream.lastSequence) continue;
           if (this.active.get(requestId) !== stream) return;
@@ -321,8 +273,7 @@ export class BackendProxy {
       ) {
         stream.lastSequence = finalEvent.sequence;
         this.send(stream.sender, streamEventChannel(requestId), finalEvent);
-        terminalSeen =
-          finalEvent.type === "done" || finalEvent.type === "error";
+        terminalSeen = finalEvent.type === "done" || finalEvent.type === "error";
       }
       if (!terminalSeen && this.active.get(requestId) === stream) {
         this.send(stream.sender, streamEventChannel(requestId), {
@@ -381,18 +332,13 @@ export class BackendProxy {
 
 function sanitizeStreamErrorMessage(message: string): string {
   return message
-    .replace(
-      /DOCMIND_SESSION_TOKEN=[^\s]+/g,
-      "DOCMIND_SESSION_TOKEN=[redacted]",
-    )
+    .replace(/DOCMIND_SESSION_TOKEN=[^\s]+/g, "DOCMIND_SESSION_TOKEN=[redacted]")
     .replace(/(?:[A-Za-z]:)?\/(?:[^\s/]+\/)+[^\s]*/g, "[path]");
 }
 
 function isSchema(value: unknown): value is z.ZodType<unknown> {
   return Boolean(
-    value &&
-    typeof value === "object" &&
-    typeof (value as z.ZodType).parse === "function",
+    value && typeof value === "object" && typeof (value as z.ZodType).parse === "function",
   );
 }
 
@@ -417,27 +363,18 @@ export async function collectSse(
   let buffer = "";
   const decoder = new TextDecoder();
   for await (const chunk of chunks) {
-    buffer +=
-      typeof chunk === "string"
-        ? chunk
-        : decoder.decode(chunk, { stream: true });
+    buffer += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
     const frames = buffer.split(/\r?\n\r?\n/);
     buffer = frames.pop() ?? "";
     for (const frame of frames) {
       const event = parseSseFrame(frame);
-      if (
-        event &&
-        (!result.length || event.sequence > result[result.length - 1].sequence)
-      )
+      if (event && (!result.length || event.sequence > result[result.length - 1].sequence))
         result.push(event);
     }
   }
   buffer += decoder.decode();
   const event = parseSseFrame(buffer);
-  if (
-    event &&
-    (!result.length || event.sequence > result[result.length - 1].sequence)
-  )
+  if (event && (!result.length || event.sequence > result[result.length - 1].sequence))
     result.push(event);
   return result;
 }

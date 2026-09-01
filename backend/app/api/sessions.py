@@ -9,7 +9,7 @@ from app.api.errors import DomainError
 from app.schemas.chat import CitationRef, MessageView
 from app.schemas.sessions import SessionCreate, SessionSummary
 from app.storage.models import SessionRecord
-from app.storage.repositories import ConversationStore, RepositoryStore
+from app.storage.repositories import ConversationStore, DocumentStore, RepositoryStore
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -20,6 +20,9 @@ def _conversation_store(request: Request) -> ConversationStore:
 
 def _repository_store(request: Request) -> RepositoryStore:
     return cast(RepositoryStore, request.app.state.repository_store)
+
+def _document_store(request: Request) -> DocumentStore:
+    return cast(DocumentStore, request.app.state.document_store)
 
 
 def _not_found() -> DomainError:
@@ -66,6 +69,8 @@ async def create_session(request: Request, body: SessionCreate) -> SessionSummar
     known_ids = {repository.id for repository in _repository_store(request).list()}
     if not set(repository_ids).issubset(known_ids):
         raise _not_found()
+    if any(_document_store(request).indexed_count_for_repository(identifier) <= 0 for identifier in repository_ids):
+        raise DomainError("SESSION_INVALID_REQUEST", "会话知识库尚未建立索引", 400)
     return _view(_conversation_store(request).create_session(repository_ids, title="新会话"))
 
 

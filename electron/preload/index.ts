@@ -29,9 +29,7 @@ import type { DocMindApi, EventEnvelope } from "../shared/contracts";
 const uuid = (value: unknown): string => {
   if (
     typeof value !== "string" ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-      value,
-    )
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
   )
     throw new Error("INVALID_REQUEST");
   return value;
@@ -42,9 +40,7 @@ async function invoke<T extends z.ZodTypeAny>(
   schema: T,
   ...args: unknown[]
 ): Promise<z.output<T>> {
-  const result = IpcResultSchema(schema).parse(
-    await ipcRenderer.invoke(channel, ...args),
-  );
+  const result = IpcResultSchema(schema).parse(await ipcRenderer.invoke(channel, ...args));
   if ("error" in result) throw result.error;
   return result.value as z.output<T>;
 }
@@ -59,17 +55,17 @@ function subscription(
   const key = `${channel}:${requestId}`;
   const previous = activeSubscriptions.get(key);
   previous?.cancel();
-  let active = true;
+  let attached = true;
+  let cancelled = false;
   let lastSequence = -1;
   const listener = (_event: unknown, payload: unknown) => {
     const parsed = EventEnvelopeSchema.safeParse(payload);
     if (parsed.success && parsed.data.sequence > lastSequence) {
       lastSequence = parsed.data.sequence;
-      const terminal =
-        parsed.data.type === "done" || parsed.data.type === "error";
+      const terminal = parsed.data.type === "done" || parsed.data.type === "error";
       if (terminal) {
-        active = false;
         ipcRenderer.removeListener(eventChannel, listener);
+        attached = false;
         activeSubscriptions.delete(key);
       }
       onEvent(parsed.data);
@@ -77,14 +73,20 @@ function subscription(
   };
   ipcRenderer.on(eventChannel, listener);
   ipcRenderer.send(channel, ...startArgs);
+  const detach = () => {
+    if (!attached) return;
+    attached = false;
+    ipcRenderer.removeListener(eventChannel, listener);
+  };
   const result = {
     requestId,
+    detach,
     cancel: () => {
-      if (!active) return;
-      active = false;
-      ipcRenderer.removeListener(eventChannel, listener);
-      ipcRenderer.send(IPC_CHANNELS.streamCancel, requestId);
+      if (cancelled) return;
+      cancelled = true;
+      detach();
       activeSubscriptions.delete(key);
+      ipcRenderer.send(IPC_CHANNELS.streamCancel, requestId);
     },
   };
   activeSubscriptions.set(key, result);
@@ -102,10 +104,8 @@ const api: DocMindApi = {
         SettingsViewSchema,
         ModelSettingsInputSchema.parse(input),
       ),
-    testModel: () =>
-      invoke(IPC_CHANNELS.settingsTestModel, ModelConnectionResultSchema),
-    clearDiagnostics: () =>
-      invoke(IPC_CHANNELS.settingsClearDiagnostics, z.undefined()),
+    testModel: () => invoke(IPC_CHANNELS.settingsTestModel, ModelConnectionResultSchema),
+    clearDiagnostics: () => invoke(IPC_CHANNELS.settingsClearDiagnostics, z.undefined()),
   },
   embedding: {
     status: () => invoke(IPC_CHANNELS.embeddingStatus, ModelStatusSchema),
@@ -126,17 +126,9 @@ const api: DocMindApi = {
   },
   documents: {
     list: (repositoryId) =>
-      invoke(
-        IPC_CHANNELS.documentsList,
-        DocumentSummarySchema.array(),
-        uuid(repositoryId),
-      ),
+      invoke(IPC_CHANNELS.documentsList, DocumentSummarySchema.array(), uuid(repositoryId)),
     read: (documentId) =>
-      invoke(
-        IPC_CHANNELS.documentsRead,
-        DocumentDetailSchema,
-        uuid(documentId),
-      ),
+      invoke(IPC_CHANNELS.documentsRead, DocumentDetailSchema, uuid(documentId)),
     create: (repositoryId, input) =>
       invoke(
         IPC_CHANNELS.documentsCreate,
@@ -153,48 +145,25 @@ const api: DocMindApi = {
       ),
     delete: (documentId, confirm) => {
       if (confirm !== true) return Promise.reject(new Error("INVALID_REQUEST"));
-      return invoke(
-        IPC_CHANNELS.documentsDelete,
-        z.undefined(),
-        uuid(documentId),
-        true,
-      );
+      return invoke(IPC_CHANNELS.documentsDelete, z.undefined(), uuid(documentId), true);
     },
   },
   imports: {
     inspect: (input) =>
-      invoke(
-        IPC_CHANNELS.importsInspect,
-        SourcePreviewSchema,
-        SourceRefSchema.parse(input),
-      ),
+      invoke(IPC_CHANNELS.importsInspect, SourcePreviewSchema, SourceRefSchema.parse(input)),
     create: (input) =>
-      invoke(
-        IPC_CHANNELS.importsCreate,
-        ImportJobSchema,
-        CreateImportInputSchema.parse(input),
-      ),
-    get: (jobId) =>
-      invoke(IPC_CHANNELS.importsGet, ImportJobSchema, uuid(jobId)),
-    retry: (jobId) =>
-      invoke(IPC_CHANNELS.importsRetry, ImportJobSchema, uuid(jobId)),
-    cancel: (jobId) =>
-      invoke(IPC_CHANNELS.importsCancel, ImportJobSchema, uuid(jobId)),
+      invoke(IPC_CHANNELS.importsCreate, ImportJobSchema, CreateImportInputSchema.parse(input)),
+    get: (jobId) => invoke(IPC_CHANNELS.importsGet, ImportJobSchema, uuid(jobId)),
+    retry: (jobId) => invoke(IPC_CHANNELS.importsRetry, ImportJobSchema, uuid(jobId)),
+    cancel: (jobId) => invoke(IPC_CHANNELS.importsCancel, ImportJobSchema, uuid(jobId)),
     subscribe: (jobId, afterSequence, onEvent) => {
       const id = uuid(jobId);
-      if (!Number.isInteger(afterSequence) || afterSequence < 0)
-        throw new Error("INVALID_REQUEST");
-      return subscription(
-        IPC_CHANNELS.importsSubscribe,
-        id,
-        [id, afterSequence],
-        onEvent,
-      );
+      if (!Number.isInteger(afterSequence) || afterSequence < 0) throw new Error("INVALID_REQUEST");
+      return subscription(IPC_CHANNELS.importsSubscribe, id, [id, afterSequence], onEvent);
     },
   },
   chat: {
-    listSessions: () =>
-      invoke(IPC_CHANNELS.chatListSessions, SessionSummarySchema.array()),
+    listSessions: () => invoke(IPC_CHANNELS.chatListSessions, SessionSummarySchema.array()),
     createSession: (input) =>
       invoke(
         IPC_CHANNELS.chatCreateSession,
@@ -202,30 +171,17 @@ const api: DocMindApi = {
         CreateSessionInputSchema.parse(input),
       ),
     listMessages: (sessionId) =>
-      invoke(
-        IPC_CHANNELS.chatListMessages,
-        MessageSchema.array(),
-        uuid(sessionId),
-      ),
+      invoke(IPC_CHANNELS.chatListMessages, MessageSchema.array(), uuid(sessionId)),
     stream: (input, onEvent) => {
       const data = ChatStreamInputSchema.parse(input);
-      return subscription(
-        IPC_CHANNELS.chatStream,
-        data.requestId,
-        [data],
-        onEvent,
-      );
+      return subscription(IPC_CHANNELS.chatStream, data.requestId, [data], onEvent);
     },
   },
   dialogs: {
     chooseSource: (kind) => {
       if (kind !== "pdf" && kind !== "markdown")
         return Promise.reject(new Error("INVALID_REQUEST"));
-      return invoke(
-        IPC_CHANNELS.dialogsChooseSource,
-        StagedSourceSchema.nullable(),
-        kind,
-      );
+      return invoke(IPC_CHANNELS.dialogsChooseSource, StagedSourceSchema.nullable(), kind);
     },
   },
   shell: {
@@ -238,11 +194,7 @@ const api: DocMindApi = {
       }
       if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
         return Promise.reject(new Error("INVALID_REQUEST"));
-      return invoke(
-        IPC_CHANNELS.shellOpenExternal,
-        z.undefined(),
-        parsed.toString(),
-      );
+      return invoke(IPC_CHANNELS.shellOpenExternal, z.undefined(), parsed.toString());
     },
   },
 };

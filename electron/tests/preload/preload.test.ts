@@ -4,6 +4,7 @@ import {
   BackendEventEnvelopeSchema,
   SourcePreviewSchema,
   CitationSchema,
+  RepositorySchema,
 } from "../../shared/contracts";
 
 const exposed: Record<string, unknown> = {};
@@ -38,25 +39,55 @@ describe("preload bridge", () => {
   it("removes a request-specific event listener exactly once on cancellation", async () => {
     const api = exposed.docmind as any;
     const callback = vi.fn();
-    const subscription = api.imports.subscribe(
-      "00000000-0000-0000-0000-000000000001",
-      0,
-      callback,
-    );
+    const subscription = api.imports.subscribe("00000000-0000-0000-0000-000000000001", 0, callback);
     subscription.cancel();
     subscription.cancel();
     expect(removeListener).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith("stream:cancel", subscription.requestId);
   });
 
+  it("detaches a request listener without cancelling its backend stream", () => {
+    const api = exposed.docmind as any;
+    const subscription = api.chat.stream(
+      {
+        requestId: "00000000-0000-0000-0000-000000000013",
+        sessionId: "00000000-0000-0000-0000-000000000014",
+        message: "问题",
+        repositoryIds: ["00000000-0000-0000-0000-000000000015"],
+      },
+      vi.fn(),
+    );
+
+    subscription.detach();
+
+    expect(removeListener).toHaveBeenCalledWith(
+      "stream:event:00000000-0000-0000-0000-000000000013",
+      expect.any(Function),
+    );
+    expect(send).not.toHaveBeenCalledWith("stream:cancel", subscription.requestId);
+  });
+
+  it("requires a backend-reported indexed document count", () => {
+    const parsed = RepositorySchema.parse({
+      id: "00000000-0000-0000-0000-000000000016",
+      yuqueId: null,
+      name: "SwiftUI",
+      description: null,
+      yuqueUrl: null,
+      documentCount: 3,
+      indexedDocumentCount: 2,
+      syncStatus: "已同步",
+      createdAt: "2026-08-31T00:00:00Z",
+      updatedAt: "2026-08-31T00:00:00Z",
+    });
+
+    expect(parsed.indexedDocumentCount).toBe(2);
+  });
+
   it("keeps one listener per import request when subscribed repeatedly", () => {
     const api = exposed.docmind as any;
     const callback = vi.fn();
-    const first = api.imports.subscribe(
-      "00000000-0000-0000-0000-000000000001",
-      0,
-      callback,
-    );
+    const first = api.imports.subscribe("00000000-0000-0000-0000-000000000001", 0, callback);
     api.imports.subscribe("00000000-0000-0000-0000-000000000001", 1, callback);
     expect(first.cancel).toBeTypeOf("function");
     expect(removeListener).toHaveBeenCalled();
@@ -66,10 +97,7 @@ describe("preload bridge", () => {
     const api = exposed.docmind as any;
     const callback = vi.fn();
     api.imports.subscribe("00000000-0000-0000-0000-000000000006", 0, callback);
-    const listener = on.mock.calls.at(-1)?.[1] as (
-      event: unknown,
-      payload: unknown,
-    ) => void;
+    const listener = on.mock.calls.at(-1)?.[1] as (event: unknown, payload: unknown) => void;
     listener(
       {},
       {
@@ -157,10 +185,7 @@ describe("preload bridge", () => {
       throw new Error("renderer callback failed");
     });
     api.imports.subscribe("00000000-0000-0000-0000-000000000012", 0, callback);
-    const listener = on.mock.calls.at(-1)?.[1] as (
-      event: unknown,
-      payload: unknown,
-    ) => void;
+    const listener = on.mock.calls.at(-1)?.[1] as (event: unknown, payload: unknown) => void;
     expect(() =>
       listener(
         {},

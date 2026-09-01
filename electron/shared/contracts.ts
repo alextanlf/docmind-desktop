@@ -63,6 +63,7 @@ export const RepositorySchema = z.object({
   description: nullableText(2_000),
   yuqueUrl: z.string().max(4_000).nullable().optional(),
   documentCount: z.number().int().nonnegative(),
+  indexedDocumentCount: z.number().int().nonnegative(),
   syncStatus: z.string(),
   createdAt: timestamp,
   updatedAt: timestamp,
@@ -246,6 +247,7 @@ export type ChatStreamInput = z.infer<typeof ChatStreamInputSchema>;
 export interface StreamSubscription {
   requestId: string;
   cancel(): void;
+  detach(): void;
 }
 
 export interface DocMindApi {
@@ -287,10 +289,7 @@ export interface DocMindApi {
     listSessions(): Promise<SessionSummary[]>;
     createSession(input: CreateSessionInput): Promise<SessionSummary>;
     listMessages(sessionId: string): Promise<Message[]>;
-    stream(
-      input: ChatStreamInput,
-      onEvent: (event: EventEnvelope) => void,
-    ): StreamSubscription;
+    stream(input: ChatStreamInput, onEvent: (event: EventEnvelope) => void): StreamSubscription;
   };
   dialogs: {
     chooseSource(kind: "pdf" | "markdown"): Promise<StagedSource | null>;

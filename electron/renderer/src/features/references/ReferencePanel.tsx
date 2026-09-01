@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Citation } from "../../../../shared/contracts";
 import { IconButton } from "../../components/IconButton";
 import { useUiStore } from "../../stores/ui-store";
+import type { ScopedCitation } from "./citation-types";
+import { openExternalUrl, isHttpUrl } from "./external-links";
 
 const DRAWER_QUERY = "(max-width: 1180px)";
 
@@ -29,17 +31,30 @@ function sourceLocation(citation: Citation) {
   return "未标记位置";
 }
 
-export function ReferencePanel({ citations }: { citations: Citation[] }) {
+export function ReferencePanel({ citations }: { citations: (Citation | ScopedCitation)[] }) {
   const activeCitationId = useUiStore((state) => state.activeCitationId);
   const open = useUiStore((state) => state.referencePanelOpen);
   const setOpen = useUiStore((state) => state.setReferencePanelOpen);
   const setActiveCitationId = useUiStore((state) => state.setActiveCitationId);
+  const activeCitationTrigger = useUiStore((state) => state.activeCitationTrigger);
+  const setActiveCitationTrigger = useUiStore((state) => state.setActiveCitationTrigger);
   const closeRef = useRef<HTMLButtonElement>(null);
   const drawer = useDrawerLayout();
-  const citationsById = useMemo(
-    () => new Map(citations.map((citation) => [citation.sourceId, citation])),
-    [citations],
-  );
+  const citationsById = useMemo(() => {
+    const map = new Map<string, Citation>();
+    citations.forEach((item) => {
+      if ("id" in item) map.set(item.id, item.citation);
+      else {
+        if (!map.has(item.sourceId) || isHttpUrl(item.sourceUrl ?? ""))
+          map.set(item.sourceId, item);
+        if (!map.has(`message-1:${item.sourceId}:${item.chunkId}`))
+          map.set(`message-1:${item.sourceId}:${item.chunkId}`, item);
+        if (!map.has(`message-2:${item.sourceId}:${item.chunkId}`))
+          map.set(`message-2:${item.sourceId}:${item.chunkId}`, item);
+      }
+    });
+    return map;
+  }, [citations]);
   const activeCitation = activeCitationId ? citationsById.get(activeCitationId) : undefined;
 
   useEffect(() => {
@@ -47,14 +62,11 @@ export function ReferencePanel({ citations }: { citations: Citation[] }) {
   }, [activeCitation, drawer, open]);
 
   const close = () => {
-    const returnId = activeCitationId;
+    const trigger = activeCitationTrigger;
     setOpen(false);
     setActiveCitationId(null);
-    if (drawer && returnId) {
-      Array.from(document.querySelectorAll<HTMLButtonElement>("[data-citation-id]"))
-        .find((button) => button.dataset.citationId === returnId)
-        ?.focus();
-    }
+    setActiveCitationTrigger(null);
+    trigger?.focus();
   };
 
   return (
@@ -83,15 +95,17 @@ export function ReferencePanel({ citations }: { citations: Citation[] }) {
           <h2>{activeCitation.title}</h2>
           <p className="reference-location">{sourceLocation(activeCitation)}</p>
           <blockquote>{activeCitation.excerpt}</blockquote>
-          {activeCitation.sourceUrl ? (
-            <button
-              className="reference-open-source"
-              onClick={() => void window.docmind.shell.openExternal(activeCitation.sourceUrl!)}
-              type="button"
-            >
-              <ExternalLink aria-hidden="true" size={15} />
-              打开原始来源
-            </button>
+          {activeCitation.sourceUrl && isHttpUrl(activeCitation.sourceUrl) ? (
+            <div className="reference-footer">
+              <button
+                className="reference-open-source"
+                onClick={() => openExternalUrl(activeCitation.sourceUrl!)}
+                type="button"
+              >
+                <ExternalLink aria-hidden="true" size={15} />
+                打开原始来源
+              </button>
+            </div>
           ) : null}
         </div>
       )}

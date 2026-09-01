@@ -22,6 +22,7 @@ import { useImportStore } from "../features/imports/import-store";
 import { DocumentEditor } from "../features/repositories/DocumentEditor";
 import { RepositoryTree } from "../features/repositories/RepositoryTree";
 import { ReferencePanel } from "../features/references/ReferencePanel";
+import { citationIdentity, type ScopedCitation } from "../features/references/citation-types";
 import {
   useDocumentQuery,
   useRepositoriesQuery,
@@ -71,16 +72,33 @@ export function Workspace() {
   const sessionMessages = useMessagesQuery(selectedSession?.id ?? null);
   const stream = useChatStreamStore();
   const citations = useMemo(() => {
-    const all = [...(sessionMessages.data ?? []).flatMap((message) => message.citations)];
-    if (stream.sessionId === selectedSession?.id) all.push(...stream.citations);
+    const all: ScopedCitation[] = (sessionMessages.data ?? []).flatMap((message) =>
+      message.citations.map((citation) => ({
+        id: citationIdentity(message.id, citation),
+        citation,
+      })),
+    );
+    if (stream.sessionId === selectedSession?.id && stream.requestId)
+      all.push(
+        ...stream.citations.map((citation) => ({
+          id: citationIdentity(stream.requestId!, citation),
+          citation,
+        })),
+      );
     const known = new Set<string>();
     return all.filter((citation) => {
-      const key = `${citation.sourceId}:${citation.chunkId}`;
+      const key = citation.id;
       if (known.has(key)) return false;
       known.add(key);
       return true;
     });
-  }, [selectedSession?.id, sessionMessages.data, stream.citations, stream.sessionId]);
+  }, [
+    selectedSession?.id,
+    sessionMessages.data,
+    stream.citations,
+    stream.requestId,
+    stream.sessionId,
+  ]);
 
   const selectSession = (session: SessionSummary) => {
     if (selectedSession?.id !== session.id) {
@@ -126,6 +144,8 @@ export function Workspace() {
         </div>
         <SessionList
           onSessionSelect={selectSession}
+          repositories={repositories.data ?? []}
+          collapsed={sidebarCollapsed || forcedIconRail}
           selectedRepositoryIds={selectedRepositoryIds}
           selectedSessionId={selectedSession?.id}
         />

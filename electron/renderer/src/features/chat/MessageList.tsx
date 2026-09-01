@@ -23,7 +23,11 @@ export function MessageList({
         <article className={`chat-message chat-message-${message.role}`} key={message.id}>
           <span className="message-role">{message.role === "user" ? "你" : "DocMind"}</span>
           {message.role === "assistant" ? (
-            <MarkdownMessage citations={message.citations} content={message.content} />
+            <MarkdownMessage
+              citationScope={message.id}
+              citations={message.citations}
+              content={message.content}
+            />
           ) : (
             <p>{message.content}</p>
           )}
@@ -38,7 +42,7 @@ export function MessageList({
       {draftAssistant ? (
         <article className="chat-message chat-message-assistant">
           <span className="message-role">DocMind</span>
-          <MarkdownMessage citations={citations} content={draftAssistant} />
+          <MarkdownMessage citationScope="stream" citations={citations} content={draftAssistant} />
         </article>
       ) : null}
     </div>

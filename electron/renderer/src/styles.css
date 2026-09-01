@@ -663,13 +663,22 @@ button:disabled {
 }
 
 .reference-panel {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
   height: 100%;
 }
 .reference-content {
-  display: grid;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
   gap: 10px;
   padding: 18px 16px;
   overflow: auto;
+}
+.reference-footer {
+  flex: 0 0 auto;
 }
 .reference-source-id {
   width: max-content;
@@ -721,6 +730,9 @@ button:disabled {
 
 .session-list {
   display: grid;
+  min-height: 0;
+  max-height: min(42vh, 360px);
+  overflow: auto;
   gap: 7px;
   margin-bottom: 8px;
 }

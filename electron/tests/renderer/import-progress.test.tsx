@@ -26,7 +26,7 @@ describe("导入进度", () => {
       imports: {
         subscribe: vi.fn((_id, _after, callback) => {
           eventHandler = callback;
-          return { requestId: job.id, cancel };
+          return { requestId: job.id, cancel, detach: vi.fn() };
         }),
       },
     });
@@ -71,7 +71,7 @@ describe("导入进度", () => {
         ),
         subscribe: vi.fn((_id, _after, callback) => {
           eventHandler = callback;
-          return { requestId: delayedJob.id, cancel: vi.fn() };
+          return { requestId: delayedJob.id, cancel: vi.fn(), detach: vi.fn() };
         }),
       },
     });

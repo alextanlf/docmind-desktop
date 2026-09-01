@@ -1,5 +1,5 @@
 import { MessageSquarePlus } from "lucide-react";
-import type { SessionSummary } from "../../../../shared/contracts";
+import type { Repository, SessionSummary } from "../../../../shared/contracts";
 import { clientErrorMessage } from "../settings/settings.queries";
 import { useCreateSessionMutation, useSessionsQuery } from "./chat.queries";
 
@@ -7,6 +7,8 @@ type SessionListProps = {
   onSessionSelect?: (session: SessionSummary) => void;
   selectedRepositoryIds: string[];
   selectedSessionId?: string | null;
+  repositories?: Repository[];
+  collapsed?: boolean;
 };
 
 function sessionGroup(session: SessionSummary) {
@@ -23,6 +25,8 @@ export function SessionList({
   onSessionSelect,
   selectedRepositoryIds,
   selectedSessionId,
+  repositories,
+  collapsed = false,
 }: SessionListProps) {
   const sessions = useSessionsQuery();
   const createSession = useCreateSessionMutation();
@@ -36,7 +40,13 @@ export function SessionList({
   );
 
   const create = async () => {
-    if (!selectedRepositoryIds.length) return;
+    const valid =
+      selectedRepositoryIds.length > 0 &&
+      (!repositories ||
+        selectedRepositoryIds.every((id) =>
+          repositories.some((repo) => repo.id === id && repo.indexedDocumentCount > 0),
+        ));
+    if (!valid) return;
     try {
       const session = await createSession.mutateAsync(selectedRepositoryIds);
       onSessionSelect?.(session);
@@ -50,7 +60,14 @@ export function SessionList({
       <button
         aria-label="新建会话"
         className="new-chat-button"
-        disabled={!selectedRepositoryIds.length || createSession.isPending}
+        disabled={
+          !selectedRepositoryIds.length ||
+          (!!repositories &&
+            !selectedRepositoryIds.every((id) =>
+              repositories.some((repo) => repo.id === id && repo.indexedDocumentCount > 0),
+            )) ||
+          createSession.isPending
+        }
         onClick={() => void create()}
         title="新建会话"
         type="button"
@@ -65,7 +82,7 @@ export function SessionList({
       {sessions.isError ? <p className="session-error">无法读取会话，请稍后重试。</p> : null}
       {Object.entries(grouped).map(([group, items]) => (
         <div className="session-group" key={group}>
-          <span>{group}</span>
+          {!collapsed ? <span>{group}</span> : null}
           {items.map((session) => (
             <button
               aria-current={selectedSessionId === session.id ? "page" : undefined}
@@ -74,7 +91,7 @@ export function SessionList({
               onClick={() => onSessionSelect?.(session)}
               type="button"
             >
-              {session.title}
+              {!collapsed ? session.title : null}
             </button>
           ))}
         </div>

@@ -4,7 +4,7 @@ import json
 from uuid import uuid4
 
 from app.imports.events import EventEnvelope
-from app.storage.models import MessageRecord, RepositoryRecord
+from app.storage.models import DocumentChunkRecord, DocumentRecord, MessageRecord, RepositoryRecord
 from app.storage.repositories import ConversationStore
 
 
@@ -37,6 +37,8 @@ def _seed_chat(client) -> str:  # type: ignore[no-untyped-def]
                 RepositoryRecord(id="repo-2", name="Other"),
             ]
         )
+        session.add(DocumentRecord(id="doc-1", repository_id="repo-1", title="State"))
+        session.add(DocumentChunkRecord(id="chunk-1", document_id="doc-1", repository_id="repo-1", chunk_index=0, text="state", token_count=1))
     conversation_store = ConversationStore(database)
     chat_session = conversation_store.create_session(["repo-1"])
     client.app.state.conversation_store = conversation_store
