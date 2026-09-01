@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../../renderer/src/App";
 import { appQueryClient } from "../../renderer/src/app/query-client";
@@ -144,5 +144,43 @@ describe("首次设置", () => {
 
     expect(await screen.findByRole("dialog", { name: "无法读取首次设置" })).toBeVisible();
     expect(screen.getByRole("button", { name: "重新检查设置" })).toBeVisible();
+  });
+
+  it("isolates the real startup error modal and focuses its retry action", async () => {
+    installDocMindApi({
+      settings: {
+        get: vi.fn().mockRejectedValue({ code: "BACKEND_UNAVAILABLE", retryable: false }),
+      },
+    });
+    render(<App />);
+
+    const dialog = await screen.findByRole("dialog", { name: "无法读取首次设置" });
+    const retry = screen.getByRole("button", { name: "重新检查设置" });
+    await waitFor(() => expect(retry).toHaveFocus());
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    const modalLayer = dialog.closest(".dialog-backdrop");
+    const background = Array.from(document.body.children).find((element) => element !== modalLayer);
+    expect(background).toHaveAttribute("inert");
+    expect(background).toHaveAttribute("aria-hidden", "true");
+    expect(screen.queryByRole("button", { name: "新建会话" })).not.toBeInTheDocument();
+  });
+
+  it("isolates workspace controls while initial settings are pending", async () => {
+    let resolveSettings!: (value: typeof readySettings) => void;
+    const pendingSettings = new Promise<typeof readySettings>((resolve) => {
+      resolveSettings = resolve;
+    });
+    installDocMindApi({ settings: { get: vi.fn(() => pendingSettings) } });
+    render(<App />);
+
+    const dialog = await screen.findByRole("dialog", { name: "正在检查首次设置" });
+    await waitFor(() => expect(dialog).toHaveFocus());
+    const modalLayer = dialog.closest(".dialog-backdrop");
+    const background = Array.from(document.body.children).find((element) => element !== modalLayer);
+    expect(background).toHaveAttribute("inert");
+    expect(background).toHaveAttribute("aria-hidden", "true");
+    expect(screen.queryByRole("button", { name: "新建会话" })).not.toBeInTheDocument();
+
+    await act(async () => resolveSettings(readySettings));
   });
 });

@@ -1,5 +1,5 @@
 import { CheckCircle2, LoaderCircle, PlugZap, Save } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import type { SettingsView } from "../../../../shared/contracts";
 import { appQueryClient } from "../../app/query-client";
 import { clientErrorMessage, settingsKeys } from "./settings.queries";
@@ -43,8 +43,12 @@ export function ModelSettingsForm({
   const [testing, setTesting] = useState(false);
   const [needsSave, setNeedsSave] = useState(false);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const revisionRef = useRef(0);
+  const activeOperationRef = useRef<{ kind: "save" | "test"; revision: number } | null>(null);
+  const busy = saving || testing;
 
   function invalidateConnection() {
+    revisionRef.current += 1;
     setNeedsSave(true);
     setMessage(null);
     onConnectionInvalidated?.();
@@ -60,6 +64,9 @@ export function ModelSettingsForm({
 
   async function save(event: FormEvent) {
     event.preventDefault();
+    if (activeOperationRef.current) return;
+    const operation = { kind: "save" as const, revision: revisionRef.current };
+    activeOperationRef.current = operation;
     onConnectionInvalidated?.();
     setSaving(true);
     setMessage(null);
@@ -72,23 +79,35 @@ export function ModelSettingsForm({
         apiKey: clearKey ? "" : apiKey.trim() || undefined,
       });
       appQueryClient.setQueryData(settingsKeys.root, saved);
+      if (activeOperationRef.current !== operation || revisionRef.current !== operation.revision)
+        return;
       setHasSavedKey(saved.hasApiKey);
       setApiKey("");
       setClearKey(false);
       setNeedsSave(false);
       setMessage({ tone: "success", text: "设置已保存" });
     } catch (error) {
+      if (activeOperationRef.current !== operation || revisionRef.current !== operation.revision)
+        return;
       setMessage({ tone: "error", text: clientErrorMessage(error) });
     } finally {
-      setSaving(false);
+      if (activeOperationRef.current === operation) {
+        activeOperationRef.current = null;
+        setSaving(false);
+      }
     }
   }
 
   async function testConnection() {
+    if (activeOperationRef.current || needsSave || !hasSavedKey) return;
+    const operation = { kind: "test" as const, revision: revisionRef.current };
+    activeOperationRef.current = operation;
     setTesting(true);
     setMessage(null);
     try {
       const result = await window.docmind.settings.testModel();
+      if (activeOperationRef.current !== operation || revisionRef.current !== operation.revision)
+        return;
       if (!result.connected) {
         setMessage({ tone: "error", text: "模型未能建立连接，请检查设置" });
         return;
@@ -96,9 +115,14 @@ export function ModelSettingsForm({
       setMessage({ tone: "success", text: `连接成功，延迟 ${result.latencyMs} 毫秒` });
       onConnectionSuccess?.();
     } catch (error) {
+      if (activeOperationRef.current !== operation || revisionRef.current !== operation.revision)
+        return;
       setMessage({ tone: "error", text: clientErrorMessage(error) });
     } finally {
-      setTesting(false);
+      if (activeOperationRef.current === operation) {
+        activeOperationRef.current = null;
+        setTesting(false);
+      }
     }
   }
 
@@ -107,7 +131,11 @@ export function ModelSettingsForm({
       <div className="form-grid">
         <label>
           <span>模型预设</span>
-          <select value={preset} onChange={(event) => changePreset(event.target.value as Preset)}>
+          <select
+            disabled={busy}
+            value={preset}
+            onChange={(event) => changePreset(event.target.value as Preset)}
+          >
             {Object.entries(PRESETS).map(([value, option]) => (
               <option key={value} value={value}>
                 {option.label}
@@ -118,6 +146,7 @@ export function ModelSettingsForm({
         <label className="form-field-wide">
           <span>Base URL</span>
           <input
+            disabled={busy}
             value={baseUrl}
             onChange={(event) => {
               setBaseUrl(event.target.value);
@@ -129,6 +158,7 @@ export function ModelSettingsForm({
         <label>
           <span>模型名称</span>
           <input
+            disabled={busy}
             value={model}
             onChange={(event) => {
               setModel(event.target.value);
@@ -139,6 +169,7 @@ export function ModelSettingsForm({
         <label>
           <span>超时时间（秒）</span>
           <input
+            disabled={busy}
             max={300}
             min={1}
             onChange={(event) => {
@@ -153,7 +184,7 @@ export function ModelSettingsForm({
           <span>API Key</span>
           <input
             autoComplete="off"
-            disabled={clearKey}
+            disabled={clearKey || busy}
             onChange={(event) => {
               setApiKey(event.target.value);
               invalidateConnection();
@@ -168,6 +199,7 @@ export function ModelSettingsForm({
         <label className="checkbox-row">
           <input
             checked={clearKey}
+            disabled={busy}
             onChange={(event) => {
               setClearKey(event.target.checked);
               invalidateConnection();
@@ -187,7 +219,7 @@ export function ModelSettingsForm({
         </p>
       ) : null}
       <div className="form-actions">
-        <button className="button button-secondary" disabled={saving} type="submit">
+        <button className="button button-secondary" disabled={busy} type="submit">
           {saving ? (
             <LoaderCircle aria-hidden="true" className="spin" size={16} />
           ) : (
@@ -197,7 +229,7 @@ export function ModelSettingsForm({
         </button>
         <button
           className="button button-primary"
-          disabled={!hasSavedKey || needsSave || testing || saving}
+          disabled={!hasSavedKey || needsSave || busy}
           onClick={testConnection}
           type="button"
         >

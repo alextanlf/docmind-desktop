@@ -72,7 +72,7 @@ export function Modal({
       }
       if (previousFocus?.isConnected) previousFocus.focus();
     };
-  }, [focusInitial]);
+  }, [focusInitial, labelledBy]);
 
   function handleKeyDown(event: KeyboardEvent<HTMLElement>) {
     if (event.key === "Escape") {
