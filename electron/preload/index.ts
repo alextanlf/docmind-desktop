@@ -25,15 +25,30 @@ import {
 import type { DocMindApi, EventEnvelope } from "../shared/contracts";
 
 const uuid = (value: unknown): string => {
-  if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw new Error("INVALID_REQUEST");
+  if (
+    typeof value !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      value,
+    )
+  )
+    throw new Error("INVALID_REQUEST");
   return value;
 };
 
-async function invoke<T>(channel: string, schema: { parse(value: unknown): T }, ...args: unknown[]): Promise<T> {
+async function invoke<T>(
+  channel: string,
+  schema: { parse(value: unknown): T },
+  ...args: unknown[]
+): Promise<T> {
   return schema.parse(await ipcRenderer.invoke(channel, ...args));
 }
 
-function subscription(channel: string, requestId: string, startArgs: unknown[], onEvent: (event: EventEnvelope) => void) {
+function subscription(
+  channel: string,
+  requestId: string,
+  startArgs: unknown[],
+  onEvent: (event: EventEnvelope) => void,
+) {
   const eventChannel = streamEventChannel(requestId);
   const key = `${channel}:${requestId}`;
   const previous = activeSubscriptions.get(key);
@@ -73,9 +88,18 @@ const activeSubscriptions = new Map<string, { cancel(): void }>();
 const api: DocMindApi = {
   settings: {
     get: () => invoke(IPC_CHANNELS.settingsGet, SettingsViewSchema),
-    saveModel: (input) => invoke(IPC_CHANNELS.settingsSaveModel, SettingsViewSchema, ModelSettingsInputSchema.parse(input)),
-    testModel: () => invoke(IPC_CHANNELS.settingsTestModel, ModelConnectionResultSchema),
-    clearDiagnostics: () => ipcRenderer.invoke(IPC_CHANNELS.settingsClearDiagnostics).then(() => undefined),
+    saveModel: (input) =>
+      invoke(
+        IPC_CHANNELS.settingsSaveModel,
+        SettingsViewSchema,
+        ModelSettingsInputSchema.parse(input),
+      ),
+    testModel: () =>
+      invoke(IPC_CHANNELS.settingsTestModel, ModelConnectionResultSchema),
+    clearDiagnostics: () =>
+      ipcRenderer
+        .invoke(IPC_CHANNELS.settingsClearDiagnostics)
+        .then(() => undefined),
   },
   embedding: {
     status: () => invoke(IPC_CHANNELS.embeddingStatus, ModelStatusSchema),
@@ -87,51 +111,127 @@ const api: DocMindApi = {
   },
   repositories: {
     list: () => invoke(IPC_CHANNELS.repositoriesList, RepositorySchema.array()),
-    create: (input) => invoke(IPC_CHANNELS.repositoriesCreate, RepositorySchema, CreateRepositoryInputSchema.parse(input)),
+    create: (input) =>
+      invoke(
+        IPC_CHANNELS.repositoriesCreate,
+        RepositorySchema,
+        CreateRepositoryInputSchema.parse(input),
+      ),
   },
   documents: {
-    list: (repositoryId) => invoke(IPC_CHANNELS.documentsList, DocumentSummarySchema.array(), uuid(repositoryId)),
-    read: (documentId) => invoke(IPC_CHANNELS.documentsRead, DocumentDetailSchema, uuid(documentId)),
-    create: (repositoryId, input) => invoke(IPC_CHANNELS.documentsCreate, DocumentDetailSchema, uuid(repositoryId), DocumentInputSchema.parse(input)),
-    update: (documentId, input) => invoke(IPC_CHANNELS.documentsUpdate, DocumentDetailSchema, uuid(documentId), DocumentInputSchema.parse(input)),
+    list: (repositoryId) =>
+      invoke(
+        IPC_CHANNELS.documentsList,
+        DocumentSummarySchema.array(),
+        uuid(repositoryId),
+      ),
+    read: (documentId) =>
+      invoke(
+        IPC_CHANNELS.documentsRead,
+        DocumentDetailSchema,
+        uuid(documentId),
+      ),
+    create: (repositoryId, input) =>
+      invoke(
+        IPC_CHANNELS.documentsCreate,
+        DocumentDetailSchema,
+        uuid(repositoryId),
+        DocumentInputSchema.parse(input),
+      ),
+    update: (documentId, input) =>
+      invoke(
+        IPC_CHANNELS.documentsUpdate,
+        DocumentDetailSchema,
+        uuid(documentId),
+        DocumentInputSchema.parse(input),
+      ),
     delete: (documentId, confirm) => {
       if (confirm !== true) return Promise.reject(new Error("INVALID_REQUEST"));
-      return ipcRenderer.invoke(IPC_CHANNELS.documentsDelete, uuid(documentId), true).then(() => undefined);
+      return ipcRenderer
+        .invoke(IPC_CHANNELS.documentsDelete, uuid(documentId), true)
+        .then(() => undefined);
     },
   },
   imports: {
-    inspect: (input) => invoke(IPC_CHANNELS.importsInspect, SourcePreviewSchema, SourceRefSchema.parse(input)),
-    create: (input) => invoke(IPC_CHANNELS.importsCreate, ImportJobSchema, CreateImportInputSchema.parse(input)),
-    get: (jobId) => invoke(IPC_CHANNELS.importsGet, ImportJobSchema, uuid(jobId)),
-    retry: (jobId) => invoke(IPC_CHANNELS.importsRetry, ImportJobSchema, uuid(jobId)),
-    cancel: (jobId) => invoke(IPC_CHANNELS.importsCancel, ImportJobSchema, uuid(jobId)),
+    inspect: (input) =>
+      invoke(
+        IPC_CHANNELS.importsInspect,
+        SourcePreviewSchema,
+        SourceRefSchema.parse(input),
+      ),
+    create: (input) =>
+      invoke(
+        IPC_CHANNELS.importsCreate,
+        ImportJobSchema,
+        CreateImportInputSchema.parse(input),
+      ),
+    get: (jobId) =>
+      invoke(IPC_CHANNELS.importsGet, ImportJobSchema, uuid(jobId)),
+    retry: (jobId) =>
+      invoke(IPC_CHANNELS.importsRetry, ImportJobSchema, uuid(jobId)),
+    cancel: (jobId) =>
+      invoke(IPC_CHANNELS.importsCancel, ImportJobSchema, uuid(jobId)),
     subscribe: (jobId, afterSequence, onEvent) => {
       const id = uuid(jobId);
-      if (!Number.isInteger(afterSequence) || afterSequence < 0) throw new Error("INVALID_REQUEST");
-      return subscription(IPC_CHANNELS.importsSubscribe, id, [id, afterSequence], onEvent);
+      if (!Number.isInteger(afterSequence) || afterSequence < 0)
+        throw new Error("INVALID_REQUEST");
+      return subscription(
+        IPC_CHANNELS.importsSubscribe,
+        id,
+        [id, afterSequence],
+        onEvent,
+      );
     },
   },
   chat: {
-    listSessions: () => invoke(IPC_CHANNELS.chatListSessions, SessionSummarySchema.array()),
-    createSession: (input) => invoke(IPC_CHANNELS.chatCreateSession, SessionSummarySchema, CreateSessionInputSchema.parse(input)),
-    listMessages: (sessionId) => invoke(IPC_CHANNELS.chatListMessages, MessageSchema.array(), uuid(sessionId)),
+    listSessions: () =>
+      invoke(IPC_CHANNELS.chatListSessions, SessionSummarySchema.array()),
+    createSession: (input) =>
+      invoke(
+        IPC_CHANNELS.chatCreateSession,
+        SessionSummarySchema,
+        CreateSessionInputSchema.parse(input),
+      ),
+    listMessages: (sessionId) =>
+      invoke(
+        IPC_CHANNELS.chatListMessages,
+        MessageSchema.array(),
+        uuid(sessionId),
+      ),
     stream: (input, onEvent) => {
       const data = ChatStreamInputSchema.parse(input);
-      return subscription(IPC_CHANNELS.chatStream, data.requestId, [data], onEvent);
+      return subscription(
+        IPC_CHANNELS.chatStream,
+        data.requestId,
+        [data],
+        onEvent,
+      );
     },
   },
   dialogs: {
     chooseSource: (kind) => {
-      if (kind !== "pdf" && kind !== "markdown") return Promise.reject(new Error("INVALID_REQUEST"));
-      return ipcRenderer.invoke(IPC_CHANNELS.dialogsChooseSource, kind).then((value: unknown) => value === null ? null : StagedSourceSchema.parse(value));
+      if (kind !== "pdf" && kind !== "markdown")
+        return Promise.reject(new Error("INVALID_REQUEST"));
+      return ipcRenderer
+        .invoke(IPC_CHANNELS.dialogsChooseSource, kind)
+        .then((value: unknown) =>
+          value === null ? null : StagedSourceSchema.parse(value),
+        );
     },
   },
   shell: {
     openExternal: (url) => {
       let parsed: URL;
-      try { parsed = new URL(url); } catch { return Promise.reject(new Error("INVALID_REQUEST")); }
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return Promise.reject(new Error("INVALID_REQUEST"));
-      return ipcRenderer.invoke(IPC_CHANNELS.shellOpenExternal, parsed.toString()).then(() => undefined);
+      try {
+        parsed = new URL(url);
+      } catch {
+        return Promise.reject(new Error("INVALID_REQUEST"));
+      }
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+        return Promise.reject(new Error("INVALID_REQUEST"));
+      return ipcRenderer
+        .invoke(IPC_CHANNELS.shellOpenExternal, parsed.toString())
+        .then(() => undefined);
     },
   },
 };
