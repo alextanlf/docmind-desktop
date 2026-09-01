@@ -1,9 +1,13 @@
 import type {
+  Citation,
   DocMindApi,
   DocumentDetail,
+  EventEnvelope,
   ImportJob,
+  Message,
   ModelStatus,
   Repository,
+  SessionSummary,
   SettingsView,
   SourcePreview,
   StagedSource,
@@ -99,6 +103,25 @@ export const job: ImportJob = {
   updatedAt: "2026-08-31T00:00:00Z",
 };
 
+export const session: SessionSummary = {
+  id: "00000000-0000-0000-0000-000000000025",
+  title: "State 管理问题",
+  repositoryIds: [repository.id],
+  createdAt: "2026-08-31T08:00:00Z",
+  updatedAt: "2026-08-31T08:00:00Z",
+};
+
+export const citation: Citation = {
+  sourceId: "S1",
+  chunkId: "chunk-state-1",
+  documentId: document.id,
+  title: "状态管理",
+  sectionPath: "状态管理 > @State",
+  pageNumber: null,
+  excerpt: "@State 用于管理视图内部的可变状态。",
+  sourceUrl: "https://www.yuque.com/test/swiftui/state",
+};
+
 export function installDocMindApi(overrides?: {
   settings?: Partial<typeof window.docmind.settings>;
   embedding?: Partial<typeof window.docmind.embedding>;
@@ -106,6 +129,7 @@ export function installDocMindApi(overrides?: {
   repositories?: Partial<DocMindApi["repositories"]>;
   documents?: Partial<DocMindApi["documents"]>;
   imports?: Partial<DocMindApi["imports"]>;
+  chat?: Partial<DocMindApi["chat"]>;
   dialogs?: Partial<DocMindApi["dialogs"]>;
   shell?: Partial<DocMindApi["shell"]>;
 }) {
@@ -158,6 +182,13 @@ export function installDocMindApi(overrides?: {
       subscribe: vi.fn().mockReturnValue({ requestId: job.id, cancel: vi.fn() }),
       ...overrides?.imports,
     },
+    chat: {
+      listSessions: vi.fn().mockResolvedValue([session]),
+      createSession: vi.fn().mockResolvedValue(session),
+      listMessages: vi.fn().mockResolvedValue([]),
+      stream: vi.fn(),
+      ...overrides?.chat,
+    },
     dialogs: {
       chooseSource: vi.fn().mockResolvedValue(source),
       ...overrides?.dialogs,
@@ -173,4 +204,65 @@ export function installDocMindApi(overrides?: {
     value: api as DocMindApi,
   });
   return api;
+}
+
+export function installChatStreamMock(chat: DocMindApi["chat"]) {
+  let onEvent: ((event: EventEnvelope) => void) | null = null;
+  let input: Parameters<DocMindApi["chat"]["stream"]>[0] | null = null;
+  let accumulatedContent = "";
+  let accumulatedCitations: Citation[] = [];
+  let lastSequence = 0;
+  const cancel = vi.fn();
+  const messages: Message[] = [];
+
+  vi.mocked(chat.listMessages).mockImplementation(async () => messages);
+  vi.mocked(chat.stream).mockImplementation((nextInput, listener) => {
+    input = nextInput;
+    onEvent = listener;
+    return { requestId: nextInput.requestId, cancel };
+  });
+
+  return {
+    get requestId() {
+      return input?.requestId ?? "";
+    },
+    cancel,
+    emit(event: EventEnvelope) {
+      const ordered = event.sequence > lastSequence;
+      if (ordered) lastSequence = event.sequence;
+      if (ordered && event.type === "delta" && typeof event.payload.content === "string") {
+        accumulatedContent += event.payload.content;
+      }
+      if (ordered && event.type === "citations" && Array.isArray(event.payload.citations)) {
+        accumulatedCitations = event.payload.citations as Citation[];
+      }
+      if (ordered && event.type === "done" && input) {
+        const messageId =
+          typeof event.payload.messageId === "string" ? event.payload.messageId : "";
+        messages.splice(
+          0,
+          messages.length,
+          {
+            id: "00000000-0000-0000-0000-000000000026",
+            sessionId: input.sessionId,
+            role: "user",
+            content: input.message,
+            citations: [],
+            generationStatus: "completed",
+            createdAt: "2026-08-31T08:01:00Z",
+          },
+          {
+            id: messageId,
+            sessionId: input.sessionId,
+            role: "assistant",
+            content: accumulatedContent,
+            citations: accumulatedCitations,
+            generationStatus: "completed",
+            createdAt: "2026-08-31T08:01:01Z",
+          },
+        );
+      }
+      onEvent?.(event);
+    },
+  };
 }
