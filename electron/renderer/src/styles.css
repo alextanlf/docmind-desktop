@@ -952,6 +952,9 @@ button:disabled {
     Menlo,
     monospace;
 }
+.markdown-code-block {
+  position: relative;
+}
 .markdown-copy-button {
   position: absolute;
   top: 6px;

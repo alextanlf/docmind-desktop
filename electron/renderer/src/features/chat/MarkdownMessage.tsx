@@ -1,5 +1,11 @@
 import { Check, Copy } from "lucide-react";
-import { useState, type ComponentPropsWithoutRef } from "react";
+import {
+  Children,
+  isValidElement,
+  useState,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+} from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Citation } from "../../../../shared/contracts";
@@ -64,18 +70,31 @@ function MarkdownLink({ href, children }: ComponentPropsWithoutRef<"a">) {
   );
 }
 
-function CodeBlock({
-  children,
-  className,
-  ...rest
-}: ComponentPropsWithoutRef<"code"> & { inline?: boolean }) {
-  const [copied, setCopied] = useState(false);
-  const code = String(children).replace(/\n$/, "");
-  const block = !rest.inline;
-  if (!block) return <code className={className}>{children}</code>;
+function codeText(children: ReactNode): string {
+  return Children.toArray(children)
+    .map((child) => {
+      if (typeof child === "string") return child;
+      if (isValidElement<{ children?: ReactNode }>(child)) return codeText(child.props.children);
+      return "";
+    })
+    .join("")
+    .replace(/\n$/, "");
+}
+
+function Code({ children, className, ...rest }: ComponentPropsWithoutRef<"code">) {
   return (
-    <span className="markdown-code-block">
-      <code className={className}>{code}</code>
+    <code className={className} {...rest}>
+      {children}
+    </code>
+  );
+}
+
+function CodeBlock({ children, ...rest }: ComponentPropsWithoutRef<"pre">) {
+  const [copied, setCopied] = useState(false);
+  const code = codeText(children);
+  return (
+    <div className="markdown-code-block">
+      <pre {...rest}>{children}</pre>
       <button
         aria-label="复制代码"
         className="markdown-copy-button"
@@ -88,7 +107,7 @@ function CodeBlock({
       >
         {copied ? <Check aria-hidden="true" size={15} /> : <Copy aria-hidden="true" size={15} />}
       </button>
-    </span>
+    </div>
   );
 }
 
@@ -125,7 +144,8 @@ export function MarkdownMessage({
       <ReactMarkdown
         components={{
           a: (props) => <CitationLink {...props} citationsBySourceId={citationsBySourceId} />,
-          code: CodeBlock,
+          code: Code,
+          pre: CodeBlock,
         }}
         remarkPlugins={[remarkGfm, citationRemarkPlugin(scoped)]}
       >

@@ -3,16 +3,12 @@ from __future__ import annotations
 from app.storage.models import DocumentChunkRecord, DocumentRecord, RepositoryRecord
 
 
-def test_session_create_and_message_history(client, auth_headers) -> None:
-    """Catches missing session creation and empty persisted-history contracts."""
+def test_session_create_rejects_an_empty_repository_scope(client, auth_headers) -> None:
+    """Catches session creation succeeding with no authorized knowledge base."""
     created = client.post("/api/sessions", json={"repositoryIds": []}, headers=auth_headers)
-    session_id = created.json()["id"]
-    history = client.get(f"/api/sessions/{session_id}/messages", headers=auth_headers)
 
-    assert created.status_code == 201
-    assert created.json()["title"] == "新会话"
-    assert history.status_code == 200
-    assert history.json() == []
+    assert created.status_code == 400
+    assert created.json()["error"]["code"] == "SESSION_INVALID_REQUEST"
 
 
 def test_sessions_require_known_indexed_repository_scope(client, auth_headers) -> None:

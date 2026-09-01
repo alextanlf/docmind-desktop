@@ -42,6 +42,19 @@ def _session(store: ConversationStore, session_id: str) -> SessionRecord:
     return session
 
 
+def _after_sequence(request: Request) -> int:
+    value = request.headers.get("Last-Event-ID")
+    if value is None:
+        return 0
+    try:
+        sequence = int(value)
+    except ValueError:
+        raise _invalid_request() from None
+    if sequence < 0:
+        raise _invalid_request()
+    return sequence
+
+
 @router.post("/{session_id}/messages/stream")
 async def stream_message(request: Request, session_id: str) -> StreamingResponse:
     try:
@@ -76,9 +89,12 @@ async def stream_message(request: Request, session_id: str) -> StreamingResponse
         message=message,
         repository_ids=repository_ids,
     )
+    after_sequence = _after_sequence(request)
 
     async def stream():  # type: ignore[no-untyped-def]
-        async for event in _chat_service(request).stream(chat_request):
+        async for event in _chat_service(request).stream(
+            chat_request, after_sequence=after_sequence
+        ):
             data = json.dumps(
                 event.model_dump(mode="json"),
                 ensure_ascii=False,

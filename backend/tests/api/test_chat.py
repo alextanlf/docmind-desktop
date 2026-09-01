@@ -12,8 +12,8 @@ class StubChatService:
     def __init__(self) -> None:
         self.requests = []
 
-    async def stream(self, request):  # type: ignore[no-untyped-def]
-        self.requests.append(request)
+    async def stream(self, request, *, after_sequence=0):  # type: ignore[no-untyped-def]
+        self.requests.append((request, after_sequence))
         yield EventEnvelope(
             request_id=request.request_id,
             type="delta",
@@ -78,7 +78,28 @@ def test_chat_stream_returns_shared_envelopes_as_sse(client, auth_headers) -> No
     payloads = [json.loads(frame.split("data: ", 1)[1]) for frame in frames]
     assert [payload["type"] for payload in payloads] == ["delta", "done"]
     assert payloads[0]["request_id"] == str(request_id)
-    assert service.requests[0].session_id == session_id
+    assert service.requests[0][0].session_id == session_id
+    assert service.requests[0][1] == 0
+
+
+def test_chat_stream_forwards_last_event_id_for_replay(client, auth_headers) -> None:
+    """Catches remount replay restarting from sequence zero."""
+    session_id = _seed_chat(client)
+    service = StubChatService()
+    client.app.state.chat_service = service
+
+    response = client.post(
+        f"/api/sessions/{session_id}/messages/stream",
+        headers={**auth_headers, "Last-Event-ID": "1"},
+        json={
+            "message": "@State 是什么？",
+            "repositoryIds": ["repo-1"],
+            "requestId": str(uuid4()),
+        },
+    )
+
+    assert response.status_code == 200
+    assert service.requests[0][1] == 1
 
 
 def test_chat_message_list_returns_persisted_citations(client, auth_headers) -> None:

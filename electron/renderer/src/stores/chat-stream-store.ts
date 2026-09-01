@@ -20,6 +20,7 @@ type ChatStreamState = {
   subscription: StreamSubscription | null;
   start: (input: { requestId: string; sessionId: string; userMessage: string }) => void;
   attachSubscription: (subscription: StreamSubscription) => void;
+  detachForSession: (sessionId: string) => void;
   applyEvent: (event: EventEnvelope) => boolean;
   stop: () => void;
   cancelForSession: (sessionId: string | null) => void;
@@ -85,6 +86,11 @@ export const useChatStreamStore = create<ChatStreamState>((set, get) => ({
     }),
   attachSubscription: (subscription) => {
     if (get().requestId === subscription.requestId) set({ subscription });
+  },
+  detachForSession: (sessionId) => {
+    const current = get();
+    if (current.sessionId === sessionId && current.status === "streaming")
+      set({ subscription: null });
   },
   applyEvent: (event) => {
     const current = get();

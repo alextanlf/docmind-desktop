@@ -62,8 +62,10 @@ async def list_sessions(request: Request) -> list[SessionSummary]:
 @router.post("", response_model=SessionSummary, status_code=status.HTTP_201_CREATED)
 async def create_session(request: Request, body: SessionCreate) -> SessionSummary:
     repository_ids = body.repository_ids
-    if any(not identifier.strip() for identifier in repository_ids) or len(set(repository_ids)) != len(
-        repository_ids
+    if (
+        not repository_ids
+        or any(not identifier.strip() for identifier in repository_ids)
+        or len(set(repository_ids)) != len(repository_ids)
     ):
         raise DomainError("SESSION_INVALID_REQUEST", "会话知识库范围无效", 400)
     known_ids = {repository.id for repository in _repository_store(request).list()}

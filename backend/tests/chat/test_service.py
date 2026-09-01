@@ -311,6 +311,9 @@ async def test_slow_and_late_subscribers_replay_lossless_long_answer() -> None:
 
     slow_events = [first, *[event async for event in slow_stream]]
     replayed_events = [event async for event in service.stream(request)]
+    resumed_events = [
+        event async for event in service.stream(request, after_sequence=first.sequence)
+    ]
 
     expected_sequences = list(range(1, len(deltas) + 3))
     assert [event.sequence for event in slow_events] == expected_sequences
@@ -324,6 +327,7 @@ async def test_slow_and_late_subscribers_replay_lossless_long_answer() -> None:
     )
     assert streamed == replayed == store.messages[-1].content
     assert slow_events[-1].type == replayed_events[-1].type == "done"
+    assert [event.sequence for event in resumed_events] == expected_sequences[1:]
     assert len(llm.calls) == 1
 
     await asyncio.wait_for(cleanup, timeout=0.3)

@@ -1,6 +1,7 @@
 import { Square } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import type { EventEnvelope } from "../../../../shared/contracts";
 import { IconButton } from "../../components/IconButton";
 import { useChatStreamStore } from "../../stores/chat-stream-store";
 import { chatKeys, useMessagesQuery } from "./chat.queries";
@@ -25,11 +26,44 @@ export function ChatPanel({
   const stream = useChatStreamStore();
   const [composerValue, setComposerValue] = useState("");
   const activeStream = stream.sessionId === sessionId ? stream : null;
+  const handleEvent = useCallback(
+    (event: EventEnvelope) => {
+      const accepted = useChatStreamStore.getState().applyEvent(event);
+      if (accepted && event.type === "done") {
+        void Promise.all([
+          queryClient.invalidateQueries({ queryKey: chatKeys.messages(sessionId) }),
+          queryClient.invalidateQueries({ queryKey: chatKeys.sessions }),
+        ]);
+      }
+    },
+    [queryClient, sessionId],
+  );
+  useEffect(() => {
+    if (
+      !activeStream?.requestId ||
+      activeStream.status !== "streaming" ||
+      activeStream.subscription
+    )
+      return;
+    const subscription = window.docmind.chat.stream(
+      {
+        requestId: activeStream.requestId,
+        sessionId,
+        message: activeStream.userMessage,
+        repositoryIds,
+      },
+      handleEvent,
+      activeStream.lastSequence,
+    );
+    useChatStreamStore.getState().attachSubscription(subscription);
+  }, [activeStream, handleEvent, repositoryIds, sessionId]);
   useEffect(
     () => () => {
       const current = useChatStreamStore.getState();
-      if (current.sessionId === sessionId && current.status === "streaming")
+      if (current.sessionId === sessionId && current.status === "streaming") {
         current.subscription?.detach?.();
+        current.detachForSession(sessionId);
+      }
     },
     [sessionId],
   );
@@ -43,15 +77,7 @@ export function ChatPanel({
     setComposerValue("");
     const subscription = window.docmind.chat.stream(
       { requestId, sessionId, message, repositoryIds },
-      (event) => {
-        const accepted = useChatStreamStore.getState().applyEvent(event);
-        if (accepted && event.type === "done") {
-          void Promise.all([
-            queryClient.invalidateQueries({ queryKey: chatKeys.messages(sessionId) }),
-            queryClient.invalidateQueries({ queryKey: chatKeys.sessions }),
-          ]);
-        }
-      },
+      handleEvent,
     );
     useChatStreamStore.getState().attachSubscription(subscription);
   };
@@ -73,6 +99,7 @@ export function ChatPanel({
           draftAssistant={activeStream?.draftAssistant ?? ""}
           draftUserMessage={activeStream?.userMessage ?? ""}
           messages={messages.data ?? []}
+          streamRequestId={activeStream?.requestId}
         />
       </div>
       {activeStream?.status === "streaming" ? (

@@ -97,6 +97,13 @@ describe("引用资料", () => {
     );
   });
 
+  it("keeps inline code inline without a block copy action", () => {
+    render(<ReferenceSurface content={"使用 `@State` 管理状态。"} />);
+
+    expect(screen.getByText("@State").tagName).toBe("CODE");
+    expect(screen.queryByRole("button", { name: "复制代码" })).not.toBeInTheDocument();
+  });
+
   it("keeps repeated source IDs scoped to the triggering answer and restores focus there", () => {
     const newer = {
       ...citation,

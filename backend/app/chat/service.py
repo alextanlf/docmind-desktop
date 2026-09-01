@@ -49,9 +49,11 @@ class ChatService:
         self._start_lock = asyncio.Lock()
         self._stopped = False
 
-    async def stream(self, request: ChatStreamRequest) -> AsyncIterator[EventEnvelope]:
+    async def stream(
+        self, request: ChatStreamRequest, *, after_sequence: int = 0
+    ) -> AsyncIterator[EventEnvelope]:
         key = str(request.request_id)
-        subscription = self.event_broker.subscribe(key, 0)
+        subscription = self.event_broker.subscribe(key, after_sequence)
         helper_tasks: set[asyncio.Task[Any]] = set()
 
         def create_helper_locked(
@@ -69,7 +71,7 @@ class ChatService:
             await self._ensure_producer(key, request)
             self._active_subscribers[key] = self._active_subscribers.get(key, 0) + 1
             next_event = create_helper_locked(anext(subscription), "next-event")
-        cursor = 0
+        cursor = after_sequence
         try:
             while True:
                 fallback = self._fallback_terminals.get(key)

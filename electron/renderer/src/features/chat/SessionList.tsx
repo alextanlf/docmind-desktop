@@ -18,7 +18,11 @@ function sessionGroup(session: SessionSummary) {
   const target = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
   if (target === day) return "今天";
   if (target === day - 86_400_000) return "昨天";
-  return date.toLocaleDateString("zh-CN", { month: "long", day: "numeric" });
+  return date.toLocaleDateString("zh-CN", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
 }
 
 export function SessionList({
@@ -80,22 +84,24 @@ export function SessionList({
       ) : null}
       {sessions.isPending ? <p className="session-empty">正在读取会话…</p> : null}
       {sessions.isError ? <p className="session-error">无法读取会话，请稍后重试。</p> : null}
-      {Object.entries(grouped).map(([group, items]) => (
-        <div className="session-group" key={group}>
-          {!collapsed ? <span>{group}</span> : null}
-          {items.map((session) => (
-            <button
-              aria-current={selectedSessionId === session.id ? "page" : undefined}
-              className={selectedSessionId === session.id ? "is-active" : undefined}
-              key={session.id}
-              onClick={() => onSessionSelect?.(session)}
-              type="button"
-            >
-              {!collapsed ? session.title : null}
-            </button>
-          ))}
-        </div>
-      ))}
+      {!collapsed
+        ? Object.entries(grouped).map(([group, items]) => (
+            <div className="session-group" key={group}>
+              <span>{group}</span>
+              {items.map((session) => (
+                <button
+                  aria-current={selectedSessionId === session.id ? "page" : undefined}
+                  className={selectedSessionId === session.id ? "is-active" : undefined}
+                  key={session.id}
+                  onClick={() => onSessionSelect?.(session)}
+                  type="button"
+                >
+                  {session.title}
+                </button>
+              ))}
+            </div>
+          ))
+        : null}
       {!sessions.isPending && !sessions.isError && sessions.data?.length === 0 ? (
         <p className="session-empty">暂无会话</p>
       ) : null}
