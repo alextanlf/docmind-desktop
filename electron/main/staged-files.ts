@@ -114,13 +114,30 @@ export class StagedFileService {
               position,
             );
             if (bytesRead === 0) throw new Error("source changed");
-            await destination.write(buffer, 0, bytesRead);
+            let written = 0;
+            while (written < bytesRead) {
+              const { bytesWritten } = await destination.write(
+                buffer,
+                written,
+                bytesRead - written,
+              );
+              if (
+                !Number.isInteger(bytesWritten) ||
+                bytesWritten <= 0 ||
+                bytesWritten > bytesRead - written
+              )
+                throw new Error("destination write failed");
+              written += bytesWritten;
+            }
             position += bytesRead;
             if (position > limit) throw new Error("source changed");
           }
           const finalStat = await sourceHandle.stat();
           if (finalStat.size !== openedStat.size)
             throw new Error("source changed");
+          const destinationStat = await destination.stat();
+          if (destinationStat.size !== openedStat.size)
+            throw new Error("destination write failed");
           await destination.sync();
         } finally {
           await destination.close().catch(() => {});

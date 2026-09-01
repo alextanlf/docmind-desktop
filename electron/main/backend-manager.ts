@@ -34,6 +34,7 @@ export class BackendManager {
   private readonly command: string;
   private readonly args: string[];
   private readonly configuredPackagedCommand: boolean;
+  private readonly invalidPackagedArgs: boolean;
   constructor(opts: {
     spawn?: SpawnFn;
     fetch?: typeof fetch;
@@ -54,20 +55,34 @@ export class BackendManager {
     this.timeout = opts.startupTimeoutMs ?? 15000;
     this.shutdownTimeout = opts.shutdownTimeoutMs ?? 3000;
     const packaged = opts.packaged ?? false;
+    const rawBackendArgs = opts.backendArgs as unknown;
+    const validBackendArgs =
+      rawBackendArgs === undefined ||
+      (Array.isArray(rawBackendArgs) &&
+        rawBackendArgs.every((arg) => typeof arg === "string"));
+    this.invalidPackagedArgs = packaged && !validBackendArgs;
     this.cwd = packaged
       ? (opts.backendCwd ?? "")
       : join(opts.repoDir ?? process.cwd(), "backend");
     this.configuredPackagedCommand =
       !packaged ||
-      Boolean(opts.backendCommand && opts.backendArgs && opts.backendCwd);
+      Boolean(
+        opts.backendCommand &&
+        opts.backendCwd &&
+        validBackendArgs &&
+        Array.isArray(rawBackendArgs),
+      );
     this.command = packaged ? (opts.backendCommand ?? "") : "uv";
     this.args = packaged
-      ? (opts.backendArgs ?? ["-m", "app"])
+      ? validBackendArgs && Array.isArray(rawBackendArgs)
+        ? (rawBackendArgs as string[])
+        : []
       : ["run", "python", "-m", "app"];
   }
   async start(): Promise<BackendConnection> {
     if (this.connection) return this.connection;
-    if (!this.configuredPackagedCommand) throw new BackendStartError();
+    if (!this.configuredPackagedCommand || this.invalidPackagedArgs)
+      throw new BackendStartError();
     this.token = randomBytes(32).toString("hex");
     const env = {
       ...process.env,
@@ -92,7 +107,9 @@ export class BackendManager {
       this.stderr = (this.stderr + String(data)).slice(-2000);
     });
     child.once("error", () => {
-      startError = new BackendStartError(this.redactedError());
+      // Defer diagnostic construction until the startup loop observes the
+      // failure so stderr data delivered after the error event is retained.
+      startError = new BackendStartError();
     });
     child.once("exit", () => {
       exited = true;
@@ -102,7 +119,7 @@ export class BackendManager {
       if (startError || exited) {
         const diagnostic = this.redactedError();
         await this.stop();
-        throw startError ?? new BackendStartError(diagnostic);
+        throw new BackendStartError(diagnostic);
       }
       try {
         const response = await this.healthRequest(
