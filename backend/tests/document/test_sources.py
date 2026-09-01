@@ -332,3 +332,4 @@ async def test_source_inspector_previews_staged_markdown(staged_store: StagedFil
         "text/markdown",
         len(b"# Local guide"),
     )
+    assert preview.source_url == f"staged://{staged_id}"

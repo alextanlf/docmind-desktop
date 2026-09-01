@@ -117,7 +117,10 @@ class StagedFileStore:
                 raise _unsupported("Markdown 必须使用 UTF-8 编码") from None
         return DownloadedDocument(
             title=path.name,
-            source_url=path.as_uri(),
+            # Preserve only the opaque staged identifier across the backend
+            # boundary; never expose the absolute staging path in previews,
+            # persisted chunks, or later chat citations.
+            source_url=f"staged://{staged_id.lower()}",
             media_type=media_type,
             raw_bytes=raw_bytes,
             local_path=path,
