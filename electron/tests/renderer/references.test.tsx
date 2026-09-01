@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MarkdownMessage } from "../../renderer/src/features/chat/MarkdownMessage";
 import { ReferencePanel } from "../../renderer/src/features/references/ReferencePanel";
@@ -16,10 +16,20 @@ function ReferenceSurface({ content = "答案 [S1]" }: { content?: string }) {
   );
 }
 
+function ReferenceOpenMarker() {
+  const open = useUiStore((state) => state.referencePanelOpen);
+
+  return <output data-open={String(open)} data-testid="reference-open-state" />;
+}
+
 describe("引用资料", () => {
   beforeEach(() => {
     installDocMindApi();
-    useUiStore.setState({ activeCitationId: null, referencePanelOpen: false });
+    useUiStore.setState({
+      activeCitationId: null,
+      activeCitationTrigger: null,
+      referencePanelOpen: false,
+    });
   });
 
   it("opens a citation in the reference panel without layout overlap", async () => {
@@ -135,12 +145,23 @@ describe("引用资料", () => {
       configurable: true,
       value: () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
     });
-    render(<ReferenceSurface />);
+    render(
+      <>
+        <ReferenceSurface />
+        <ReferenceOpenMarker />
+      </>,
+    );
     const citationButton = screen.getByRole("button", { name: "查看引用 S1" });
+    const openState = screen.getByTestId("reference-open-state");
+    const focusStates: string[] = [];
+    citationButton.addEventListener("focus", () => focusStates.push(openState.dataset.open ?? ""));
 
     fireEvent.click(citationButton);
+    expect(useUiStore.getState().activeCitationTrigger).toBe(citationButton);
     fireEvent.click(screen.getByRole("button", { name: "关闭引用资料" }));
 
+    await waitFor(() => expect(openState).toHaveAttribute("data-open", "false"));
+    expect(focusStates).toEqual(["false"]);
     expect(citationButton).toHaveFocus();
     Object.defineProperty(window, "matchMedia", { configurable: true, value: originalMatchMedia });
   });
