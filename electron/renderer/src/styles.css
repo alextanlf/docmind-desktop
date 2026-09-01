@@ -1529,9 +1529,6 @@ progress::-webkit-progress-bar {
   .workspace-grid.sidebar-is-collapsed.reference-is-closed {
     grid-template-columns: 64px minmax(480px, 1fr) 0;
   }
-  .workspace-reference {
-    visibility: hidden;
-  }
 }
 
 @media (max-width: 1000px) {
