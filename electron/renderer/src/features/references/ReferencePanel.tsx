@@ -36,9 +36,9 @@ export function ReferencePanel({ citations }: { citations: (Citation | ScopedCit
   const open = useUiStore((state) => state.referencePanelOpen);
   const setOpen = useUiStore((state) => state.setReferencePanelOpen);
   const setActiveCitationId = useUiStore((state) => state.setActiveCitationId);
-  const activeCitationTrigger = useUiStore((state) => state.activeCitationTrigger);
   const setActiveCitationTrigger = useUiStore((state) => state.setActiveCitationTrigger);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const pendingFocusTrigger = useRef<HTMLButtonElement | null>(null);
   const drawer = useDrawerLayout();
   const citationsById = useMemo(() => {
     const map = new Map<string, Citation>();
@@ -61,12 +61,18 @@ export function ReferencePanel({ citations }: { citations: (Citation | ScopedCit
     if (drawer && open && activeCitation) closeRef.current?.focus();
   }, [activeCitation, drawer, open]);
 
+  useEffect(() => {
+    if (open) return;
+    const trigger = pendingFocusTrigger.current;
+    pendingFocusTrigger.current = null;
+    if (trigger?.isConnected) trigger.focus();
+  }, [open]);
+
   const close = () => {
-    const trigger = activeCitationTrigger;
+    pendingFocusTrigger.current = useUiStore.getState().activeCitationTrigger;
     setOpen(false);
     setActiveCitationId(null);
     setActiveCitationTrigger(null);
-    trigger?.focus();
   };
 
   return (
