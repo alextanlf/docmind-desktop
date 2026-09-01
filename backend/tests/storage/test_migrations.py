@@ -22,6 +22,7 @@ def test_upgrade_creates_all_phase_one_tables() -> None:
         "document_chunks",
         "import_jobs",
         "sessions",
+        "chat_requests",
         "messages",
         "settings",
         "vector_cleanups",
@@ -58,6 +59,9 @@ def test_upgrade_creates_exact_phase_one_columns(database: Database) -> None:
     }
     assert {column["name"] for column in inspector.get_columns("sessions")} == {
         "id", "title", "repository_scope_json", "created_at", "updated_at",
+    }
+    assert {column["name"] for column in inspector.get_columns("chat_requests")} == {
+        "request_id", "session_id", "terminal_type", "terminal_payload_json", "created_at", "updated_at",
     }
     assert {column["name"] for column in inspector.get_columns("messages")} == {
         "id", "session_id", "role", "content", "citations_json", "generation_status", "created_at",
@@ -138,6 +142,7 @@ def test_migration_declares_defaults_indexes_and_foreign_key_actions(database: D
             "state", "progress", "message", "retryable", "cancel_requested", "created_at", "updated_at"
         },
         "sessions": {"repository_scope_json", "created_at", "updated_at"},
+        "chat_requests": {"created_at", "updated_at"},
         "messages": {"citations_json", "generation_status", "created_at"},
         "settings": {"updated_at"},
     }
@@ -156,6 +161,7 @@ def test_migration_declares_defaults_indexes_and_foreign_key_actions(database: D
             "ix_document_chunks_repository_id": ["repository_id"],
         },
         "import_jobs": {"ix_import_jobs_state": ["state"]},
+        "chat_requests": {"ix_chat_requests_session_id": ["session_id"]},
         "messages": {"ix_messages_session_id": ["session_id"]},
     }
     for table_name, expected_indexes in index_columns.items():
@@ -167,12 +173,13 @@ def test_migration_declares_defaults_indexes_and_foreign_key_actions(database: D
             foreign_key["constrained_columns"][0]: foreign_key["options"].get("ondelete")
             for foreign_key in inspector.get_foreign_keys(table_name)
         }
-        for table_name in ("documents", "document_chunks", "import_jobs", "messages")
+        for table_name in ("documents", "document_chunks", "import_jobs", "chat_requests", "messages")
     }
     assert foreign_keys == {
         "documents": {"repository_id": "CASCADE"},
         "document_chunks": {"document_id": "CASCADE", "repository_id": "CASCADE"},
         "import_jobs": {"repository_id": "SET NULL", "document_id": "SET NULL"},
+        "chat_requests": {"session_id": "CASCADE"},
         "messages": {"session_id": "CASCADE"},
     }
 
