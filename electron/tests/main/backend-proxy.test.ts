@@ -56,6 +56,23 @@ describe("BackendProxy", () => {
     });
   });
 
+  it("preserves structured client errors for void requests", async () => {
+    const error = new (
+      await import("../../main/backend-proxy")
+    ).DocMindClientError(
+      "MODEL_AUTH_FAILED",
+      "请先配置 API Key",
+      false,
+      "保存 API Key 后重试",
+    );
+    const proxy = new BackendProxy({
+      request: vi.fn().mockRejectedValue(error),
+    });
+    await expect(
+      proxy.requestVoid("/api/settings/diagnostics/clear"),
+    ).rejects.toBe(error);
+  });
+
   it("forwards ordered events from a byte-split response and removes the stream at terminal", async () => {
     const sent: unknown[] = [];
     const body = new ReadableStream<Uint8Array>({

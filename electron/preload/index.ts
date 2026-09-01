@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { z } from "zod";
 import { IPC_CHANNELS, streamEventChannel } from "../shared/channels";
 import {
   ChatStreamInputSchema,
@@ -10,6 +11,7 @@ import {
   DocumentSummarySchema,
   EventEnvelopeSchema,
   ImportJobSchema,
+  IpcResultSchema,
   MessageSchema,
   ModelConnectionResultSchema,
   ModelSettingsInputSchema,
@@ -35,12 +37,16 @@ const uuid = (value: unknown): string => {
   return value;
 };
 
-async function invoke<T>(
+async function invoke<T extends z.ZodTypeAny>(
   channel: string,
-  schema: { parse(value: unknown): T },
+  schema: T,
   ...args: unknown[]
-): Promise<T> {
-  return schema.parse(await ipcRenderer.invoke(channel, ...args));
+): Promise<z.output<T>> {
+  const result = IpcResultSchema(schema).parse(
+    await ipcRenderer.invoke(channel, ...args),
+  );
+  if ("error" in result) throw result.error;
+  return result.value as z.output<T>;
 }
 
 function subscription(
@@ -59,12 +65,14 @@ function subscription(
     const parsed = EventEnvelopeSchema.safeParse(payload);
     if (parsed.success && parsed.data.sequence > lastSequence) {
       lastSequence = parsed.data.sequence;
-      onEvent(parsed.data);
-      if (parsed.data.type === "done" || parsed.data.type === "error") {
+      const terminal =
+        parsed.data.type === "done" || parsed.data.type === "error";
+      if (terminal) {
         active = false;
         ipcRenderer.removeListener(eventChannel, listener);
         activeSubscriptions.delete(key);
       }
+      onEvent(parsed.data);
     }
   };
   ipcRenderer.on(eventChannel, listener);
@@ -97,9 +105,7 @@ const api: DocMindApi = {
     testModel: () =>
       invoke(IPC_CHANNELS.settingsTestModel, ModelConnectionResultSchema),
     clearDiagnostics: () =>
-      ipcRenderer
-        .invoke(IPC_CHANNELS.settingsClearDiagnostics)
-        .then(() => undefined),
+      invoke(IPC_CHANNELS.settingsClearDiagnostics, z.undefined()),
   },
   embedding: {
     status: () => invoke(IPC_CHANNELS.embeddingStatus, ModelStatusSchema),
@@ -147,9 +153,12 @@ const api: DocMindApi = {
       ),
     delete: (documentId, confirm) => {
       if (confirm !== true) return Promise.reject(new Error("INVALID_REQUEST"));
-      return ipcRenderer
-        .invoke(IPC_CHANNELS.documentsDelete, uuid(documentId), true)
-        .then(() => undefined);
+      return invoke(
+        IPC_CHANNELS.documentsDelete,
+        z.undefined(),
+        uuid(documentId),
+        true,
+      );
     },
   },
   imports: {
@@ -212,11 +221,11 @@ const api: DocMindApi = {
     chooseSource: (kind) => {
       if (kind !== "pdf" && kind !== "markdown")
         return Promise.reject(new Error("INVALID_REQUEST"));
-      return ipcRenderer
-        .invoke(IPC_CHANNELS.dialogsChooseSource, kind)
-        .then((value: unknown) =>
-          value === null ? null : StagedSourceSchema.parse(value),
-        );
+      return invoke(
+        IPC_CHANNELS.dialogsChooseSource,
+        StagedSourceSchema.nullable(),
+        kind,
+      );
     },
   },
   shell: {
@@ -229,9 +238,11 @@ const api: DocMindApi = {
       }
       if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
         return Promise.reject(new Error("INVALID_REQUEST"));
-      return ipcRenderer
-        .invoke(IPC_CHANNELS.shellOpenExternal, parsed.toString())
-        .then(() => undefined);
+      return invoke(
+        IPC_CHANNELS.shellOpenExternal,
+        z.undefined(),
+        parsed.toString(),
+      );
     },
   },
 };

@@ -131,4 +131,50 @@ describe("preload bridge", () => {
     });
     expect(parsed.sourceUrl).toBeNull();
   });
+
+  it("unwraps a resolved IPC error envelope without losing stable fields", async () => {
+    const api = exposed.docmind as any;
+    invoke.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: "MODEL_AUTH_FAILED",
+        message: "请先配置 API Key",
+        retryable: false,
+        action: "保存 API Key 后重试",
+      },
+    });
+    await expect(api.settings.get()).rejects.toEqual({
+      code: "MODEL_AUTH_FAILED",
+      message: "请先配置 API Key",
+      retryable: false,
+      action: "保存 API Key 后重试",
+    });
+  });
+
+  it("removes terminal listeners even when the event callback throws", () => {
+    const api = exposed.docmind as any;
+    const callback = vi.fn(() => {
+      throw new Error("renderer callback failed");
+    });
+    api.imports.subscribe("00000000-0000-0000-0000-000000000012", 0, callback);
+    const listener = on.mock.calls.at(-1)?.[1] as (
+      event: unknown,
+      payload: unknown,
+    ) => void;
+    expect(() =>
+      listener(
+        {},
+        {
+          requestId: "00000000-0000-0000-0000-000000000012",
+          type: "done",
+          sequence: 1,
+          payload: {},
+        },
+      ),
+    ).toThrow("renderer callback failed");
+    expect(removeListener).toHaveBeenCalledWith(
+      "stream:event:00000000-0000-0000-0000-000000000012",
+      listener,
+    );
+  });
 });

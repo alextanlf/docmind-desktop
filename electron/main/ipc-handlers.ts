@@ -326,9 +326,9 @@ export function registerIpcHandlers(
       } else {
         ipcMain.handle(channel, async (event: IpcEvent, ...args: any[]) => {
           try {
-            return await handler(event, ...args);
+            return { ok: true as const, value: await handler(event, ...args) };
           } catch (error) {
-            throw serializeIpcError(error);
+            return { ok: false as const, error: serializeIpcError(error) };
           }
         });
       }
