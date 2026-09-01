@@ -54,7 +54,7 @@ describe("IPC handlers", () => {
     );
   });
 
-  it("wraps ipcMain handlers with serializable stable errors", async () => {
+  it("resolves ipcMain handlers with a cloneable stable error envelope", async () => {
     const deps = dependencies();
     const registered = new Map<
       string,
@@ -68,12 +68,31 @@ describe("IPC handlers", () => {
     );
     registerIpcHandlers(deps);
     const wrapped = registered.get("settings:get");
-    await expect(wrapped?.({})).rejects.toMatchObject({
-      code: "BACKEND_REQUEST_FAILED",
-      message: "请求失败",
-      retryable: false,
+    const result = await wrapped?.({});
+    const cloned = JSON.parse(JSON.stringify(result));
+    expect(cloned).toEqual({
+      ok: false,
+      error: {
+        code: "BACKEND_REQUEST_FAILED",
+        message: "请求失败",
+        retryable: false,
+      },
     });
-    await expect(wrapped?.({})).rejects.not.toThrow(/private|failed/);
+    expect(JSON.stringify(cloned)).not.toMatch(/private|failed/);
+  });
+
+  it("resolves successful ipcMain handlers with a cloneable value envelope", async () => {
+    const deps = dependencies();
+    const registered = new Map<string, any>();
+    deps.ipcMain.handle.mockImplementation((channel: string, handler: any) =>
+      registered.set(channel, handler),
+    );
+    deps.proxy.requestJson.mockResolvedValue({ status: "ok" });
+    registerIpcHandlers(deps);
+    await expect(registered.get("settings:get")({})).resolves.toEqual({
+      ok: true,
+      value: { status: "ok" },
+    });
   });
 
   it("sanitizes staged source preview paths at the typed boundary", async () => {

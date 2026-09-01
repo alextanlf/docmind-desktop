@@ -13,6 +13,11 @@ export const ErrorBodySchema = z.object({
   action: z.string().max(500).nullable().optional(),
 });
 export const ErrorEnvelopeSchema = z.object({ error: ErrorBodySchema });
+export const IpcResultSchema = <T extends z.ZodTypeAny>(value: T) =>
+  z.discriminatedUnion("ok", [
+    z.object({ ok: z.literal(true), value }),
+    z.object({ ok: z.literal(false), error: ErrorBodySchema }),
+  ]);
 
 export const ModelSettingsInputSchema = z.object({
   preset: z.enum(["deepseek", "qwen", "openai", "custom"]),

@@ -132,7 +132,8 @@ export class BackendProxy {
     let response: Response;
     try {
       response = await this.requestFn(route, init);
-    } catch {
+    } catch (error) {
+      if (error instanceof DocMindClientError) throw error;
       throw new DocMindClientError(
         "BACKEND_UNAVAILABLE",
         "后端暂不可用，请稍后重试",
