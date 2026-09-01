@@ -11,10 +11,5 @@
     "skipLibCheck": true,
     "types": ["vitest/globals", "node"]
   },
-  "include": [
-    "electron/renderer/src",
-    "electron/tests",
-    "electron/main",
-    "electron/preload"
-  ]
+  "include": ["electron/renderer/src", "electron/tests", "electron/main", "electron/preload", "e2e"]
 }

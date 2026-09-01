@@ -7,14 +7,27 @@ import { createWindow, showAfterDidFinishLoad } from "./window-manager";
 import { logger } from "./logger";
 let backend: BackendManager;
 let proxy: BackendProxy;
+
+if (process.env.DOCMIND_E2E === "1" && process.env.DOCMIND_E2E_DATA_DIR) {
+  app.setPath("userData", process.env.DOCMIND_E2E_DATA_DIR);
+}
+
+function stagedFilesForRuntime(dataDir: string) {
+  const fixture = process.env.DOCMIND_E2E === "1" ? process.env.DOCMIND_E2E_DIALOG_PATH : undefined;
+  return new StagedFileService({
+    dataDir,
+    ...(fixture
+      ? {
+          showOpenDialog: async () => ({ canceled: false, filePaths: [fixture] }),
+        }
+      : {}),
+  });
+}
 function parsePackagedArgs(value: string | undefined) {
   if (value === undefined) return { valid: true, args: undefined };
   try {
     const parsed: unknown = JSON.parse(value);
-    if (
-      !Array.isArray(parsed) ||
-      parsed.some((argument) => typeof argument !== "string")
-    )
+    if (!Array.isArray(parsed) || parsed.some((argument) => typeof argument !== "string"))
       return { valid: false, args: undefined };
     return { valid: true, args: parsed as string[] };
   } catch {
@@ -39,12 +52,11 @@ app.whenReady().then(async () => {
     });
     registerIpcHandlers({
       proxy,
-      stagedFiles: new StagedFileService({ dataDir: app.getPath("userData") }),
+      stagedFiles: stagedFilesForRuntime(app.getPath("userData")),
       app,
     });
     const origin =
-      process.env.ELECTRON_RENDERER_URL ??
-      `file://${__dirname}/../renderer/index.html`;
+      process.env.ELECTRON_RENDERER_URL ?? `file://${__dirname}/../renderer/index.html`;
     const win = createWindow(origin);
     showAfterDidFinishLoad(win);
     await win.loadURL(origin);

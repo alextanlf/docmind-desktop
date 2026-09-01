@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  registerIpcHandlers,
-  serializeIpcError,
-} from "../../main/ipc-handlers";
+import { registerIpcHandlers, serializeIpcError } from "../../main/ipc-handlers";
 
 function dependencies() {
   return {
@@ -38,9 +35,7 @@ describe("IPC handlers", () => {
   it("validates UUID path parameters before interpolation", async () => {
     const deps = dependencies();
     const handlers = registerIpcHandlers(deps);
-    expect(() => handlers["documents:read"]({} as any, "not-a-uuid")).toThrow(
-      /请求参数无效/,
-    );
+    expect(() => handlers["documents:read"]({} as any, "not-a-uuid")).toThrow(/请求参数无效/);
     expect(deps.proxy.requestJson).not.toHaveBeenCalled();
   });
 
@@ -48,24 +43,16 @@ describe("IPC handlers", () => {
     const deps = dependencies();
     const destroyed = { on: vi.fn() };
     registerIpcHandlers({ ...deps, getWebContents: () => destroyed } as any);
-    expect(destroyed.on).toHaveBeenCalledWith(
-      "destroyed",
-      expect.any(Function),
-    );
+    expect(destroyed.on).toHaveBeenCalledWith("destroyed", expect.any(Function));
   });
 
   it("resolves ipcMain handlers with a cloneable stable error envelope", async () => {
     const deps = dependencies();
-    const registered = new Map<
-      string,
-      (event: unknown, ...args: unknown[]) => unknown
-    >();
+    const registered = new Map<string, (event: unknown, ...args: unknown[]) => unknown>();
     deps.ipcMain.handle.mockImplementation((channel: string, handler: any) =>
       registered.set(channel, handler),
     );
-    deps.proxy.requestJson.mockRejectedValue(
-      new Error("failed at /private/secret/token"),
-    );
+    deps.proxy.requestJson.mockRejectedValue(new Error("failed at /private/secret/token"));
     registerIpcHandlers(deps);
     const wrapped = registered.get("settings:get");
     const result = await wrapped?.({});
@@ -125,11 +112,7 @@ describe("IPC handlers", () => {
       listeners.set(channel, handler),
     );
     registerIpcHandlers(deps);
-    listeners.get("imports:subscribe")(
-      { sender },
-      "00000000-0000-0000-0000-000000000001",
-      0,
-    );
+    listeners.get("imports:subscribe")({ sender }, "00000000-0000-0000-0000-000000000001", 0);
     expect(sender.send).toHaveBeenCalledWith(
       "stream:event:00000000-0000-0000-0000-000000000001",
       expect.objectContaining({

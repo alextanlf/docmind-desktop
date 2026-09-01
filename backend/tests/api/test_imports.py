@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import UTC, datetime
+from threading import Event
 
 import pytest
 from starlette.requests import Request
@@ -33,8 +35,8 @@ class StubImportService:
         self.event_broker = InMemoryEventBroker()
         self.jobs = {"job-api-1": job_view()}
         self.last_event_sequences = {"job-api-1": 0}
-        self.run_started = asyncio.Event()
-        self.release_run = asyncio.Event()
+        self.run_started = Event()
+        self.release_run = Event()
         self.inspect_calls = 0
 
     async def inspect(self, ref: SourceRef) -> SourcePreview:
@@ -58,7 +60,7 @@ class StubImportService:
 
     async def run(self, job_id: str) -> None:
         self.run_started.set()
-        await self.release_run.wait()
+        await asyncio.to_thread(self.release_run.wait)
         self.jobs[job_id] = job_view("completed", 100)
         await self.event_broker.publish(job_id, "progress", {"progress": 70})
         await self.event_broker.publish(job_id, "done", {"progress": 100})
@@ -133,11 +135,16 @@ def test_create_retains_background_task_until_runner_finishes(client, auth_heade
     assert response.status_code == 202
     assert response.json()["id"] == "job-api-1"
     assert len(client.app.state.import_tasks) == 1
+    for _ in range(100):
+        if service.run_started.is_set():
+            break
+        time.sleep(0.001)
+    assert service.run_started.is_set()
     service.release_run.set()
     for _ in range(100):
         if not client.app.state.import_tasks:
             break
-        asyncio.run(asyncio.sleep(0.001))
+        time.sleep(0.001)
     assert client.app.state.import_tasks == set()
 
 

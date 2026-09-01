@@ -6,7 +6,7 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ["electron/**/*.ts", "e2e/**/*.js"],
+    files: ["electron/**/*.ts", "e2e/**/*.ts"],
     languageOptions: { globals: globals.node },
     rules: { "@typescript-eslint/no-explicit-any": "off" },
   },

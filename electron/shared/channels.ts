@@ -29,8 +29,7 @@ export const IPC_CHANNELS = {
   streamCancel: "stream:cancel",
 } as const;
 
-export const streamEventChannel = (requestId: string) =>
-  `stream:event:${requestId}`;
+export const streamEventChannel = (requestId: string) => `stream:event:${requestId}`;
 export const CHANNELS = IPC_CHANNELS;
 export const STREAM_EVENT_PREFIX = "stream:event:";
 
