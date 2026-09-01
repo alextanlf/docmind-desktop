@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { Component, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ErrorBoundary } from "../../renderer/src/app/ErrorBoundary";
+import { AppProviders } from "../../renderer/src/app/AppProviders";
 import { Workspace } from "../../renderer/src/app/Workspace";
 import { useUiStore } from "../../renderer/src/stores/ui-store";
 import { installDocMindApi } from "./test-docmind-api";
@@ -10,6 +11,14 @@ class BrokenView extends Component {
   render(): ReactNode {
     throw new Error("secret stack details");
   }
+}
+
+function renderWorkspace() {
+  return render(
+    <AppProviders>
+      <Workspace />
+    </AppProviders>,
+  );
 }
 
 describe("Workspace", () => {
@@ -29,7 +38,7 @@ describe("Workspace", () => {
   });
 
   it("renders stable three-column workspace dimensions and responsive classes", () => {
-    render(<Workspace />);
+    renderWorkspace();
 
     expect(screen.getByLabelText("工作台")).toHaveClass("workspace-grid");
     expect(screen.getByLabelText("主导航")).toHaveClass("w-[248px]");
@@ -39,7 +48,7 @@ describe("Workspace", () => {
   });
 
   it("supports keyboard sidebar controls with accessible icon labels", () => {
-    render(<Workspace />);
+    renderWorkspace();
 
     const collapse = screen.getByRole("button", { name: "收起侧边栏" });
     collapse.focus();
@@ -55,7 +64,7 @@ describe("Workspace", () => {
 
   it("keeps rail navigation named and titled when sidebar labels are hidden", () => {
     useUiStore.setState({ sidebarCollapsed: true });
-    render(<Workspace />);
+    renderWorkspace();
 
     for (const label of ["新建会话", "知识库", "导入文档", "设置"]) {
       const button = screen.getByRole("button", { name: label });
@@ -65,7 +74,7 @@ describe("Workspace", () => {
   });
 
   it("reopens the reference panel after it is closed", () => {
-    render(<Workspace />);
+    renderWorkspace();
 
     fireEvent.click(screen.getByRole("button", { name: "关闭引用资料" }));
     expect(screen.getByLabelText("工作台")).toHaveClass("reference-is-closed");
@@ -90,7 +99,7 @@ describe("Workspace", () => {
         dispatchEvent: vi.fn(),
       }),
     );
-    render(<Workspace />);
+    renderWorkspace();
 
     expect(screen.queryByRole("button", { name: "收起侧边栏" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "展开侧边栏" })).not.toBeInTheDocument();
