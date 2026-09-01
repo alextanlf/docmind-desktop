@@ -6,13 +6,34 @@ import {
   Library,
   MessageSquarePlus,
   PanelRightClose,
+  PanelRightOpen,
   Search,
   Settings,
 } from "lucide-react";
 import { clsx } from "clsx";
+import { useEffect, useState } from "react";
 import { IconButton } from "../components/IconButton";
 import { SettingsView } from "../features/settings/SettingsView";
 import { useUiStore } from "../stores/ui-store";
+
+const FORCED_RAIL_QUERY = "(max-width: 1000px)";
+
+function useForcedIconRail() {
+  const [forced, setForced] = useState(
+    () => typeof window.matchMedia === "function" && window.matchMedia(FORCED_RAIL_QUERY).matches,
+  );
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia(FORCED_RAIL_QUERY);
+    const update = (event: MediaQueryListEvent) => setForced(event.matches);
+    setForced(query.matches);
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  return forced;
+}
 
 export function Workspace() {
   const activeView = useUiStore((state) => state.activeView);
@@ -21,6 +42,7 @@ export function Workspace() {
   const toggleSidebar = useUiStore((state) => state.toggleSidebar);
   const referencePanelOpen = useUiStore((state) => state.referencePanelOpen);
   const setReferencePanelOpen = useUiStore((state) => state.setReferencePanelOpen);
+  const forcedIconRail = useForcedIconRail();
 
   return (
     <main
@@ -40,18 +62,20 @@ export function Workspace() {
             D
           </span>
           <strong>DocMind</strong>
-          <IconButton
-            icon={
-              sidebarCollapsed ? (
-                <ChevronRight aria-hidden="true" size={18} />
-              ) : (
-                <ChevronLeft aria-hidden="true" size={18} />
-              )
-            }
-            label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
-            onClick={toggleSidebar}
-            size="small"
-          />
+          {forcedIconRail ? null : (
+            <IconButton
+              icon={
+                sidebarCollapsed ? (
+                  <ChevronRight aria-hidden="true" size={18} />
+                ) : (
+                  <ChevronLeft aria-hidden="true" size={18} />
+                )
+              }
+              label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+              onClick={toggleSidebar}
+              size="small"
+            />
+          )}
         </div>
         <button aria-label="新建会话" className="new-chat-button" title="新建会话" type="button">
           <MessageSquarePlus aria-hidden="true" size={17} />
@@ -93,6 +117,15 @@ export function Workspace() {
         className="workspace-main"
         aria-label={activeView === "settings" ? "设置内容" : "对话工作区"}
       >
+        {!referencePanelOpen ? (
+          <IconButton
+            className="reference-reopen"
+            icon={<PanelRightOpen aria-hidden="true" size={17} />}
+            label="打开引用资料"
+            onClick={() => setReferencePanelOpen(true)}
+            size="small"
+          />
+        ) : null}
         {activeView === "settings" ? (
           <SettingsView />
         ) : (

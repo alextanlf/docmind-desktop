@@ -55,6 +55,63 @@ describe("首次设置", () => {
     expect(await screen.findByLabelText("工作台")).toBeVisible();
   });
 
+  it("invalidates a successful model test after edits, saves, or key clearing", async () => {
+    installDocMindApi({
+      yuque: { status: vi.fn().mockResolvedValue(loggedOutYuque) },
+    });
+    render(<App />);
+
+    const next = await screen.findByRole("button", { name: "下一步" });
+    const testConnection = screen.getByRole("button", { name: "测试模型连接" });
+    fireEvent.click(testConnection);
+    await waitFor(() => expect(next).toBeEnabled());
+
+    fireEvent.change(screen.getByLabelText("模型名称"), { target: { value: "changed-model" } });
+    expect(next).toBeDisabled();
+    expect(testConnection).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+    await screen.findByText("设置已保存");
+    expect(next).toBeDisabled();
+    expect(testConnection).toBeEnabled();
+
+    fireEvent.click(testConnection);
+    await waitFor(() => expect(next).toBeEnabled());
+    fireEvent.click(screen.getByRole("checkbox", { name: "清除已保存的 API Key" }));
+    expect(next).toBeDisabled();
+    expect(testConnection).toBeDisabled();
+  });
+
+  it("keeps onboarding focus inside the required modal", async () => {
+    installDocMindApi({
+      settings: {
+        get: vi.fn().mockResolvedValue({ ...readySettings, hasApiKey: false }),
+      },
+      yuque: { status: vi.fn().mockResolvedValue(loggedOutYuque) },
+    });
+    render(<App />);
+
+    const dialog = await screen.findByRole("dialog", { name: "开始使用 DocMind" });
+    const first = screen.getByRole("combobox", { name: "模型预设" });
+    const last = screen.getByRole("button", { name: "保存设置" });
+    await waitFor(() => expect(first).toHaveFocus());
+
+    last.focus();
+    fireEvent.keyDown(last, { key: "Tab" });
+    expect(first).toHaveFocus();
+    fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
+    expect(last).toHaveFocus();
+
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(dialog).toBeVisible();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+
+    const modalLayer = dialog.closest(".dialog-backdrop");
+    const background = Array.from(document.body.children).find((element) => element !== modalLayer);
+    expect(background).toHaveAttribute("inert");
+    expect(background).toHaveAttribute("aria-hidden", "true");
+  });
+
   it("skips onboarding when the model key and Yuque session are ready", async () => {
     installDocMindApi({
       yuque: {

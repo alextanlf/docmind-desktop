@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppProviders } from "../../renderer/src/app/AppProviders";
 import { appQueryClient } from "../../renderer/src/app/query-client";
 import { SettingsView } from "../../renderer/src/features/settings/SettingsView";
+import { clientErrorMessage } from "../../renderer/src/features/settings/settings.queries";
 import {
   installDocMindApi,
   loggedOutYuque,
@@ -57,6 +58,33 @@ describe("设置", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("API Key 无效，请更新密钥后重试");
   });
 
+  it.each([
+    ["MODEL_TIMEOUT", "模型连接超时，请检查网络或调大超时时间"],
+    ["MODEL_RATE_LIMITED", "请求过于频繁，请稍后重试"],
+    ["MODEL_PROTOCOL_ERROR", "模型服务响应格式异常，请检查 Base URL 或接口兼容性"],
+    ["MODEL_UNAVAILABLE", "模型服务暂不可用，请稍后重试"],
+  ])("maps %s without exposing backend details", (code, expected) => {
+    expect(
+      clientErrorMessage({
+        code,
+        message: "Invalid payload at /Users/private/config.json",
+        action: "paste raw stack trace",
+      }),
+    ).toBe(expected);
+  });
+
+  it("uses generic Chinese copy for unknown and local validation errors", () => {
+    const raw = "ZodError: invalid_type at /Users/private/config.json";
+    expect(clientErrorMessage({ code: "UNKNOWN_INTERNAL", message: raw })).toBe(
+      "操作失败，请检查设置后重试",
+    );
+    expect(clientErrorMessage({ code: "VALIDATION_ERROR", message: raw })).toBe(
+      "设置内容无效，请检查填写内容",
+    );
+    expect(clientErrorMessage(new Error(raw))).not.toContain("ZodError");
+    expect(clientErrorMessage(new Error(raw))).not.toContain("/Users/private");
+  });
+
   it("shows embedding download details, progress, retry, and Yuque login controls", async () => {
     const api = installDocMindApi({
       yuque: { status: vi.fn().mockResolvedValue(loggedOutYuque) },
@@ -106,7 +134,23 @@ describe("设置", () => {
     expect(screen.queryByText(/删除全部|清空数据/)).not.toBeInTheDocument();
   });
 
-  it("retries a retryable settings query once but never retries auth errors", async () => {
+  it("traps confirmation focus, closes on Escape, and restores the trigger", async () => {
+    installDocMindApi();
+    renderSettings();
+
+    const trigger = await screen.findByRole("button", { name: "清理失败截图" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "确认清理失败截图" });
+    const close = screen.getByRole("button", { name: "关闭确认窗口" });
+    await waitFor(() => expect(close).toHaveFocus());
+
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "确认清理失败截图" })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("retries a retryable settings query once but excludes semantic non-retryable codes", async () => {
     const retryableGet = vi
       .fn()
       .mockRejectedValueOnce({ code: "NETWORK_ERROR", retryable: true })
@@ -116,11 +160,20 @@ describe("设置", () => {
     expect(await screen.findByText(readySettings.dataPath)).toBeVisible();
     expect(retryableGet).toHaveBeenCalledTimes(2);
 
-    appQueryClient.clear();
-    const authGet = vi.fn().mockRejectedValue({ code: "MODEL_AUTH_FAILED", retryable: true });
-    installDocMindApi({ settings: { get: authGet } });
-    renderSettings();
-    expect(await screen.findByRole("alert")).toBeVisible();
-    expect(authGet).toHaveBeenCalledTimes(1);
+    for (const code of [
+      "MODEL_AUTH_FAILED",
+      "MODEL_PRESET_INVALID",
+      "YUQUE_LOGIN_REQUIRED",
+      "VALIDATION_ERROR",
+      "DESTRUCTIVE_OPERATION",
+    ]) {
+      appQueryClient.clear();
+      const get = vi.fn().mockRejectedValue({ code, retryable: true });
+      installDocMindApi({ settings: { get } });
+      const view = renderSettings();
+      expect(await screen.findByRole("alert")).toBeVisible();
+      expect(get).toHaveBeenCalledTimes(1);
+      view.unmount();
+    }
   });
 });

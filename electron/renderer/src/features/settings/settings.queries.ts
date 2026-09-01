@@ -23,16 +23,27 @@ export function useYuqueStatusQuery() {
 }
 
 export function clientErrorMessage(error: unknown): string {
-  const value = error as { code?: string; message?: string; action?: string } | null;
+  const value = error as { code?: string } | null;
   const messages: Record<string, string> = {
     MODEL_AUTH_FAILED: "API Key 无效，请更新密钥后重试",
     MODEL_NOT_FOUND: "未找到指定模型，请检查模型名称",
     MODEL_PRESET_INVALID: "模型预设无效，请重新选择",
+    MODEL_TIMEOUT: "模型连接超时，请检查网络或调大超时时间",
+    RATE_LIMITED: "请求过于频繁，请稍后重试",
+    MODEL_RATE_LIMITED: "请求过于频繁，请稍后重试",
+    PROTOCOL_ERROR: "模型服务响应格式异常，请检查 Base URL 或接口兼容性",
+    MODEL_PROTOCOL_ERROR: "模型服务响应格式异常，请检查 Base URL 或接口兼容性",
+    UNAVAILABLE: "模型服务暂不可用，请稍后重试",
+    MODEL_UNAVAILABLE: "模型服务暂不可用，请稍后重试",
     BACKEND_UNAVAILABLE: "本地服务暂不可用，请稍后重试",
     EMBEDDING_DOWNLOAD_FAILED: "Embedding 模型下载失败，请检查网络后重试",
     YUQUE_LOGIN_REQUIRED: "语雀登录已失效，请重新登录",
   };
   if (value?.code && messages[value.code]) return messages[value.code];
-  if (value?.message) return value.action ? `${value.message}。${value.action}` : value.message;
-  return "操作失败，请重试";
+  if (
+    value?.code &&
+    ["VALIDATION_ERROR", "INVALID_REQUEST", "MODEL_VALIDATION_FAILED"].includes(value.code)
+  )
+    return "设置内容无效，请检查填写内容";
+  return "操作失败，请检查设置后重试";
 }

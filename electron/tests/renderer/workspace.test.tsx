@@ -23,7 +23,10 @@ describe("Workspace", () => {
     });
   });
 
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
 
   it("renders stable three-column workspace dimensions and responsive classes", () => {
     render(<Workspace />);
@@ -59,6 +62,39 @@ describe("Workspace", () => {
       expect(button).toHaveAttribute("aria-label", label);
       expect(button).toHaveAttribute("title", label);
     }
+  });
+
+  it("reopens the reference panel after it is closed", () => {
+    render(<Workspace />);
+
+    fireEvent.click(screen.getByRole("button", { name: "关闭引用资料" }));
+    expect(screen.getByLabelText("工作台")).toHaveClass("reference-is-closed");
+    const reopen = screen.getByRole("button", { name: "打开引用资料" });
+    fireEvent.click(reopen);
+
+    expect(screen.getByLabelText("工作台")).not.toHaveClass("reference-is-closed");
+    expect(screen.queryByRole("button", { name: "打开引用资料" })).not.toBeInTheDocument();
+  });
+
+  it("removes the unavailable collapse action when the viewport forces the icon rail", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockReturnValue({
+        matches: true,
+        media: "(max-width: 1000px)",
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }),
+    );
+    render(<Workspace />);
+
+    expect(screen.queryByRole("button", { name: "收起侧边栏" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "展开侧边栏" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "设置" })).toBeVisible();
   });
 
   it("shows a safe recovery view without exposing the error stack", () => {
