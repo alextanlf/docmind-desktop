@@ -5,7 +5,7 @@ import { ErrorBoundary } from "../../renderer/src/app/ErrorBoundary";
 import { AppProviders } from "../../renderer/src/app/AppProviders";
 import { Workspace } from "../../renderer/src/app/Workspace";
 import { useUiStore } from "../../renderer/src/stores/ui-store";
-import { installDocMindApi } from "./test-docmind-api";
+import { document, installDocMindApi, repository } from "./test-docmind-api";
 
 class BrokenView extends Component {
   render(): ReactNode {
@@ -104,6 +104,19 @@ describe("Workspace", () => {
     expect(screen.queryByRole("button", { name: "收起侧边栏" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "展开侧边栏" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "设置" })).toBeVisible();
+  });
+
+  it("names the actual repository in the document delete confirmation", async () => {
+    installDocMindApi();
+    renderWorkspace();
+
+    fireEvent.click(await screen.findByRole("button", { name: `展开 ${repository.name}` }));
+    fireEvent.click(await screen.findByRole("button", { name: document.title }));
+    fireEvent.click(await screen.findByRole("button", { name: "删除文档" }));
+
+    expect(
+      await screen.findByText(new RegExp(`将从「${repository.name}」删除「${document.title}」`)),
+    ).toBeVisible();
   });
 
   it("shows a safe recovery view without exposing the error stack", () => {

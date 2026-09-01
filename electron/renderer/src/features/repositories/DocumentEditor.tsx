@@ -8,7 +8,7 @@ import { repositoryKeys } from "./repository.queries";
 
 type DocumentEditorProps = {
   document: DocumentDetail;
-  repositoryName?: string;
+  repositoryName?: string | null;
   onClose: () => void;
 };
 
@@ -105,7 +105,7 @@ export function DocumentEditor({
           document={document}
           onClose={() => setDeleting(false)}
           onDeleted={onClose}
-          repositoryName={repositoryName}
+          repositoryName={repositoryName ?? "知识库"}
         />
       ) : null}
     </section>
