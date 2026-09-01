@@ -67,6 +67,23 @@ describe("preload bridge", () => {
     expect(send).not.toHaveBeenCalledWith("stream:cancel", subscription.requestId);
   });
 
+  it("releases a detached chat subscription so a remount can reattach without cancelling it", () => {
+    const api = exposed.docmind as any;
+    const input = {
+      requestId: "00000000-0000-0000-0000-000000000017",
+      sessionId: "00000000-0000-0000-0000-000000000018",
+      message: "问题",
+      repositoryIds: ["00000000-0000-0000-0000-000000000019"],
+    };
+    const first = api.chat.stream(input, vi.fn());
+
+    first.detach();
+    const second = api.chat.stream(input, vi.fn(), 1);
+
+    expect(second.requestId).toBe(input.requestId);
+    expect(send).not.toHaveBeenCalledWith("stream:cancel", input.requestId);
+  });
+
   it("requires a backend-reported indexed document count", () => {
     const parsed = RepositorySchema.parse({
       id: "00000000-0000-0000-0000-000000000016",

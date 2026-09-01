@@ -1,10 +1,6 @@
 import { createRequire } from "node:module";
 import { z } from "zod";
-import {
-  BackendProxy,
-  DocMindClientError,
-  type StreamSender,
-} from "./backend-proxy";
+import { BackendProxy, DocMindClientError, type StreamSender } from "./backend-proxy";
 import { StagedFileService } from "./staged-files";
 import { IPC_CHANNELS, streamEventChannel } from "../shared/channels";
 import {
@@ -63,8 +59,7 @@ export interface IpcDependencies {
     removeHandler?(channel: string): void;
     removeAllListeners?(channel?: string): void;
   };
-  getWebContents?: () =>
-    { on?(event: "destroyed", listener: () => void): void } | undefined;
+  getWebContents?: () => { on?(event: "destroyed", listener: () => void): void } | undefined;
   app?: { on?(event: "before-quit", listener: () => void): void };
 }
 
@@ -73,8 +68,7 @@ export type IpcHandlerMap = Record<string, Handler>;
 const UUID = z.string().uuid();
 const parse = <T>(schema: z.ZodType<T>, value: unknown): T => {
   const result = schema.safeParse(value);
-  if (!result.success)
-    throw new DocMindClientError("INVALID_REQUEST", "请求参数无效");
+  if (!result.success) throw new DocMindClientError("INVALID_REQUEST", "请求参数无效");
   return result.data;
 };
 
@@ -87,9 +81,7 @@ function jsonInit(method: string, body?: unknown): RequestInit {
   return init;
 }
 
-export function registerIpcHandlers(
-  dependencies: IpcDependencies,
-): IpcHandlerMap {
+export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMap {
   const proxy =
     dependencies.proxy ??
     dependencies.backendProxy ??
@@ -97,13 +89,10 @@ export function registerIpcHandlers(
       backendManager: dependencies.backend ?? dependencies.backendManager,
     });
   const stagedFiles =
-    dependencies.stagedFiles ??
-    dependencies.files ??
-    dependencies.stagedFileService;
+    dependencies.stagedFiles ?? dependencies.files ?? dependencies.stagedFileService;
   if (!stagedFiles) throw new Error("IPC handlers require staged file service");
   const handlers: IpcHandlerMap = {
-    [IPC_CHANNELS.settingsGet]: () =>
-      proxy.requestJson("/api/settings", {}, SettingsViewSchema),
+    [IPC_CHANNELS.settingsGet]: () => proxy.requestJson("/api/settings", {}, SettingsViewSchema),
     [IPC_CHANNELS.settingsSaveModel]: (_event, input) =>
       proxy.requestJson(
         "/api/settings/model",
@@ -111,29 +100,16 @@ export function registerIpcHandlers(
         SettingsViewSchema,
       ),
     [IPC_CHANNELS.settingsTestModel]: () =>
-      proxy.requestJson(
-        "/api/settings/model/test",
-        jsonInit("POST"),
-        ModelConnectionResultSchema,
-      ),
+      proxy.requestJson("/api/settings/model/test", jsonInit("POST"), ModelConnectionResultSchema),
     [IPC_CHANNELS.settingsClearDiagnostics]: () =>
       proxy.requestVoid("/api/settings/diagnostics/clear", jsonInit("POST")),
     [IPC_CHANNELS.embeddingStatus]: () =>
       proxy.requestJson("/api/embedding/status", {}, ModelStatusSchema),
     [IPC_CHANNELS.embeddingPrepare]: () =>
-      proxy.requestJson(
-        "/api/embedding/prepare",
-        jsonInit("POST"),
-        ModelStatusSchema,
-      ),
-    [IPC_CHANNELS.yuqueStatus]: () =>
-      proxy.requestJson("/api/yuque/status", {}, YuqueStatusSchema),
+      proxy.requestJson("/api/embedding/prepare", jsonInit("POST"), ModelStatusSchema),
+    [IPC_CHANNELS.yuqueStatus]: () => proxy.requestJson("/api/yuque/status", {}, YuqueStatusSchema),
     [IPC_CHANNELS.yuqueLogin]: () =>
-      proxy.requestJson(
-        "/api/yuque/login",
-        jsonInit("POST"),
-        YuqueStatusSchema,
-      ),
+      proxy.requestJson("/api/yuque/login", jsonInit("POST"), YuqueStatusSchema),
     [IPC_CHANNELS.repositoriesList]: () =>
       proxy.requestJson("/api/repositories", {}, z.array(RepositorySchema)),
     [IPC_CHANNELS.repositoriesCreate]: (_event, input) =>
@@ -152,11 +128,7 @@ export function registerIpcHandlers(
     },
     [IPC_CHANNELS.documentsRead]: (_event, documentId) => {
       const id = parse(UUID, documentId);
-      return proxy.requestJson(
-        `/api/documents/${id}`,
-        {},
-        DocumentDetailSchema,
-      );
+      return proxy.requestJson(`/api/documents/${id}`, {}, DocumentDetailSchema);
     },
     [IPC_CHANNELS.documentsCreate]: (_event, repositoryId, input) => {
       const id = parse(UUID, repositoryId);
@@ -176,12 +148,8 @@ export function registerIpcHandlers(
     },
     [IPC_CHANNELS.documentsDelete]: (_event, documentId, confirm) => {
       const id = parse(UUID, documentId);
-      if (confirm !== true)
-        throw new DocMindClientError("INVALID_REQUEST", "必须确认删除");
-      return proxy.requestVoid(
-        `/api/documents/${id}`,
-        jsonInit("DELETE", { confirm: true }),
-      );
+      if (confirm !== true) throw new DocMindClientError("INVALID_REQUEST", "必须确认删除");
+      return proxy.requestVoid(`/api/documents/${id}`, jsonInit("DELETE", { confirm: true }));
     },
     [IPC_CHANNELS.importsInspect]: async (_event, input) =>
       SourcePreviewSchema.parse(
@@ -203,19 +171,11 @@ export function registerIpcHandlers(
     },
     [IPC_CHANNELS.importsRetry]: (_event, jobId) => {
       const id = parse(UUID, jobId);
-      return proxy.requestJson(
-        `/api/imports/${id}/retry`,
-        jsonInit("POST"),
-        ImportJobSchema,
-      );
+      return proxy.requestJson(`/api/imports/${id}/retry`, jsonInit("POST"), ImportJobSchema);
     },
     [IPC_CHANNELS.importsCancel]: (_event, jobId) => {
       const id = parse(UUID, jobId);
-      return proxy.requestJson(
-        `/api/imports/${id}/cancel`,
-        jsonInit("POST"),
-        ImportJobSchema,
-      );
+      return proxy.requestJson(`/api/imports/${id}/cancel`, jsonInit("POST"), ImportJobSchema);
     },
     [IPC_CHANNELS.importsSubscribe]: (event, jobId, afterSequence) => {
       const id = parse(UUID, jobId);
@@ -239,15 +199,13 @@ export function registerIpcHandlers(
       ),
     [IPC_CHANNELS.chatListMessages]: (_event, sessionId) => {
       const id = parse(UUID, sessionId);
-      return proxy.requestJson(
-        `/api/sessions/${id}/messages`,
-        {},
-        z.array(MessageSchema),
-      );
+      return proxy.requestJson(`/api/sessions/${id}/messages`, {}, z.array(MessageSchema));
     },
-    [IPC_CHANNELS.chatStream]: (event, input) => {
+    [IPC_CHANNELS.chatStream]: (event, input, afterSequence) => {
       const data = parse(ChatStreamInputSchema, input);
-      return proxy.openStream({
+      if (afterSequence !== undefined && (!Number.isInteger(afterSequence) || afterSequence < 0))
+        throw new DocMindClientError("INVALID_REQUEST", "事件序号无效");
+      const options = {
         requestId: data.requestId,
         sessionId: data.sessionId,
         route: `/api/sessions/${data.sessionId}/messages/stream`,
@@ -257,32 +215,34 @@ export function registerIpcHandlers(
           requestId: data.requestId,
         },
         sender: event.sender ?? { send: () => {} },
-      });
+        ...(afterSequence === undefined
+          ? {}
+          : {
+              afterSequence,
+              headers: { "Last-Event-ID": String(afterSequence) },
+            }),
+      };
+      return afterSequence === undefined ? proxy.openStream(options) : proxy.resumeStream(options);
     },
     [IPC_CHANNELS.dialogsChooseSource]: (_event, kind) => {
       if (kind !== "pdf" && kind !== "markdown")
         throw new DocMindClientError("INVALID_REQUEST", "来源类型无效");
       return stagedFiles
         .chooseAndStage(kind)
-        .then((value) =>
-          value === null ? null : parse(StagedSourceSchema, value),
-        )
+        .then((value) => (value === null ? null : parse(StagedSourceSchema, value)))
         .catch((error: unknown) => {
           if (error instanceof DocMindClientError) throw error;
           const candidate = error as { code?: unknown; message?: unknown };
           if (typeof candidate.code === "string")
             throw new DocMindClientError(
               candidate.code,
-              typeof candidate.message === "string"
-                ? candidate.message
-                : "文件操作失败",
+              typeof candidate.message === "string" ? candidate.message : "文件操作失败",
             );
           throw error;
         });
     },
     [IPC_CHANNELS.shellOpenExternal]: async (_event, url) => {
-      if (typeof url !== "string")
-        throw new DocMindClientError("INVALID_REQUEST", "链接无效");
+      if (typeof url !== "string") throw new DocMindClientError("INVALID_REQUEST", "链接无效");
       let parsed: URL;
       try {
         parsed = new URL(url);
@@ -315,9 +275,7 @@ export function registerIpcHandlers(
           try {
             const result = handler(event, ...args);
             if (result && typeof result.then === "function") {
-              void result.catch((error: unknown) =>
-                emitStreamError(channel, event, args, error),
-              );
+              void result.catch((error: unknown) => emitStreamError(channel, event, args, error));
             }
           } catch (error) {
             emitStreamError(channel, event, args, error);
@@ -336,9 +294,7 @@ export function registerIpcHandlers(
   }
   const webContents = dependencies.getWebContents?.();
   webContents?.on?.("destroyed", () => proxy.cleanup());
-  (dependencies.app ?? electronIpc.app)?.on?.("before-quit", () =>
-    proxy.cleanup(),
-  );
+  (dependencies.app ?? electronIpc.app)?.on?.("before-quit", () => proxy.cleanup());
   return handlers;
 }
 
@@ -369,8 +325,7 @@ export function serializeIpcError(error: unknown): {
   ) {
     return sanitizeSerialized({
       code: candidate.code,
-      message:
-        typeof candidate.message === "string" ? candidate.message : "请求失败",
+      message: typeof candidate.message === "string" ? candidate.message : "请求失败",
       retryable: false,
     });
   }
@@ -394,10 +349,7 @@ function sanitizeSerialized(value: {
   };
   const clean = (text: string) =>
     text
-      .replace(
-        /DOCMIND_SESSION_TOKEN=[^\s]+/g,
-        "DOCMIND_SESSION_TOKEN=[redacted]",
-      )
+      .replace(/DOCMIND_SESSION_TOKEN=[^\s]+/g, "DOCMIND_SESSION_TOKEN=[redacted]")
       .replace(/(?:[A-Za-z]:)?\/(?:[^\s/]+\/)+[^\s]*/g, "[path]");
   const result: {
     code: string;
@@ -413,19 +365,9 @@ function sanitizeSerialized(value: {
   return result;
 }
 
-function emitStreamError(
-  channel: string,
-  event: IpcEvent,
-  args: any[],
-  error: unknown,
-): void {
-  const requestId =
-    channel === IPC_CHANNELS.chatStream ? args[0]?.requestId : args[0];
-  if (
-    typeof requestId !== "string" ||
-    !z.string().uuid().safeParse(requestId).success
-  )
-    return;
+function emitStreamError(channel: string, event: IpcEvent, args: any[], error: unknown): void {
+  const requestId = channel === IPC_CHANNELS.chatStream ? args[0]?.requestId : args[0];
+  if (typeof requestId !== "string" || !z.string().uuid().safeParse(requestId).success) return;
   const serialized = serializeIpcError(error);
   try {
     event.sender?.send(streamEventChannel(requestId), {

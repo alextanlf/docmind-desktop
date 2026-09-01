@@ -156,6 +156,32 @@ export class BackendProxy {
     };
   }
 
+  resumeStream(options: OpenStreamOptions): StreamSubscription {
+    const current = this.active.get(options.requestId);
+    if (!current) return this.openStream(options);
+
+    current.controller.abort();
+    if (current.destroyed) current.sender.removeListener?.("destroyed", current.destroyed);
+    const controller = options.controller ?? new AbortController();
+    const stream: ActiveStream = {
+      controller,
+      sender: options.sender,
+      sessionId: current.sessionId,
+      lastSequence: options.afterSequence ?? current.lastSequence,
+    };
+    this.active.set(options.requestId, stream);
+    const destroyed = () => this.cancel(options.requestId);
+    stream.destroyed = destroyed;
+    if (stream.sender.once) stream.sender.once("destroyed", destroyed);
+    else stream.sender.on?.("destroyed", destroyed);
+    void this.consume(options.requestId, options.route, options.body, stream, options.headers);
+    return {
+      requestId: options.requestId,
+      detach: () => undefined,
+      cancel: () => this.cancel(options.requestId),
+    };
+  }
+
   cancel(requestId: string): void {
     const stream = this.active.get(requestId);
     if (!stream) return;

@@ -289,7 +289,11 @@ export interface DocMindApi {
     listSessions(): Promise<SessionSummary[]>;
     createSession(input: CreateSessionInput): Promise<SessionSummary>;
     listMessages(sessionId: string): Promise<Message[]>;
-    stream(input: ChatStreamInput, onEvent: (event: EventEnvelope) => void): StreamSubscription;
+    stream(
+      input: ChatStreamInput,
+      onEvent: (event: EventEnvelope) => void,
+      afterSequence?: number,
+    ): StreamSubscription;
   };
   dialogs: {
     chooseSource(kind: "pdf" | "markdown"): Promise<StagedSource | null>;

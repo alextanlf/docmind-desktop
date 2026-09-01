@@ -6,6 +6,7 @@ type MessageListProps = {
   draftAssistant: string;
   draftUserMessage: string;
   messages: Message[];
+  streamRequestId?: string | null;
 };
 
 export function MessageList({
@@ -13,6 +14,7 @@ export function MessageList({
   draftAssistant,
   draftUserMessage,
   messages,
+  streamRequestId,
 }: MessageListProps) {
   if (messages.length === 0 && !draftAssistant && !draftUserMessage) {
     return <div className="chat-empty">开始新的对话</div>;
@@ -42,7 +44,11 @@ export function MessageList({
       {draftAssistant ? (
         <article className="chat-message chat-message-assistant">
           <span className="message-role">DocMind</span>
-          <MarkdownMessage citationScope="stream" citations={citations} content={draftAssistant} />
+          <MarkdownMessage
+            citationScope={streamRequestId ?? "stream"}
+            citations={citations}
+            content={draftAssistant}
+          />
         </article>
       ) : null}
     </div>

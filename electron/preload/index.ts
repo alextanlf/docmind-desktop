@@ -50,6 +50,7 @@ function subscription(
   requestId: string,
   startArgs: unknown[],
   onEvent: (event: EventEnvelope) => void,
+  afterSequence?: number,
 ) {
   const eventChannel = streamEventChannel(requestId);
   const key = `${channel}:${requestId}`;
@@ -72,11 +73,12 @@ function subscription(
     }
   };
   ipcRenderer.on(eventChannel, listener);
-  ipcRenderer.send(channel, ...startArgs);
+  ipcRenderer.send(channel, ...startArgs, afterSequence);
   const detach = () => {
     if (!attached) return;
     attached = false;
     ipcRenderer.removeListener(eventChannel, listener);
+    activeSubscriptions.delete(key);
   };
   const result = {
     requestId,
@@ -172,9 +174,11 @@ const api: DocMindApi = {
       ),
     listMessages: (sessionId) =>
       invoke(IPC_CHANNELS.chatListMessages, MessageSchema.array(), uuid(sessionId)),
-    stream: (input, onEvent) => {
+    stream: (input, onEvent, afterSequence) => {
       const data = ChatStreamInputSchema.parse(input);
-      return subscription(IPC_CHANNELS.chatStream, data.requestId, [data], onEvent);
+      if (afterSequence !== undefined && (!Number.isInteger(afterSequence) || afterSequence < 0))
+        throw new Error("INVALID_REQUEST");
+      return subscription(IPC_CHANNELS.chatStream, data.requestId, [data], onEvent, afterSequence);
     },
   },
   dialogs: {

@@ -57,9 +57,7 @@ describe("BackendProxy", () => {
   });
 
   it("preserves structured client errors for void requests", async () => {
-    const error = new (
-      await import("../../main/backend-proxy")
-    ).DocMindClientError(
+    const error = new (await import("../../main/backend-proxy")).DocMindClientError(
       "MODEL_AUTH_FAILED",
       "请先配置 API Key",
       false,
@@ -68,9 +66,7 @@ describe("BackendProxy", () => {
     const proxy = new BackendProxy({
       request: vi.fn().mockRejectedValue(error),
     });
-    await expect(
-      proxy.requestVoid("/api/settings/diagnostics/clear"),
-    ).rejects.toBe(error);
+    await expect(proxy.requestVoid("/api/settings/diagnostics/clear")).rejects.toBe(error);
   });
 
   it("forwards ordered events from a byte-split response and removes the stream at terminal", async () => {
@@ -144,6 +140,57 @@ describe("BackendProxy", () => {
     });
     await vi.waitFor(() => expect(proxy.activeStreamCount()).toBe(0));
     expect(sent.map((event) => (event as any).sequence)).toEqual([3, 4]);
+  });
+
+  it("replaces an active chat reader with a replay from the last sequence", async () => {
+    const requestId = "00000000-0000-0000-0000-000000000016";
+    const sessionId = "00000000-0000-0000-0000-000000000017";
+    let resolveFirst!: (response: Response) => void;
+    const first = new Promise<Response>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const sent: unknown[] = [];
+    const proxy = new BackendProxy({
+      request: vi
+        .fn()
+        .mockReturnValueOnce(first)
+        .mockResolvedValueOnce(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    `data: {"requestId":"${requestId}","type":"done","sequence":2,"payload":{}}\n\n`,
+                  ),
+                );
+                controller.close();
+              },
+            }),
+          ),
+        ),
+    });
+    const options = {
+      requestId,
+      sessionId,
+      route: `/api/sessions/${sessionId}/messages/stream`,
+      body: { requestId },
+      sender: { send: (_channel: string, event: unknown) => sent.push(event) },
+    };
+    proxy.openStream(options);
+
+    proxy.resumeStream({ ...options, afterSequence: 1, headers: { "Last-Event-ID": "1" } });
+    resolveFirst(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.close();
+          },
+        }),
+      ),
+    );
+
+    await vi.waitFor(() => expect(proxy.activeStreamCount()).toBe(0));
+    expect(sent).toEqual([expect.objectContaining({ sequence: 2, type: "done" })]);
   });
 
   it("suppresses events that arrive after cancellation even when fetch ignores AbortSignal", async () => {
@@ -221,9 +268,7 @@ describe("BackendProxy", () => {
     const sent: unknown[] = [];
     const requestId = "00000000-0000-0000-0000-000000000010";
     const proxy = new BackendProxy({
-      request: vi
-        .fn()
-        .mockRejectedValue(new Error("failed at /private/secret")),
+      request: vi.fn().mockRejectedValue(new Error("failed at /private/secret")),
     });
     proxy.openStream({
       requestId,

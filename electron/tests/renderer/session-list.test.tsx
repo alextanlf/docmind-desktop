@@ -115,5 +115,34 @@ describe("会话列表", () => {
     expect(screen.queryByText("今天")).not.toBeInTheDocument();
     expect(screen.queryByText("昨天")).not.toBeInTheDocument();
     expect(screen.queryByText(session.title)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+  });
+
+  it("keeps older groups distinct across calendar years", async () => {
+    const previousYear = new Date().getFullYear() - 1;
+    const twoYearsAgo = previousYear - 1;
+    const previous = {
+      ...session,
+      id: "session-previous-year",
+      title: "去年的问题",
+      updatedAt: `${previousYear}-08-20T12:00:00Z`,
+    };
+    const older = {
+      ...session,
+      id: "session-two-years-ago",
+      title: "前年的问题",
+      updatedAt: `${twoYearsAgo}-08-20T12:00:00Z`,
+    };
+    installDocMindApi({
+      chat: { listSessions: vi.fn().mockResolvedValue([previous, older]) },
+    });
+    render(
+      <AppProviders>
+        <SessionList selectedRepositoryIds={[repository.id]} />
+      </AppProviders>,
+    );
+
+    expect(await screen.findByText(`${previousYear}年8月20日`)).toBeVisible();
+    expect(screen.getByText(`${twoYearsAgo}年8月20日`)).toBeVisible();
   });
 });

@@ -109,6 +109,53 @@ describe("流式对话", () => {
     expect(stream.cancel).not.toHaveBeenCalled();
   });
 
+  it("reconnects a detached stream from its last event and accepts its terminal result", async () => {
+    const api = installDocMindApi();
+    const stream = installChatStreamMock(api.chat);
+    const props = {
+      sessionId: "00000000-0000-0000-0000-000000000025",
+      repositoryIds: [repository.id],
+    };
+    const first = render(
+      <AppProviders>
+        <ChatPanel {...props} />
+      </AppProviders>,
+    );
+
+    sendMessage("重新挂载时继续");
+    act(() => {
+      stream.emit({
+        requestId: stream.requestId,
+        type: "delta",
+        sequence: 1,
+        payload: { content: "已收到的内容" },
+      });
+    });
+    first.unmount();
+
+    render(
+      <AppProviders>
+        <ChatPanel {...props} />
+      </AppProviders>,
+    );
+
+    await waitFor(() => expect(api.chat.stream).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(api.chat.stream).mock.calls[1]?.[2]).toBe(1);
+    act(() => {
+      stream.emit({
+        requestId: stream.requestId,
+        type: "done",
+        sequence: 2,
+        payload: { messageId: "00000000-0000-0000-0000-000000000027" },
+      });
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "停止生成" })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByLabelText("输入问题")).toBeEnabled();
+  });
+
   it("cancels the active request when the user switches sessions", async () => {
     const secondSession = {
       id: "00000000-0000-0000-0000-000000000028",
@@ -200,5 +247,35 @@ describe("流式对话", () => {
     expect(screen.getByRole("button", { name: "查看引用 S1" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "查看引用 未知" })).not.toBeInTheDocument();
     expect(screen.getByText(/与 \[未知\]/)).toBeVisible();
+  });
+
+  it("uses the stream request ID when a streamed citation opens the workspace panel", async () => {
+    const api = installDocMindApi();
+    const stream = installChatStreamMock(api.chat);
+    render(
+      <AppProviders>
+        <Workspace />
+      </AppProviders>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: session.title }));
+    sendMessage("流式引用");
+    act(() => {
+      stream.emit({
+        requestId: stream.requestId,
+        type: "citations",
+        sequence: 1,
+        payload: { citations: [citation] },
+      });
+      stream.emit({
+        requestId: stream.requestId,
+        type: "delta",
+        sequence: 2,
+        payload: { content: "答案 [S1]" },
+      });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "查看引用 S1" }));
+    expect(screen.getByLabelText("引用资料内容")).toHaveTextContent(citation.title);
   });
 });
