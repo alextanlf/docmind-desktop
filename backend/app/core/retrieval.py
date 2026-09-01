@@ -59,7 +59,7 @@ class BM25Index:
         ranked = sorted(
             zip(chunks, scores, strict=True), key=lambda item: (-float(item[1]), item[0].id)
         )[:top_k]
-        return [(chunk.id, float(score)) for chunk, score in ranked]
+        return [(chunk.id, float(score)) for chunk, score in ranked if float(score) > 0]
 
 
 class HybridRetriever:
@@ -92,8 +92,21 @@ class HybridRetriever:
             ],
             key=lambda hit: (-hit.similarity, hit.id),
         )[:10]
-        max_score = max((hit.similarity for hit in vector_hits), default=0.0)
         keyword_hits = self.bm25.search(query, repository_ids, top_k=10)
+        records = self._records(
+            [
+                *[hit.id for hit in vector_hits],
+                *[identifier for identifier, _ in keyword_hits],
+            ],
+            repository_ids,
+        )
+        vector_hits = [hit for hit in vector_hits if hit.id in records]
+        keyword_hits = [
+            (identifier, score)
+            for identifier, score in keyword_hits
+            if identifier in records
+        ]
+        max_score = max((hit.similarity for hit in vector_hits), default=0.0)
         fused = reciprocal_rank_fusion(
             [hit.id for hit in vector_hits], [identifier for identifier, _ in keyword_hits]
         )
@@ -101,7 +114,6 @@ class HybridRetriever:
             return RetrievalResult(hits=[], max_score=max_score)
         vector_scores = {hit.id: hit.similarity for hit in vector_hits}
         keyword_scores = dict(keyword_hits)
-        records = self._records([item.chunk_id for item in fused], repository_ids)
         hits: list[RetrievalHit] = []
         for item in fused:
             record = records.get(item.chunk_id)

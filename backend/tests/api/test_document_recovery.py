@@ -109,7 +109,7 @@ def test_create_compensation_preserves_vector_owned_by_another_document(
     client, auth_headers, monkeypatch
 ) -> None:
     """Deleting a failed create's vectors must not remove another document's live vector."""
-    repository, _ = _install_gateway(client)
+    repository, _gateway = _install_gateway(client)
     vector_store = _install_vector_store(client)
     shared_id = "00000000-0000-0000-0000-000000000123"
     owner_id = _seed_vector_owner(client, repository.id, shared_id)
@@ -162,6 +162,7 @@ class LostCreateResponseGateway(FakeYuqueGateway):
         super().__init__()
         self.create_calls = 0
         self.discovery_available = False
+        self.discovery_visible = True
         self.intent_payload_at_submit: dict[str, object] = {}
         self.submitted_content = ""
         self.read_intent = dict
@@ -177,6 +178,8 @@ class LostCreateResponseGateway(FakeYuqueGateway):
     async def find_document_by_marker(self, repository_id: str, marker: str):  # type: ignore[no-untyped-def]
         if not self.discovery_available:
             raise ConnectionError("discovery unavailable")
+        if not self.discovery_visible:
+            return None
         return await super().find_document_by_marker(repository_id, marker)
 
 
@@ -212,6 +215,40 @@ def test_lost_create_response_is_discovered_and_compensated_after_restart(
     gateway.discovery_available = True
     with _recreated_client(client, gateway) as recreated:
         assert recreated.app.state.document_mutation_store.list() == []
+
+    assert gateway.create_calls == 1
+    assert asyncio.run(gateway.list_documents("repo-remote")) == []
+
+
+def test_create_discovery_intent_survives_a_successful_but_not_yet_visible_lookup(
+    client, auth_headers
+) -> None:
+    gateway = LostCreateResponseGateway()
+    repository, _ = _install_gateway(client, gateway)
+    _install_vector_store(client)
+
+    def read_intent() -> dict[str, object]:
+        records = client.app.state.document_mutation_store.list()
+        assert len(records) == 1
+        return json.loads(records[0].payload_json)
+
+    gateway.read_intent = read_intent
+    response = client.post(
+        f"/api/repositories/{repository.id}/documents",
+        headers=auth_headers,
+        json={"title": "Eventually visible", "content": "# Eventually visible"},
+    )
+    assert response.status_code == 503
+    assert gateway.create_calls == 1
+
+    gateway.discovery_available = True
+    gateway.discovery_visible = False
+    with _recreated_client(client, gateway) as first_restart:
+        assert len(first_restart.app.state.document_mutation_store.list()) == 1
+
+    gateway.discovery_visible = True
+    with _recreated_client(client, gateway) as second_restart:
+        assert second_restart.app.state.document_mutation_store.list() == []
 
     assert gateway.create_calls == 1
     assert asyncio.run(gateway.list_documents("repo-remote")) == []
@@ -264,7 +301,7 @@ def test_update_rollback_distinguishes_missing_file_from_empty_file(
     client, auth_headers
 ) -> None:
     """Rollback must restore absence as absence and an empty file as an empty file."""
-    repository, _ = _install_gateway(client)
+    repository, gateway = _install_gateway(client)
     _install_vector_store(client)
     created = [
         client.post(
@@ -276,6 +313,9 @@ def test_update_rollback_distinguishes_missing_file_from_empty_file(
     ]
     missing_path = Path(client.app.state.document_store.get(created[0]["id"]).markdown_path)
     empty_path = Path(client.app.state.document_store.get(created[1]["id"]).markdown_path)
+    remote_before = [
+        asyncio.run(gateway.read_document(f"doc-{index}")) for index in (1, 2)
+    ]
     missing_path.unlink()
     empty_path.write_bytes(b"")
     original_update_editor = client.app.state.document_store.update_editor
@@ -299,11 +339,14 @@ def test_update_rollback_distinguishes_missing_file_from_empty_file(
     assert [response.status_code for response in responses] == [503, 503]
     assert not missing_path.exists()
     assert empty_path.exists() and empty_path.read_bytes() == b""
+    assert [
+        asyncio.run(gateway.read_document(f"doc-{index}")) for index in (1, 2)
+    ] == remote_before
 
 
 def test_update_rollback_restores_non_utf8_bytes_exactly(client, auth_headers) -> None:
     """The pre-mutation file snapshot is byte-exact rather than decoded text."""
-    repository, _ = _install_gateway(client)
+    repository, gateway = _install_gateway(client)
     _install_vector_store(client)
     created = client.post(
         f"/api/repositories/{repository.id}/documents",
@@ -314,6 +357,7 @@ def test_update_rollback_restores_non_utf8_bytes_exactly(client, auth_headers) -
     path = Path(client.app.state.document_store.get(document_id).markdown_path)
     previous = b"\xff\x00\r\nexact\x80"
     path.write_bytes(previous)
+    remote_before = asyncio.run(gateway.read_document("doc-1"))
     original_update_editor = client.app.state.document_store.update_editor
 
     def fail_update_editor(*args, **kwargs):  # type: ignore[no-untyped-def]
@@ -331,6 +375,7 @@ def test_update_rollback_restores_non_utf8_bytes_exactly(client, auth_headers) -
 
     assert response.status_code == 503
     assert path.read_bytes() == previous
+    assert asyncio.run(gateway.read_document("doc-1")) == remote_before
 
 
 def test_unreadable_snapshot_aborts_before_remote_update(

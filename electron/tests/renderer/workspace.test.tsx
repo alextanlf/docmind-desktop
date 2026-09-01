@@ -1,9 +1,11 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Component, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ErrorBoundary } from "../../renderer/src/app/ErrorBoundary";
 import { AppProviders } from "../../renderer/src/app/AppProviders";
+import { appQueryClient } from "../../renderer/src/app/query-client";
 import { Workspace } from "../../renderer/src/app/Workspace";
+import { repositoryKeys } from "../../renderer/src/features/repositories/repository.queries";
 import { useUiStore } from "../../renderer/src/stores/ui-store";
 import { document, installDocMindApi, repository } from "./test-docmind-api";
 
@@ -106,6 +108,35 @@ describe("Workspace", () => {
     expect(screen.getByRole("button", { name: "设置" })).toBeVisible();
   });
 
+  it("transfers focus when the forced icon rail removes the focused collapse action", async () => {
+    let changeListener: ((event: MediaQueryListEvent) => void) | undefined;
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockReturnValue({
+        matches: false,
+        media: "(max-width: 1000px)",
+        onchange: null,
+        addEventListener: vi.fn((event: string, listener: (event: MediaQueryListEvent) => void) => {
+          if (event === "change") changeListener = listener;
+        }),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }),
+    );
+    renderWorkspace();
+    const collapse = screen.getByRole("button", { name: "收起侧边栏" });
+    collapse.focus();
+
+    act(() => changeListener?.({ matches: true } as MediaQueryListEvent));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "收起侧边栏" })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "导入文档" })).toHaveFocus();
+  });
+
   it("names the actual repository in the document delete confirmation", async () => {
     installDocMindApi();
     renderWorkspace();
@@ -117,6 +148,42 @@ describe("Workspace", () => {
     expect(
       await screen.findByText(new RegExp(`将从「${repository.name}」删除「${document.title}」`)),
     ).toBeVisible();
+  });
+
+  it("saves the selected cached document with its own draft after switching documents", async () => {
+    const secondDocument = {
+      ...document,
+      id: "00000000-0000-0000-0000-000000000023",
+      yuqueId: "navigation",
+      title: "Navigation",
+      content: "# Navigation\n\nSecond document content",
+    };
+    appQueryClient.clear();
+    appQueryClient.setQueryData(repositoryKeys.document(document.id), document);
+    appQueryClient.setQueryData(repositoryKeys.document(secondDocument.id), secondDocument);
+    const api = installDocMindApi({
+      documents: {
+        list: vi.fn().mockResolvedValue([document, secondDocument]),
+      },
+    });
+    renderWorkspace();
+
+    fireEvent.click(await screen.findByRole("button", { name: `展开 ${repository.name}` }));
+    fireEvent.click(await screen.findByRole("button", { name: document.title }));
+    fireEvent.change(await screen.findByLabelText("Markdown 内容"), {
+      target: { value: "# Unsaved first document draft" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: secondDocument.title }));
+
+    expect(await screen.findByLabelText("文档标题")).toHaveValue(secondDocument.title);
+    expect(screen.getByLabelText("Markdown 内容")).toHaveValue(secondDocument.content);
+    fireEvent.click(screen.getByRole("button", { name: "保存文档" }));
+    await waitFor(() =>
+      expect(api.documents.update).toHaveBeenCalledWith(secondDocument.id, {
+        title: secondDocument.title,
+        content: secondDocument.content,
+      }),
+    );
   });
 
   it("shows a safe recovery view without exposing the error stack", () => {

@@ -37,6 +37,38 @@ describe("BackendManager", () => {
     );
   });
 
+  it("serializes concurrent starts so only one backend is spawned", async () => {
+    const process = fakeProcess();
+    const spawn = vi.fn(() => process as any);
+    let resolveHealth!: (response: Response) => void;
+    let markHealthRequested!: () => void;
+    const healthRequested = new Promise<void>((resolve) => {
+      markHealthRequested = resolve;
+    });
+    const healthResponse = new Promise<Response>((resolve) => {
+      resolveHealth = resolve;
+    });
+    const fetch = vi.fn(() => {
+      markHealthRequested();
+      return healthResponse;
+    });
+    const manager = new BackendManager({
+      spawn,
+      fetch: fetch as typeof globalThis.fetch,
+      healthIntervalMs: 0,
+    });
+
+    const first = manager.start();
+    const second = manager.start();
+    await healthRequested;
+    resolveHealth(new Response("{}"));
+    const [firstConnection, secondConnection] = await Promise.all([first, second]);
+
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(secondConnection).toEqual(firstConnection);
+  });
+
   it("uses backend working directory in development to resolve app module", async () => {
     const process = fakeProcess();
     const spawn = vi.fn(() => process as any);
@@ -106,6 +138,28 @@ describe("BackendManager", () => {
     },
   );
 
+  it("rejects sparse packaged backend arguments before spawning", async () => {
+    const process = fakeProcess();
+    const spawn = vi.fn(() => process as any);
+    const sparseArgs = Array<string>(2);
+    sparseArgs[1] = "app";
+    const manager = new BackendManager({
+      spawn,
+      fetch: vi.fn(),
+      packaged: true,
+      backendCommand: "/bundle/python",
+      backendArgs: sparseArgs,
+      backendCwd: "/bundle/backend",
+      startupTimeoutMs: 1,
+      shutdownTimeoutMs: 0,
+    });
+
+    await expect(manager.start()).rejects.toMatchObject({
+      code: "BACKEND_START_FAILED",
+    });
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
   it("throws start failure when child exits", async () => {
     const process = fakeProcess();
     const manager = new BackendManager({
@@ -148,6 +202,57 @@ describe("BackendManager", () => {
     await manager.start();
 
     await expect(manager.stop()).resolves.toBe(true);
+  });
+
+  it("serializes concurrent stops on the same child exit", async () => {
+    const process = fakeProcess();
+    const manager = new BackendManager({
+      spawn: () => process as any,
+      fetch: vi.fn().mockResolvedValue(new Response("{}")),
+      healthIntervalMs: 0,
+      shutdownTimeoutMs: 100,
+    });
+    await manager.start();
+
+    const first = manager.stop();
+    const second = manager.stop();
+    let secondSettled = false;
+    void second.then(() => {
+      secondSettled = true;
+    });
+    await Promise.resolve();
+    const settledBeforeExit = secondSettled;
+    process.__exit();
+    await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
+
+    expect(settledBeforeExit).toBe(false);
+    expect(process.kill).toHaveBeenCalledTimes(1);
+    expect(process.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("waits for shutdown before a concurrent restart spawns", async () => {
+    const firstProcess = fakeProcess();
+    const secondProcess = fakeProcess();
+    const processes = [firstProcess, secondProcess];
+    const spawn = vi.fn(() => processes.shift() as any);
+    const manager = new BackendManager({
+      spawn,
+      fetch: vi.fn().mockResolvedValue(new Response("{}")),
+      healthIntervalMs: 0,
+      shutdownTimeoutMs: 100,
+    });
+    await manager.start();
+
+    const stopping = manager.stop();
+    const restarting = manager.start();
+    await Promise.resolve();
+    const spawnCountBeforeExit = spawn.mock.calls.length;
+    firstProcess.__exit();
+    await stopping;
+    await restarting;
+
+    expect(spawnCountBeforeExit).toBe(1);
+    expect(spawn).toHaveBeenCalledTimes(2);
   });
 
   it("redacts raw runtime token and paths from child diagnostics", async () => {
@@ -214,6 +319,51 @@ describe("BackendManager", () => {
       code: "BACKEND_START_FAILED",
     });
   }, 100);
+
+  it("aborts a hanging health probe at the overall startup deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const process = fakeProcess();
+      process.kill.mockImplementation(() => process.__exit());
+      let rejectProbe: (error: Error) => void = () => {};
+      const fetch = vi.fn((_: string | URL, init?: RequestInit) => {
+        const signal = init?.signal;
+        return new Promise<Response>((_, reject) => {
+          rejectProbe = reject;
+          signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("aborted", "AbortError")),
+            { once: true },
+          );
+        });
+      });
+      const manager = new BackendManager({
+        spawn: () => process as any,
+        fetch: fetch as typeof globalThis.fetch,
+        healthIntervalMs: 0,
+        startupTimeoutMs: 50,
+      });
+
+      const outcome = manager.start().then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      const probeSignal = (fetch.mock.calls[0]?.[1] as RequestInit | undefined)?.signal ?? null;
+      if (probeSignal === null) {
+        process.__exit();
+        rejectProbe(new Error("test cleanup"));
+        await vi.runAllTimersAsync();
+        await outcome;
+      }
+
+      expect(probeSignal).not.toBeNull();
+      await vi.advanceTimersByTimeAsync(50);
+      await expect(outcome).resolves.toMatchObject({ code: "BACKEND_START_FAILED" });
+      expect(probeSignal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("cleans up timed-out child before a retry can spawn another backend", async () => {
     const process = fakeProcess();

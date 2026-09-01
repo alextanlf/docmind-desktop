@@ -210,4 +210,23 @@ describe("引用资料", () => {
       referencePanelOpen: false,
     });
   });
+
+  it("returns focus to the activating repeated citation occurrence after remount", async () => {
+    const content = "第一次引用 [S1]，第二次引用 [S1]。";
+    const { rerender } = render(<ReferenceSurface content={content} messageKey="original" />);
+    const originalTriggers = screen.getAllByRole("button", { name: "查看引用 S1" });
+
+    fireEvent.click(originalTriggers[1]);
+    rerender(<ReferenceSurface content={content} messageKey="replacement" />);
+    const currentTriggers = screen.getAllByRole("button", { name: "查看引用 S1" });
+    fireEvent.click(screen.getByRole("button", { name: "关闭引用资料" }));
+
+    await waitFor(() => expect(currentTriggers[1]).toHaveFocus());
+    expect(currentTriggers[0].dataset.citationTriggerId).not.toBe(
+      currentTriggers[1].dataset.citationTriggerId,
+    );
+    expect(currentTriggers[1].dataset.citationTriggerId).toBe(
+      originalTriggers[1].dataset.citationTriggerId,
+    );
+  });
 });

@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
-import { useState } from "react";
-import type { ImportJob, SourceRef } from "../../../../shared/contracts";
+import { useEffect, useRef, useState } from "react";
+import type { ImportJob, Repository, SourceRef } from "../../../../shared/contracts";
 import { Modal } from "../../components/Modal";
 import { appQueryClient } from "../../app/query-client";
 import { clientErrorMessage } from "../settings/settings.queries";
@@ -34,13 +34,22 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
   const [pending, setPending] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState("");
+  const inspectionGeneration = useRef(0);
+  const openRef = useRef(open);
+  openRef.current = open;
+  useEffect(() => {
+    if (!open) inspectionGeneration.current += 1;
+  }, [open]);
   if (!open) return null;
   function close() {
+    inspectionGeneration.current += 1;
     reset();
     onClose();
   }
   async function inspect(currentSource: SourceRef) {
+    const generation = ++inspectionGeneration.current;
     const inspected = await window.docmind.imports.inspect(currentSource);
+    if (!openRef.current || generation !== inspectionGeneration.current) return;
     setSource(currentSource);
     setPreview(inspected);
     setStep(2);
@@ -110,8 +119,11 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
             onBack={() => setStep(1)}
             onContinue={() => setStep(3)}
             onDuplicateDecision={setDuplicateDecision}
-            onRepositoryCreated={() =>
-              void appQueryClient.invalidateQueries({ queryKey: repositoryKeys.root })
+            onRepositoryCreated={(repository) =>
+              appQueryClient.setQueryData<Repository[]>(repositoryKeys.root, (current = []) => [
+                ...current.filter((item) => item.id !== repository.id),
+                repository,
+              ])
             }
             onSelectRepository={setRepositoryId}
             preview={preview}

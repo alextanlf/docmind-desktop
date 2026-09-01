@@ -130,6 +130,7 @@ class FakeYuqueGateway:
         self.before_create: Callable[[], None] | None = None
         self.after_list: Callable[[], None] | None = None
         self.after_read: Callable[[], None] | None = None
+        self.after_update: Callable[[], None] | None = None
 
     async def create_document(self, request):  # type: ignore[no-untyped-def]
         self.create_calls += 1
@@ -162,6 +163,8 @@ class FakeYuqueGateway:
             url=f"https://yuque.test/{request.document_id}",
         )
         self.documents[request.document_id] = content
+        if self.after_update is not None:
+            self.after_update()
         return YuqueDocument(**content.model_dump(exclude={"content"}))
 
     async def list_documents(self, repository_id: str) -> list[YuqueDocument]:
@@ -238,6 +241,62 @@ async def create_job(service: ImportService, source: FakeSourceInspector, decisi
             duplicate_decision=decision,
         )
     )
+
+
+async def create_full_update_job(
+    service: ImportService,
+    source: FakeSourceInspector,
+    vector_store: FakeVectorStore,
+    gateway: FakeYuqueGateway,
+    tmp_path: Path,
+) -> ImportJobRecord:
+    preview = await source.inspect(SourceRef(kind="url", value=source.document.source_url))
+    document_dir = tmp_path / "existing-document"
+    document_dir.mkdir()
+    raw_path = document_dir / "raw.bin"
+    markdown_path = document_dir / "document.md"
+    raw_path.write_bytes(b"# Old\n\nold text")
+    markdown_path.write_text("# Old\n\nold text", encoding="utf-8")
+    service.document_store.create(
+        DocumentRecord(
+            id="existing-document",
+            repository_id="repository-1",
+            title="Old",
+            source_url="https://example.test/old.md",
+            raw_path=str(raw_path),
+            markdown_path=str(markdown_path),
+            source_type="import",
+            content_hash=preview.fingerprint,
+            yuque_id="remote-existing",
+            yuque_url="https://yuque.test/remote-existing",
+        )
+    )
+    service.document_store.replace_chunks(
+        "existing-document",
+        [
+            DocumentChunkRecord(
+                id="old-chunk",
+                document_id="existing-document",
+                repository_id="repository-1",
+                chunk_index=0,
+                text="# Old\n\nold text",
+                token_count=4,
+                vector_id="old-vector",
+            )
+        ],
+    )
+    vector_store.ids.add("old-vector")
+    gateway.documents["remote-existing"] = YuqueDocumentContent(
+        yuque_id="remote-existing",
+        repository_id="remote-repository-1",
+        title="Old",
+        content="# Old\n\nold text",
+        url="https://yuque.test/remote-existing",
+    )
+    view = await create_job(service, source, "update")
+    record = service.job_store.get(view.id)
+    assert record is not None
+    return record
 
 
 def create_indexing_job(
@@ -505,6 +564,106 @@ async def test_cancel_after_filesystem_persistence_stops_before_upload_transitio
 
     assert (cancelled.state, cancelled.progress) == (ImportStatus.CANCELLED, 20)  # type: ignore[union-attr]
     assert gateway.create_calls == 0
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    ["local_persist", "remote_update", "vector_upsert", "sqlite_replace"],
+)
+async def test_update_cancellation_reaches_a_coherent_boundary_before_cancelling(
+    database, tmp_path, monkeypatch, boundary: str
+) -> None:
+    service, source, vector_store, gateway = make_service(database, tmp_path)
+    job = await create_full_update_job(service, source, vector_store, gateway, tmp_path)
+
+    if boundary == "local_persist":
+        original_persist = service._persist_parsed_document
+
+        def persist_then_cancel(*args):  # type: ignore[no-untyped-def]
+            original_persist(*args)
+            service.job_store.request_cancel(job.id)
+
+        monkeypatch.setattr(service, "_persist_parsed_document", persist_then_cancel)
+    elif boundary == "remote_update":
+        gateway.after_update = lambda: service.job_store.request_cancel(job.id)
+    elif boundary == "vector_upsert":
+        vector_store.on_upsert = lambda: service.job_store.request_cancel(job.id)
+    else:
+        original_replace = service.document_store.replace_chunks
+
+        def replace_then_cancel(
+            document_id: str, chunks: list[DocumentChunkRecord]
+        ) -> None:
+            original_replace(document_id, chunks)
+            service.job_store.request_cancel(job.id)
+
+        monkeypatch.setattr(service.document_store, "replace_chunks", replace_then_cancel)
+
+    await service.run(job.id)
+
+    persisted_job = service.job_store.get(job.id)
+    document = service.document_store.get("existing-document")
+    vector_ids = service.document_store.vector_ids("existing-document")
+    assert persisted_job is not None
+    assert document is not None
+    assert persisted_job.state == ImportStatus.CANCELLED
+    assert Path(document.raw_path or "").read_bytes() == b"# Imported\n\nUseful text"
+    assert Path(document.markdown_path or "").read_text(encoding="utf-8") == (
+        "# Imported\n\nUseful text"
+    )
+    assert gateway.documents["remote-existing"].content == (
+        f"# Imported\n\nUseful text\n\n<!-- docmind-import:{job.id} -->\n"
+    )
+    assert [
+        chunk.text for chunk in service.document_store.list_chunks("existing-document")
+    ] == ["# Imported\n\nUseful text"]
+    assert vector_ids
+    assert vector_store.ids == set(vector_ids)
+    assert "old-vector" not in vector_store.ids
+
+
+async def test_restart_keeps_cancelled_update_retryable_until_coherence_is_restored(
+    database, tmp_path, monkeypatch
+) -> None:
+    service, source, vector_store, gateway = make_service(database, tmp_path)
+    job = await create_full_update_job(service, source, vector_store, gateway, tmp_path)
+    original_persist = service._persist_parsed_document
+
+    def persist_then_interrupt(*args):  # type: ignore[no-untyped-def]
+        original_persist(*args)
+        service.job_store.request_cancel(job.id)
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(service, "_persist_parsed_document", persist_then_interrupt)
+
+    with pytest.raises(asyncio.CancelledError):
+        await service.run(job.id)
+
+    interrupted = service.job_store.get(job.id)
+    assert interrupted is not None
+    assert json.loads(interrupted.source_value)["coherence_pending"] is True
+    assert service.job_store.recover_interrupted() == 1
+    recovered = service.job_store.get(job.id)
+    assert recovered is not None
+    assert (recovered.state, recovered.error_code, recovered.retryable) == (
+        ImportStatus.FAILED,
+        "APP_RESTARTED",
+        True,
+    )
+
+    monkeypatch.setattr(service, "_persist_parsed_document", original_persist)
+    await service.retry(job.id)
+    await service.run(job.id)
+
+    completed = service.job_store.get(job.id)
+    vector_ids = service.document_store.vector_ids("existing-document")
+    assert completed is not None
+    assert completed.state == ImportStatus.COMPLETED
+    assert gateway.documents["remote-existing"].content == (
+        f"# Imported\n\nUseful text\n\n<!-- docmind-import:{job.id} -->\n"
+    )
+    assert vector_store.ids == set(vector_ids)
+    assert "old-vector" not in vector_store.ids
 
 
 async def test_cancel_after_remote_attach_stops_before_indexing_transition(

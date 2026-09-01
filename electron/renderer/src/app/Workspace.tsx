@@ -8,7 +8,7 @@ import {
   Settings,
 } from "lucide-react";
 import { clsx } from "clsx";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { SessionSummary } from "../../../shared/contracts";
 import { IconButton } from "../components/IconButton";
 import { ChatPanel } from "../features/chat/ChatPanel";
@@ -33,7 +33,7 @@ import { useUiStore } from "../stores/ui-store";
 
 const FORCED_RAIL_QUERY = "(max-width: 1000px)";
 
-function useForcedIconRail() {
+function useForcedIconRail(onBeforeForce: () => void) {
   const [forced, setForced] = useState(
     () => typeof window.matchMedia === "function" && window.matchMedia(FORCED_RAIL_QUERY).matches,
   );
@@ -41,11 +41,14 @@ function useForcedIconRail() {
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
     const query = window.matchMedia(FORCED_RAIL_QUERY);
-    const update = (event: MediaQueryListEvent) => setForced(event.matches);
+    const update = (event: MediaQueryListEvent) => {
+      if (event.matches) onBeforeForce();
+      setForced(event.matches);
+    };
     setForced(query.matches);
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
-  }, []);
+  }, [onBeforeForce]);
 
   return forced;
 }
@@ -57,7 +60,13 @@ export function Workspace() {
   const toggleSidebar = useUiStore((state) => state.toggleSidebar);
   const referencePanelOpen = useUiStore((state) => state.referencePanelOpen);
   const setReferencePanelOpen = useUiStore((state) => state.setReferencePanelOpen);
-  const forcedIconRail = useForcedIconRail();
+  const sidebarToggleRef = useRef<HTMLButtonElement>(null);
+  const importNavigationRef = useRef<HTMLButtonElement>(null);
+  const sidebarFocusTransferPending = useRef(false);
+  const prepareSidebarFocusTransfer = useCallback(() => {
+    sidebarFocusTransferPending.current = document.activeElement === sidebarToggleRef.current;
+  }, []);
+  const forcedIconRail = useForcedIconRail(prepareSidebarFocusTransfer);
   const [importOpen, setImportOpen] = useState(false);
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
   const [selectedSession, setSelectedSession] = useState<SessionSummary | null>(null);
@@ -71,6 +80,13 @@ export function Workspace() {
   );
   const sessionMessages = useMessagesQuery(selectedSession?.id ?? null);
   const stream = useChatStreamStore();
+
+  useLayoutEffect(() => {
+    if (!forcedIconRail || !sidebarFocusTransferPending.current) return;
+    sidebarFocusTransferPending.current = false;
+    importNavigationRef.current?.focus();
+  }, [forcedIconRail]);
+
   const citations = useMemo(() => {
     const all: ScopedCitation[] = (sessionMessages.data ?? []).flatMap((message) =>
       message.citations.map((citation) => ({
@@ -139,6 +155,7 @@ export function Workspace() {
               }
               label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
               onClick={toggleSidebar}
+              ref={sidebarToggleRef}
               size="small"
             />
           )}
@@ -158,6 +175,7 @@ export function Workspace() {
           <button
             aria-label="导入文档"
             onClick={() => setImportOpen(true)}
+            ref={importNavigationRef}
             title="导入文档"
             type="button"
           >
@@ -201,6 +219,7 @@ export function Workspace() {
         ) : selectedDocument.data ? (
           <DocumentEditor
             document={selectedDocument.data}
+            key={selectedDocument.data.id}
             onClose={() => setSelectedDocumentId(null)}
             repositoryName={selectedRepository?.name}
           />

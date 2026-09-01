@@ -38,7 +38,7 @@ export function ReferencePanel({ citations }: { citations: (Citation | ScopedCit
   const setActiveCitationId = useUiStore((state) => state.setActiveCitationId);
   const setActiveCitationTrigger = useUiStore((state) => state.setActiveCitationTrigger);
   const closeRef = useRef<HTMLButtonElement>(null);
-  const pendingFocusCitationId = useRef<string | null>(null);
+  const pendingFocusTriggerId = useRef<string | null>(null);
   const drawer = useDrawerLayout();
   const citationsById = useMemo(() => {
     const map = new Map<string, Citation>();
@@ -63,19 +63,21 @@ export function ReferencePanel({ citations }: { citations: (Citation | ScopedCit
 
   useEffect(() => {
     if (open) return;
-    const citationId = pendingFocusCitationId.current;
-    pendingFocusCitationId.current = null;
-    if (!citationId) return;
+    const triggerId = pendingFocusTriggerId.current;
+    pendingFocusTriggerId.current = null;
+    if (!triggerId) return;
     const trigger = Array.from(
-      document.querySelectorAll<HTMLButtonElement>("button[data-citation-id]"),
-    ).find((candidate) => candidate.isConnected && candidate.dataset.citationId === citationId);
+      document.querySelectorAll<HTMLButtonElement>("button[data-citation-trigger-id]"),
+    ).find(
+      (candidate) => candidate.isConnected && candidate.dataset.citationTriggerId === triggerId,
+    );
     trigger?.focus();
   }, [open]);
 
   const close = () => {
     const state = useUiStore.getState();
-    pendingFocusCitationId.current =
-      state.activeCitationId ?? state.activeCitationTrigger?.dataset.citationId ?? null;
+    pendingFocusTriggerId.current =
+      state.activeCitationTrigger?.dataset.citationTriggerId ?? state.activeCitationId;
     setOpen(false);
     setActiveCitationId(null);
     setActiveCitationTrigger(null);

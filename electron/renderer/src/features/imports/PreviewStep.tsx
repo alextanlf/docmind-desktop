@@ -9,7 +9,7 @@ type PreviewStepProps = {
   duplicateDecision: "skip" | "update" | null;
   onSelectRepository: (repositoryId: string) => void;
   onDuplicateDecision: (value: "skip" | "update" | null) => void;
-  onRepositoryCreated: () => void;
+  onRepositoryCreated: (repository: Repository) => void;
   onBack: () => void;
   onContinue: () => void;
 };
@@ -34,8 +34,8 @@ export function PreviewStep({
     setError("");
     try {
       const repository = await window.docmind.repositories.create({ name });
+      onRepositoryCreated(repository);
       onSelectRepository(repository.id);
-      onRepositoryCreated();
       setNewName("");
     } catch (cause) {
       setError(clientErrorMessage(cause));

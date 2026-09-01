@@ -246,6 +246,8 @@ class ImportService:
         if await self._cancel_if_requested(job_id):
             return False
         if metadata["duplicate_decision"] != "skip":
+            if metadata["duplicate_decision"] == "update" and job.document_id is not None:
+                self.job_store.merge_source_metadata(job_id, {"coherence_pending": True})
             self._persist_parsed_document(job_id, downloaded, parsed)
         if await self._cancel_if_requested(job_id):
             return False
@@ -383,7 +385,7 @@ class ImportService:
                         for record in records
                     ],
                 )
-                if self._job(job_id).cancel_requested:
+                if self._job(job_id).cancel_requested and not metadata["coherence_pending"]:
                     await self._cleanup_created_vectors(
                         job_id, job.repository_id or "", created_ids
                     )
@@ -411,6 +413,11 @@ class ImportService:
                 if not commit_started or not commit_state["sqlite_replaced"]:
                     await self._delete_vectors(job.repository_id or "", created_ids)
                 await self._fail(job_id, "INDEX_FAILED", "写入文档索引失败", True)
+                return
+
+        if metadata["coherence_pending"]:
+            self.job_store.merge_source_metadata(job_id, {"coherence_pending": False})
+            if await self._cancel_if_requested(job_id):
                 return
 
         completed = self.job_store.transition(
@@ -660,6 +667,8 @@ class ImportService:
         job = self._job(job_id)
         if not job.cancel_requested:
             return False
+        if _source_metadata(job)["coherence_pending"]:
+            return False
         cancelled = self.job_store.cancel(job_id)
         await self._publish_event(
             job_id,
@@ -696,8 +705,7 @@ class ImportService:
             ImportStatus.INDEXING,
         }:
             return
-        if job.cancel_requested:
-            await self._cancel_if_requested(job_id)
+        if job.cancel_requested and await self._cancel_if_requested(job_id):
             return
         failures = {
             ImportStatus.PARSING: ("PARSE_FAILED", "文档解析失败", False),
@@ -761,6 +769,7 @@ def _encode_source_metadata(
     last_event_sequence: int = 0,
     stale_vector_ids: list[str] | None = None,
     pending_created_vector_ids: list[str] | None = None,
+    coherence_pending: bool = False,
 ) -> str:
     return json.dumps(
         {
@@ -772,6 +781,7 @@ def _encode_source_metadata(
             "last_event_sequence": last_event_sequence,
             "stale_vector_ids": stale_vector_ids or [],
             "pending_created_vector_ids": pending_created_vector_ids or [],
+            "coherence_pending": coherence_pending,
         },
         ensure_ascii=False,
         separators=(",", ":"),
@@ -809,6 +819,7 @@ def _source_metadata(job: ImportJobRecord) -> dict[str, Any]:
             isinstance(identifier, str) for identifier in pending_created_vector_ids
         ):
             pending_created_vector_ids = []
+        coherence_pending = metadata.get("coherence_pending") is True
         return {
             "value": metadata["value"],
             "fingerprint": (
@@ -825,6 +836,7 @@ def _source_metadata(job: ImportJobRecord) -> dict[str, Any]:
             "last_event_sequence": last_event_sequence,
             "stale_vector_ids": stale_vector_ids,
             "pending_created_vector_ids": pending_created_vector_ids,
+            "coherence_pending": coherence_pending,
         }
     return {
         "value": job.source_value,
@@ -834,4 +846,5 @@ def _source_metadata(job: ImportJobRecord) -> dict[str, Any]:
         "last_event_sequence": 0,
         "stale_vector_ids": [],
         "pending_created_vector_ids": [],
+        "coherence_pending": False,
     }

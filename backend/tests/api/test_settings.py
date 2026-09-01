@@ -3,8 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from app.api.errors import DomainError
+from app.api.settings import MODEL_CONFIG_KEY, MODEL_KEY_REFERENCE, SettingsService
 from app.core.llm import ModelConnectionResult
 from app.core.secrets import KeyringSecretStore, MemorySecretStore
+from app.schemas.settings import ModelSettingsUpdate
 from app.storage.models import SettingRecord
 
 
@@ -110,6 +115,69 @@ def test_very_long_api_key_is_never_reflected_in_response_or_sqlite(
     assert api_key not in json.dumps(values)
 
 
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://user:base-url-secret@example.test/v1",
+        "https://example.test/v1?api_key=base-url-secret",
+        "https://example.test/v1#base-url-secret",
+        "ftp://example.test/base-url-secret",
+    ],
+)
+def test_unsafe_model_base_url_is_rejected_without_persisting_or_reflecting_secrets(
+    client, auth_headers, base_url: str
+) -> None:
+    response = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "custom",
+            "baseUrl": base_url,
+            "model": "test-model",
+            "timeoutSeconds": 30,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "INVALID_REQUEST"
+    assert "base-url-secret" not in response.text
+    with client.app.state.database.session() as session:
+        values = [record.value for record in session.query(SettingRecord).all()]
+    assert "base-url-secret" not in json.dumps(values)
+
+
+@pytest.mark.parametrize(
+    ("base_url", "expected"),
+    [
+        (
+            "HTTPS://EXAMPLE.TEST:443/compatible-mode/v1/",
+            "https://example.test/compatible-mode/v1",
+        ),
+        ("http://EXAMPLE.TEST:80/v1/", "http://example.test/v1"),
+    ],
+)
+def test_model_base_url_is_normalized_without_discarding_compatible_path(
+    client, auth_headers, base_url: str, expected: str
+) -> None:
+    response = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "custom",
+            "baseUrl": base_url,
+            "model": "test-model",
+            "timeoutSeconds": 30,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["model"]["baseUrl"] == expected
+    with client.app.state.database.session() as session:
+        stored = session.get(SettingRecord, "model.config")
+    assert stored is not None
+    assert json.loads(stored.value)["baseUrl"] == expected
+
+
 def test_omitted_key_preserves_existing_key_and_empty_key_deletes_it(
     client, auth_headers, app_secret_store: MemorySecretStore
 ) -> None:
@@ -129,6 +197,102 @@ def test_omitted_key_preserves_existing_key_and_empty_key_deletes_it(
     assert deleted.status_code == 200
     assert deleted.json()["hasApiKey"] is False
     assert app_secret_store.get("model-api-key") is None
+
+
+async def test_keychain_failure_keeps_previous_model_config() -> None:
+    old_config = (
+        '{"preset":"custom","baseUrl":"https://old.example/v1",'
+        '"model":"old-model","timeoutSeconds":30}'
+    )
+
+    class DictSettingStore:
+        def __init__(self) -> None:
+            self.values = {
+                MODEL_CONFIG_KEY: old_config,
+                MODEL_KEY_REFERENCE: "model-api-key",
+            }
+
+        def get(self, key: str) -> str | None:
+            return self.values.get(key)
+
+        def set(self, key: str, value: str) -> None:
+            self.values[key] = value
+
+        def set_many(self, values: dict[str, str]) -> None:
+            self.values.update(values)
+
+    class FailingSecretStore(MemorySecretStore):
+        def set(self, name: str, value: str) -> None:
+            del name, value
+            raise DomainError("SECRET_STORE_FAILED", "无法访问系统钥匙串，请稍后重试", 503, True)
+
+    setting_store = DictSettingStore()
+    secret_store = FailingSecretStore()
+    secret_store._values["model-api-key"] = "old-secret"
+    service = SettingsService(setting_store, secret_store)  # type: ignore[arg-type]
+
+    with pytest.raises(DomainError) as error:
+        await service.save_model(
+            ModelSettingsUpdate(
+                preset="custom",
+                base_url="https://new.example/v1",
+                model="new-model",
+                timeout_seconds=30,
+                api_key="new-secret",
+            )
+        )
+
+    assert error.value.code == "SECRET_STORE_FAILED"
+    assert setting_store.values[MODEL_CONFIG_KEY] == old_config
+    assert secret_store.get("model-api-key") == "old-secret"
+
+
+async def test_settings_persistence_failure_restores_previous_api_key() -> None:
+    old_config = (
+        '{"preset":"custom","baseUrl":"https://old.example/v1",'
+        '"model":"old-model","timeoutSeconds":30}'
+    )
+
+    class FailingSettingStore:
+        def __init__(self) -> None:
+            self.values = {
+                MODEL_CONFIG_KEY: old_config,
+                MODEL_KEY_REFERENCE: "model-api-key",
+            }
+
+        def get(self, key: str) -> str | None:
+            return self.values.get(key)
+
+        def set(self, key: str, value: str) -> None:
+            self.values[key] = value
+            if key == MODEL_KEY_REFERENCE:
+                raise RuntimeError("settings commit failed")
+
+        def set_many(self, values: dict[str, str]) -> None:
+            del values
+            raise RuntimeError("settings commit failed")
+
+    setting_store = FailingSettingStore()
+    secret_store = MemorySecretStore()
+    secret_store.set("model-api-key", "old-secret")
+    service = SettingsService(setting_store, secret_store)  # type: ignore[arg-type]
+
+    with pytest.raises(RuntimeError, match="settings commit failed"):
+        await service.save_model(
+            ModelSettingsUpdate(
+                preset="custom",
+                base_url="https://new.example/v1",
+                model="new-model",
+                timeout_seconds=30,
+                api_key="new-secret",
+            )
+        )
+
+    assert setting_store.values == {
+        MODEL_CONFIG_KEY: old_config,
+        MODEL_KEY_REFERENCE: "model-api-key",
+    }
+    assert secret_store.get("model-api-key") == "old-secret"
 
 
 def test_presets_supply_editable_defaults(client, auth_headers) -> None:

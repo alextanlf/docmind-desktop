@@ -20,9 +20,12 @@ type MarkdownNode = {
   children?: MarkdownNode[];
 };
 
+const CITATION_URL_PREFIX = "https://docmind.local/citation/";
+
 function citationRemarkPlugin(citations: ScopedCitation[]) {
   const citationsBySourceId = new Map(citations.map((item) => [item.citation.sourceId, item]));
   return () => (tree: MarkdownNode) => {
+    let citationOccurrence = 0;
     const visit = (node: MarkdownNode) => {
       if (!node.children) return;
       node.children = node.children.flatMap((child) => {
@@ -37,9 +40,12 @@ function citationRemarkPlugin(citations: ScopedCitation[]) {
           if (!citationsBySourceId.has(sourceId) || match.index === undefined) continue;
           if (match.index > lastIndex)
             parts.push({ type: "text", value: child.value.slice(lastIndex, match.index) });
+          const citationUrl = new URL(`${CITATION_URL_PREFIX}${encodeURIComponent(sourceId)}`);
+          citationUrl.searchParams.set("occurrence", String(citationOccurrence));
+          citationOccurrence += 1;
           parts.push({
             type: "link",
-            url: `https://docmind.local/citation/${encodeURIComponent(sourceId)}`,
+            url: citationUrl.toString(),
             children: [{ type: "text", value: sourceId }],
           });
           lastIndex = match.index + match[0].length;
@@ -55,7 +61,7 @@ function citationRemarkPlugin(citations: ScopedCitation[]) {
 }
 
 function MarkdownLink({ href, children }: ComponentPropsWithoutRef<"a">) {
-  if (href?.startsWith("https://docmind.local/citation/")) return null;
+  if (href?.startsWith(CITATION_URL_PREFIX)) return null;
   if (!href || !/^https?:\/\//i.test(href)) return <span>{children}</span>;
   return (
     <a
@@ -116,11 +122,16 @@ function CitationLink({
   citationsBySourceId,
   children,
 }: ComponentPropsWithoutRef<"a"> & { citationsBySourceId: Map<string, ScopedCitation> }) {
-  if (href?.startsWith("https://docmind.local/citation/")) {
-    const citation = citationsBySourceId.get(
-      decodeURIComponent(href.slice("https://docmind.local/citation/".length)),
+  if (href?.startsWith(CITATION_URL_PREFIX)) {
+    const citationUrl = new URL(href);
+    const sourceId = decodeURIComponent(citationUrl.pathname.slice("/citation/".length));
+    const citation = citationsBySourceId.get(sourceId);
+    const occurrence = citationUrl.searchParams.get("occurrence") ?? "0";
+    return citation ? (
+      <CitationButton scoped={citation} triggerId={`${citation.id}:occurrence:${occurrence}`} />
+    ) : (
+      <>{children}</>
     );
-    return citation ? <CitationButton scoped={citation} /> : <>{children}</>;
   }
   return <MarkdownLink href={href}>{children}</MarkdownLink>;
 }

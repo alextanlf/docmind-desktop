@@ -90,6 +90,25 @@ def test_chunker_splits_oversized_fenced_code_into_valid_indented_fences() -> No
     assert all(chunk.token_count <= 800 for chunk in chunks)
 
 
+def test_chunker_keeps_fences_and_indentation_when_one_code_line_is_oversized() -> None:
+    long_expression = " + ".join(f"value_{index}" for index in range(40))
+    code_line = f"    result = {long_expression}"
+    code = f"```python\n{code_line}\n```"
+    document = ParsedDocument(
+        title="Single long line",
+        source_url="https://docs.test/code",
+        markdown=code,
+        sections=[ParsedSection(heading_path=["Code"], markdown=code)],
+    )
+
+    chunks = SemanticChunker(max_tokens=24, overlap_tokens=4).chunk(document)
+
+    assert len(chunks) > 1
+    assert all(chunk.text.startswith("```python\n") and chunk.text.endswith("\n```") for chunk in chunks)
+    assert all(chunk.text.splitlines()[1].startswith("    ") for chunk in chunks)
+    assert all(chunk.token_count <= 24 for chunk in chunks)
+
+
 def test_chunker_drops_empty_sections() -> None:
     document = ParsedDocument(
         title="Empty", source_url="x", markdown="", sections=[ParsedSection(heading_path=[], markdown="\n\t ")]

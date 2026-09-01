@@ -31,6 +31,7 @@ class AppSettings(BaseSettings):
     source_read_timeout_seconds: float = 30.0
     html_markdown_max_bytes: int = 20 * 1024 * 1024
     pdf_max_bytes: int = 100 * 1024 * 1024
+    max_request_body_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
     embedding_model_name: str = "BAAI/bge-base-zh-v1.5"
     embedding_device: str = "cpu"
     embedding_dimension: int = Field(default=768, gt=0)

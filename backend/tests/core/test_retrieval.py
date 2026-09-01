@@ -182,6 +182,66 @@ async def test_hybrid_search_caps_results_at_five_and_rejects_nonpositive_limits
     assert empty.hits == []
 
 
+async def test_orphan_vectors_do_not_raise_repository_confidence(database) -> None:
+    repository = RepositoryRecord(id="repo-1", name="Repository")
+    document = DocumentRecord(id="doc-1", repository_id=repository.id, title="Guide")
+    chunk = DocumentChunkRecord(
+        id="valid-chunk",
+        document_id=document.id,
+        repository_id=repository.id,
+        chunk_index=0,
+        text="needle",
+        token_count=1,
+    )
+    with database.session() as session:
+        session.add_all([repository, document, chunk])
+    retriever = HybridRetriever(
+        database=database,
+        vector_store=_StubVectorStore(
+            {
+                repository.id: [
+                    _vector_hit("orphan-chunk", 0.99),
+                    _vector_hit(chunk.id, 0.40),
+                ]
+            }
+        ),  # type: ignore[arg-type]
+        embedding_provider=FakeEmbeddingProvider(EmbeddingSettings(dimension=8)),
+        similarity_threshold=0.65,
+    )
+
+    result = await retriever.search("needle", [repository.id])
+
+    assert result.hits == []
+    assert result.max_score == 0.40
+
+
+async def test_nonpositive_bm25_scores_are_not_reported_as_keyword_evidence(database) -> None:
+    repository = RepositoryRecord(id="repo-1", name="Repository")
+    document = DocumentRecord(id="doc-1", repository_id=repository.id, title="Guide")
+    chunk = DocumentChunkRecord(
+        id="chunk-1",
+        document_id=document.id,
+        repository_id=repository.id,
+        chunk_index=0,
+        text="needle",
+        token_count=1,
+    )
+    with database.session() as session:
+        session.add_all([repository, document, chunk])
+    retriever = HybridRetriever(
+        database=database,
+        vector_store=_StubVectorStore(
+            {repository.id: [_vector_hit(chunk.id, 0.90)]}
+        ),  # type: ignore[arg-type]
+        embedding_provider=FakeEmbeddingProvider(EmbeddingSettings(dimension=8)),
+    )
+
+    result = await retriever.search("needle", [repository.id])
+
+    assert [hit.chunk_id for hit in result.hits] == [chunk.id]
+    assert result.hits[0].keyword_score is None
+
+
 class _StubVectorStore:
     def __init__(self, hits_by_repository: dict[str, list[VectorHit]]) -> None:
         self.hits_by_repository = hits_by_repository

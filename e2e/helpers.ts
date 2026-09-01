@@ -14,7 +14,7 @@ export async function completeFakeOnboarding(page: Page): Promise<void> {
   await page.getByRole("button", { name: "测试模型连接" }).click();
   await page.getByRole("button", { name: "下一步" }).click();
   await page.getByRole("button", { name: "打开语雀登录" }).click();
-  await expect(page.getByText("已连接语雀")).toBeVisible();
+  await expect(page.getByText("已登录", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "进入工作台" }).click();
   await expect(page.getByLabel("工作台")).toBeVisible();
 }
@@ -38,7 +38,7 @@ export async function importFixture(
     await repository.selectOption({ label: "SwiftUI" });
   } else {
     await page.getByLabel("新建知识库名称").fill("SwiftUI");
-    await page.getByRole("button", { name: "创建知识库" }).click();
+    await page.getByRole("button", { name: "新建知识库" }).click();
   }
   await page.getByRole("button", { name: "继续" }).click();
   await page.getByRole("button", { name: "准备模型" }).click();
@@ -46,4 +46,17 @@ export async function importFixture(
   await expect(page.getByLabel("导入进度")).toBeVisible();
   if (options.stopAtDuplicateDecision) return;
   if (options.waitForCompletion !== false) await expect(page.getByText("导入完成")).toBeVisible();
+}
+
+export async function createChatSession(page: Page, repositoryName = "SwiftUI"): Promise<void> {
+  await page.getByLabel("选择知识库").click();
+  await page.getByRole("checkbox", { name: repositoryName }).check();
+  await page.getByRole("button", { name: "新建会话" }).click();
+  await expect(page.getByLabel("输入问题")).toBeEnabled();
+}
+
+export async function expandRepository(page: Page, repositoryName = "SwiftUI"): Promise<void> {
+  const expand = page.getByRole("button", { name: `展开 ${repositoryName}` });
+  if (await expand.isVisible()) await expand.click();
+  await expect(page.getByRole("button", { name: `收起 ${repositoryName}` })).toBeVisible();
 }
