@@ -7,7 +7,6 @@ export default defineConfig({
   timeout: 45_000,
   retries: 0,
   outputDir: "test-results/e2e",
-  snapshotPathTemplate: "artifacts/visual/{arg}{ext}",
   use: {
     trace: "retain-on-failure",
     screenshot: "only-on-failure",

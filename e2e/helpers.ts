@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import { resolve } from "node:path";
+import type { FixtureDialog } from "./fixtures/backend-fixture";
 
 type ImportOptions = {
   stopAtDuplicateDecision?: boolean;
@@ -19,11 +20,13 @@ export async function completeFakeOnboarding(page: Page): Promise<void> {
 }
 
 export async function importFixture(
+  dialog: FixtureDialog,
   page: Page,
   fixture: string,
   options: ImportOptions = {},
 ): Promise<void> {
   const fixturePath = resolve(process.cwd(), fixture);
+  await dialog.setDialogFixture(fixture);
   await page.getByLabel("导入文档").click();
   await page.getByRole("button", { name: "Markdown" }).click();
   await page.getByRole("button", { name: "选择 Markdown 文件" }).click();
@@ -40,6 +43,7 @@ export async function importFixture(
   await page.getByRole("button", { name: "继续" }).click();
   await page.getByRole("button", { name: "准备模型" }).click();
   await page.getByRole("button", { name: "确认导入" }).click();
+  await expect(page.getByLabel("导入进度")).toBeVisible();
   if (options.stopAtDuplicateDecision) return;
   if (options.waitForCompletion !== false) await expect(page.getByText("导入完成")).toBeVisible();
 }

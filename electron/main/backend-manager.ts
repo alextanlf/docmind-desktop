@@ -23,6 +23,7 @@ export class BackendStartError extends Error {
 export class BackendManager {
   private child?: ChildProcess;
   private connection?: BackendConnection;
+  private childExited = false;
   private stderr = "";
   private token = "";
   private readonly spawn: SpawnFn;
@@ -86,6 +87,7 @@ export class BackendManager {
     };
     let startError: Error | undefined;
     let exited = false;
+    this.childExited = false;
     try {
       this.child = this.spawn(this.command, this.args, {
         cwd: this.cwd,
@@ -110,6 +112,10 @@ export class BackendManager {
     });
     child.once("exit", () => {
       exited = true;
+      this.childExited = true;
+      const artifacts = process.env.DOCMIND_E2E_ARTIFACTS_DIR;
+      if (process.env.DOCMIND_E2E === "1" && artifacts)
+        void appendFile(join(artifacts, "backend.log"), "backend exited\n", "utf8").catch(() => {});
     });
     const started = Date.now();
     while (Date.now() - started < this.timeout) {
@@ -180,34 +186,38 @@ export class BackendManager {
       headers,
     });
   }
-  async stop() {
+  async stop(): Promise<boolean> {
     const child = this.child;
+    const childExited = this.childExited;
     this.reset();
-    if (!child?.pid) return;
-    const exited = await new Promise<boolean>((resolve) => {
-      let settled = false;
-      const timer = setTimeout(() => finish(false), this.shutdownTimeout);
-      const finish = (value: boolean) => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timer);
-          resolve(value);
-        }
-      };
-      child.once("exit", () => finish(true));
+    if (!child?.pid || childExited) return true;
+    const waitForExit = () =>
+      new Promise<boolean>((resolve) => {
+        let settled = false;
+        const timer = setTimeout(() => finish(false), this.shutdownTimeout);
+        const finish = (value: boolean) => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            resolve(value);
+          }
+        };
+        child.once("exit", () => finish(true));
+      });
+    const waitForExitAfterSignal = async (signal: NodeJS.Signals) => {
+      const exit = waitForExit();
       try {
-        child.kill("SIGTERM");
+        child.kill(signal);
       } catch {
-        finish(true);
-        return;
+        return true;
       }
-    });
+      return exit;
+    };
+    const exited = await waitForExitAfterSignal("SIGTERM");
+    if (exited) return true;
     if (!exited) {
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        /* exact child already gone */
-      }
+      return waitForExitAfterSignal("SIGKILL");
     }
+    return true;
   }
 }

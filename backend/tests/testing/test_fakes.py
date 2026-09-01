@@ -32,6 +32,29 @@ def test_fake_services_are_selected_only_for_nonproduction_opt_in(
     assert isinstance(app.state.fake_llm_provider, FakeLLMProvider)
 
 
+def test_fake_services_keep_the_configured_retrieval_threshold_and_disable_e2e_controls(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("DOCMIND_FAKE_SERVICES", "1")
+    monkeypatch.delenv("DOCMIND_E2E", raising=False)
+    from app.main import create_app
+    from app.testing.fakes import E2EControlledFakeEmbeddingProvider
+
+    app = create_app(
+        AppSettings(
+            session_token=SecretStr("test-token"),
+            data_dir=tmp_path / "fake-data",
+            environment="test",
+            rag_similarity_threshold=0.65,
+        )
+    )
+
+    with TestClient(app):
+        assert app.state.chat_service.retriever.similarity_threshold == 0.65
+        assert not isinstance(app.state.embedding_provider, E2EControlledFakeEmbeddingProvider)
+        assert app.state.fake_llm_provider.control is None
+
+
 def test_fake_services_are_rejected_in_production(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:

@@ -8,18 +8,21 @@ DocMind is a local macOS knowledge workspace. It imports URL, PDF, and UTF-8 Mar
 - A Yuque account for real-service use
 - A model API key for one of the DeepSeek, Qwen, OpenAI, or custom OpenAI-compatible presets
 
-Set up dependencies without starting the application:
+For ordinary development on a trusted machine, install the backend and the Electron runtime, then start the app:
 
 ```bash
 ./scripts/setup-backend.sh
+npm install
+npm run dev
+```
+
+For restricted validation environments where Electron downloads or launches are intentionally blocked, install JavaScript packages without postinstall scripts:
+
+```bash
 npm install --ignore-scripts
 ```
 
-Start development with one command:
-
-```bash
-npm run dev
-```
+That restricted setup supports static checks and unit tests only. It cannot start `npm run dev` or run Electron E2E; complete those checks later on a trusted runtime.
 
 The first-run dialog saves non-secret model settings locally and stores the API key only in the macOS Keychain. The key is never written to SQLite, diagnostics, IPC values, or logs. Choose a preset (DeepSeek, Qwen, OpenAI, or Custom), save a valid key, then test the model connection.
 
@@ -27,7 +30,7 @@ The first real import requires explicit embedding preparation. It downloads abou
 
 ## Sources And Limits
 
-- HTTP(S) article URL, subject to safe-address checks and a 20 MB converted Markdown limit
+- HTTP(S) article URL, subject to safe-address checks, at most 5 redirects, a 10-second connection timeout, a 30-second read timeout, and a 20 MB converted Markdown limit
 - UTF-8 Markdown file up to 20 MB
 - PDF file up to 100 MB
 
@@ -61,4 +64,4 @@ Record each item as `PASS`, `FAIL`, or `NOT RUN`. Do not treat fake-service resu
 
 ## Phase 1 Boundaries
 
-Phase 1 excludes collaborative sharing, cloud synchronization, automatic background Yuque synchronization, multi-user accounts, arbitrary local filesystem access from the renderer, and uncited answers outside retrieved evidence.
+Phase 1 excludes collaborative sharing, cloud synchronization, automatic background Yuque synchronization, multi-user accounts, arbitrary local filesystem access from the renderer, and uncited answers outside retrieved evidence. These exclusions are binding for Phase 1; they are not silently enabled by configuration or treated as supported workflows.

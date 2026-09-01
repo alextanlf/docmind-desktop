@@ -134,6 +134,22 @@ describe("BackendManager", () => {
     expect(process.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
   });
 
+  it("acknowledges shutdown only after the backend child exits", async () => {
+    const process = fakeProcess();
+    process.kill.mockImplementation((signal: string) => {
+      if (signal === "SIGTERM") process.__exit();
+    });
+    const manager = new BackendManager({
+      spawn: () => process as any,
+      fetch: vi.fn().mockResolvedValue(new Response("{}")),
+      healthIntervalMs: 0,
+      shutdownTimeoutMs: 10,
+    });
+    await manager.start();
+
+    await expect(manager.stop()).resolves.toBe(true);
+  });
+
   it("redacts raw runtime token and paths from child diagnostics", async () => {
     const process = fakeProcess();
     const manager = new BackendManager({

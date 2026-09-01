@@ -5,13 +5,15 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 const root = resolve(__dirname, "../..");
-const fixturePath = resolve(root, "e2e/fixtures/state-guide.md");
+export type FixtureDialog = {
+  setDialogFixture(fixture: string): Promise<void>;
+};
 
-type ElectronHarness = {
+type ElectronHarness = FixtureDialog & {
   app: ElectronApplication;
   page: Page;
   close(): Promise<void>;
-  restart(): Promise<void>;
+  restart(): Promise<Page>;
   backendExited(): Promise<boolean>;
   expectHealthy(): Promise<void>;
   failNextModelTest(): Promise<void>;
@@ -51,10 +53,11 @@ export const test = base.extend<Fixtures>({
         app = await launch(dataDir, artifacts);
         page = await app.firstWindow();
         attachPageGuards(page);
+        return page;
       },
       async backendExited() {
         const log = await readFile(join(artifacts, "backend.log"), "utf8").catch(() => "");
-        return log.includes("backend exited") || app.process().exitCode !== null;
+        return log.includes("backend exited");
       },
       async expectHealthy() {
         expect(consoleErrors, "renderer console/page errors").toEqual([]);
@@ -68,11 +71,17 @@ export const test = base.extend<Fixtures>({
       async failNextIndex() {
         await writeControl(dataDir, "fail-next-index");
       },
+      async setDialogFixture(fixture) {
+        await writeDialogFixture(dataDir, resolve(root, fixture));
+      },
     };
     try {
       await use(harness);
       expect(consoleErrors, "renderer console/page errors").toEqual([]);
     } catch (error) {
+      const consoleArtifact = testInfo.outputPath("console-errors.txt");
+      await writeFile(consoleArtifact, consoleErrors.join("\n"), "utf8").catch(() => {});
+      await testInfo.attach("console-errors", { path: consoleArtifact, contentType: "text/plain" });
       await page
         .screenshot({ path: testInfo.outputPath("failure.png"), fullPage: true })
         .catch(() => {});
@@ -100,7 +109,6 @@ async function launch(dataDir: string, artifacts: string): Promise<ElectronAppli
       ...process.env,
       DOCMIND_E2E: "1",
       DOCMIND_E2E_DATA_DIR: dataDir,
-      DOCMIND_E2E_DIALOG_PATH: fixturePath,
       DOCMIND_E2E_ARTIFACTS_DIR: artifacts,
       DOCMIND_FAKE_SERVICES: "1",
     },
@@ -113,4 +121,10 @@ async function writeControl(dataDir: string, command: string): Promise<void> {
   const control = join(dataDir, "e2e", "control");
   await mkdir(join(dataDir, "e2e"), { recursive: true });
   await writeFile(control, command, "utf8");
+}
+
+async function writeDialogFixture(dataDir: string, fixture: string): Promise<void> {
+  const control = join(dataDir, "e2e", "dialog-path");
+  await mkdir(join(dataDir, "e2e"), { recursive: true });
+  await writeFile(control, fixture, "utf8");
 }
