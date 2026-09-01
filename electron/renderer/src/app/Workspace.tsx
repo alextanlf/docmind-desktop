@@ -7,12 +7,18 @@ import {
   MessageSquarePlus,
   PanelRightClose,
   PanelRightOpen,
-  Search,
   Settings,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { useEffect, useState } from "react";
 import { IconButton } from "../components/IconButton";
+import { ImportDialog } from "../features/imports/ImportDialog";
+import { ImportProgress } from "../features/imports/ImportProgress";
+import { useImportJobQuery } from "../features/imports/imports.queries";
+import { useImportStore } from "../features/imports/import-store";
+import { DocumentEditor } from "../features/repositories/DocumentEditor";
+import { RepositoryTree } from "../features/repositories/RepositoryTree";
+import { useDocumentQuery } from "../features/repositories/repository.queries";
 import { SettingsView } from "../features/settings/SettingsView";
 import { useUiStore } from "../stores/ui-store";
 
@@ -43,6 +49,11 @@ export function Workspace() {
   const referencePanelOpen = useUiStore((state) => state.referencePanelOpen);
   const setReferencePanelOpen = useUiStore((state) => state.setReferencePanelOpen);
   const forcedIconRail = useForcedIconRail();
+  const [importOpen, setImportOpen] = useState(false);
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
+  const jobId = useImportStore((state) => state.jobId);
+  const importJob = useImportJobQuery(jobId);
+  const selectedDocument = useDocumentQuery(selectedDocumentId);
 
   return (
     <main
@@ -86,21 +97,22 @@ export function Workspace() {
             <Library aria-hidden="true" size={17} />
             <span>知识库</span>
           </button>
-          <button aria-label="导入文档" title="导入文档" type="button">
+          <button
+            aria-label="导入文档"
+            onClick={() => setImportOpen(true)}
+            title="导入文档"
+            type="button"
+          >
             <FilePlus2 aria-hidden="true" size={17} />
             <span>导入文档</span>
           </button>
         </nav>
         <div className="sidebar-library">
-          <div className="sidebar-section-title">
-            <span>知识库</span>
-            <IconButton
-              icon={<Search aria-hidden="true" size={16} />}
-              label="搜索知识库"
-              size="small"
-            />
-          </div>
-          <p>登录语雀后，知识库将显示在这里。</p>
+          <RepositoryTree
+            onOpenDocument={(documentId) => {
+              setSelectedDocumentId(documentId);
+            }}
+          />
         </div>
         <button
           aria-label="设置"
@@ -128,12 +140,21 @@ export function Workspace() {
         ) : null}
         {activeView === "settings" ? (
           <SettingsView />
+        ) : selectedDocument.data ? (
+          <DocumentEditor
+            document={selectedDocument.data}
+            onClose={() => setSelectedDocumentId(null)}
+          />
         ) : (
           <div className="empty-workspace">
             <BookOpen aria-hidden="true" size={24} />
             <h1>选择知识库开始对话</h1>
             <p>导入文档后，可在这里检索内容并查看引用来源。</p>
-            <button className="button button-primary" type="button">
+            <button
+              className="button button-primary"
+              onClick={() => setImportOpen(true)}
+              type="button"
+            >
               <FilePlus2 aria-hidden="true" size={16} />
               导入第一篇文档
             </button>
@@ -158,6 +179,19 @@ export function Workspace() {
           <p>点击回答中的引用，可在此查看原文。</p>
         </div>
       </aside>
+      <ImportDialog
+        onClose={() => setImportOpen(false)}
+        onImported={() => setImportOpen(false)}
+        open={importOpen}
+      />
+      {importJob.data ? (
+        <div className="workspace-import-progress">
+          <ImportProgress
+            job={importJob.data}
+            onOpenDocument={(documentId) => setSelectedDocumentId(documentId)}
+          />
+        </div>
+      ) : null}
     </main>
   );
 }
