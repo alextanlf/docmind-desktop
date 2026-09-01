@@ -92,6 +92,29 @@ describe("BackendManager", () => {
     );
   });
 
+  it.each([[[1]], [[null]], [[{ value: "-m" }]]])(
+    "rejects packaged backend arguments containing non-strings (%j) before spawning",
+    async (invalidArgs) => {
+      const process = fakeProcess();
+      const spawn = vi.fn(() => process as any);
+      const manager = new BackendManager({
+        spawn,
+        fetch: vi.fn(),
+        packaged: true,
+        backendCommand: "/bundle/python",
+        backendArgs: invalidArgs as any,
+        backendCwd: "/bundle/backend",
+        healthIntervalMs: 0,
+        startupTimeoutMs: 10,
+      });
+
+      await expect(manager.start()).rejects.toMatchObject({
+        code: "BACKEND_START_FAILED",
+      });
+      expect(spawn).not.toHaveBeenCalled();
+    },
+  );
+
   it("throws start failure when child exits", async () => {
     const process = fakeProcess();
     const manager = new BackendManager({
@@ -153,6 +176,24 @@ describe("BackendManager", () => {
       code: "BACKEND_START_FAILED",
     });
   });
+
+  it("includes stderr emitted after a child error in sanitized diagnostics", async () => {
+    const process = fakeProcess();
+    const manager = new BackendManager({
+      spawn: () => process as any,
+      fetch: () => new Promise<Response>(() => {}),
+      healthIntervalMs: 0,
+      shutdownTimeoutMs: 0,
+    });
+    const pending = manager.start();
+    process.__error(new Error("spawn failed"));
+    process.__stderr("late startup failure at /private/backend/log");
+
+    const error = (await pending.catch((value) => value as Error)) as Error;
+    expect(error).toMatchObject({ code: "BACKEND_START_FAILED" });
+    expect(error.message).toContain("late startup failure");
+    expect(error.message).not.toContain("/private/backend/log");
+  }, 100);
 
   it("rejects promptly when child errors during a hanging health request", async () => {
     const process = fakeProcess();

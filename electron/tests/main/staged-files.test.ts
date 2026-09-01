@@ -1,5 +1,13 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtemp, writeFile, symlink, rm } from "node:fs/promises";
+import {
+  mkdtemp,
+  writeFile,
+  symlink,
+  rm,
+  open,
+  readdir,
+  readFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StagedFileService } from "../../main/staged-files";
@@ -74,5 +82,46 @@ describe("staged files", () => {
       "markdown",
     );
     expect(result.name).toBe("safe.md");
+  });
+
+  it("retries short destination writes before atomically publishing the staged file", async () => {
+    const source = join(dir, "short-write.md");
+    const contents = "deterministic short write regression";
+    await writeFile(source, contents);
+
+    const probe = await open(source, "r");
+    const fileHandlePrototype = Object.getPrototypeOf(probe) as {
+      write: (...args: any[]) => Promise<{ bytesWritten: number }>;
+    };
+    await probe.close();
+    const originalWrite = fileHandlePrototype.write;
+    let shortWritePending = true;
+    fileHandlePrototype.write = async function (...args: any[]) {
+      const [buffer, offset, length, position] = args;
+      if (shortWritePending && length > 1) {
+        shortWritePending = false;
+        const shortLength = Math.max(1, Math.floor(length / 2));
+        return originalWrite.call(this, buffer, offset, shortLength, position);
+      }
+      return originalWrite.apply(this, args);
+    };
+
+    try {
+      await new StagedFileService({ dataDir: dir }).stageSelected(
+        source,
+        "markdown",
+      );
+    } finally {
+      fileHandlePrototype.write = originalWrite;
+    }
+
+    const stagedEntries = await readdir(join(dir, "imports", "staging"));
+    const stagedFile = stagedEntries.find(
+      (entry) => !entry.endsWith(".partial"),
+    );
+    expect(stagedFile).toBeDefined();
+    await expect(
+      readFile(join(dir, "imports", "staging", stagedFile!)),
+    ).resolves.toEqual(Buffer.from(contents));
   });
 });
