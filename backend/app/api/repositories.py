@@ -21,14 +21,17 @@ def _store(request: Request) -> RepositoryStore:
     return cast(RepositoryStore, request.app.state.repository_store)
 
 
-def _refresh_counts(request: Request, records: list[RepositoryRecord]) -> None:
+def _refresh_counts(request: Request, records: list[RepositoryRecord]) -> dict[str, int]:
     document_store = request.app.state.document_store
     store = _store(request)
+    indexed: dict[str, int] = {}
     for record in records:
         store.set_document_count(record.id, len(document_store.list_for_repository(record.id)))
+        indexed[record.id] = document_store.indexed_count_for_repository(record.id)
+    return indexed
 
 
-def _view(record: RepositoryRecord) -> RepositoryView:
+def _view(record: RepositoryRecord, indexed_document_count: int = 0) -> RepositoryView:
     return RepositoryView(
         id=record.id,
         yuque_id=record.yuque_id,
@@ -36,6 +39,7 @@ def _view(record: RepositoryRecord) -> RepositoryView:
         description=record.description,
         yuque_url=record.yuque_url,
         document_count=record.document_count,
+        indexed_document_count=indexed_document_count,
         sync_status=record.sync_status,
         created_at=record.created_at,
         updated_at=record.updated_at,
@@ -59,8 +63,8 @@ async def list_repositories(request: Request) -> list[RepositoryView]:
     for remote in await _gateway(request).list_repositories():
         _upsert(store, remote)
     records = store.list()
-    _refresh_counts(request, records)
-    return [_view(record) for record in store.list()]
+    indexed = _refresh_counts(request, records)
+    return [_view(record, indexed.get(record.id, 0)) for record in store.list()]
 
 
 @router.post("", response_model=RepositoryView, status_code=status.HTTP_201_CREATED)

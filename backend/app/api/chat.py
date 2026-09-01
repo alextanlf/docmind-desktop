@@ -11,7 +11,7 @@ from app.api.errors import DomainError
 from app.chat.service import ChatService
 from app.schemas.chat import ChatMessageBody, ChatStreamRequest
 from app.storage.models import SessionRecord
-from app.storage.repositories import ConversationStore, RepositoryStore
+from app.storage.repositories import ConversationStore, DocumentStore, RepositoryStore
 
 router = APIRouter(prefix="/api/sessions", tags=["chat"])
 
@@ -26,6 +26,9 @@ def _conversation_store(request: Request) -> ConversationStore:
 
 def _repository_store(request: Request) -> RepositoryStore:
     return cast(RepositoryStore, request.app.state.repository_store)
+
+def _document_store(request: Request) -> DocumentStore:
+    return cast(DocumentStore, request.app.state.document_store)
 
 
 def _chat_service(request: Request) -> ChatService:
@@ -61,6 +64,7 @@ async def stream_message(request: Request, session_id: str) -> StreamingResponse
         or any(not repository_id.strip() for repository_id in repository_ids)
         or len(set(repository_ids)) != len(repository_ids)
         or not set(repository_ids).issubset(known_repository_ids)
+        or any(_document_store(request).indexed_count_for_repository(identifier) <= 0 for identifier in repository_ids)
         or not isinstance(scope, list)
         or not set(repository_ids).issubset(set(scope))
     ):

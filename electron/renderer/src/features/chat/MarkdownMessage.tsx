@@ -4,6 +4,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Citation } from "../../../../shared/contracts";
 import { CitationButton } from "../references/CitationButton";
+import { openExternalUrl } from "../references/external-links";
+import type { ScopedCitation } from "../references/citation-types";
 
 type MarkdownNode = {
   type: string;
@@ -12,8 +14,8 @@ type MarkdownNode = {
   children?: MarkdownNode[];
 };
 
-function citationRemarkPlugin(citations: Citation[]) {
-  const citationsBySourceId = new Map(citations.map((citation) => [citation.sourceId, citation]));
+function citationRemarkPlugin(citations: ScopedCitation[]) {
+  const citationsBySourceId = new Map(citations.map((item) => [item.citation.sourceId, item]));
   return () => (tree: MarkdownNode) => {
     const visit = (node: MarkdownNode) => {
       if (!node.children) return;
@@ -46,26 +48,15 @@ function citationRemarkPlugin(citations: Citation[]) {
   };
 }
 
-function isYuqueUrl(url: string) {
-  try {
-    const hostname = new URL(url).hostname;
-    return hostname === "yuque.com" || hostname.endsWith(".yuque.com");
-  } catch {
-    return false;
-  }
-}
-
 function MarkdownLink({ href, children }: ComponentPropsWithoutRef<"a">) {
   if (href?.startsWith("https://docmind.local/citation/")) return null;
-  if (!href || !/^https?:\/\//i.test(href)) return <a href={href}>{children}</a>;
+  if (!href || !/^https?:\/\//i.test(href)) return <span>{children}</span>;
   return (
     <a
       href={href}
       onClick={(event) => {
         event.preventDefault();
-        if (isYuqueUrl(href) || window.confirm("即将打开外部链接，是否继续？")) {
-          void window.docmind.shell.openExternal(href);
-        }
+        openExternalUrl(href);
       }}
     >
       {children}
@@ -73,10 +64,14 @@ function MarkdownLink({ href, children }: ComponentPropsWithoutRef<"a">) {
   );
 }
 
-function CodeBlock({ children, className }: ComponentPropsWithoutRef<"code">) {
+function CodeBlock({
+  children,
+  className,
+  ...rest
+}: ComponentPropsWithoutRef<"code"> & { inline?: boolean }) {
   const [copied, setCopied] = useState(false);
   const code = String(children).replace(/\n$/, "");
-  const block = className?.startsWith("language-");
+  const block = !rest.inline;
   if (!block) return <code className={className}>{children}</code>;
   return (
     <span className="markdown-code-block">
@@ -101,12 +96,12 @@ function CitationLink({
   href,
   citationsBySourceId,
   children,
-}: ComponentPropsWithoutRef<"a"> & { citationsBySourceId: Map<string, Citation> }) {
+}: ComponentPropsWithoutRef<"a"> & { citationsBySourceId: Map<string, ScopedCitation> }) {
   if (href?.startsWith("https://docmind.local/citation/")) {
     const citation = citationsBySourceId.get(
       decodeURIComponent(href.slice("https://docmind.local/citation/".length)),
     );
-    return citation ? <CitationButton citation={citation} /> : <>{children}</>;
+    return citation ? <CitationButton scoped={citation} /> : <>{children}</>;
   }
   return <MarkdownLink href={href}>{children}</MarkdownLink>;
 }
@@ -114,11 +109,17 @@ function CitationLink({
 export function MarkdownMessage({
   content,
   citations,
+  citationScope,
 }: {
   content: string;
   citations: Citation[];
+  citationScope?: string;
 }) {
-  const citationsBySourceId = new Map(citations.map((citation) => [citation.sourceId, citation]));
+  const scoped = citations.map((citation) => ({
+    id: `${citationScope ?? "message"}:${citation.sourceId}:${citation.chunkId}`,
+    citation,
+  }));
+  const citationsBySourceId = new Map(scoped.map((item) => [item.citation.sourceId, item]));
   return (
     <div className="markdown-message">
       <ReactMarkdown
@@ -126,7 +127,7 @@ export function MarkdownMessage({
           a: (props) => <CitationLink {...props} citationsBySourceId={citationsBySourceId} />,
           code: CodeBlock,
         }}
-        remarkPlugins={[remarkGfm, citationRemarkPlugin(citations)]}
+        remarkPlugins={[remarkGfm, citationRemarkPlugin(scoped)]}
       >
         {content}
       </ReactMarkdown>

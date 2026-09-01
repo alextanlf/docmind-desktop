@@ -1,4 +1,5 @@
 import { Check, ChevronDown, Database } from "lucide-react";
+import { useEffect } from "react";
 import type { Repository } from "../../../../shared/contracts";
 
 type RepositoryScopeProps = {
@@ -12,7 +13,11 @@ export function RepositoryScope({
   repositories,
   selectedRepositoryIds,
 }: RepositoryScopeProps) {
-  const indexed = repositories.filter((repository) => repository.documentCount > 0);
+  const indexed = repositories.filter((repository) => repository.indexedDocumentCount > 0);
+  useEffect(() => {
+    const valid = selectedRepositoryIds.filter((id) => indexed.some((repo) => repo.id === id));
+    if (valid.length !== selectedRepositoryIds.length) onChange(valid);
+  }, [indexed, onChange, selectedRepositoryIds]);
   const selected = indexed.filter((repository) => selectedRepositoryIds.includes(repository.id));
   const label = selected.length
     ? selected.map((repository) => repository.name).join("、")

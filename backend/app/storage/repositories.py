@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 
 from app.api.errors import DomainError
 from app.imports.state_machine import ensure_transition_allowed
@@ -81,6 +81,13 @@ class DocumentStore:
                 .order_by(DocumentRecord.created_at.desc())
             )
             return list(session.scalars(statement))
+
+    def indexed_count_for_repository(self, repository_id: str) -> int:
+        with self.database.session() as session:
+            statement = select(func.count(func.distinct(DocumentChunkRecord.document_id))).where(
+                DocumentChunkRecord.repository_id == repository_id
+            )
+            return int(session.scalar(statement) or 0)
 
     def get(self, document_id: str) -> DocumentRecord | None:
         with self.database.session() as session:

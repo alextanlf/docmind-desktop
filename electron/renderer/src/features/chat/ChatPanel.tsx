@@ -1,5 +1,5 @@
 import { Square } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { IconButton } from "../../components/IconButton";
 import { useChatStreamStore } from "../../stores/chat-stream-store";
@@ -25,6 +25,14 @@ export function ChatPanel({
   const stream = useChatStreamStore();
   const [composerValue, setComposerValue] = useState("");
   const activeStream = stream.sessionId === sessionId ? stream : null;
+  useEffect(
+    () => () => {
+      const current = useChatStreamStore.getState();
+      if (current.sessionId === sessionId && current.status === "streaming")
+        current.subscription?.detach?.();
+    },
+    [sessionId],
+  );
   const canSend = repositoryIds.length > 0 && activeStream?.status !== "streaming";
 
   const send = () => {

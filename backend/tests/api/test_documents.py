@@ -78,11 +78,13 @@ def test_document_create_read_and_update_keep_local_index_in_sync(client, auth_h
     assert client.app.state.import_service.document_store.vector_ids(document_id)
     repositories = client.get("/api/repositories", headers=auth_headers)
     assert repositories.json()[0]["documentCount"] == 1
+    assert repositories.json()[0]["indexedDocumentCount"] == 1
     deleted = client.request(
         "DELETE", f"/api/documents/{document_id}", headers=auth_headers, json={"confirm": True}
     )
     assert deleted.status_code == 204
     assert client.get("/api/repositories", headers=auth_headers).json()[0]["documentCount"] == 0
+    assert client.get("/api/repositories", headers=auth_headers).json()[0]["indexedDocumentCount"] == 0
 
 
 def test_delete_document_requires_confirmation(client, auth_headers) -> None:

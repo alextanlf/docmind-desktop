@@ -26,6 +26,7 @@ class RepositoryView(WireModel):
     description: str | None
     yuque_url: str | None
     document_count: int
+    indexed_document_count: int
     sync_status: str
     created_at: datetime
     updated_at: datetime

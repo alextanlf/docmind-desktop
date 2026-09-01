@@ -48,6 +48,7 @@ export const repository: Repository = {
   description: "SwiftUI 知识库",
   yuqueUrl: "https://www.yuque.com/test/swiftui",
   documentCount: 1,
+  indexedDocumentCount: 1,
   syncStatus: "已同步",
   createdAt: "2026-08-31T00:00:00Z",
   updatedAt: "2026-08-31T00:00:00Z",
@@ -179,7 +180,7 @@ export function installDocMindApi(overrides?: {
       get: vi.fn().mockResolvedValue(job),
       retry: vi.fn().mockResolvedValue(job),
       cancel: vi.fn().mockResolvedValue({ ...job, state: "cancelled" }),
-      subscribe: vi.fn().mockReturnValue({ requestId: job.id, cancel: vi.fn() }),
+      subscribe: vi.fn().mockReturnValue({ requestId: job.id, cancel: vi.fn(), detach: vi.fn() }),
       ...overrides?.imports,
     },
     chat: {
@@ -213,13 +214,14 @@ export function installChatStreamMock(chat: DocMindApi["chat"]) {
   let accumulatedCitations: Citation[] = [];
   let lastSequence = 0;
   const cancel = vi.fn();
+  const detach = vi.fn();
   const messages: Message[] = [];
 
   vi.mocked(chat.listMessages).mockImplementation(async () => messages);
   vi.mocked(chat.stream).mockImplementation((nextInput, listener) => {
     input = nextInput;
     onEvent = listener;
-    return { requestId: nextInput.requestId, cancel };
+    return { requestId: nextInput.requestId, cancel, detach };
   });
 
   return {
@@ -227,6 +229,7 @@ export function installChatStreamMock(chat: DocMindApi["chat"]) {
       return input?.requestId ?? "";
     },
     cancel,
+    detach,
     emit(event: EventEnvelope) {
       const ordered = event.sequence > lastSequence;
       if (ordered) lastSequence = event.sequence;
