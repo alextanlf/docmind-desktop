@@ -1,4 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+import {
+  EventEnvelopeSchema,
+  BackendEventEnvelopeSchema,
+  SourcePreviewSchema,
+  CitationSchema,
+} from "../../shared/contracts";
 
 const exposed: Record<string, unknown> = {};
 const invoke = vi.fn().mockResolvedValue({});
@@ -7,7 +13,11 @@ const removeListener = vi.fn();
 const send = vi.fn();
 
 vi.mock("electron", () => ({
-  contextBridge: { exposeInMainWorld: vi.fn((key: string, value: unknown) => { exposed[key] = value; }) },
+  contextBridge: {
+    exposeInMainWorld: vi.fn((key: string, value: unknown) => {
+      exposed[key] = value;
+    }),
+  },
   ipcRenderer: { invoke, on, removeListener, send },
 }));
 
@@ -28,7 +38,11 @@ describe("preload bridge", () => {
   it("removes a request-specific event listener exactly once on cancellation", async () => {
     const api = exposed.docmind as any;
     const callback = vi.fn();
-    const subscription = api.imports.subscribe("00000000-0000-0000-0000-000000000001", 0, callback);
+    const subscription = api.imports.subscribe(
+      "00000000-0000-0000-0000-000000000001",
+      0,
+      callback,
+    );
     subscription.cancel();
     subscription.cancel();
     expect(removeListener).toHaveBeenCalledTimes(1);
@@ -38,7 +52,11 @@ describe("preload bridge", () => {
   it("keeps one listener per import request when subscribed repeatedly", () => {
     const api = exposed.docmind as any;
     const callback = vi.fn();
-    const first = api.imports.subscribe("00000000-0000-0000-0000-000000000001", 0, callback);
+    const first = api.imports.subscribe(
+      "00000000-0000-0000-0000-000000000001",
+      0,
+      callback,
+    );
     api.imports.subscribe("00000000-0000-0000-0000-000000000001", 1, callback);
     expect(first.cancel).toBeTypeOf("function");
     expect(removeListener).toHaveBeenCalled();
@@ -48,9 +66,69 @@ describe("preload bridge", () => {
     const api = exposed.docmind as any;
     const callback = vi.fn();
     api.imports.subscribe("00000000-0000-0000-0000-000000000006", 0, callback);
-    const listener = on.mock.calls.at(-1)?.[1] as ((event: unknown, payload: unknown) => void);
-    listener({}, { requestId: "r", type: "done", sequence: 1, payload: {} });
+    const listener = on.mock.calls.at(-1)?.[1] as (
+      event: unknown,
+      payload: unknown,
+    ) => void;
+    listener(
+      {},
+      {
+        requestId: "00000000-0000-0000-0000-000000000006",
+        type: "done",
+        sequence: 1,
+        payload: {},
+      },
+    );
     expect(callback).toHaveBeenCalledOnce();
-    expect(removeListener).toHaveBeenCalledWith("stream:event:00000000-0000-0000-0000-000000000006", listener);
+    expect(removeListener).toHaveBeenCalledWith(
+      "stream:event:00000000-0000-0000-0000-000000000006",
+      listener,
+    );
+  });
+
+  it("requires UUID request IDs for renderer events while retaining a separate opaque backend schema", () => {
+    expect(
+      EventEnvelopeSchema.safeParse({
+        requestId: "opaque",
+        type: "done",
+        sequence: 1,
+        payload: {},
+      }).success,
+    ).toBe(false);
+    expect(
+      BackendEventEnvelopeSchema.safeParse({
+        request_id: "opaque",
+        type: "done",
+        sequence: 1,
+        payload: {},
+      }).success,
+    ).toBe(true);
+  });
+
+  it("masks staged source URLs in the shared contract", () => {
+    const parsed = SourcePreviewSchema.parse({
+      title: "指南",
+      sourceKind: "staged_file",
+      sourceUrl: "/private/staging/file.md",
+      mediaType: "text/markdown",
+      sizeBytes: 1,
+      fingerprint: "a".repeat(64),
+      warnings: [],
+    });
+    expect(parsed.sourceUrl).toBeNull();
+  });
+
+  it("masks local staged paths from citation responses", () => {
+    const parsed = CitationSchema.parse({
+      sourceId: "staged-source",
+      chunkId: "chunk-1",
+      documentId: "00000000-0000-0000-0000-000000000009",
+      title: "指南",
+      sectionPath: null,
+      pageNumber: null,
+      excerpt: "内容",
+      sourceUrl: "file:///private/staging/guide.md",
+    });
+    expect(parsed.sourceUrl).toBeNull();
   });
 });

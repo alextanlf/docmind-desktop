@@ -34,7 +34,9 @@ app.whenReady().then(async () => {
       backendCwd: process.env.DOCMIND_BACKEND_CWD,
     });
     await backend.start();
-    proxy = new BackendProxy({ request: (path, init) => backend.request(path, init) });
+    proxy = new BackendProxy({
+      request: (path, init) => backend.request(path, init),
+    });
     registerIpcHandlers({
       proxy,
       stagedFiles: new StagedFileService({ dataDir: app.getPath("userData") }),

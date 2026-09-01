@@ -33,7 +33,10 @@ export const SettingsViewSchema = z.object({
   dataPath: z.string(),
   screenshotCount: z.number().int().nonnegative(),
 });
-export const ModelConnectionResultSchema = z.object({ connected: z.boolean(), latencyMs: z.number().int().nonnegative() });
+export const ModelConnectionResultSchema = z.object({
+  connected: z.boolean(),
+  latencyMs: z.number().int().nonnegative(),
+});
 
 export const ModelStatusSchema = z.object({
   state: z.enum(["unavailable", "downloading", "ready", "error"]),
@@ -61,7 +64,10 @@ export const RepositorySchema = z.object({
 });
 export const CreateRepositoryInputSchema = z.object({ name: text(120) });
 
-export const DocumentInputSchema = z.object({ title: text(240), content: bounded(2_000_000) });
+export const DocumentInputSchema = z.object({
+  title: text(240),
+  content: bounded(2_000_000),
+});
 export const DocumentSummarySchema = z.object({
   id,
   repositoryId: id,
@@ -73,18 +79,31 @@ export const DocumentSummarySchema = z.object({
   createdAt: timestamp,
   updatedAt: timestamp,
 });
-export const DocumentDetailSchema = DocumentSummarySchema.extend({ content: z.string().max(2_000_000) });
-
-export const SourceRefSchema = z.object({ kind: z.enum(["url", "staged_file"]), value: bounded(4_000) });
-export const SourcePreviewSchema = z.object({
-  title: text(240),
-  sourceKind: z.enum(["url", "staged_file"]),
-  sourceUrl: z.string().max(4_000).nullable().optional(),
-  mediaType: z.string(),
-  sizeBytes: z.number().int().nonnegative(),
-  fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
-  warnings: z.array(z.string().max(500)),
+export const DocumentDetailSchema = DocumentSummarySchema.extend({
+  content: z.string().max(2_000_000),
 });
+
+export const SourceRefSchema = z.object({
+  kind: z.enum(["url", "staged_file"]),
+  value: bounded(4_000),
+});
+export const SourcePreviewSchema = z.preprocess(
+  (value) => {
+    if (!value || typeof value !== "object") return value;
+    const raw = value as Record<string, unknown>;
+    if (raw.sourceKind === "staged_file") return { ...raw, sourceUrl: null };
+    return raw;
+  },
+  z.object({
+    title: text(240),
+    sourceKind: z.enum(["url", "staged_file"]),
+    sourceUrl: z.string().max(4_000).nullable().optional(),
+    mediaType: z.string(),
+    sizeBytes: z.number().int().nonnegative(),
+    fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+    warnings: z.array(z.string().max(500)),
+  }),
+);
 export const CreateImportInputSchema = z.object({
   source: SourceRefSchema,
   repositoryId: id,
@@ -95,7 +114,15 @@ export const ImportJobSchema = z.object({
   id,
   source: SourceRefSchema,
   repositoryId: id.nullable().optional(),
-  state: z.enum(["pending", "parsing", "uploading", "indexing", "completed", "failed", "cancelled"]),
+  state: z.enum([
+    "pending",
+    "parsing",
+    "uploading",
+    "indexing",
+    "completed",
+    "failed",
+    "cancelled",
+  ]),
   currentStage: z.string().nullable().optional(),
   progress: z.number().int().min(0).max(100),
   message: z.string(),
@@ -110,18 +137,39 @@ export const ImportJobSchema = z.object({
   updatedAt: timestamp,
 });
 
-export const CreateSessionInputSchema = z.object({ repositoryIds: z.array(id).max(100) });
-export const SessionSummarySchema = z.object({ id, title: text(512), repositoryIds: z.array(id), createdAt: timestamp, updatedAt: timestamp });
-export const CitationSchema = z.object({
-  sourceId: z.string().max(255),
-  chunkId: z.string().max(255),
-  documentId: id,
-  title: text(240),
-  sectionPath: z.string().max(1_000).nullable().optional(),
-  pageNumber: z.number().int().positive().nullable().optional(),
-  excerpt: z.string().max(5_000),
-  sourceUrl: z.string().max(4_000).nullable().optional(),
+export const CreateSessionInputSchema = z.object({
+  repositoryIds: z.array(id).max(100),
 });
+export const SessionSummarySchema = z.object({
+  id,
+  title: text(512),
+  repositoryIds: z.array(id),
+  createdAt: timestamp,
+  updatedAt: timestamp,
+});
+export const CitationSchema = z.preprocess(
+  (value) => {
+    if (!value || typeof value !== "object") return value;
+    const raw = value as Record<string, unknown>;
+    const sourceUrl = raw.sourceUrl;
+    if (
+      typeof sourceUrl === "string" &&
+      (sourceUrl.startsWith("/") || sourceUrl.startsWith("file:"))
+    )
+      return { ...raw, sourceUrl: null };
+    return raw;
+  },
+  z.object({
+    sourceId: z.string().max(255),
+    chunkId: z.string().max(255),
+    documentId: id,
+    title: text(240),
+    sectionPath: z.string().max(1_000).nullable().optional(),
+    pageNumber: z.number().int().positive().nullable().optional(),
+    excerpt: z.string().max(5_000),
+    sourceUrl: z.string().max(4_000).nullable().optional(),
+  }),
+);
 export const MessageSchema = z.object({
   id,
   sessionId: id,
@@ -132,7 +180,14 @@ export const MessageSchema = z.object({
   createdAt: timestamp,
 });
 
-export const EventEnvelopeSchema = z.preprocess(
+const eventEnvelopeShape = z.object({
+  requestId: id,
+  type: z.enum(["progress", "delta", "citations", "done", "error"]),
+  sequence: z.number().int().nonnegative(),
+  payload: z.record(z.unknown()),
+});
+
+export const BackendEventEnvelopeSchema = z.preprocess(
   (value) => {
     if (!value || typeof value !== "object") return value;
     const raw = value as Record<string, unknown>;
@@ -140,19 +195,23 @@ export const EventEnvelopeSchema = z.preprocess(
       ? { ...raw, requestId: raw.request_id }
       : raw;
   },
-  z.object({
-    // The backend emits UUIDs, while test/fake event brokers may use short
-    // opaque request labels. Request IDs are still validated and bounded;
-    // locally-created stream IDs use the stricter UUID schemas below.
-    requestId: z.string().min(1).max(100),
-    type: z.enum(["progress", "delta", "citations", "done", "error"]),
-    sequence: z.number().int().nonnegative(),
-    payload: z.record(z.unknown()),
-  }),
+  eventEnvelopeShape.extend({ requestId: z.string().min(1).max(100) }),
 );
+export const EventEnvelopeSchema = eventEnvelopeShape;
 
-export const StagedSourceSchema = z.object({ stagedSourceId: id, kind: z.literal("staged_file"), name: text(255), mediaType: z.string().max(255), sizeBytes: z.number().int().nonnegative() });
-export const ChatStreamInputSchema = z.object({ requestId: id, sessionId: id, message: bounded(20_000), repositoryIds: z.array(id).min(1).max(100) });
+export const StagedSourceSchema = z.object({
+  stagedSourceId: id,
+  kind: z.literal("staged_file"),
+  name: text(255),
+  mediaType: z.string().max(255),
+  sizeBytes: z.number().int().nonnegative(),
+});
+export const ChatStreamInputSchema = z.object({
+  requestId: id,
+  sessionId: id,
+  message: bounded(20_000),
+  repositoryIds: z.array(id).min(1).max(100),
+});
 
 export type ErrorBody = z.infer<typeof ErrorBodySchema>;
 export type ErrorEnvelope = z.infer<typeof ErrorEnvelopeSchema>;
@@ -175,6 +234,7 @@ export type CreateSessionInput = z.infer<typeof CreateSessionInputSchema>;
 export type Citation = z.infer<typeof CitationSchema>;
 export type Message = z.infer<typeof MessageSchema>;
 export type EventEnvelope = z.infer<typeof EventEnvelopeSchema>;
+export type BackendEventEnvelope = z.infer<typeof BackendEventEnvelopeSchema>;
 export type StagedSource = z.infer<typeof StagedSourceSchema>;
 export type ChatStreamInput = z.infer<typeof ChatStreamInputSchema>;
 
@@ -184,15 +244,68 @@ export interface StreamSubscription {
 }
 
 export interface DocMindApi {
-  settings: { get(): Promise<SettingsView>; saveModel(input: ModelSettingsInput): Promise<SettingsView>; testModel(): Promise<ModelConnectionResult>; clearDiagnostics(): Promise<void> };
-  embedding: { status(): Promise<ModelStatus>; prepare(): Promise<ModelStatus> };
+  settings: {
+    get(): Promise<SettingsView>;
+    saveModel(input: ModelSettingsInput): Promise<SettingsView>;
+    testModel(): Promise<ModelConnectionResult>;
+    clearDiagnostics(): Promise<void>;
+  };
+  embedding: {
+    status(): Promise<ModelStatus>;
+    prepare(): Promise<ModelStatus>;
+  };
   yuque: { status(): Promise<YuqueStatus>; login(): Promise<YuqueStatus> };
-  repositories: { list(): Promise<Repository[]>; create(input: CreateRepositoryInput): Promise<Repository> };
-  documents: { list(repositoryId: string): Promise<DocumentSummary[]>; read(documentId: string): Promise<DocumentDetail>; create(repositoryId: string, input: DocumentInput): Promise<DocumentDetail>; update(documentId: string, input: DocumentInput): Promise<DocumentDetail>; delete(documentId: string, confirm: true): Promise<void> };
-  imports: { inspect(input: SourceRef): Promise<SourcePreview>; create(input: CreateImportInput): Promise<ImportJob>; get(jobId: string): Promise<ImportJob>; retry(jobId: string): Promise<ImportJob>; cancel(jobId: string): Promise<ImportJob>; subscribe(jobId: string, afterSequence: number, onEvent: (event: EventEnvelope) => void): StreamSubscription };
-  chat: { listSessions(): Promise<SessionSummary[]>; createSession(input: CreateSessionInput): Promise<SessionSummary>; listMessages(sessionId: string): Promise<Message[]>; stream(input: ChatStreamInput, onEvent: (event: EventEnvelope) => void): StreamSubscription };
-  dialogs: { chooseSource(kind: "pdf" | "markdown"): Promise<StagedSource | null> };
+  repositories: {
+    list(): Promise<Repository[]>;
+    create(input: CreateRepositoryInput): Promise<Repository>;
+  };
+  documents: {
+    list(repositoryId: string): Promise<DocumentSummary[]>;
+    read(documentId: string): Promise<DocumentDetail>;
+    create(repositoryId: string, input: DocumentInput): Promise<DocumentDetail>;
+    update(documentId: string, input: DocumentInput): Promise<DocumentDetail>;
+    delete(documentId: string, confirm: true): Promise<void>;
+  };
+  imports: {
+    inspect(input: SourceRef): Promise<SourcePreview>;
+    create(input: CreateImportInput): Promise<ImportJob>;
+    get(jobId: string): Promise<ImportJob>;
+    retry(jobId: string): Promise<ImportJob>;
+    cancel(jobId: string): Promise<ImportJob>;
+    subscribe(
+      jobId: string,
+      afterSequence: number,
+      onEvent: (event: EventEnvelope) => void,
+    ): StreamSubscription;
+  };
+  chat: {
+    listSessions(): Promise<SessionSummary[]>;
+    createSession(input: CreateSessionInput): Promise<SessionSummary>;
+    listMessages(sessionId: string): Promise<Message[]>;
+    stream(
+      input: ChatStreamInput,
+      onEvent: (event: EventEnvelope) => void,
+    ): StreamSubscription;
+  };
+  dialogs: {
+    chooseSource(kind: "pdf" | "markdown"): Promise<StagedSource | null>;
+  };
   shell: { openExternal(url: string): Promise<void> };
 }
 
-export const schemas = { SettingsViewSchema, ModelConnectionResultSchema, ModelStatusSchema, YuqueStatusSchema, RepositorySchema, DocumentSummarySchema, DocumentDetailSchema, SourcePreviewSchema, ImportJobSchema, SessionSummarySchema, MessageSchema, EventEnvelopeSchema, StagedSourceSchema };
+export const schemas = {
+  SettingsViewSchema,
+  ModelConnectionResultSchema,
+  ModelStatusSchema,
+  YuqueStatusSchema,
+  RepositorySchema,
+  DocumentSummarySchema,
+  DocumentDetailSchema,
+  SourcePreviewSchema,
+  ImportJobSchema,
+  SessionSummarySchema,
+  MessageSchema,
+  EventEnvelopeSchema,
+  BackendEventEnvelopeSchema,
+  StagedSourceSchema,
+};
