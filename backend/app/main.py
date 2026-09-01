@@ -19,6 +19,7 @@ from app.api.embedding import router as embedding_router
 from app.api.errors import DomainError, domain_error_handler, request_validation_handler
 from app.api.imports import router as imports_router
 from app.api.repositories import router as repositories_router
+from app.api.request_limits import RequestBodyLimitMiddleware
 from app.api.sessions import router as sessions_router
 from app.api.settings import SettingsService
 from app.api.settings import router as settings_router
@@ -209,6 +210,10 @@ def create_app(
             database.engine.dispose()
 
     app = FastAPI(dependencies=[Depends(require_runtime_token)], lifespan=lifespan)
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_bytes=runtime_settings.max_request_body_bytes,
+    )
     app.dependency_overrides[get_settings] = lambda: runtime_settings
     app.state.settings = runtime_settings
     app.state.secret_store = runtime_secret_store

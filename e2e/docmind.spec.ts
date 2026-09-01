@@ -1,11 +1,17 @@
-import { completeFakeOnboarding, importFixture } from "./helpers";
+import {
+  completeFakeOnboarding,
+  createChatSession,
+  expandRepository,
+  importFixture,
+} from "./helpers";
 import { expect, test } from "./fixtures/backend-fixture";
 
 test("onboards, imports Markdown and answers with a citation", async ({ electronApp, page }) => {
   await completeFakeOnboarding(page);
   await importFixture(electronApp, page, "e2e/fixtures/state-guide.md");
   await expect(page.getByText("导入完成")).toBeVisible();
-  await page.getByLabel("消息输入").fill("@State 有什么作用？");
+  await createChatSession(page);
+  await page.getByLabel("输入问题").fill("@State 有什么作用？");
   await page.getByRole("button", { name: "发送消息" }).click();
   await expect(page.getByRole("button", { name: "查看引用 S1" })).toBeVisible();
   await page.getByRole("button", { name: "查看引用 S1" }).click();
@@ -57,18 +63,21 @@ test("requires a duplicate-content decision", async ({ electronApp, page }) => {
 test("deletes a remote document only after title confirmation", async ({ electronApp, page }) => {
   await completeFakeOnboarding(page);
   await importFixture(electronApp, page, "e2e/fixtures/state-guide.md");
-  await page.getByText("状态管理", { exact: true }).click();
+  await expandRepository(page);
+  await page.getByRole("button", { name: "状态管理", exact: true }).click();
   await page.getByLabel("删除文档").click();
   await page.getByLabel("输入文档标题以确认").fill("状态管理");
   await page.getByRole("button", { name: "删除文档" }).click();
-  await expect(page.getByText("状态管理", { exact: true })).not.toBeVisible();
+  await expect(page.getByRole("button", { name: "状态管理", exact: true })).toHaveCount(0);
 });
 
 test("persists fake-service data across an app restart", async ({ electronApp, page }) => {
   await completeFakeOnboarding(page);
   await importFixture(electronApp, page, "e2e/fixtures/state-guide.md");
   const restartedPage = await electronApp.restart();
-  await expect(restartedPage.getByText("状态管理", { exact: true })).toBeVisible();
+  await expect(restartedPage.getByLabel("工作台")).toBeVisible();
+  await expandRepository(restartedPage);
+  await expect(restartedPage.getByRole("button", { name: "状态管理", exact: true })).toBeVisible();
 });
 
 test("shuts down the backend gracefully", async ({ electronApp, page }) => {

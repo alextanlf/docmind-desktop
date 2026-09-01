@@ -494,7 +494,8 @@ class ImportJobStore:
             now = utc_now()
             for job in jobs:
                 job.current_stage = job.current_stage or job.state.value
-                if job.cancel_requested:
+                metadata = _normalized_source_metadata(job)
+                if job.cancel_requested and metadata.get("coherence_pending") is not True:
                     job.state = ImportStatus.CANCELLED
                     job.message = "导入已取消"
                     job.error_code = None
@@ -743,10 +744,14 @@ class SettingStore:
             return record.value if record is not None else None
 
     def set(self, key: str, value: str) -> None:
+        self.set_many({key: value})
+
+    def set_many(self, values: dict[str, str]) -> None:
         with self.database.session() as session:
-            record = session.get(SettingRecord, key)
-            if record is None:
-                session.add(SettingRecord(key=key, value=value))
-            else:
-                record.value = value
-                record.updated_at = utc_now()
+            for key, value in values.items():
+                record = session.get(SettingRecord, key)
+                if record is None:
+                    session.add(SettingRecord(key=key, value=value))
+                else:
+                    record.value = value
+                    record.updated_at = utc_now()

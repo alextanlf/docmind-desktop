@@ -99,15 +99,37 @@ class SemanticChunker:
         token_count = 0
         for line in match.group("body").splitlines():
             line_tokens = self.counter.count(line)
+            if line_tokens > capacity:
+                if lines:
+                    result.append(opening + "\n" + "\n".join(lines) + "\n" + closing)
+                    lines, token_count = [], 0
+                result.extend(
+                    opening + "\n" + fragment + "\n" + closing
+                    for fragment in self._split_oversized_code_line(line, capacity)
+                )
+                continue
             if lines and token_count + line_tokens > capacity:
                 result.append(opening + "\n" + "\n".join(lines) + "\n" + closing)
                 lines, token_count = [], 0
-            if line_tokens > capacity:
-                return None
             lines.append(line)
             token_count += line_tokens
         if lines:
             result.append(opening + "\n" + "\n".join(lines) + "\n" + closing)
+        return result
+
+    @staticmethod
+    def _split_oversized_code_line(line: str, capacity: int) -> list[str]:
+        indentation = line[: len(line) - len(line.lstrip(" \t"))]
+        content = line[len(indentation) :]
+        tokens = list(re.finditer(r"[\u4e00-\u9fff]|[A-Za-z0-9_]+|[^\s\w]", content))
+        result: list[str] = []
+        start_char = 0
+        for token_start in range(0, len(tokens), capacity):
+            token_end = min(token_start + capacity, len(tokens))
+            end_char = len(content) if token_end == len(tokens) else tokens[token_end - 1].end()
+            fragment = content[start_char:end_char].lstrip(" \t")
+            result.append(indentation + fragment)
+            start_char = end_char
         return result
 
     @staticmethod

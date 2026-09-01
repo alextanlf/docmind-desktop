@@ -4,9 +4,10 @@ import json
 import time
 from collections.abc import AsyncIterator
 from typing import Protocol
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from app.api.errors import DomainError
 from app.schemas.common import WireModel
@@ -17,6 +18,37 @@ class ModelConfig(WireModel):
     base_url: str
     model: str
     timeout_seconds: float = Field(gt=0, le=300)
+
+    @field_validator("base_url")
+    @classmethod
+    def normalize_base_url(cls, value: str) -> str:
+        if value == "":
+            return value
+        if value != value.strip() or any(character.isspace() for character in value):
+            raise ValueError("invalid model base URL")
+        try:
+            parsed = urlsplit(value)
+            port = parsed.port
+        except ValueError as error:
+            raise ValueError("invalid model base URL") from error
+        scheme = parsed.scheme.lower()
+        if (
+            scheme not in {"http", "https"}
+            or parsed.hostname is None
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or "?" in value
+            or parsed.fragment
+            or "#" in value
+        ):
+            raise ValueError("invalid model base URL")
+        host = parsed.hostname.lower()
+        if ":" in host:
+            host = f"[{host}]"
+        default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+        netloc = host if port is None or default_port else f"{host}:{port}"
+        return urlunsplit((scheme, netloc, parsed.path.rstrip("/"), "", ""))
 
 
 class ModelConnectionResult(WireModel):

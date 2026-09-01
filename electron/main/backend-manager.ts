@@ -37,6 +37,7 @@ export class BackendManager {
   private readonly args: string[];
   private readonly configuredPackagedCommand: boolean;
   private readonly invalidPackagedArgs: boolean;
+  private lifecycleTail?: Promise<void>;
   constructor(opts: {
     spawn?: SpawnFn;
     fetch?: typeof fetch;
@@ -60,7 +61,8 @@ export class BackendManager {
     const rawBackendArgs = opts.backendArgs as unknown;
     const validBackendArgs =
       rawBackendArgs === undefined ||
-      (Array.isArray(rawBackendArgs) && rawBackendArgs.every((arg) => typeof arg === "string"));
+      (Array.isArray(rawBackendArgs) &&
+        Array.from(rawBackendArgs).every((arg) => typeof arg === "string"));
     this.invalidPackagedArgs = packaged && !validBackendArgs;
     this.cwd = packaged ? (opts.backendCwd ?? "") : join(opts.repoDir ?? process.cwd(), "backend");
     this.configuredPackagedCommand =
@@ -75,7 +77,22 @@ export class BackendManager {
         : []
       : ["run", "python", "-m", "app"];
   }
-  async start(): Promise<BackendConnection> {
+  private runLifecycleOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.lifecycleTail ? this.lifecycleTail.then(operation, operation) : operation();
+    const tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.lifecycleTail = tail;
+    void tail.then(() => {
+      if (this.lifecycleTail === tail) this.lifecycleTail = undefined;
+    });
+    return result;
+  }
+  start(): Promise<BackendConnection> {
+    return this.runLifecycleOperation(() => this.startOnce());
+  }
+  private async startOnce(): Promise<BackendConnection> {
     if (this.connection) return this.connection;
     if (!this.configuredPackagedCommand || this.invalidPackagedArgs) throw new BackendStartError();
     this.token = randomBytes(32).toString("hex");
@@ -117,16 +134,17 @@ export class BackendManager {
       if (process.env.DOCMIND_E2E === "1" && artifacts)
         void appendFile(join(artifacts, "backend.log"), "backend exited\n", "utf8").catch(() => {});
     });
-    const started = Date.now();
-    while (Date.now() - started < this.timeout) {
+    const deadline = Date.now() + this.timeout;
+    while (Date.now() < deadline) {
       if (startError || exited) {
         const diagnostic = this.redactedError();
-        await this.stop();
+        await this.stopOnce();
         throw new BackendStartError(diagnostic);
       }
       try {
         const response = await this.healthRequest(
           () => startError ?? (exited ? new BackendStartError(this.redactedError()) : undefined),
+          deadline - Date.now(),
         );
         if (response.ok) {
           this.connection = {
@@ -138,17 +156,31 @@ export class BackendManager {
       } catch {
         /* wait for backend */
       }
-      await new Promise((resolve) => setTimeout(resolve, this.interval));
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(this.interval, remaining)));
     }
     const diagnostic = this.redactedError();
-    await this.stop();
+    await this.stopOnce();
     throw new BackendStartError(diagnostic);
   }
-  private async healthRequest(failure: () => Error | undefined) {
+  private async healthRequest(failure: () => Error | undefined, timeoutMs: number) {
     let rejectChild: (error: Error) => void = () => {};
     const childFailure = new Promise<Response>((_, reject) => {
       rejectChild = reject;
     });
+    const controller = new AbortController();
+    let rejectDeadline: (error: Error) => void = () => {};
+    const probeDeadline = new Promise<Response>((_, reject) => {
+      rejectDeadline = reject;
+    });
+    const deadlineTimer = setTimeout(
+      () => {
+        controller.abort();
+        rejectDeadline(new BackendStartError());
+      },
+      Math.max(0, timeoutMs),
+    );
     const check = setInterval(() => {
       const error = failure();
       if (error) rejectChild(error);
@@ -157,10 +189,13 @@ export class BackendManager {
       return await Promise.race([
         this.fetchFn("http://127.0.0.1:18900/health", {
           headers: { "X-DocMind-Token": this.token },
+          signal: controller.signal,
         }),
         childFailure,
+        probeDeadline,
       ]);
     } finally {
+      clearTimeout(deadlineTimer);
       clearInterval(check);
     }
   }
@@ -186,7 +221,10 @@ export class BackendManager {
       headers,
     });
   }
-  async stop(): Promise<boolean> {
+  stop(): Promise<boolean> {
+    return this.runLifecycleOperation(() => this.stopOnce());
+  }
+  private async stopOnce(): Promise<boolean> {
     const child = this.child;
     const childExited = this.childExited;
     this.reset();

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -85,6 +86,38 @@ def test_document_create_read_and_update_keep_local_index_in_sync(client, auth_h
     assert deleted.status_code == 204
     assert client.get("/api/repositories", headers=auth_headers).json()[0]["documentCount"] == 0
     assert client.get("/api/repositories", headers=auth_headers).json()[0]["indexedDocumentCount"] == 0
+
+
+def test_document_create_preserves_submitted_markdown_whitespace(client, auth_headers) -> None:
+    repository_id, _ = _seed_repository(client)
+    content = "\n# State\n\n状态管理  \n"
+
+    created = client.post(
+        f"/api/repositories/{repository_id}/documents",
+        headers=auth_headers,
+        json={"title": "State", "content": content},
+    )
+
+    assert created.status_code == 201
+    assert created.json()["content"] == content
+
+
+def test_document_create_removes_the_recovery_marker_from_remote_content(
+    client, auth_headers
+) -> None:
+    repository_id, gateway = _seed_repository(client)
+    content = "# State\n\n状态管理"
+
+    created = client.post(
+        f"/api/repositories/{repository_id}/documents",
+        headers=auth_headers,
+        json={"title": "State", "content": content},
+    )
+
+    assert created.status_code == 201
+    remote = asyncio.run(gateway.read_document("doc-1"))
+    assert remote.content == content
+    assert "docmind-mutation:" not in remote.content
 
 
 def test_delete_document_requires_confirmation(client, auth_headers) -> None:
@@ -216,12 +249,24 @@ def test_delete_vector_failure_still_removes_local_and_retry_cleans_pending(clie
     first = client.request(
         "DELETE", f"/api/documents/{document_id}", headers=auth_headers, json={"confirm": True}
     )
+    pending_vector_ids = set(vector_store.ids)
+    unconfirmed = client.request(
+        "DELETE", f"/api/documents/{document_id}", headers=auth_headers, json={}
+    )
+    pending_after_unconfirmed = client.app.state.vector_cleanup_store.list()
+    vectors_after_unconfirmed = set(vector_store.ids)
     second = client.request(
         "DELETE", f"/api/documents/{document_id}", headers=auth_headers, json={"confirm": True}
     )
 
     assert first.status_code == 204
+    assert unconfirmed.status_code == 400
+    assert unconfirmed.json()["error"]["code"] == "CONFIRMATION_REQUIRED"
+    assert vectors_after_unconfirmed == pending_vector_ids
+    assert len(pending_after_unconfirmed) == 1
+    assert set(json.loads(pending_after_unconfirmed[0].vector_ids_json)) == pending_vector_ids
     assert second.status_code == 204
+    assert vector_store.ids == set()
     assert client.app.state.document_store.get(document_id) is None
     assert document_id not in {item.yuque_id for item in asyncio.run(gateway.list_documents("repo-remote"))}
 

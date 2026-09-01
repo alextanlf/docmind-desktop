@@ -503,7 +503,9 @@ async def _compensate_mutation_unshielded(request: Request, mutation_id: str) ->
             except Exception:  # noqa: BLE001 - preserve uncertain create intent
                 complete = False
             else:
-                if discovered is not None:
+                if discovered is None:
+                    complete = False
+                else:
                     remote_id = discovered.yuque_id
                     remote_applied = True
                     payload.update(
@@ -533,8 +535,8 @@ async def _compensate_mutation_unshielded(request: Request, mutation_id: str) ->
                     _gateway(request).update_document(
                         UpdateYuqueDocumentRequest(
                             document_id=remote_id,
-                            title=str(old.get("title", "")),
-                            content=str(old.get("content", "")),
+                            title=str(old.get("remote_title", old.get("title", ""))),
+                            content=str(old.get("remote_content", old.get("content", ""))),
                         )
                     )
                 )
@@ -771,6 +773,16 @@ async def update_document(request: Request, document_id: str, body: DocumentInpu
     if document is None or not document.yuque_id:
         raise _not_found()
     old_snapshot = _document_snapshot(request, document)
+    try:
+        old_remote = await _gateway(request).read_document(document.yuque_id)
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:  # noqa: BLE001 - gateway failures map to a stable API error
+        raise _remote_failure(error) from None
+    old_snapshot.update(
+        remote_title=old_remote.title,
+        remote_content=old_remote.content,
+    )
     intent = _mutation_store(request).create(
         operation="update",
         repository_id=document.repository_id,
@@ -834,6 +846,8 @@ async def delete_document(request: Request, document_id: str, body: DocumentDele
     if document is None:
         pending = next((item for item in _cleanup_store(request).list() if item.document_id == document_id), None)
         if pending is not None:
+            if not body.confirm:
+                raise DomainError("CONFIRMATION_REQUIRED", "请确认删除文档", 400)
             try:
                 pending_ids = _unowned_vector_ids(
                     request, list(json.loads(pending.vector_ids_json))

@@ -44,6 +44,13 @@ class FixtureLocator:
             raise self.page.repository_submit_error
         if self.selector == "[data-testid=editor-save]" and self.page.document_save_error:
             raise self.page.document_save_error
+        if self.selector == "[data-testid=editor-save]" and self.page.document_url_after_save:
+            self.page.url = self.page.document_url_after_save
+        if (
+            self.selector == "[data-testid=editor-save]"
+            and self.page.document_title_after_save is not None
+        ):
+            self.page.values["[data-testid=editor-title]"] = self.page.document_title_after_save
 
     async def fill(self, value: str) -> None:
         if not self.visible:
@@ -100,6 +107,8 @@ class FixturePage:
         self.repository_list_calls = 0
         self.repository_submit_error: Exception | None = None
         self.document_save_error: Exception | None = None
+        self.document_url_after_save: str | None = None
+        self.document_title_after_save: str | None = None
 
     def locator(self, selector: str) -> FixtureLocator:
         return FixtureLocator(self, selector, selector in self.available)
@@ -388,6 +397,80 @@ async def test_close_stops_playwright_once_when_called_concurrently(tmp_path: Pa
     assert gateway._playwright is None
 
 
+async def test_new_page_reuses_manager_serializes_contexts_and_closes_each_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakeContext:
+        def __init__(self, chromium: FakeChromium, page: object) -> None:
+            self.chromium = chromium
+            self.pages = [page]
+            self.init_scripts: list[str] = []
+            self.close_calls = 0
+
+        async def add_init_script(self, script: str) -> None:
+            self.init_scripts.append(script)
+
+        async def close(self) -> None:
+            self.close_calls += 1
+            self.chromium.active_contexts -= 1
+
+    class FakeChromium:
+        def __init__(self) -> None:
+            self.active_contexts = 0
+            self.max_active_contexts = 0
+            self.contexts: list[FakeContext] = []
+            self.headless_values: list[bool] = []
+
+        async def launch_persistent_context(
+            self, _profile: str, *, headless: bool, args: list[str]
+        ) -> FakeContext:
+            assert args == ["--disable-blink-features=AutomationControlled"]
+            self.active_contexts += 1
+            self.max_active_contexts = max(self.max_active_contexts, self.active_contexts)
+            self.headless_values.append(headless)
+            context = FakeContext(self, object())
+            self.contexts.append(context)
+            return context
+
+    class FakeManager:
+        def __init__(self) -> None:
+            self.chromium = FakeChromium()
+            self.stop_calls = 0
+
+        async def stop(self) -> None:
+            self.stop_calls += 1
+
+    class FakePlaywrightStarter:
+        def __init__(self, manager: FakeManager) -> None:
+            self.manager = manager
+            self.start_calls = 0
+
+        async def start(self) -> FakeManager:
+            self.start_calls += 1
+            return self.manager
+
+    manager = FakeManager()
+    starter = FakePlaywrightStarter(manager)
+    monkeypatch.setattr("app.yuque.gateway.async_playwright", lambda: starter)
+    gateway = PlaywrightYuqueGateway(
+        AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
+    )
+
+    async def use_page(visible_login: bool) -> None:
+        async with gateway._new_page(visible_login=visible_login):
+            await asyncio.sleep(0)
+
+    await asyncio.gather(use_page(False), use_page(True))
+    await gateway.close()
+
+    assert starter.start_calls == 1
+    assert manager.chromium.max_active_contexts == 1
+    assert manager.chromium.headless_values == [True, False]
+    assert [context.close_calls for context in manager.chromium.contexts] == [1, 1]
+    assert all("navigator" in context.init_scripts[0] for context in manager.chromium.contexts)
+    assert manager.stop_calls == 1
+
+
 async def test_begin_login_waits_for_regular_context_work_instead_of_reporting_conflict(
     tmp_path: Path,
 ) -> None:
@@ -625,13 +708,43 @@ async def test_repository_creation_submit_error_is_not_replayed(
     assert page.clicked.count("[data-testid=create-repository]") == 1
     assert page.fill_attempts.count(("[data-testid=repository-name]", "SwiftUI")) == 1
     assert page.clicked.count("[data-testid=create-repository-submit]") == 1
-    assert [path.name for path in page.screenshots] == [
-        f"{gateway._request_id}-create-repository.png"
-    ]
+    assert len(page.screenshots) == 1
+    assert page.screenshots[0].name.endswith("-create-repository.png")
 
 
-async def test_document_creation_retries_visibility_without_saving_twice(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_gateway_uses_a_distinct_screenshot_id_for_each_operation(tmp_path: Path) -> None:
+    page = FixturePage(
+        {
+            "[data-testid=dashboard]",
+            "[data-testid=create-repository]",
+            "[data-testid=repository-name]",
+            "[data-testid=create-repository-submit]",
+        }
+    )
+    page.repository_submit_error = TimeoutError("repository create response timed out")
+    gateway = PlaywrightYuqueGateway(
+        AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
+    )
+
+    @asynccontextmanager
+    async def fake_new_page(*, visible_login: bool):
+        assert visible_login is False
+        yield page
+
+    gateway._new_page = fake_new_page  # type: ignore[method-assign]
+
+    for _ in range(2):
+        with pytest.raises(DomainError):
+            await gateway.create_repository(CreateRepositoryRequest(name="SwiftUI"))
+
+    filenames = [path.name for path in page.screenshots]
+    assert len(filenames) == 2
+    assert len(set(filenames)) == 2
+    assert all(filename.endswith("-create-repository.png") for filename in filenames)
+
+
+async def test_document_creation_uses_current_editor_identity_when_titles_duplicate(
+    tmp_path: Path,
 ) -> None:
     gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
     page = FixturePage(
@@ -646,7 +759,55 @@ async def test_document_creation_retries_visibility_without_saving_twice(
         }
     )
     page.text["[data-testid=document-link]"] = "State"
-    page.document_list_visibility_after = 1
+    page.attributes[("[data-testid=document-link]", "href")] = "/swiftui/existing-state"
+    page.document_url_after_save = "https://www.yuque.com/swiftui/new-state"
+
+    @asynccontextmanager
+    async def fake_new_page(*, visible_login: bool):
+        assert visible_login is False
+        yield page
+
+    gateway._new_page = fake_new_page  # type: ignore[method-assign]
+
+    created = await gateway.create_document(
+        CreateYuqueDocumentRequest(repository_id="swiftui", title="State", content="# State")
+    )
+
+    assert created.yuque_id == "swiftui/new-state"
+    assert created.url == "https://www.yuque.com/swiftui/new-state"
+    assert page.document_list_calls == 0
+    assert page.clicked.count("[data-testid=editor-save]") == 1
+
+
+@pytest.mark.parametrize(
+    "editor_url",
+    [
+        "http://www.yuque.com/swiftui/new-state",
+        "https://example.test/swiftui/new-state",
+        "https://www.yuque.com/other/new-state",
+    ],
+    ids=["insecure-origin", "foreign-origin", "different-repository"],
+)
+async def test_document_creation_rejects_editor_url_outside_requested_yuque_repository(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    editor_url: str,
+) -> None:
+    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    page = FixturePage(
+        {
+            "[data-testid=dashboard]",
+            "[data-testid=create-document]",
+            "[data-testid=editor-title]",
+            "[data-testid=editor-markdown]",
+            "[data-testid=editor-save]",
+            "[data-testid=save-confirmation]",
+            "[data-testid=document-link]",
+        }
+    )
+    page.text["[data-testid=document-link]"] = "State"
+    page.attributes[("[data-testid=document-link]", "href")] = "/swiftui/existing-state"
+    page.document_url_after_save = editor_url
 
     async def no_delay(_: float) -> None:
         return None
@@ -660,12 +821,54 @@ async def test_document_creation_retries_visibility_without_saving_twice(
 
     gateway._new_page = fake_new_page  # type: ignore[method-assign]
 
-    created = await gateway.create_document(
-        CreateYuqueDocumentRequest(repository_id="swiftui", title="State", content="# State")
-    )
+    with pytest.raises(DomainError) as error:
+        await gateway.create_document(
+            CreateYuqueDocumentRequest(repository_id="swiftui", title="State", content="# State")
+        )
 
-    assert created.title == "State"
-    assert page.document_list_calls == 2
+    assert error.value.code == "YUQUE_PAGE_CHANGED"
+    assert page.clicked.count("[data-testid=editor-save]") == 1
+
+
+async def test_document_creation_confirms_current_editor_title(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    page = FixturePage(
+        {
+            "[data-testid=dashboard]",
+            "[data-testid=create-document]",
+            "[data-testid=editor-title]",
+            "[data-testid=editor-markdown]",
+            "[data-testid=editor-save]",
+            "[data-testid=save-confirmation]",
+            "[data-testid=document-link]",
+        }
+    )
+    page.text["[data-testid=document-link]"] = "State"
+    page.attributes[("[data-testid=document-link]", "href")] = "/swiftui/existing-state"
+    page.document_url_after_save = "https://www.yuque.com/swiftui/new-state"
+    page.document_title_after_save = "Other State"
+
+    async def no_delay(_: float) -> None:
+        return None
+
+    monkeypatch.setattr("app.yuque.base_page.asyncio.sleep", no_delay)
+
+    @asynccontextmanager
+    async def fake_new_page(*, visible_login: bool):
+        assert visible_login is False
+        yield page
+
+    gateway._new_page = fake_new_page  # type: ignore[method-assign]
+
+    with pytest.raises(DomainError) as error:
+        await gateway.create_document(
+            CreateYuqueDocumentRequest(repository_id="swiftui", title="State", content="# State")
+        )
+
+    assert error.value.code == "YUQUE_PAGE_CHANGED"
     assert page.clicked.count("[data-testid=editor-save]") == 1
 
 
@@ -782,6 +985,5 @@ async def test_document_creation_save_error_is_not_replayed(
     assert page.clicked.count("[data-testid=create-document]") == 1
     assert page.fill_attempts.count(("[data-testid=editor-title]", "State")) == 1
     assert page.clicked.count("[data-testid=editor-save]") == 1
-    assert [path.name for path in page.screenshots] == [
-        f"{gateway._request_id}-create-document.png"
-    ]
+    assert len(page.screenshots) == 1
+    assert page.screenshots[0].name.endswith("-create-document.png")

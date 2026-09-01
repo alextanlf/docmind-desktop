@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import asyncio
+import gc
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
+from starlette.requests import Request
 
+from app.api.embedding import prepare_embedding
 from app.config import AppSettings, EmbeddingSettings
 from app.core.embedding import FakeEmbeddingProvider
 from app.core.secrets import MemorySecretStore
 from app.main import create_app
+from app.schemas.embedding import ModelStatus
 
 
 def test_embedding_routes_require_runtime_token(client: TestClient) -> None:
@@ -59,3 +66,43 @@ def test_completed_prepare_request_returns_current_status_without_restarting(tmp
         assert response.status_code == 202
         assert response.json()["state"] == "ready"
         assert fake_embedding.ensure_ready_calls == 1
+
+
+async def test_failed_background_preparation_consumes_its_terminal_exception() -> None:
+    class FailingEmbeddingProvider:
+        def __init__(self) -> None:
+            self.status = ModelStatus(
+                state="unavailable", model_name="test-model", message="模型尚未准备"
+            )
+
+        async def ensure_ready(self) -> ModelStatus:
+            self.status = ModelStatus(
+                state="error", model_name="test-model", message="嵌入模型准备失败"
+            )
+            raise ValueError("dimension mismatch")
+
+    provider = FailingEmbeddingProvider()
+    state = SimpleNamespace(embedding_provider=provider, embedding_prepare_task=None)
+    request = Request({"type": "http", "app": SimpleNamespace(state=state)})
+    loop = asyncio.get_running_loop()
+    contexts: list[dict[str, object]] = []
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: contexts.append(context))
+    try:
+        await prepare_embedding(request)
+        task = state.embedding_prepare_task
+        await asyncio.sleep(0)
+        assert task.done()
+        assert provider.status.state == "error"
+
+        state.embedding_prepare_task = None
+        del task
+        gc.collect()
+        await asyncio.sleep(0)
+
+        assert not any(
+            context.get("message") == "Task exception was never retrieved"
+            for context in contexts
+        )
+    finally:
+        loop.set_exception_handler(previous_handler)

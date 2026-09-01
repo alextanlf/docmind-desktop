@@ -56,15 +56,31 @@ class SettingsService:
         if update.preset not in MODEL_PRESETS:
             raise DomainError("MODEL_PRESET_INVALID", "模型预设无效", 422)
         config = ModelSettingsView(**update.model_dump(exclude={"api_key"}))
-        self.setting_store.set(MODEL_CONFIG_KEY, config.model_dump_json())
+        serialized_config = config.model_dump_json()
         if update.api_key is None:
+            self.setting_store.set_many({MODEL_CONFIG_KEY: serialized_config})
             return config
+
+        previous_api_key = self.secret_store.get(MODEL_API_KEY_NAME)
         if update.api_key == "":
             self.secret_store.delete(MODEL_API_KEY_NAME)
-            self.setting_store.set(MODEL_KEY_REFERENCE, "")
-            return config
-        self.secret_store.set(MODEL_API_KEY_NAME, update.api_key)
-        self.setting_store.set(MODEL_KEY_REFERENCE, MODEL_API_KEY_NAME)
+            key_reference = ""
+        else:
+            self.secret_store.set(MODEL_API_KEY_NAME, update.api_key)
+            key_reference = MODEL_API_KEY_NAME
+        try:
+            self.setting_store.set_many(
+                {
+                    MODEL_CONFIG_KEY: serialized_config,
+                    MODEL_KEY_REFERENCE: key_reference,
+                }
+            )
+        except Exception:
+            if previous_api_key is None:
+                self.secret_store.delete(MODEL_API_KEY_NAME)
+            else:
+                self.secret_store.set(MODEL_API_KEY_NAME, previous_api_key)
+            raise
         return config
 
     async def test_model(self) -> ModelConnectionResult:

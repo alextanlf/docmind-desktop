@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Protocol
@@ -147,7 +148,8 @@ class FakeYuqueGateway:
     async def read_document(self, document_id: str) -> YuqueDocumentContent:
         async with self._serialized():
             self._require_login(allow_first_use=True)
-            return self._document(document_id)
+            document = self._document(document_id)
+            return document.model_copy(update={"content": _strip_mutation_marker(document.content)})
 
     async def update_document(self, request: UpdateYuqueDocumentRequest) -> YuqueDocument:
         async with self._serialized():
@@ -208,11 +210,11 @@ class PlaywrightYuqueGateway:
         self._context_lock = asyncio.Lock()
         self._login_lock = asyncio.Lock()
         self._playwright: Any | None = None
-        self._request_id = uuid4().hex
 
     async def login_status(self) -> LoginStatus:
+        request_id = uuid4().hex
         async with self._new_page(visible_login=False) as page:
-            login = LoginPage(page, self.settings.screenshots_dir, self._request_id)
+            login = LoginPage(page, self.settings.screenshots_dir, request_id)
 
             async def status() -> LoginStatus:
                 await page.goto("https://www.yuque.com/dashboard", wait_until="domcontentloaded")
@@ -231,9 +233,10 @@ class PlaywrightYuqueGateway:
     async def begin_login(self) -> LoginResult:
         if self._login_lock.locked():
             raise DomainError("YUQUE_LOGIN_IN_PROGRESS", "语雀登录正在进行", 409, False)
+        request_id = uuid4().hex
         try:
             async with self._login_lock, self._new_page(visible_login=True) as page:
-                login = LoginPage(page, self.settings.screenshots_dir, self._request_id)
+                login = LoginPage(page, self.settings.screenshots_dir, request_id)
 
                 async def open_login_page() -> None:
                     await page.goto("https://www.yuque.com/login", wait_until="domcontentloaded")
@@ -253,14 +256,16 @@ class PlaywrightYuqueGateway:
             raise DomainError("YUQUE_LOGIN_REQUIRED", "语雀登录状态不可用", 401, True, "重新登录语雀") from None
 
     async def list_repositories(self) -> list[YuqueRepository]:
-        async with self._background_page("list-repositories") as page:
-            return await DashboardPage(page, self.settings.screenshots_dir, self._request_id).with_retry(
+        async with self._background_page("list-repositories") as operation:
+            page, request_id = operation
+            return await DashboardPage(page, self.settings.screenshots_dir, request_id).with_retry(
                 "list-repositories", DashboardPage(page).list_repositories
             )
 
     async def create_repository(self, request: CreateRepositoryRequest) -> YuqueRepository:
-        async with self._background_page("create-repository") as page:
-            dashboard = DashboardPage(page, self.settings.screenshots_dir, self._request_id)
+        async with self._background_page("create-repository") as operation:
+            page, request_id = operation
+            dashboard = DashboardPage(page, self.settings.screenshots_dir, request_id)
             try:
                 await dashboard.submit_new_repository(request.name)
             except DomainError as error:
@@ -280,8 +285,9 @@ class PlaywrightYuqueGateway:
             )
 
     async def list_documents(self, repository_id: str) -> list[YuqueDocument]:
-        async with self._background_page("list-documents") as page:
-            repository = RepositoryPage(page, self.settings.screenshots_dir, self._request_id)
+        async with self._background_page("list-documents") as operation:
+            page, request_id = operation
+            repository = RepositoryPage(page, self.settings.screenshots_dir, request_id)
 
             async def list_documents() -> list[YuqueDocument]:
                 await _open_yuque_resource(page, repository_id)
@@ -290,9 +296,10 @@ class PlaywrightYuqueGateway:
             return await repository.with_retry("list-documents", list_documents)
 
     async def create_document(self, request: CreateYuqueDocumentRequest) -> YuqueDocument:
-        async with self._background_page("create-document") as page:
-            repository = RepositoryPage(page, self.settings.screenshots_dir, self._request_id)
-            editor = EditorPage(page, self.settings.screenshots_dir, self._request_id)
+        async with self._background_page("create-document") as operation:
+            page, request_id = operation
+            repository = RepositoryPage(page, self.settings.screenshots_dir, request_id)
+            editor = EditorPage(page, self.settings.screenshots_dir, request_id)
 
             async def create() -> None:
                 await _open_yuque_resource(page, request.repository_id)
@@ -300,12 +307,29 @@ class PlaywrightYuqueGateway:
                 await editor.set_title(request.title)
                 await editor.import_markdown(request.content)
 
-            async def find_created_document() -> YuqueDocument:
-                documents = await repository.list_documents(request.repository_id)
-                created = next((document for document in documents if document.title == request.title), None)
-                if created is None:
+            async def confirm_created_document() -> YuqueDocument:
+                parsed_url = urlparse(page.url)
+                repository_id = _repository_id_from_document_url(page.url)
+                document_id = _resource_identity(page.url)
+                requested_repository_id = _resource_identity(request.repository_id)
+                if (
+                    parsed_url.scheme != "https"
+                    or parsed_url.hostname != "www.yuque.com"
+                    or parsed_url.username is not None
+                    or parsed_url.password is not None
+                    or repository_id != requested_repository_id
+                    or document_id == requested_repository_id
+                ):
                     raise DomainError("YUQUE_PAGE_CHANGED", "新建文档后未找到文档，请重新登录后重试", 503, True)
-                return created
+                title = await editor.read_title()
+                if title != request.title:
+                    raise DomainError("YUQUE_PAGE_CHANGED", "新建文档后未找到文档，请重新登录后重试", 503, True)
+                return YuqueDocument(
+                    yuque_id=document_id,
+                    repository_id=request.repository_id,
+                    title=title,
+                    url=page.url,
+                )
 
             try:
                 await create()
@@ -321,7 +345,7 @@ class PlaywrightYuqueGateway:
                 raise DomainError(
                     "YUQUE_PAGE_CHANGED", "语雀页面响应异常，请重新登录后重试", 503, True
                 ) from None
-            return await repository.with_retry("confirm-created-document", find_created_document)
+            return await editor.with_retry("confirm-created-document", confirm_created_document)
 
     async def find_document_by_marker(
         self, repository_id: str, marker: str
@@ -329,7 +353,7 @@ class PlaywrightYuqueGateway:
         for delay in (*RETRY_DELAYS, None):
             documents = await self.list_documents(repository_id)
             for document in documents:
-                content = await self.read_document(document.yuque_id)
+                content = await self._read_document(document.yuque_id, strip_mutation_marker=False)
                 if marker in content.content:
                     return document
             if delay is None:
@@ -346,24 +370,34 @@ class PlaywrightYuqueGateway:
         )
 
     async def read_document(self, document_id: str) -> YuqueDocumentContent:
-        async with self._background_page("read-document") as page:
-            editor = EditorPage(page, self.settings.screenshots_dir, self._request_id)
+        return await self._read_document(document_id, strip_mutation_marker=True)
+
+    async def _read_document(
+        self, document_id: str, *, strip_mutation_marker: bool
+    ) -> YuqueDocumentContent:
+        async with self._background_page("read-document") as operation:
+            page, request_id = operation
+            editor = EditorPage(page, self.settings.screenshots_dir, request_id)
 
             async def read() -> YuqueDocumentContent:
                 await _open_yuque_resource(page, document_id)
+                content = await editor.read_markdown()
+                if strip_mutation_marker:
+                    content = _strip_mutation_marker(content)
                 return YuqueDocumentContent(
                     yuque_id=document_id,
                     repository_id=_repository_id_from_document_url(page.url),
                     title=await editor.read_title(),
-                    content=await editor.read_markdown(),
+                    content=content,
                     url=page.url,
                 )
 
             return await editor.with_retry("read-document", read)
 
     async def update_document(self, request: UpdateYuqueDocumentRequest) -> YuqueDocument:
-        async with self._background_page("update-document") as page:
-            editor = EditorPage(page, self.settings.screenshots_dir, self._request_id)
+        async with self._background_page("update-document") as operation:
+            page, request_id = operation
+            editor = EditorPage(page, self.settings.screenshots_dir, request_id)
 
             async def update() -> YuqueDocument:
                 await _open_yuque_resource(page, request.document_id)
@@ -379,8 +413,9 @@ class PlaywrightYuqueGateway:
             return await editor.with_retry("update-document", update)
 
     async def delete_document(self, document_id: str) -> None:
-        async with self._background_page("delete-document") as page:
-            repository = RepositoryPage(page, self.settings.screenshots_dir, self._request_id)
+        async with self._background_page("delete-document") as operation:
+            page, request_id = operation
+            repository = RepositoryPage(page, self.settings.screenshots_dir, request_id)
 
             async def delete() -> None:
                 await _open_yuque_resource(page, document_id)
@@ -396,9 +431,10 @@ class PlaywrightYuqueGateway:
                 await manager.stop()
 
     @asynccontextmanager
-    async def _background_page(self, operation: str) -> AsyncIterator[Any]:
+    async def _background_page(self, operation: str) -> AsyncIterator[tuple[Any, str]]:
+        request_id = uuid4().hex
         async with self._new_page(visible_login=False) as page:
-            login = LoginPage(page, self.settings.screenshots_dir, self._request_id)
+            login = LoginPage(page, self.settings.screenshots_dir, request_id)
 
             async def authenticate() -> None:
                 await page.goto("https://www.yuque.com/dashboard", wait_until="domcontentloaded")
@@ -409,7 +445,7 @@ class PlaywrightYuqueGateway:
                 raise DomainError("YUQUE_PAGE_CHANGED", "语雀页面结构已变化，请重新登录后重试", 503, True)
 
             await login.with_retry(f"{operation}-authenticate", authenticate)
-            yield page
+            yield page, request_id
 
     @asynccontextmanager
     async def _new_page(self, visible_login: bool) -> AsyncIterator[Any]:
@@ -470,3 +506,10 @@ def _resource_identity(value: str | None) -> str:
         return ""
     parsed = urlparse(value)
     return (parsed.path or value).strip("/")
+
+
+_MUTATION_MARKER_RE = re.compile(r"\n\n<!--\s*docmind-mutation:[^>]+-->\Z")
+
+
+def _strip_mutation_marker(content: str) -> str:
+    return _MUTATION_MARKER_RE.sub("", content)
