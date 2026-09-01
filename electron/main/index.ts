@@ -1,8 +1,12 @@
 import { app } from "electron";
 import { BackendManager, BackendStartError } from "./backend-manager";
+import { BackendProxy } from "./backend-proxy";
+import { registerIpcHandlers } from "./ipc-handlers";
+import { StagedFileService } from "./staged-files";
 import { createWindow, showAfterDidFinishLoad } from "./window-manager";
 import { logger } from "./logger";
 let backend: BackendManager;
+let proxy: BackendProxy;
 function parsePackagedArgs(value: string | undefined) {
   if (value === undefined) return { valid: true, args: undefined };
   try {
@@ -30,6 +34,12 @@ app.whenReady().then(async () => {
       backendCwd: process.env.DOCMIND_BACKEND_CWD,
     });
     await backend.start();
+    proxy = new BackendProxy({ request: (path, init) => backend.request(path, init) });
+    registerIpcHandlers({
+      proxy,
+      stagedFiles: new StagedFileService({ dataDir: app.getPath("userData") }),
+      app,
+    });
     const origin =
       process.env.ELECTRON_RENDERER_URL ??
       `file://${__dirname}/../renderer/index.html`;
@@ -42,6 +52,7 @@ app.whenReady().then(async () => {
   }
 });
 app.on("before-quit", () => {
+  proxy?.cleanup();
   void backend?.stop();
 });
 app.on("window-all-closed", () => {
