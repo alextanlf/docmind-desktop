@@ -66,4 +66,52 @@ describe("单文档导入", () => {
     expect(useImportStore.getState().source).toBeNull();
     expect(api.imports.create).not.toHaveBeenCalled();
   });
+
+  it("resets to step one after a successful import before reopening", async () => {
+    const api = installDocMindApi({
+      embedding: {
+        status: vi.fn().mockResolvedValue({
+          state: "ready",
+          modelName: "BAAI/bge-base-zh-v1.5",
+          dimension: 768,
+          message: "已就绪",
+          progress: 100,
+        }),
+      },
+    });
+    let open = true;
+    const onClose = () => {
+      open = false;
+      rerender(
+        <AppProviders>
+          <ImportDialog onImported={onClose} open={open} onClose={onClose} />
+        </AppProviders>,
+      );
+    };
+    const { rerender } = render(
+      <AppProviders>
+        <ImportDialog onImported={onClose} open={open} onClose={onClose} />
+      </AppProviders>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Markdown" }));
+    fireEvent.click(screen.getByRole("button", { name: "选择 Markdown 文件" }));
+    expect(await screen.findByText("guide.md")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "继续" }));
+    await screen.findByLabelText("目标知识库");
+    fireEvent.change(screen.getByLabelText("目标知识库"), { target: { value: repository.id } });
+    fireEvent.click(screen.getByRole("button", { name: "继续" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认导入" }));
+    await waitFor(() => expect(api.imports.create).toHaveBeenCalledTimes(1));
+
+    open = true;
+    rerender(
+      <AppProviders>
+        <ImportDialog onImported={onClose} open={open} onClose={onClose} />
+      </AppProviders>,
+    );
+    expect(screen.queryByRole("button", { name: "选择 Markdown 文件" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Markdown" })).toBeVisible();
+    expect(api.imports.create).toHaveBeenCalledTimes(1);
+  });
 });

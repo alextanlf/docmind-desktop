@@ -69,6 +69,7 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
         fingerprint: preview.fingerprint,
         duplicateDecision,
       });
+      reset();
       setJobId(job.id);
       onImported?.(job);
     } catch (cause) {

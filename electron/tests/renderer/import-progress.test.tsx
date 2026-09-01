@@ -55,4 +55,43 @@ describe("导入进度", () => {
     view.unmount();
     expect(cancel).toHaveBeenCalledTimes(1);
   });
+
+  it("does not let a delayed initial job snapshot overwrite newer streamed progress", async () => {
+    const delayedJob = { ...job, id: "00000000-0000-0000-0000-000000000025" };
+    let resolveGet: ((value: typeof delayedJob) => void) | undefined;
+    let eventHandler:
+      ((event: { sequence: number; payload: Record<string, unknown> }) => void) | undefined;
+    const api = installDocMindApi({
+      imports: {
+        get: vi.fn().mockImplementation(
+          () =>
+            new Promise<typeof delayedJob>((resolve) => {
+              resolveGet = resolve;
+            }),
+        ),
+        subscribe: vi.fn((_id, _after, callback) => {
+          eventHandler = callback;
+          return { requestId: delayedJob.id, cancel: vi.fn() };
+        }),
+      },
+    });
+    render(
+      <AppProviders>
+        <ImportProgress job={delayedJob} />
+      </AppProviders>,
+    );
+
+    expect(api.imports.subscribe).not.toHaveBeenCalled();
+    resolveGet?.(delayedJob);
+    await waitFor(() => expect(api.imports.subscribe).toHaveBeenCalled());
+    eventHandler?.({
+      sequence: 2,
+      payload: { progress: 72, currentStage: "索引", message: "正在索引" },
+    });
+    expect(await screen.findByText("正在索引")).toBeVisible();
+    expect(screen.getByRole("progressbar", { name: "导入进度" })).toHaveAttribute(
+      "aria-valuenow",
+      "72",
+    );
+  });
 });

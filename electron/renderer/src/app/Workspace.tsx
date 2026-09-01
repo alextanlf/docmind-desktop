@@ -18,7 +18,10 @@ import { useImportJobQuery } from "../features/imports/imports.queries";
 import { useImportStore } from "../features/imports/import-store";
 import { DocumentEditor } from "../features/repositories/DocumentEditor";
 import { RepositoryTree } from "../features/repositories/RepositoryTree";
-import { useDocumentQuery } from "../features/repositories/repository.queries";
+import {
+  useDocumentQuery,
+  useRepositoriesQuery,
+} from "../features/repositories/repository.queries";
 import { SettingsView } from "../features/settings/SettingsView";
 import { useUiStore } from "../stores/ui-store";
 
@@ -54,6 +57,10 @@ export function Workspace() {
   const jobId = useImportStore((state) => state.jobId);
   const importJob = useImportJobQuery(jobId);
   const selectedDocument = useDocumentQuery(selectedDocumentId);
+  const repositories = useRepositoriesQuery();
+  const selectedRepository = repositories.data?.find(
+    (repository) => repository.id === selectedDocument.data?.repositoryId,
+  );
 
   return (
     <main
@@ -144,6 +151,7 @@ export function Workspace() {
           <DocumentEditor
             document={selectedDocument.data}
             onClose={() => setSelectedDocumentId(null)}
+            repositoryName={selectedRepository?.name}
           />
         ) : (
           <div className="empty-workspace">

@@ -35,21 +35,25 @@ export function ImportProgress({ job, onOpenDocument }: ImportProgressProps) {
   const subscriptionRef = useRef<{ cancel: () => void } | null>(null);
   useEffect(() => {
     let active = true;
-    const afterSequence = lastSequences.get(job.id) ?? 0;
-    void window.docmind.imports
-      .get(job.id)
-      .then((current) => {
-        if (active) setActiveJob(current);
-      })
-      .catch((cause) => {
+    async function initialize() {
+      try {
+        const current = await window.docmind.imports.get(job.id);
+        if (!active) return;
+        setActiveJob(current);
+        const afterSequence = lastSequences.get(job.id) ?? 0;
+        const subscription = window.docmind.imports.subscribe(job.id, afterSequence, (event) => {
+          const last = lastSequences.get(job.id) ?? 0;
+          if (event.sequence <= last) return;
+          lastSequences.set(job.id, event.sequence);
+          if (active) setActiveJob((currentJob) => patchJob(currentJob, event));
+        });
+        if (active) subscriptionRef.current = subscription;
+        else subscription.cancel();
+      } catch (cause) {
         if (active) setError(clientErrorMessage(cause));
-      });
-    subscriptionRef.current = window.docmind.imports.subscribe(job.id, afterSequence, (event) => {
-      const last = lastSequences.get(job.id) ?? 0;
-      if (event.sequence <= last) return;
-      lastSequences.set(job.id, event.sequence);
-      if (active) setActiveJob((current) => patchJob(current, event));
-    });
+      }
+    }
+    void initialize();
     return () => {
       active = false;
       subscriptionRef.current?.cancel();
