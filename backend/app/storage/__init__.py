@@ -1,5 +1,6 @@
 from app.storage.database import Database
 from app.storage.models import (
+    ChatRequestRecord,
     DocumentChunkRecord,
     DocumentRecord,
     ImportJobRecord,
@@ -18,6 +19,7 @@ from app.storage.repositories import (
 )
 
 __all__ = [
+    "ChatRequestRecord",
     "ConversationStore",
     "Database",
     "DocumentChunkRecord",

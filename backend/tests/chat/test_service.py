@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import suppress
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 from app.api.errors import DomainError
@@ -11,7 +12,9 @@ from app.core.llm import ChatDelta
 from app.imports.events import InMemoryEventBroker
 from app.schemas.chat import ChatStreamRequest
 from app.schemas.retrieval import RetrievalHit, RetrievalResult
-from app.storage.models import MessageRecord
+from app.storage.database import Database
+from app.storage.models import MessageRecord, SessionRecord
+from app.storage.repositories import ConversationStore
 
 
 class FakeRetriever:
@@ -41,6 +44,7 @@ class FakeLLM:
 class FakeConversationStore:
     def __init__(self) -> None:
         self.messages: list[MessageRecord] = []
+        self.chat_requests: dict[str, SimpleNamespace] = {}
 
     def add_message(self, message: MessageRecord) -> MessageRecord:
         self.messages.append(message)
@@ -48,6 +52,27 @@ class FakeConversationStore:
 
     def list_messages(self, session_id: str) -> list[MessageRecord]:
         return [message for message in self.messages if message.session_id == session_id]
+
+    def claim_chat_request(self, request_id: str, session_id: str) -> tuple[SimpleNamespace, bool]:
+        record = self.chat_requests.get(request_id)
+        if record is not None:
+            return record, False
+        record = SimpleNamespace(
+            request_id=request_id,
+            session_id=session_id,
+            terminal_type=None,
+            terminal_payload_json=None,
+        )
+        self.chat_requests[request_id] = record
+        return record, True
+
+    def complete_chat_request(
+        self, request_id: str, terminal_type: str, payload: dict[str, object]
+    ) -> SimpleNamespace:
+        record = self.chat_requests[request_id]
+        record.terminal_type = terminal_type
+        record.terminal_payload_json = json.dumps(payload, ensure_ascii=False)
+        return record
 
 
 class FailingConversationStore(FakeConversationStore):
@@ -332,6 +357,50 @@ async def test_slow_and_late_subscribers_replay_lossless_long_answer() -> None:
 
     await asyncio.wait_for(cleanup, timeout=0.3)
     _assert_chat_archives_empty(service, broker)
+
+
+async def test_expired_terminal_replay_never_regenerates_detached_request() -> None:
+    """Catches cleanup forgetting terminal request ownership before a remount."""
+    llm = FakeLLM(["完成 [S1]"])
+    database = Database("sqlite+pysqlite:///:memory:")
+    database.upgrade()
+    with database.session() as session:
+        session.add(SessionRecord(id="s-1"))
+    store = ConversationStore(database)
+    broker = InMemoryEventBroker(retention=None)
+    service = ChatService(
+        retriever=FakeRetriever(RetrievalResult(hits=[_hit()], max_score=0.9)),
+        llm=llm,
+        conversation_store=store,
+        event_broker=broker,
+        terminal_replay_ttl_seconds=0.01,
+    )
+    request = _request()
+    detached_stream = service.stream(request)
+
+    first = await anext(detached_stream)
+    assert first.type == "citations"
+    await detached_stream.aclose()
+    await service.wait_for_idle()
+    cleanup = service._cleanup_tasks[str(request.request_id)]
+    await asyncio.wait_for(cleanup, timeout=0.2)
+    assert str(request.request_id) not in broker._jobs
+
+    try:
+        remounted = [
+            event
+            async for event in service.stream(request, after_sequence=first.sequence)
+        ]
+
+        assert [event.type for event in remounted] == ["done"]
+        assert remounted[0].sequence > first.sequence
+        assert len(
+            [message for message in store.list_messages(request.session_id) if message.role == "user"]
+        ) == 1
+        assert len(llm.calls) == 1
+    finally:
+        await service.stop()
+        database.engine.dispose()
 
 
 async def test_stop_cancels_terminal_cleanup_and_clears_chat_archives() -> None:

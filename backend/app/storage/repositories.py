@@ -6,11 +6,13 @@ from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.api.errors import DomainError
 from app.imports.state_machine import ensure_transition_allowed
 from app.storage.database import Database
 from app.storage.models import (
+    ChatRequestRecord,
     DocumentChunkRecord,
     DocumentMutationRecord,
     DocumentRecord,
@@ -615,6 +617,36 @@ class ConversationStore:
                 parent.updated_at = utc_now()
             session.flush()
             return message
+
+    def claim_chat_request(
+        self, request_id: str, session_id: str
+    ) -> tuple[ChatRequestRecord, bool]:
+        """Atomically reserve a chat request ID for exactly one producer."""
+        with self.database.session() as session:
+            result = session.execute(
+                sqlite_insert(ChatRequestRecord)
+                .values(request_id=request_id, session_id=session_id)
+                .on_conflict_do_nothing(index_elements=["request_id"])
+            )
+            record = session.get(ChatRequestRecord, request_id)
+            if record is None:
+                raise DomainError("CHAT_REQUEST_CONFLICT", "聊天请求状态冲突", 409)
+            return record, result.rowcount == 1
+
+    def complete_chat_request(
+        self, request_id: str, terminal_type: str, payload: dict[str, Any]
+    ) -> ChatRequestRecord:
+        with self.database.session() as session:
+            record = session.get(ChatRequestRecord, request_id)
+            if record is None:
+                raise DomainError("CHAT_REQUEST_CONFLICT", "聊天请求状态冲突", 409)
+            record.terminal_type = terminal_type
+            record.terminal_payload_json = json.dumps(
+                payload, ensure_ascii=False, separators=(",", ":")
+            )
+            record.updated_at = utc_now()
+            session.flush()
+            return record
 
 
 class VectorCleanupStore:

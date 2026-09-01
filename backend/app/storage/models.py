@@ -189,6 +189,25 @@ class SessionRecord(Base):
     )
 
 
+class ChatRequestRecord(Base):
+    """Durable terminal ownership for a streamed chat request."""
+
+    __tablename__ = "chat_requests"
+
+    request_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("sessions.id", ondelete="CASCADE"), index=True
+    )
+    terminal_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    terminal_payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
+    )
+
+
 class MessageRecord(Base):
     __tablename__ = "messages"
 

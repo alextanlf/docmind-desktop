@@ -68,9 +68,13 @@ class ChatService:
             return task
 
         async with self._lifecycle_lock:
-            await self._ensure_producer(key, request)
+            restored_terminal = await self._ensure_producer(
+                key, request, after_sequence
+            )
             self._active_subscribers[key] = self._active_subscribers.get(key, 0) + 1
             next_event = create_helper_locked(anext(subscription), "next-event")
+        if restored_terminal:
+            await self._start_cleanup(key)
         cursor = after_sequence
         try:
             while True:
@@ -164,17 +168,36 @@ class ChatService:
             self._active_subscribers.clear()
             self._cleanup_tasks.clear()
 
-    async def _ensure_producer(self, key: str, request: ChatStreamRequest) -> None:
+    async def _ensure_producer(
+        self, key: str, request: ChatStreamRequest, after_sequence: int
+    ) -> bool:
         async with self._start_lock:
             if key in self._started_request_ids:
-                return
+                return False
             if self._stopped:
                 raise RuntimeError("chat service is stopped")
+            record, claimed = self.conversation_store.claim_chat_request(
+                key, request.session_id
+            )
             self._started_request_ids.add(key)
             self._fallback_ready[key] = asyncio.Event()
+            if not claimed:
+                terminal_type, payload = _terminal_from_record(record)
+                if record.terminal_type is None:
+                    self.conversation_store.complete_chat_request(
+                        key, terminal_type, payload
+                    )
+                await self._publish(
+                    key,
+                    terminal_type,
+                    payload,
+                    sequence=max(after_sequence, 0) + 1,
+                )
+                return True
             task = asyncio.create_task(self._produce(key, request))
             self.tasks.add(task)
             task.add_done_callback(self._producer_finished)
+            return False
 
     def _producer_finished(self, task: asyncio.Task[None]) -> None:
         self.tasks.discard(task)
@@ -239,7 +262,9 @@ class ChatService:
                     request.session_id, _GAP_ANSWER, [], "completed"
                 )
                 await self._publish(key, "delta", {"content": _GAP_ANSWER})
-                await self._publish(key, "done", {"messageId": assistant.id})
+                terminal = {"messageId": assistant.id}
+                self.conversation_store.complete_chat_request(key, "done", terminal)
+                await self._publish(key, "done", terminal)
                 await self._start_cleanup(key)
                 return
 
@@ -265,7 +290,9 @@ class ChatService:
             assistant = self._persist_assistant(
                 request.session_id, answer, citations, "completed"
             )
-            await self._publish(key, "done", {"messageId": assistant.id})
+            terminal = {"messageId": assistant.id}
+            self.conversation_store.complete_chat_request(key, "done", terminal)
+            await self._publish(key, "done", terminal)
             await self._start_cleanup(key)
         except asyncio.CancelledError:
             raise
@@ -282,6 +309,7 @@ class ChatService:
                 except Exception:  # noqa: BLE001, S110 - terminal must survive storage failure
                     pass
             try:
+                self.conversation_store.complete_chat_request(key, "error", details)
                 await self._publish(key, "error", details)
                 await self._start_cleanup(key)
             except Exception:
@@ -318,9 +346,16 @@ class ChatService:
         )
 
     async def _publish(
-        self, key: str, event_type: EventType, payload: dict[str, Any]
+        self,
+        key: str,
+        event_type: EventType,
+        payload: dict[str, Any],
+        *,
+        sequence: int | None = None,
     ) -> None:
-        event = await self.event_broker.publish(key, event_type, payload)
+        event = await self.event_broker.publish(
+            key, event_type, payload, sequence=sequence
+        )
         self._last_sequences[key] = event.sequence
 
 
@@ -369,3 +404,21 @@ def _error_details(error: Exception) -> dict[str, Any]:
         "message": "回答生成失败，请稍后重试",
         "retryable": True,
     }
+
+
+def _terminal_from_record(record: Any) -> tuple[EventType, dict[str, Any]]:
+    if record.terminal_type in {"done", "error"}:
+        try:
+            payload = json.loads(record.terminal_payload_json)
+        except (TypeError, json.JSONDecodeError):
+            payload = None
+        if isinstance(payload, dict):
+            return record.terminal_type, payload
+    return (
+        "error",
+        {
+            "code": "CHAT_REQUEST_INTERRUPTED",
+            "message": "聊天请求在完成前中断，请发起新请求",
+            "retryable": True,
+        },
+    )
