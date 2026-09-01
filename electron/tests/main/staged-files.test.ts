@@ -1,13 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import {
-  mkdtemp,
-  writeFile,
-  symlink,
-  rm,
-  open,
-  readdir,
-  readFile,
-} from "node:fs/promises";
+import { mkdtemp, writeFile, symlink, rm, open, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StagedFileService } from "../../main/staged-files";
@@ -41,10 +33,7 @@ describe("staged files", () => {
   it("copies approved markdown without exposing original path", async () => {
     const src = join(dir, "guide.md");
     await writeFile(src, "hello");
-    const result = await new StagedFileService({ dataDir: dir }).stageSelected(
-      src,
-      "markdown",
-    );
+    const result = await new StagedFileService({ dataDir: dir }).stageSelected(src, "markdown");
     expect(result).toMatchObject({
       kind: "staged_file",
       name: "guide.md",
@@ -54,17 +43,11 @@ describe("staged files", () => {
     expect(result.stagedSourceId).toMatch(/^[0-9a-f-]{36}$/);
     expect(JSON.stringify(result)).not.toContain(dir);
   });
-  it.each([".txt", ".exe", ".html"])(
-    "rejects unsupported extension %s",
-    async (ext) => {
-      await expect(
-        new StagedFileService({ dataDir: dir }).stageSelected(
-          join(dir, "file" + ext),
-          "markdown",
-        ),
-      ).rejects.toMatchObject({ code: "SOURCE_UNSUPPORTED" });
-    },
-  );
+  it.each([".txt", ".exe", ".html"])("rejects unsupported extension %s", async (ext) => {
+    await expect(
+      new StagedFileService({ dataDir: dir }).stageSelected(join(dir, "file" + ext), "markdown"),
+    ).rejects.toMatchObject({ code: "SOURCE_UNSUPPORTED" });
+  });
   it("rejects symlink", async () => {
     const src = join(dir, "a.md");
     const target = join(dir, "target.md");
@@ -77,10 +60,7 @@ describe("staged files", () => {
   it("uses descriptor-verified regular file staging", async () => {
     const source = join(dir, "safe.md");
     await writeFile(source, "x");
-    const result = await new StagedFileService({ dataDir: dir }).stageSelected(
-      source,
-      "markdown",
-    );
+    const result = await new StagedFileService({ dataDir: dir }).stageSelected(source, "markdown");
     expect(result.name).toBe("safe.md");
   });
 
@@ -107,21 +87,16 @@ describe("staged files", () => {
     };
 
     try {
-      await new StagedFileService({ dataDir: dir }).stageSelected(
-        source,
-        "markdown",
-      );
+      await new StagedFileService({ dataDir: dir }).stageSelected(source, "markdown");
     } finally {
       fileHandlePrototype.write = originalWrite;
     }
 
     const stagedEntries = await readdir(join(dir, "imports", "staging"));
-    const stagedFile = stagedEntries.find(
-      (entry) => !entry.endsWith(".partial"),
-    );
+    const stagedFile = stagedEntries.find((entry) => !entry.endsWith(".partial"));
     expect(stagedFile).toBeDefined();
-    await expect(
-      readFile(join(dir, "imports", "staging", stagedFile!)),
-    ).resolves.toEqual(Buffer.from(contents));
+    await expect(readFile(join(dir, "imports", "staging", stagedFile!))).resolves.toEqual(
+      Buffer.from(contents),
+    );
   });
 });

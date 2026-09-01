@@ -14,30 +14,19 @@ describe("window security", () => {
       sandbox: true,
     }));
   it("blocks navigation away from app origin", () => {
-    expect(
-      isAllowedNavigation("http://127.0.0.1:5173", "https://evil.test"),
-    ).toBe(false);
+    expect(isAllowedNavigation("http://127.0.0.1:5173", "https://evil.test")).toBe(false);
   });
   it("blocks lookalike origins and bundled-file path escapes", () => {
-    expect(
-      isAllowedNavigation("http://127.0.0.1:5173", "http://127.0.0.1:51730"),
-    ).toBe(false);
-    expect(
-      isAllowedNavigation(
-        "file:///app/renderer/index.html",
-        "file:///app/secret.txt",
-      ),
-    ).toBe(false);
+    expect(isAllowedNavigation("http://127.0.0.1:5173", "http://127.0.0.1:51730")).toBe(false);
+    expect(isAllowedNavigation("file:///app/renderer/index.html", "file:///app/secret.txt")).toBe(
+      false,
+    );
   });
   it("opens only http(s) external URLs", () => {
     const opened: string[] = [];
-    expect(handleWindowOpen("https://example.com", (u) => opened.push(u))).toBe(
-      false,
-    );
+    expect(handleWindowOpen("https://example.com", (u) => opened.push(u))).toBe(false);
     expect(opened).toEqual(["https://example.com/"]);
-    expect(handleWindowOpen("file:///tmp/x", (u) => opened.push(u))).toBe(
-      false,
-    );
+    expect(handleWindowOpen("file:///tmp/x", (u) => opened.push(u))).toBe(false);
     expect(opened).toHaveLength(1);
   });
   it("shows the window only after renderer finish load", () => {

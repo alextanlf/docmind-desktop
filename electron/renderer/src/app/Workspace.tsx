@@ -117,6 +117,7 @@ export function Workspace() {
         sidebarCollapsed && "sidebar-is-collapsed",
         !referencePanelOpen && "reference-is-closed",
       )}
+      data-reference-layout={forcedIconRail ? "drawer" : "grid"}
     >
       <aside
         aria-label="主导航"

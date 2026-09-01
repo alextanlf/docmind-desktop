@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -34,7 +35,7 @@ from app.core.llm import (
     OpenAICompatibleProvider,
 )
 from app.core.retrieval import HybridRetriever
-from app.core.secrets import KeyringSecretStore, SecretStore
+from app.core.secrets import KeyringSecretStore, MemorySecretStore, SecretStore
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
 from app.document.sources import SourceInspector
@@ -92,11 +93,31 @@ def create_app(
     llm_provider: LLMProvider | None = None,
 ) -> FastAPI:
     runtime_settings = settings or get_settings()
-    runtime_secret_store = secret_store or KeyringSecretStore()
-    runtime_embedding_provider = embedding_provider or create_embedding_provider(
-        runtime_settings.embedding_settings
-    )
-    runtime_yuque_gateway = yuque_gateway or PlaywrightYuqueGateway(runtime_settings)
+    fake_services = os.getenv("DOCMIND_FAKE_SERVICES") == "1"
+    if fake_services and runtime_settings.environment == "production":
+        raise ValueError("fake services are not allowed in production")
+    if fake_services:
+        from app.testing.fakes import (
+            E2EControl,
+            E2EControlledFakeEmbeddingProvider,
+            FakeLLMProvider,
+            FakeYuqueGateway,
+        )
+
+        e2e_control = E2EControl(runtime_settings.data_dir)
+        runtime_secret_store = secret_store or MemorySecretStore()
+        runtime_embedding_provider = embedding_provider or E2EControlledFakeEmbeddingProvider(
+            runtime_settings.embedding_settings, control=e2e_control
+        )
+        runtime_yuque_gateway = yuque_gateway or FakeYuqueGateway()
+        fake_llm_provider: LLMProvider | None = llm_provider or FakeLLMProvider(control=e2e_control)
+    else:
+        runtime_secret_store = secret_store or KeyringSecretStore()
+        runtime_embedding_provider = embedding_provider or create_embedding_provider(
+            runtime_settings.embedding_settings
+        )
+        runtime_yuque_gateway = yuque_gateway or PlaywrightYuqueGateway(runtime_settings)
+        fake_llm_provider = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -105,9 +126,16 @@ def create_app(
         database.upgrade()
         ImportJobStore(database).recover_interrupted()
         app.state.database = database
-        app.state.settings_service = SettingsService(
-            SettingStore(database), runtime_secret_store
-        )
+        if fake_llm_provider is None:
+            app.state.settings_service = SettingsService(
+                SettingStore(database), runtime_secret_store
+            )
+        else:
+            app.state.settings_service = SettingsService(
+                SettingStore(database),
+                runtime_secret_store,
+                provider_factory=lambda _config, _api_key: fake_llm_provider,
+            )
         repository_store = RepositoryStore(database)
         conversation_store = ConversationStore(database)
         vector_store = PersistentVectorStore(runtime_settings.vectorstore_settings)
@@ -125,7 +153,7 @@ def create_app(
             job_store=ImportJobStore(database),
             event_broker=InMemoryEventBroker(),
         )
-        runtime_llm_provider = llm_provider or _RuntimeLLMProvider(
+        runtime_llm_provider = fake_llm_provider or _RuntimeLLMProvider(
             app.state.settings_service,
             runtime_secret_store,
         )
@@ -156,7 +184,7 @@ def create_app(
                 database=database,
                 vector_store=vector_store,
                 embedding_provider=runtime_embedding_provider,
-                similarity_threshold=runtime_settings.rag_similarity_threshold,
+                similarity_threshold=-1.0 if fake_services else runtime_settings.rag_similarity_threshold,
             ),
             llm=runtime_llm_provider,
             conversation_store=conversation_store,
@@ -183,6 +211,7 @@ def create_app(
     app.state.embedding_provider = runtime_embedding_provider
     app.state.embedding_prepare_task = None
     app.state.yuque_gateway = runtime_yuque_gateway
+    app.state.fake_llm_provider = fake_llm_provider
     app.state.import_tasks = set()
     app.state.active_document_mutations = set()
     app.state.document_mutation_registry_lock = Lock()

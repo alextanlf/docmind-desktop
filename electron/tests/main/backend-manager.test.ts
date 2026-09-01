@@ -6,18 +6,11 @@ function fakeProcess() {
   return {
     pid: 42,
     stderr: {
-      on: vi.fn(
-        (_: string, cb: (data: string) => void) =>
-          (listeners.stderr = cb as any),
-      ),
+      on: vi.fn((_: string, cb: (data: string) => void) => (listeners.stderr = cb as any)),
     },
-    on: vi.fn(
-      (e: string, cb: (...a: unknown[]) => void) => (listeners[e] = cb),
-    ),
+    on: vi.fn((e: string, cb: (...a: unknown[]) => void) => (listeners[e] = cb)),
     kill: vi.fn(),
-    once: vi.fn(
-      (e: string, cb: (...a: unknown[]) => void) => (listeners[e] = cb),
-    ),
+    once: vi.fn((e: string, cb: (...a: unknown[]) => void) => (listeners[e] = cb)),
     __exit: () => listeners.exit?.(1),
     __error: (e: Error) => listeners.error?.(e),
     __stderr: (s: string) => listeners.stderr?.(s),
@@ -27,9 +20,7 @@ function fakeProcess() {
 describe("BackendManager", () => {
   it("passes a random runtime token and waits for authenticated health", async () => {
     const process = fakeProcess();
-    const fetch = vi
-      .fn()
-      .mockResolvedValue(new Response('{"status":"ok","version":"0.1.0"}'));
+    const fetch = vi.fn().mockResolvedValue(new Response('{"status":"ok","version":"0.1.0"}'));
     const manager = new BackendManager({
       spawn: () => process as any,
       fetch,
@@ -153,9 +144,7 @@ describe("BackendManager", () => {
       startupTimeoutMs: 20,
     });
     const pending = manager.start();
-    process.__stderr(
-      "failed token DOCMIND_SESSION_TOKEN=will-be-redacted at /tmp/private/log",
-    );
+    process.__stderr("failed token DOCMIND_SESSION_TOKEN=will-be-redacted at /tmp/private/log");
     process.__exit();
     const error = (await pending.catch((value) => value as Error)) as Error;
     expect(error.message).not.toContain("/tmp/private");

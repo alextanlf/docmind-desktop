@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { spawn as nodeSpawn, ChildProcess } from "node:child_process";
+import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export interface BackendConnection {
@@ -58,19 +59,13 @@ export class BackendManager {
     const rawBackendArgs = opts.backendArgs as unknown;
     const validBackendArgs =
       rawBackendArgs === undefined ||
-      (Array.isArray(rawBackendArgs) &&
-        rawBackendArgs.every((arg) => typeof arg === "string"));
+      (Array.isArray(rawBackendArgs) && rawBackendArgs.every((arg) => typeof arg === "string"));
     this.invalidPackagedArgs = packaged && !validBackendArgs;
-    this.cwd = packaged
-      ? (opts.backendCwd ?? "")
-      : join(opts.repoDir ?? process.cwd(), "backend");
+    this.cwd = packaged ? (opts.backendCwd ?? "") : join(opts.repoDir ?? process.cwd(), "backend");
     this.configuredPackagedCommand =
       !packaged ||
       Boolean(
-        opts.backendCommand &&
-        opts.backendCwd &&
-        validBackendArgs &&
-        Array.isArray(rawBackendArgs),
+        opts.backendCommand && opts.backendCwd && validBackendArgs && Array.isArray(rawBackendArgs),
       );
     this.command = packaged ? (opts.backendCommand ?? "") : "uv";
     this.args = packaged
@@ -81,8 +76,7 @@ export class BackendManager {
   }
   async start(): Promise<BackendConnection> {
     if (this.connection) return this.connection;
-    if (!this.configuredPackagedCommand || this.invalidPackagedArgs)
-      throw new BackendStartError();
+    if (!this.configuredPackagedCommand || this.invalidPackagedArgs) throw new BackendStartError();
     this.token = randomBytes(32).toString("hex");
     const env = {
       ...process.env,
@@ -105,6 +99,9 @@ export class BackendManager {
     const child = this.child;
     child.stderr?.on("data", (data: Buffer | string) => {
       this.stderr = (this.stderr + String(data)).slice(-2000);
+      const artifacts = process.env.DOCMIND_E2E_ARTIFACTS_DIR;
+      if (process.env.DOCMIND_E2E === "1" && artifacts)
+        void appendFile(join(artifacts, "backend.log"), String(data), "utf8").catch(() => {});
     });
     child.once("error", () => {
       // Defer diagnostic construction until the startup loop observes the
@@ -123,9 +120,7 @@ export class BackendManager {
       }
       try {
         const response = await this.healthRequest(
-          () =>
-            startError ??
-            (exited ? new BackendStartError(this.redactedError()) : undefined),
+          () => startError ?? (exited ? new BackendStartError(this.redactedError()) : undefined),
         );
         if (response.ok) {
           this.connection = {
@@ -166,14 +161,9 @@ export class BackendManager {
   private redactedError() {
     const safe = this.stderr
       .replaceAll(this.token, "[redacted]")
-      .replace(
-        /DOCMIND_SESSION_TOKEN=[^\s]+/g,
-        "DOCMIND_SESSION_TOKEN=[redacted]",
-      )
+      .replace(/DOCMIND_SESSION_TOKEN=[^\s]+/g, "DOCMIND_SESSION_TOKEN=[redacted]")
       .replace(/\/[\w.@+~%=-]+(?:\/[\w.@+~%=-]+)*/g, "[path]");
-    return safe
-      ? `Backend failed to start: ${safe}`
-      : "Backend failed to start";
+    return safe ? `Backend failed to start: ${safe}` : "Backend failed to start";
   }
   private reset() {
     this.child = undefined;

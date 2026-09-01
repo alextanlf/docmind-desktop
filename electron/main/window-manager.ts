@@ -32,8 +32,7 @@ export function isAllowedNavigation(origin: string, target: string) {
     const allowed = new URL(origin);
     const requested = new URL(target);
     if (allowed.protocol !== requested.protocol) return false;
-    if (allowed.protocol === "file:")
-      return allowed.pathname === requested.pathname;
+    if (allowed.protocol === "file:") return allowed.pathname === requested.pathname;
     return (
       allowed.hostname === requested.hostname &&
       allowed.port === requested.port &&

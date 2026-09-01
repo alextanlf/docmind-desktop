@@ -7,12 +7,16 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "dev": "./scripts/dev.sh",
+    "verify": "./scripts/test.sh",
+    "build": "./scripts/build.sh",
+    "desktop:dev": "electron-vite dev",
+    "desktop:build": "electron-vite build",
+    "desktop:test": "ELECTRON_OVERRIDE_DIST_PATH=/dev/null ELECTRON_SKIP_BINARY_DOWNLOAD=1 vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "lint": "eslint electron e2e --max-warnings=0",
     "format:check": "prettier --check .",
-    "test": "vitest run",
+    "test": "npm run desktop:test",
     "test:watch": "vitest",
     "test:e2e": "playwright test"
   },
@@ -35,10 +39,10 @@
     "@types/node": "^22.10.5",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "5.2.0",
     "autoprefixer": "^10.4.20",
-    "electron": "^31.7.7",
-    "electron-vite": "^2.3.0",
+    "electron": "44.1.0",
+    "electron-vite": "5.0.0",
     "eslint": "^9.19.0",
     "eslint-plugin-react-hooks": "^5.1.0",
     "eslint-plugin-react-refresh": "^0.4.18",
@@ -49,7 +53,7 @@
     "tailwindcss": "3.4.17",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.22.0",
-    "vite": "^5.4.11",
-    "vitest": "^2.1.8"
+    "vite": "7.3.6",
+    "vitest": "4.1.11"
   }
 }

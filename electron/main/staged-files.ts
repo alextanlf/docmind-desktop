@@ -37,9 +37,7 @@ export class StagedFileService {
   ) {
     this.showOpenDialog = opts.showOpenDialog ?? this.defaultDialog;
   }
-  private async defaultDialog(
-    options: Parameters<ShowOpenDialog>[0],
-  ): Promise<DialogResult> {
+  private async defaultDialog(options: Parameters<ShowOpenDialog>[0]): Promise<DialogResult> {
     const { dialog } = await import("electron");
     return dialog.showOpenDialog(options);
   }
@@ -54,22 +52,15 @@ export class StagedFileService {
     if (result.canceled || result.filePaths.length !== 1) return null;
     return this.stageSelected(result.filePaths[0], kind);
   }
-  async stageSelected(
-    source: string,
-    kind: "pdf" | "markdown",
-  ): Promise<StagedSource> {
+  async stageSelected(source: string, kind: "pdf" | "markdown"): Promise<StagedSource> {
     const noFollow = (constants as NodeJS.Dict<number>).O_NOFOLLOW;
     if (typeof noFollow !== "number") {
-      throw new StagedFileError(
-        "SOURCE_UNSUPPORTED",
-        "Secure file access unavailable",
-      );
+      throw new StagedFileError("SOURCE_UNSUPPORTED", "Secure file access unavailable");
     }
     const stat = await lstat(source).catch(() => {
       throw new StagedFileError("SOURCE_UNSUPPORTED", "Source unavailable");
     });
-    if (!stat.isFile())
-      throw new StagedFileError("SOURCE_UNSUPPORTED", "Regular file required");
+    if (!stat.isFile()) throw new StagedFileError("SOURCE_UNSUPPORTED", "Regular file required");
     const extension = extname(source).toLowerCase();
     const extensions = kind === "pdf" ? [".pdf"] : [".md", ".markdown"];
     if (!extensions.includes(extension))
@@ -79,10 +70,7 @@ export class StagedFileService {
         ? (this.opts.maxPdfBytes ?? 100 * 1024 * 1024)
         : (this.opts.maxMarkdownBytes ?? 20 * 1024 * 1024);
     if (stat.size > limit)
-      throw new StagedFileError(
-        "SOURCE_TOO_LARGE",
-        "Source exceeds size limit",
-      );
+      throw new StagedFileError("SOURCE_TOO_LARGE", "Source exceeds size limit");
     const id = randomUUID();
     const directory = join(this.opts.dataDir, "imports", "staging");
     const partial = join(directory, `${id}${extension}.partial`);
@@ -92,11 +80,7 @@ export class StagedFileService {
       const sourceHandle = await open(source, constants.O_RDONLY | noFollow);
       try {
         const openedStat = await sourceHandle.stat();
-        if (
-          !openedStat.isFile() ||
-          openedStat.size !== stat.size ||
-          openedStat.size > limit
-        )
+        if (!openedStat.isFile() || openedStat.size !== stat.size || openedStat.size > limit)
           throw new Error("source changed");
         const destination = await open(
           partial,
@@ -133,11 +117,9 @@ export class StagedFileService {
             if (position > limit) throw new Error("source changed");
           }
           const finalStat = await sourceHandle.stat();
-          if (finalStat.size !== openedStat.size)
-            throw new Error("source changed");
+          if (finalStat.size !== openedStat.size) throw new Error("source changed");
           const destinationStat = await destination.stat();
-          if (destinationStat.size !== openedStat.size)
-            throw new Error("destination write failed");
+          if (destinationStat.size !== openedStat.size) throw new Error("destination write failed");
           await destination.sync();
         } finally {
           await destination.close().catch(() => {});
@@ -148,10 +130,7 @@ export class StagedFileService {
       await rename(partial, final);
     } catch {
       await unlink(partial).catch(() => {});
-      throw new StagedFileError(
-        "SOURCE_STAGE_FAILED",
-        "Unable to stage source",
-      );
+      throw new StagedFileError("SOURCE_STAGE_FAILED", "Unable to stage source");
     }
     return {
       stagedSourceId: id,
