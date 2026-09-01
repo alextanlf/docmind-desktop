@@ -4,25 +4,30 @@ import {
   ChevronRight,
   FilePlus2,
   Library,
-  MessageSquarePlus,
-  PanelRightClose,
   PanelRightOpen,
   Settings,
 } from "lucide-react";
 import { clsx } from "clsx";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { SessionSummary } from "../../../shared/contracts";
 import { IconButton } from "../components/IconButton";
+import { ChatPanel } from "../features/chat/ChatPanel";
+import { RepositoryScope } from "../features/chat/RepositoryScope";
+import { SessionList } from "../features/chat/SessionList";
+import { useMessagesQuery } from "../features/chat/chat.queries";
 import { ImportDialog } from "../features/imports/ImportDialog";
 import { ImportProgress } from "../features/imports/ImportProgress";
 import { useImportJobQuery } from "../features/imports/imports.queries";
 import { useImportStore } from "../features/imports/import-store";
 import { DocumentEditor } from "../features/repositories/DocumentEditor";
 import { RepositoryTree } from "../features/repositories/RepositoryTree";
+import { ReferencePanel } from "../features/references/ReferencePanel";
 import {
   useDocumentQuery,
   useRepositoriesQuery,
 } from "../features/repositories/repository.queries";
 import { SettingsView } from "../features/settings/SettingsView";
+import { useChatStreamStore } from "../stores/chat-stream-store";
 import { useUiStore } from "../stores/ui-store";
 
 const FORCED_RAIL_QUERY = "(max-width: 1000px)";
@@ -54,6 +59,8 @@ export function Workspace() {
   const forcedIconRail = useForcedIconRail();
   const [importOpen, setImportOpen] = useState(false);
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
+  const [selectedSession, setSelectedSession] = useState<SessionSummary | null>(null);
+  const [selectedRepositoryIds, setSelectedRepositoryIds] = useState<string[]>([]);
   const jobId = useImportStore((state) => state.jobId);
   const importJob = useImportJobQuery(jobId);
   const selectedDocument = useDocumentQuery(selectedDocumentId);
@@ -61,6 +68,28 @@ export function Workspace() {
   const selectedRepository = repositories.data?.find(
     (repository) => repository.id === selectedDocument.data?.repositoryId,
   );
+  const sessionMessages = useMessagesQuery(selectedSession?.id ?? null);
+  const stream = useChatStreamStore();
+  const citations = useMemo(() => {
+    const all = [...(sessionMessages.data ?? []).flatMap((message) => message.citations)];
+    if (stream.sessionId === selectedSession?.id) all.push(...stream.citations);
+    const known = new Set<string>();
+    return all.filter((citation) => {
+      const key = `${citation.sourceId}:${citation.chunkId}`;
+      if (known.has(key)) return false;
+      known.add(key);
+      return true;
+    });
+  }, [selectedSession?.id, sessionMessages.data, stream.citations, stream.sessionId]);
+
+  const selectSession = (session: SessionSummary) => {
+    if (selectedSession?.id !== session.id) {
+      useChatStreamStore.getState().cancelForSession(selectedSession?.id ?? null);
+      setSelectedSession(session);
+      setSelectedRepositoryIds(session.repositoryIds);
+      setSelectedDocumentId(null);
+    }
+  };
 
   return (
     <main
@@ -95,10 +124,11 @@ export function Workspace() {
             />
           )}
         </div>
-        <button aria-label="新建会话" className="new-chat-button" title="新建会话" type="button">
-          <MessageSquarePlus aria-hidden="true" size={17} />
-          <span>新建会话</span>
-        </button>
+        <SessionList
+          onSessionSelect={selectSession}
+          selectedRepositoryIds={selectedRepositoryIds}
+          selectedSessionId={selectedSession?.id}
+        />
         <nav className="nav-list" aria-label="功能导航">
           <button aria-label="知识库" title="知识库" type="button">
             <Library aria-hidden="true" size={17} />
@@ -153,39 +183,44 @@ export function Workspace() {
             onClose={() => setSelectedDocumentId(null)}
             repositoryName={selectedRepository?.name}
           />
+        ) : selectedSession ? (
+          <div className="chat-workspace">
+            <header className="chat-toolbar">
+              <RepositoryScope
+                onChange={setSelectedRepositoryIds}
+                repositories={repositories.data ?? []}
+                selectedRepositoryIds={selectedRepositoryIds}
+              />
+            </header>
+            <ChatPanel repositoryIds={selectedRepositoryIds} sessionId={selectedSession.id} />
+          </div>
         ) : (
-          <div className="empty-workspace">
-            <BookOpen aria-hidden="true" size={24} />
-            <h1>选择知识库开始对话</h1>
-            <p>导入文档后，可在这里检索内容并查看引用来源。</p>
-            <button
-              className="button button-primary"
-              onClick={() => setImportOpen(true)}
-              type="button"
-            >
-              <FilePlus2 aria-hidden="true" size={16} />
-              导入第一篇文档
-            </button>
+          <div className="chat-workspace">
+            <header className="chat-toolbar">
+              <RepositoryScope
+                onChange={setSelectedRepositoryIds}
+                repositories={repositories.data ?? []}
+                selectedRepositoryIds={selectedRepositoryIds}
+              />
+            </header>
+            <div className="empty-workspace">
+              <BookOpen aria-hidden="true" size={24} />
+              <h1>选择知识库开始对话</h1>
+              <p>导入文档后，可在这里检索内容并查看引用来源。</p>
+              <button
+                className="button button-primary"
+                onClick={() => setImportOpen(true)}
+                type="button"
+              >
+                <FilePlus2 aria-hidden="true" size={16} />
+                导入第一篇文档
+              </button>
+            </div>
           </div>
         )}
       </section>
       <aside aria-label="引用资料" className="workspace-reference w-[320px]">
-        <header>
-          <div>
-            <span>引用资料</span>
-            <small>0 项</small>
-          </div>
-          <IconButton
-            icon={<PanelRightClose aria-hidden="true" size={17} />}
-            label="关闭引用资料"
-            onClick={() => setReferencePanelOpen(false)}
-            size="small"
-          />
-        </header>
-        <div className="reference-empty">
-          <BookOpen aria-hidden="true" size={21} />
-          <p>点击回答中的引用，可在此查看原文。</p>
-        </div>
+        <ReferencePanel citations={citations} />
       </aside>
       <ImportDialog
         onClose={() => setImportOpen(false)}
