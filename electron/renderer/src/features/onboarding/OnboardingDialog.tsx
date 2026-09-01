@@ -13,12 +13,10 @@ export function OnboardingDialog({ onComplete }: { onComplete: () => void }) {
 
   if (settings.isPending || yuque.isPending) {
     return (
-      <div className="dialog-backdrop">
-        <div className="onboarding-loading" role="status">
-          <LoaderCircle aria-hidden="true" className="spin" size={20} />
-          正在检查首次设置…
-        </div>
-      </div>
+      <Modal labelledBy="onboarding-loading-title" className="onboarding-loading">
+        <LoaderCircle aria-hidden="true" className="spin" size={20} />
+        <span id="onboarding-loading-title">正在检查首次设置…</span>
+      </Modal>
     );
   }
   if (settings.isError || yuque.isError) {
