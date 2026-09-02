@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Enum,
     ForeignKey,
     Integer,
@@ -67,6 +68,50 @@ class ImportStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class BatchState(StrEnum):
+    DISCOVERING = "discovering"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    RUNNING = "running"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    COMPLETED_WITH_ERRORS = "completed_with_errors"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class BatchItemState(StrEnum):
+    DISCOVERED = "discovered"
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    SKIPPED = "skipped"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class BatchSourceKind(StrEnum):
+    STAGED_DIRECTORY = "staged_directory"
+    WEB = "web"
+    YUQUE_REPOSITORY = "yuque_repository"
+    SEARCH_RESULTS = "search_results"
+
+
+class BatchItemDecision(StrEnum):
+    CREATE = "create"
+    UPDATE = "update"
+    ATTACH_REMOTE = "attach_remote"
+    SKIP = "skip"
+
+
+def string_enum(enum: type[StrEnum], length: int) -> Enum:
+    return Enum(
+        enum,
+        native_enum=False,
+        length=length,
+        values_callable=lambda values: [value.value for value in values],
+    )
+
+
 class RepositoryRecord(Base):
     __tablename__ = "repositories"
 
@@ -104,6 +149,8 @@ class DocumentRecord(Base):
     chunk_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     status: Mapped[str] = mapped_column(String(64), default="pending", server_default=text("'pending'"))
     yuque_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_identity: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
     )
@@ -146,12 +193,7 @@ class ImportJobRecord(Base):
         ForeignKey("repositories.id", ondelete="SET NULL"), nullable=True
     )
     state: Mapped[ImportStatus] = mapped_column(
-        Enum(
-            ImportStatus,
-            native_enum=False,
-            length=32,
-            values_callable=lambda statuses: [status.value for status in statuses],
-        ),
+        string_enum(ImportStatus, 32),
         default=ImportStatus.PENDING,
         server_default=text("'pending'"),
     )
@@ -170,6 +212,90 @@ class ImportJobRecord(Base):
     )
     started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
+    )
+
+
+class BatchImportRecord(Base):
+    __tablename__ = "batch_imports"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    source_kind: Mapped[BatchSourceKind] = mapped_column(string_enum(BatchSourceKind, 32))
+    source_descriptor_json: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
+    repository_id: Mapped[str | None] = mapped_column(
+        ForeignKey("repositories.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    state: Mapped[BatchState] = mapped_column(
+        string_enum(BatchState, 32), default=BatchState.DISCOVERING, server_default=text("'discovering'")
+    )
+    discovery_version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
+    total_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    selected_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    completed_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    failed_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    skipped_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    progress: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    message: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retryable: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    last_event_sequence: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
+    )
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
+    )
+
+
+class BatchItemRecord(Base):
+    __tablename__ = "batch_items"
+    __table_args__ = (
+        UniqueConstraint("batch_id", "source_identity", name="uq_batch_items_batch_source_identity"),
+        UniqueConstraint("import_job_id", name="uq_batch_items_import_job_id"),
+        CheckConstraint(
+            "decision IS NULL OR decision IN ('create', 'update', 'attach_remote', 'skip')",
+            name="ck_batch_items_decision",
+        ),
+        CheckConstraint(
+            "decision != 'attach_remote' OR remote_binding_json IS NOT NULL",
+            name="ck_batch_items_remote_binding",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    batch_id: Mapped[str] = mapped_column(ForeignKey("batch_imports.id", ondelete="CASCADE"), index=True)
+    ordinal: Mapped[int] = mapped_column(Integer)
+    source_identity: Mapped[str] = mapped_column(Text)
+    source_revision: Mapped[str] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(String(1024))
+    display_path: Mapped[str] = mapped_column(Text)
+    media_type: Mapped[str] = mapped_column(String(255))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    cached_source_json: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
+    remote_binding_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    existing_document_id: Mapped[str | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    allowed_actions_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
+    selected: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    decision: Mapped[BatchItemDecision | None] = mapped_column(string_enum(BatchItemDecision, 32), nullable=True)
+    state: Mapped[BatchItemState] = mapped_column(
+        string_enum(BatchItemState, 32), default=BatchItemState.DISCOVERED, server_default=text("'discovered'")
+    )
+    import_job_id: Mapped[str | None] = mapped_column(
+        ForeignKey("import_jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retryable: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
+    )
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
     )
