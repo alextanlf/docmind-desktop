@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from contextvars import ContextVar
 from typing import Any
 
 from app.api.errors import DomainError
@@ -33,6 +34,10 @@ class BatchService:
         self._semaphores: dict[str, asyncio.Semaphore] = {}
         self._batch_locks: dict[str, asyncio.Lock] = {}
         self._batch_tasks: dict[str, dict[str, asyncio.Task[None]]] = {}
+        self._cancel_tasks: dict[str, asyncio.Task[Any]] = {}
+        self._cancel_context: ContextVar[frozenset[str]] = ContextVar(
+            f"batch_cancel_context_{id(self)}", default=frozenset()
+        )
 
     def get(self, batch_id: str):
         batch = self.store.get(batch_id)
@@ -87,10 +92,34 @@ class BatchService:
         return await self._aggregate(batch_id)
 
     async def cancel_batch(self, batch_id: str) -> Any:
+        active_batches = self._cancel_context.get()
+        if batch_id in active_batches:
+            # Context is copied into child tasks.  Treat those calls as
+            # re-entrant requests too, otherwise a callback that schedules a
+            # nested cancel task can wait on the operation that waits on it.
+            return self.get(batch_id)
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            in_flight = self._cancel_tasks.get(batch_id)
+            if in_flight is current_task:
+                return self.get(batch_id)
+            if in_flight is not None:
+                return await asyncio.shield(in_flight)
+            self._cancel_tasks[batch_id] = current_task
+        context_token = self._cancel_context.set(active_batches | {batch_id})
+        try:
+            return await self._cancel_batch_once(batch_id)
+        finally:
+            self._cancel_context.reset(context_token)
+            if current_task is not None and self._cancel_tasks.get(batch_id) is current_task:
+                self._cancel_tasks.pop(batch_id, None)
+
+    async def _cancel_batch_once(self, batch_id: str) -> Any:
         lock = self._batch_locks.setdefault(batch_id, asyncio.Lock())
         async with lock:
             batch = self.store.request_cancel(batch_id)
             tasks = list(self._batch_tasks.get(batch_id, {}).values())
+            child_ids: list[str] = []
             # Unsheduled children must never start after cancellation.
             for item in self.store.list_item_records(batch_id):
                 if item.selected and item.state in {
@@ -99,8 +128,10 @@ class BatchService:
                 }:
                     self.store.mark_item_cancelled(item.id)
                 elif item.state == BatchItemState.RUNNING and item.import_job_id:
-                    with suppress(Exception):
-                        await self.import_service.cancel(item.import_job_id)
+                    child_ids.append(item.import_job_id)
+        for job_id in child_ids:
+            with suppress(Exception):
+                await self.import_service.cancel(job_id)
         # Await outside the coordinator lock so cancellation can race with a
         # running continue_batch call without deadlocking.
         if tasks:
@@ -116,7 +147,6 @@ class BatchService:
             batch = self.get(batch_id)
             if batch.state in {
                 BatchState.COMPLETED,
-                BatchState.COMPLETED_WITH_ERRORS,
                 BatchState.FAILED,
                 BatchState.CANCELLED,
             }:

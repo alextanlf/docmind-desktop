@@ -97,6 +97,10 @@ class FakeImportService:
         self.cancelled.append(job_id)
         self.jobs[job_id] = ImportStatus.CANCELLED
 
+    async def retry(self, job_id: str):
+        self.jobs[job_id] = ImportStatus.PENDING
+        return self.get(job_id)
+
     def get(self, job_id: str):
         state = self.jobs[job_id]
         return type("Job", (), {"state": state.value, "error_code": None, "error_message": None, "retryable": False})()
@@ -477,6 +481,366 @@ async def test_retry_rejects_item_when_parent_is_terminal_and_keeps_item_failed(
 
     assert error.value.code == "BATCH_STATE_CONFLICT"
     assert store.get_item(item.id).state is BatchItemState.FAILED  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_retry_allows_completed_with_errors_parent(database) -> None:
+    store = BatchImportStore(database)
+    batch = make_batch(store, count=1)
+    imports = FakeImportService()
+    service = BatchService(store=store, import_service=imports)
+    await service.confirm(batch.id, confirm_all(store, batch))
+    item = store.list_item_records(batch.id)[0]
+    with database.session() as session:
+        persisted = session.get(BatchItemRecord, item.id)
+        assert persisted is not None
+        persisted.state = BatchItemState.FAILED
+        persisted.retryable = True
+        parent = session.get(BatchImportRecord, batch.id)
+        assert parent is not None
+        parent.state = BatchState.COMPLETED_WITH_ERRORS
+    await service.retry_item(batch.id, item.id)
+    assert store.get_item(item.id).state is BatchItemState.COMPLETED  # type: ignore[union-attr]
+    assert store.get(batch.id).state is BatchState.COMPLETED  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_cancel_callback_can_reenter_batch_api(database) -> None:
+    store = BatchImportStore(database)
+    batch = make_batch(store, count=1)
+
+    class Reentrant(FakeImportService):
+        def __init__(self):
+            super().__init__()
+            self.service = None
+
+        async def cancel(self, job_id):
+            await self.service.continue_batch(batch.id)
+            return await super().cancel(job_id)
+
+    imports = Reentrant()
+    service = BatchService(store=store, import_service=imports)
+    imports.service = service
+    await service.confirm(batch.id, confirm_all(store, batch))
+    item = store.list_item_records(batch.id)[0]
+    with database.session() as session:
+        session.get(BatchItemRecord, item.id).state = BatchItemState.RUNNING  # type: ignore[union-attr]
+    await asyncio.wait_for(service.cancel_batch(batch.id), timeout=1)
+    assert store.get(batch.id).state is BatchState.CANCELLED  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_cancel_callback_reentry_does_not_repeat_child_cancellation(database) -> None:
+    store = BatchImportStore(database)
+    batch = make_batch(store, count=1)
+
+    class RecursiveCancel(FakeImportService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.service = None
+            self.cancel_calls = 0
+
+        async def cancel(self, job_id):
+            self.cancel_calls += 1
+            if self.cancel_calls > 1:
+                raise AssertionError("recursive child cancellation")
+            await self.service.cancel_batch(batch.id)
+            return await super().cancel(job_id)
+
+    imports = RecursiveCancel()
+    service = BatchService(store=store, import_service=imports)
+    imports.service = service
+    await service.confirm(batch.id, confirm_all(store, batch))
+    item = store.list_item_records(batch.id)[0]
+    with database.session() as session:
+        session.get(BatchItemRecord, item.id).state = BatchItemState.RUNNING  # type: ignore[union-attr]
+
+    await service.cancel_batch(batch.id)
+
+    assert imports.cancel_calls == 1
+    assert store.get(batch.id).state is BatchState.CANCELLED  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_cancel_callback_cross_task_reentry_does_not_deadlock(database) -> None:
+    store = BatchImportStore(database)
+    batch = make_batch(store, count=1)
+
+    class CrossTaskCancel(FakeImportService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.service = None
+            self.cancel_calls = 0
+
+        async def cancel(self, job_id):
+            self.cancel_calls += 1
+            if self.cancel_calls == 1:
+                child = asyncio.create_task(self.service.cancel_batch(batch.id))
+                await child
+            return await super().cancel(job_id)
+
+    imports = CrossTaskCancel()
+    service = BatchService(store=store, import_service=imports)
+    imports.service = service
+    await service.confirm(batch.id, confirm_all(store, batch))
+    item = store.list_item_records(batch.id)[0]
+    with database.session() as session:
+        session.get(BatchItemRecord, item.id).state = BatchItemState.RUNNING  # type: ignore[union-attr]
+
+    await asyncio.wait_for(service.cancel_batch(batch.id), timeout=1)
+
+    assert imports.cancel_calls == 1
+    assert store.get(batch.id).state is BatchState.CANCELLED  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize("terminal", [BatchState.COMPLETED, BatchState.COMPLETED_WITH_ERRORS, BatchState.FAILED, BatchState.CANCELLED])
+def test_finish_cancel_is_idempotent_for_terminal_parent(database, terminal) -> None:
+    store = BatchImportStore(database)
+    batch = make_batch(store, state=terminal, count=1)
+    original = store.get(batch.id)
+    assert original is not None
+    original_message, original_completed = original.message, original.completed_at
+    result = store.finish_cancel(batch.id)
+    assert result.state is terminal
+    assert result.message == original_message
+    assert result.completed_at == original_completed
+
+
+@pytest.mark.asyncio
+async def test_cancel_refreshes_aggregate_counts_and_progress(database) -> None:
+    store = BatchImportStore(database)
+    batch = make_batch(store, count=3)
+    imports = FakeImportService()
+    service = BatchService(store=store, import_service=imports)
+    await service.confirm(batch.id, confirm_all(store, batch))
+    items = store.list_item_records(batch.id)
+    with database.session() as session:
+        session.get(BatchItemRecord, items[0].id).state = BatchItemState.COMPLETED  # type: ignore[union-attr]
+        session.get(BatchItemRecord, items[1].id).state = BatchItemState.FAILED  # type: ignore[union-attr]
+    result = await service.cancel_batch(batch.id)
+    assert (result.state, result.selected_count, result.completed_count, result.failed_count, result.skipped_count, result.progress) == (BatchState.CANCELLED, 3, 1, 1, 0, 100)
+
+
+def test_confirmation_rejects_unrelated_session_reservation_without_orphan(database) -> None:
+    store = BatchImportStore(database)
+    batch = make_batch(store, count=1)
+    item = store.list_item_records(batch.id)[0]
+    external = ImportJobStore(database)
+
+    def reserve(item, **kwargs):
+        del kwargs
+        job_id = str(uuid4())
+        external.create(ImportJobRecord(id=job_id, source_kind="staged_file", source_value="{}", repository_id="repository-1"))
+        return job_id
+
+    with pytest.raises((RuntimeError, DomainError)):
+        store.confirm_and_reserve(
+            batch.id,
+            confirm_all(store, batch),
+            reserve_child=lambda item, **kwargs: reserve(item, **kwargs),
+        )
+    assert external.list() == []
+    persisted = store.get_item(item.id)
+    assert persisted is not None
+    assert (persisted.state, persisted.decision, persisted.import_job_id) == (BatchItemState.DISCOVERED, None, None)
+
+
+def test_confirmation_rejects_direct_session_reservation_without_orphan(database) -> None:
+    """A callback must not bypass the supplied confirmation session directly."""
+    store = BatchImportStore(database)
+    batch = make_batch(store, count=1)
+
+    def reserve(item, **kwargs):
+        del item, kwargs
+        job_id = str(uuid4())
+        with database.session() as session:
+            session.add(
+                ImportJobRecord(
+                    id=job_id,
+                    source_kind="staged_file",
+                    source_value="{}",
+                    repository_id="repository-1",
+                    message="waiting",
+                )
+            )
+            session.flush()
+        return job_id
+
+    with pytest.raises((RuntimeError, DomainError)):
+        store.confirm_and_reserve(
+            batch.id,
+            confirm_all(store, batch),
+            reserve_child=reserve,
+        )
+
+    assert ImportJobStore(database).list() == []
+    persisted = store.get_item(store.list_item_records(batch.id)[0].id)
+    assert persisted is not None
+    assert (persisted.state, persisted.decision, persisted.import_job_id) == (
+        BatchItemState.DISCOVERED,
+        None,
+        None,
+    )
+
+
+def test_confirmation_rejects_raw_session_from_another_database_without_orphan(database) -> None:
+    """A callback cannot commit a child through another Database instance."""
+    store = BatchImportStore(database)
+    batch = make_batch(store, count=1)
+    other_database = Database("sqlite+pysqlite:///:memory:")
+    other_database.upgrade()
+    try:
+        with other_database.session() as session:
+            session.add(RepositoryRecord(id="repository-1", yuque_id="remote-1", name="Repo"))
+
+        def reserve(item, **kwargs):
+            del item, kwargs
+            job_id = str(uuid4())
+            with other_database.session() as session:
+                session.add(
+                    ImportJobRecord(
+                        id=job_id,
+                        source_kind="staged_file",
+                        source_value="{}",
+                        repository_id="repository-1",
+                        message="waiting",
+                    )
+                )
+                session.flush()
+            return job_id
+
+        with pytest.raises((RuntimeError, DomainError)):
+            store.confirm_and_reserve(
+                batch.id,
+                confirm_all(store, batch),
+                reserve_child=reserve,
+            )
+
+        assert ImportJobStore(other_database).list() == []
+    finally:
+        other_database.engine.dispose()
+
+
+def test_confirmation_accepts_same_session_reservation_after_flush(database) -> None:
+    """A callback may persist its child through the supplied session before returning."""
+    store = BatchImportStore(database)
+    batch = make_batch(store, count=1)
+
+    def reserve(item, **kwargs):
+        session = kwargs["session"]
+        job = ImportJobRecord(
+            id=str(uuid4()),
+            source_kind="staged_file",
+            source_value=json.dumps({"value": item.id}),
+            repository_id=kwargs["repository_id"],
+            message="waiting",
+        )
+        session.add(job)
+        session.flush()
+        return job.id
+
+    confirmed = store.confirm_and_reserve(
+        batch.id,
+        confirm_all(store, batch),
+        reserve_child=reserve,
+    )
+
+    assert confirmed.state is BatchState.RUNNING
+    persisted_item = store.list_item_records(batch.id)[0]
+    assert persisted_item.import_job_id is not None
+    assert ImportJobStore(database).get(persisted_item.import_job_id) is not None
+
+
+def test_confirmation_rejects_unmapped_same_session_jobs_without_orphans(database) -> None:
+    """Every job created by a reservation callback must be returned in its mapping."""
+    store = BatchImportStore(database)
+    batch = make_batch(store, count=1)
+
+    def reserve(item, **kwargs):
+        session = kwargs["session"]
+        for suffix in ("mapped", "orphan"):
+            session.add(
+                ImportJobRecord(
+                    id=f"{item.id}-{suffix}",
+                    source_kind="staged_file",
+                    source_value=json.dumps({"value": item.id}),
+                    repository_id=kwargs["repository_id"],
+                    message="waiting",
+                )
+            )
+        session.flush()
+        return f"{item.id}-mapped"
+
+    with pytest.raises(RuntimeError):
+        store.confirm_and_reserve(
+            batch.id,
+            confirm_all(store, batch),
+            reserve_child=reserve,
+        )
+
+    assert ImportJobStore(database).list() == []
+
+
+def test_confirmation_rejects_duplicate_child_job_mapping(database) -> None:
+    """A child job cannot be bound to more than one selected item."""
+    store = BatchImportStore(database)
+    batch = make_batch(store, count=2)
+
+    def reserve_children(items, **kwargs):
+        session = kwargs["session"]
+        job_id = str(uuid4())
+        session.add(
+            ImportJobRecord(
+                id=job_id,
+                source_kind="staged_file",
+                source_value=json.dumps({"value": "shared"}),
+                repository_id=kwargs["repository_id"],
+                message="waiting",
+            )
+        )
+        session.flush()
+        return {item.id: job_id for item in items}
+
+    with pytest.raises(RuntimeError):
+        store.confirm_and_reserve(
+            batch.id,
+            confirm_all(store, batch),
+            reserve_child=lambda item, **kwargs: pytest.fail("bulk callback expected"),
+            reserve_children=reserve_children,
+        )
+
+    assert ImportJobStore(database).list() == []
+
+
+def test_confirmation_does_not_delete_existing_job_on_invalid_mapping(database) -> None:
+    """A pre-existing job cannot be smuggled through the reservation marker."""
+    store = BatchImportStore(database)
+    batch = make_batch(store, count=1)
+    existing = ImportJobRecord(
+        id=str(uuid4()),
+        source_kind="staged_file",
+        source_value=json.dumps({"value": "existing"}),
+        repository_id="repository-1",
+        message="existing",
+    )
+    ImportJobStore(database).create(existing)
+
+    def reserve(item, **kwargs):
+        del item
+        kwargs["session"].info.setdefault("batch_reserved_job_ids", set()).add(existing.id)
+        return existing.id
+
+    with pytest.raises(RuntimeError):
+        store.confirm_and_reserve(
+            batch.id,
+            confirm_all(store, batch),
+            reserve_child=reserve,
+        )
+
+    assert ImportJobStore(database).get(existing.id) is not None
+    persisted_item = store.list_item_records(batch.id)[0]
+    assert persisted_item.import_job_id is None
+    assert persisted_item.state is BatchItemState.DISCOVERED
 
 
 def test_confirmation_invokes_source_validation_before_alternate_reservation(database) -> None:

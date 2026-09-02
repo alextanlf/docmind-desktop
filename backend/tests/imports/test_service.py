@@ -377,6 +377,58 @@ async def test_batch_collection_child_parses_nested_cache_and_persists_source_id
 
 
 @pytest.mark.asyncio
+async def test_attach_remote_binds_local_snapshot_without_gateway_writes(database, tmp_path: Path) -> None:
+    service, _, _, gateway = make_service(database, tmp_path)
+    service.source_inspector = SourceInspector(service.settings)
+    store, batch, item, _ = create_collection_batch(service, database)
+    with database.session() as session:
+        persisted = session.get(BatchItemRecord, item.id)
+        assert persisted is not None
+        persisted.allowed_actions_json = json.dumps(["attach_remote", "skip"])
+        persisted.remote_binding_json = json.dumps({
+            "repository_id": "remote-repository-1",
+            "document_id": "remote-existing",
+            "document_url": "https://yuque.test/remote-existing",
+        })
+    coordinator = BatchService(store=store, import_service=service, document_store=service.document_store)
+    await coordinator.confirm(batch.id, ConfirmBatchInput(
+        discovery_version=1,
+        items=[ConfirmBatchItem(item_id=item.id, decision="attach_remote")],
+    ))
+    reserved_item = store.get_item(item.id)
+    assert reserved_item is not None
+    job_id = reserved_item.import_job_id or ""
+    service.job_store.transition(
+        job_id,
+        expected={ImportStatus.PENDING},
+        target=ImportStatus.PARSING,
+        progress=0,
+        message="parsing",
+    )
+    assert service.job_store.recover_interrupted() == 1
+    recovered_metadata = json.loads(service.job_store.get(job_id).source_value)  # type: ignore[union-attr]
+    assert recovered_metadata["attach_remote"] is True
+    assert recovered_metadata["remote_binding"]["document_id"] == "remote-existing"
+    await service.retry(job_id)
+    retried_metadata = json.loads(service.job_store.get(job_id).source_value)  # type: ignore[union-attr]
+    assert retried_metadata["attach_remote"] is True
+    assert retried_metadata["remote_binding"]["document_id"] == "remote-existing"
+    await coordinator.continue_batch(batch.id)
+    persisted_item = store.get_item(item.id)
+    assert persisted_item is not None
+    job = service.job_store.get(persisted_item.import_job_id or "")
+    assert job is not None
+    metadata = json.loads(job.source_value)
+    assert metadata["attach_remote"] is True
+    assert metadata["remote_binding"]["document_id"] == "remote-existing"
+    document = service.document_store.get(job.document_id or "")
+    assert document is not None
+    assert document.yuque_id == "remote-existing"
+    assert document.yuque_url == "https://yuque.test/remote-existing"
+    assert gateway.create_calls == gateway.update_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_tampered_collection_cache_aborts_confirmation_without_jobs(
     database, tmp_path: Path
 ) -> None:
