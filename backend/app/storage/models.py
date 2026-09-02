@@ -108,6 +108,7 @@ def string_enum(enum: type[StrEnum], length: int) -> Enum:
         enum,
         native_enum=False,
         length=length,
+        validate_strings=True,
         values_callable=lambda values: [value.value for value in values],
     )
 
@@ -219,6 +220,17 @@ class ImportJobRecord(Base):
 
 class BatchImportRecord(Base):
     __tablename__ = "batch_imports"
+    __table_args__ = (
+        CheckConstraint(
+            "source_kind IN ('staged_directory', 'web', 'yuque_repository', 'search_results')",
+            name="ck_batch_imports_source_kind",
+        ),
+        CheckConstraint(
+            "state IN ('discovering', 'awaiting_confirmation', 'running', 'paused', 'completed', "
+            "'completed_with_errors', 'failed', 'cancelled')",
+            name="ck_batch_imports_state",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     source_kind: Mapped[BatchSourceKind] = mapped_column(string_enum(BatchSourceKind, 32))
@@ -258,11 +270,25 @@ class BatchItemRecord(Base):
         UniqueConstraint("batch_id", "source_identity", name="uq_batch_items_batch_source_identity"),
         UniqueConstraint("import_job_id", name="uq_batch_items_import_job_id"),
         CheckConstraint(
+            "state IN ('discovered', 'queued', 'running', 'completed', 'skipped', 'failed', 'cancelled')",
+            name="ck_batch_items_state",
+        ),
+        CheckConstraint(
             "decision IS NULL OR decision IN ('create', 'update', 'attach_remote', 'skip')",
             name="ck_batch_items_decision",
         ),
         CheckConstraint(
-            "decision != 'attach_remote' OR remote_binding_json IS NOT NULL",
+            "decision != 'attach_remote' OR CASE WHEN json_valid(remote_binding_json) THEN CASE WHEN "
+            "json_type(remote_binding_json) = 'object' AND (("
+            "json_type(remote_binding_json, '$.repository_id') = 'text' AND "
+            "length(trim(json_extract(remote_binding_json, '$.repository_id'))) > 0 AND "
+            "json_type(remote_binding_json, '$.document_id') = 'text' AND "
+            "length(trim(json_extract(remote_binding_json, '$.document_id'))) > 0) OR ("
+            "json_type(remote_binding_json, '$.repositoryId') = 'text' AND "
+            "length(trim(json_extract(remote_binding_json, '$.repositoryId'))) > 0 AND "
+            "json_type(remote_binding_json, '$.documentId') = 'text' AND "
+            "length(trim(json_extract(remote_binding_json, '$.documentId'))) > 0)) THEN 1 ELSE 0 END "
+            "ELSE 0 END",
             name="ck_batch_items_remote_binding",
         ),
     )

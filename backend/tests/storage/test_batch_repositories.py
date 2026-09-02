@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from sqlalchemy.exc import IntegrityError
@@ -9,7 +11,13 @@ from sqlalchemy.exc import IntegrityError
 from app.api.errors import DomainError
 from app.schemas.batches import ConfirmBatchInput, ConfirmBatchItem
 from app.storage.database import Database
-from app.storage.models import BatchImportRecord, BatchItemRecord, BatchItemState, BatchState, ImportJobRecord
+from app.storage.models import (
+    BatchImportRecord,
+    BatchItemRecord,
+    BatchItemState,
+    BatchState,
+    ImportJobRecord,
+)
 from app.storage.repositories import BatchImportStore, ImportJobStore
 
 
@@ -149,6 +157,21 @@ def test_confirmation_reserves_one_job_and_allocates_event_sequences(database: D
             "00000000-0000-0000-0000-000000000011", "00000000-0000-0000-0000-000000000022"
         )
     assert [store.allocate_event_sequence(batch.id), store.allocate_event_sequence(batch.id)] == [1, 2]
+
+
+def test_allocate_event_sequence_is_atomic_across_concurrent_sessions(tmp_path: Path) -> None:
+    database = Database(f"sqlite+pysqlite:///{tmp_path / 'batch-sequences.sqlite3'}")
+    database.upgrade()
+    try:
+        store = BatchImportStore(database)
+        batch = store.create_batch(valid_batch())
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            sequences = list(executor.map(lambda _: store.allocate_event_sequence(batch.id), range(40)))
+
+        assert sorted(sequences) == list(range(1, 41))
+        assert store.get(batch.id).last_event_sequence == 40  # type: ignore[union-attr]
+    finally:
+        database.engine.dispose()
 
 
 def test_update_counts_and_recovery_pause_running_batches(database: Database) -> None:

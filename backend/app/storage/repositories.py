@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.api.errors import DomainError
@@ -691,13 +691,18 @@ class BatchImportStore:
 
     def allocate_event_sequence(self, batch_id: str) -> int:
         with self.database.session() as session:
-            batch = session.get(BatchImportRecord, batch_id)
-            if batch is None:
+            sequence = session.scalar(
+                update(BatchImportRecord)
+                .where(BatchImportRecord.id == batch_id)
+                .values(
+                    last_event_sequence=BatchImportRecord.last_event_sequence + 1,
+                    updated_at=utc_now(),
+                )
+                .returning(BatchImportRecord.last_event_sequence)
+            )
+            if sequence is None:
                 raise DomainError("BATCH_NOT_FOUND", "批次不存在", 404)
-            batch.last_event_sequence += 1
-            batch.updated_at = utc_now()
-            session.flush()
-            return batch.last_event_sequence
+            return int(sequence)
 
     def recover_on_startup(self) -> int:
         with self.database.session() as session:
