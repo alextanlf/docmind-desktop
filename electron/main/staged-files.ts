@@ -60,6 +60,7 @@ type DirectoryStagingOptions = {
   maxTotalBytes?: number;
   maxPdfBytes?: number;
   maxMarkdownBytes?: number;
+  beforeSourceRecheck?: (sourcePath: string) => Promise<void> | void;
 };
 
 const registryLocks = new Map<string, Promise<void>>();
@@ -227,6 +228,7 @@ export async function stageDirectoryForTest(options: {
   maxTotalBytes?: number;
   maxPdfBytes?: number;
   maxMarkdownBytes?: number;
+  beforeSourceRecheck?: (sourcePath: string) => Promise<void> | void;
 }): Promise<StagedCollection> {
   return stageSelectedDirectory(options.selectedPath, options);
 }
@@ -296,7 +298,12 @@ async function stageSelectedDirectory(
     for (const candidate of candidates) {
       const stagedId = randomUUID();
       const stagedPath = join(partialCollection, "items", stagedId);
-      const sha256 = await atomicCopyCandidate(candidate, canonicalRoot, stagedPath);
+      const sha256 = await atomicCopyCandidate(
+        candidate,
+        canonicalRoot,
+        stagedPath,
+        options.beforeSourceRecheck,
+      );
       files.push({
         relativePath: candidate.relativePath,
         stagedId,
@@ -435,6 +442,7 @@ async function atomicCopyCandidate(
   candidate: DirectoryCandidate,
   canonicalRoot: string,
   destinationPath: string,
+  beforeSourceRecheck?: (sourcePath: string) => Promise<void> | void,
 ): Promise<string> {
   const noFollow = (constants as NodeJS.Dict<number>).O_NOFOLLOW;
   if (typeof noFollow !== "number") throw batchSourceChanged();
@@ -489,6 +497,11 @@ async function atomicCopyCandidate(
         await destination.sync();
         const digest = hash.digest("hex");
         if (!SHA256_PATTERN.test(digest)) throw batchSourceChanged();
+        await beforeSourceRecheck?.(candidate.sourcePath);
+        const postCopyPathStat = await lstat(candidate.sourcePath, { bigint: true }).catch(() => {
+          throw batchSourceChanged();
+        });
+        if (!matchesCandidate(candidate, postCopyPathStat)) throw batchSourceChanged();
         await destination.close();
         await rename(partialPath, destinationPath);
         return digest;
