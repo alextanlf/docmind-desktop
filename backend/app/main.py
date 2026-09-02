@@ -17,6 +17,7 @@ from app.api.documents import recover_document_mutations
 from app.api.documents import router as documents_router
 from app.api.embedding import router as embedding_router
 from app.api.errors import DomainError, domain_error_handler, request_validation_handler
+from app.api.import_batches import router as import_batches_router
 from app.api.imports import router as imports_router
 from app.api.repositories import router as repositories_router
 from app.api.request_limits import RequestBodyLimitMiddleware
@@ -40,11 +41,13 @@ from app.core.secrets import KeyringSecretStore, MemorySecretStore, SecretStore
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
 from app.document.sources import SourceInspector
+from app.imports.batch_service import BatchService
 from app.imports.events import InMemoryEventBroker
 from app.imports.service import ImportService
 from app.schemas.common import HealthResponse
 from app.storage.database import Database
 from app.storage.repositories import (
+    BatchImportStore,
     ConversationStore,
     DocumentMutationStore,
     DocumentStore,
@@ -158,6 +161,14 @@ def create_app(
             job_store=ImportJobStore(database),
             event_broker=InMemoryEventBroker(),
         )
+        app.state.batch_store = BatchImportStore(database)
+        app.state.batch_service = BatchService(
+            store=app.state.batch_store,
+            import_service=app.state.import_service,
+            document_store=document_store,
+            event_broker=InMemoryEventBroker(retention=100),
+        )
+        app.state.batch_service.recover_on_startup()
         runtime_llm_provider = fake_llm_provider or _RuntimeLLMProvider(
             app.state.settings_service,
             runtime_secret_store,
@@ -230,6 +241,7 @@ def create_app(
     app.include_router(embedding_router)
     app.include_router(yuque_router)
     app.include_router(imports_router)
+    app.include_router(import_batches_router)
     app.include_router(repositories_router)
     app.include_router(documents_router)
     app.include_router(sessions_router)
