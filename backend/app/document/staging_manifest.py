@@ -4,10 +4,12 @@ import hashlib
 import json
 import os
 import stat
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
+from uuid import UUID
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.api.errors import DomainError
 
@@ -34,12 +36,113 @@ class ManifestFile(BaseModel):
 
     model_config = {"populate_by_name": True, "extra": "forbid"}
 
+    @field_validator("staged_id")
+    @classmethod
+    def _require_uuid_staged_id(cls, value: str) -> str:
+        try:
+            parsed = UUID(value)
+        except (TypeError, ValueError, AttributeError):
+            raise ValueError("stagedId must be a UUID") from None
+        if str(parsed) != value.lower():
+            raise ValueError("stagedId must be a canonical UUID")
+        return value.lower()
+
 
 class StagingManifest(BaseModel):
     root_id: str = Field(alias="rootId", min_length=1, max_length=255)
     files: list[ManifestFile] = Field(default_factory=list, max_length=_MAX_FILES)
 
     model_config = {"populate_by_name": True, "extra": "forbid"}
+
+
+@dataclass(frozen=True)
+class FileSnapshot:
+    """Bytes and metadata read from one securely opened staged-file descriptor."""
+
+    digest: str
+    size: int
+    identity: tuple[int, int]
+    raw_bytes: bytes | None = None
+
+
+def _path_identity(path: Path) -> tuple[int, int]:
+    try:
+        metadata = os.stat(path, follow_symlinks=False)
+    except OSError:
+        raise _changed("暂存文件不可用") from None
+    if not stat.S_ISREG(metadata.st_mode):
+        raise _changed("暂存文件不可用")
+    return metadata.st_dev, metadata.st_ino
+
+
+def read_file_snapshot(
+    path: Path,
+    *,
+    expected_size: int | None = None,
+    expected_hash: str | None = None,
+    max_bytes: int | None = None,
+    collect_bytes: bool = False,
+) -> FileSnapshot:
+    """Read and verify one regular file without following symlinks.
+
+    The descriptor remains the source of truth for all bytes and metadata.  A
+    no-follow path identity check before and after the read detects an atomic
+    replacement while the descriptor is being consumed.
+    """
+    path = Path(path)
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        raise _changed("暂存文件不可用") from None
+    try:
+        initial = os.fstat(descriptor)
+        if not stat.S_ISREG(initial.st_mode):
+            raise _changed("暂存文件不可用")
+        initial_identity = (initial.st_dev, initial.st_ino)
+        if expected_size is not None and initial.st_size != expected_size:
+            raise _changed("暂存文件已变化")
+        if max_bytes is not None and initial.st_size > max_bytes:
+            raise _changed("暂存文件超过大小限制")
+        if _path_identity(path) != initial_identity:
+            raise _changed("暂存文件已变化")
+
+        digest = hashlib.sha256()
+        chunks: list[bytes] = []
+        size = 0
+        read_limit = (max_bytes + 1) if max_bytes is not None else 64 * 1024
+        while True:
+            amount = min(64 * 1024, read_limit - size) if max_bytes is not None else 64 * 1024
+            if amount <= 0:
+                raise _changed("暂存文件超过大小限制")
+            chunk = os.read(descriptor, amount)
+            if not chunk:
+                break
+            digest.update(chunk)
+            if collect_bytes:
+                chunks.append(chunk)
+            size += len(chunk)
+            if max_bytes is not None and size > max_bytes:
+                raise _changed("暂存文件超过大小限制")
+
+        final = os.fstat(descriptor)
+        final_identity = (final.st_dev, final.st_ino)
+        if (
+            not stat.S_ISREG(final.st_mode)
+            or final_identity != initial_identity
+            or final.st_size != size
+            or (expected_size is not None and size != expected_size)
+            or (expected_hash is not None and digest.hexdigest() != expected_hash)
+            or _path_identity(path) != initial_identity
+        ):
+            raise _changed("暂存文件已变化")
+        value = digest.hexdigest()
+        return FileSnapshot(value, size, initial_identity, b"".join(chunks) if collect_bytes else None)
+    except DomainError:
+        raise
+    except OSError:
+        raise _changed("暂存文件不可用") from None
+    finally:
+        os.close(descriptor)
 
 
 def load_manifest(path: Path, *, max_bytes: int = _MAX_MANIFEST_BYTES) -> StagingManifest:
@@ -87,31 +190,18 @@ def _normalise_relative(value: str) -> str:
 
 def _hash_and_size(path: Path, expected_size: int, expected_hash: str) -> str:
     """Verify a staged regular file and return its digest immediately before use."""
-    try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    except OSError:
-        raise _changed("暂存文件不可用") from None
-    try:
-        initial = os.fstat(descriptor)
-        if not stat.S_ISREG(initial.st_mode) or initial.st_size != expected_size:
-            raise _changed("暂存文件已变化")
-        digest = hashlib.sha256()
-        size = 0
-        while True:
-            chunk = os.read(descriptor, 64 * 1024)
-            if not chunk:
-                break
-            digest.update(chunk)
-            size += len(chunk)
-        final = os.fstat(descriptor)
-        value = digest.hexdigest()
-        if size != expected_size or final.st_size != expected_size or value != expected_hash:
-            raise _changed("暂存文件已变化")
-        return value
-    except OSError:
-        raise _changed("暂存文件不可用") from None
-    finally:
-        os.close(descriptor)
+    return read_file_snapshot(
+        path,
+        expected_size=expected_size,
+        expected_hash=expected_hash,
+        max_bytes=max(expected_size, 1),
+    ).digest
+
+
+def verify_file_snapshot(path: Path, snapshot: FileSnapshot) -> None:
+    """Reject a path that was replaced after a descriptor snapshot was read."""
+    if _path_identity(Path(path)) != snapshot.identity:
+        raise _changed("暂存文件已变化")
 
 
 def validate_manifest(manifest: StagingManifest | dict[str, Any], collection_root: Path) -> list[ManifestFile]:
@@ -126,6 +216,12 @@ def validate_manifest(manifest: StagingManifest | dict[str, Any], collection_roo
     validated: list[ManifestFile] = []
     for entry in parsed.files:
         relative_path = _normalise_relative(entry.relative_path)
+        try:
+            staged_uuid = UUID(entry.staged_id)
+        except (TypeError, ValueError, AttributeError):
+            raise _changed("暂存文件标识无效") from None
+        if str(staged_uuid) != entry.staged_id.lower():
+            raise _changed("暂存文件标识无效")
         if entry.staged_id in seen or relative_path in seen_paths or entry.media_type not in _MEDIA_TYPES:
             raise _changed("暂存清单内容无效")
         max_bytes = _MAX_PDF_BYTES if entry.media_type == "application/pdf" else _MAX_TEXT_BYTES
@@ -134,8 +230,6 @@ def validate_manifest(manifest: StagingManifest | dict[str, Any], collection_roo
         total_bytes += entry.size_bytes
         if total_bytes > _MAX_TOTAL_BYTES:
             raise DomainError("BATCH_LIMIT_EXCEEDED", "目录文件总大小超过限制", 413, False)
-        if "/" in entry.staged_id or "\\" in entry.staged_id or entry.staged_id in {".", ".."}:
-            raise _changed("暂存文件标识无效")
         seen.add(entry.staged_id)
         seen_paths.add(relative_path)
         staged_path = root / "items" / str(entry.staged_id)
@@ -150,16 +244,4 @@ def validate_manifest(manifest: StagingManifest | dict[str, Any], collection_roo
 
 def sha256_file(path: Path) -> str:
     """Hash a regular file without following symlinks."""
-    try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    except OSError:
-        raise _changed("暂存文件不可用") from None
-    try:
-        digest = hashlib.sha256()
-        while chunk := os.read(descriptor, 64 * 1024):
-            digest.update(chunk)
-        return digest.hexdigest()
-    except OSError:
-        raise _changed("暂存文件不可用") from None
-    finally:
-        os.close(descriptor)
+    return read_file_snapshot(path).digest

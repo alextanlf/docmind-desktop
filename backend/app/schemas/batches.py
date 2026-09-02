@@ -31,8 +31,8 @@ class DiscoveryRequest(WireModel):
 
 
 class CachedSourceRef(WireModel):
-    # Staged collection item identifiers are opaque; Electron currently uses UUIDs.
-    cache_id: str = Field(min_length=1, max_length=128)
+    # Electron emits UUID-only staged collection item identifiers.
+    cache_id: UUID
     media_type: str
     byte_size: int = Field(ge=0)
     sha256: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
