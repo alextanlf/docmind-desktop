@@ -212,6 +212,12 @@ export const StagedSourceSchema = z.object({
   mediaType: z.string().max(255),
   sizeBytes: z.number().int().nonnegative(),
 });
+export const StagedCollectionSchema = z.object({
+  collectionId: id,
+  displayName: text(255),
+  itemCount: z.number().int().min(0).max(1000),
+  totalBytes: z.number().int().nonnegative().max(2 * 1024 ** 3),
+});
 export const ChatStreamInputSchema = z.object({
   requestId: id,
   sessionId: id,
@@ -242,12 +248,17 @@ export type Message = z.infer<typeof MessageSchema>;
 export type EventEnvelope = z.infer<typeof EventEnvelopeSchema>;
 export type BackendEventEnvelope = z.infer<typeof BackendEventEnvelopeSchema>;
 export type StagedSource = z.infer<typeof StagedSourceSchema>;
+export type StagedCollection = z.infer<typeof StagedCollectionSchema>;
 export type ChatStreamInput = z.infer<typeof ChatStreamInputSchema>;
 
 export interface StreamSubscription {
   requestId: string;
   cancel(): void;
   detach(): void;
+}
+
+export interface SourcesApi {
+  stageDirectory(): Promise<StagedCollection | null>;
 }
 
 export interface DocMindApi {
@@ -298,6 +309,7 @@ export interface DocMindApi {
   dialogs: {
     chooseSource(kind: "pdf" | "markdown"): Promise<StagedSource | null>;
   };
+  sources: SourcesApi;
   shell: { openExternal(url: string): Promise<void> };
 }
 
@@ -316,4 +328,5 @@ export const schemas = {
   EventEnvelopeSchema,
   BackendEventEnvelopeSchema,
   StagedSourceSchema,
+  StagedCollectionSchema,
 };

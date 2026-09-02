@@ -25,6 +25,7 @@ export const IPC_CHANNELS = {
   chatListMessages: "chat:listMessages",
   chatStream: "chat:stream",
   dialogsChooseSource: "dialogs:chooseSource",
+  sourcesStageDirectory: "sources:stageDirectory",
   shellOpenExternal: "shell:openExternal",
   streamCancel: "stream:cancel",
 } as const;

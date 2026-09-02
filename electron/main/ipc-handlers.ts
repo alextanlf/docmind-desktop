@@ -23,6 +23,7 @@ import {
   SourcePreviewSchema,
   SourceRefSchema,
   StagedSourceSchema,
+  StagedCollectionSchema,
   YuqueStatusSchema,
 } from "../shared/contracts";
 
@@ -48,9 +49,9 @@ export interface IpcDependencies {
   backendManager?: {
     request(path: string, init?: RequestInit): Promise<Response>;
   };
-  stagedFiles?: Pick<StagedFileService, "chooseAndStage">;
-  files?: Pick<StagedFileService, "chooseAndStage">;
-  stagedFileService?: Pick<StagedFileService, "chooseAndStage">;
+  stagedFiles?: Pick<StagedFileService, "chooseAndStage" | "stageDirectory">;
+  files?: Pick<StagedFileService, "chooseAndStage" | "stageDirectory">;
+  stagedFileService?: Pick<StagedFileService, "chooseAndStage" | "stageDirectory">;
   shellOpenExternal?: (url: string) => Promise<void>;
   shell?: { openExternal(url: string): Promise<void> };
   ipcMain?: {
@@ -241,6 +242,22 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
           throw error;
         });
     },
+    [IPC_CHANNELS.sourcesStageDirectory]: (_event, ...args) => {
+      if (args.length !== 0) throw new DocMindClientError("INVALID_REQUEST", "请求参数无效");
+      return stagedFiles
+        .stageDirectory()
+        .then((value) => (value === null ? null : parse(StagedCollectionSchema, value)))
+        .catch((error: unknown) => {
+          if (error instanceof DocMindClientError) throw error;
+          const candidate = error as { code?: unknown; message?: unknown };
+          if (typeof candidate.code === "string")
+            throw new DocMindClientError(
+              candidate.code,
+              typeof candidate.message === "string" ? candidate.message : "目录操作失败",
+            );
+          throw error;
+        });
+    },
     [IPC_CHANNELS.shellOpenExternal]: async (_event, url) => {
       if (typeof url !== "string") throw new DocMindClientError("INVALID_REQUEST", "链接无效");
       let parsed: URL;
@@ -346,6 +363,8 @@ function sanitizeSerialized(value: {
     SOURCE_UNSUPPORTED: "不支持此文件类型",
     SOURCE_TOO_LARGE: "文件超过大小限制",
     SOURCE_STAGE_FAILED: "文件暂存失败",
+    BATCH_LIMIT_EXCEEDED: "目录超过批量导入限制",
+    BATCH_SOURCE_CHANGED: "目录内容在暂存期间发生变化",
   };
   const clean = (text: string) =>
     text
