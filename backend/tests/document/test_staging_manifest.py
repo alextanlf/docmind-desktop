@@ -5,9 +5,11 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from app.api.errors import DomainError
 from app.document.staging_manifest import load_manifest, validate_manifest
+from app.schemas.batches import CachedSourceRef
 
 
 @pytest.fixture
@@ -56,3 +58,8 @@ def test_load_manifest_parses_json(staging_root: Path) -> None:
     loaded = load_manifest(manifest_path)
     assert loaded.root_id == "r1"
     assert loaded.files[0].staged_id == "00000000-0000-0000-0000-000000000001"
+
+
+def test_cached_source_ref_rejects_non_uuid_cache_id() -> None:
+    with pytest.raises(ValidationError):
+        CachedSourceRef(cache_id="not-a-uuid", media_type="text/markdown", byte_size=1, sha256="0" * 64)
