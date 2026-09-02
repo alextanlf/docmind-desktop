@@ -13,6 +13,7 @@ from app.schemas.batches import ConfirmBatchInput, ConfirmBatchItem
 from app.storage.database import Database
 from app.storage.models import (
     BatchImportRecord,
+    BatchItemDecision,
     BatchItemRecord,
     BatchItemState,
     BatchState,
@@ -157,6 +158,80 @@ def test_confirmation_reserves_one_job_and_allocates_event_sequences(database: D
             "00000000-0000-0000-0000-000000000011", "00000000-0000-0000-0000-000000000022"
         )
     assert [store.allocate_event_sequence(batch.id), store.allocate_event_sequence(batch.id)] == [1, 2]
+
+
+@pytest.mark.parametrize(
+    "terminal_state",
+    [BatchItemState.COMPLETED, BatchItemState.SKIPPED, BatchItemState.CANCELLED],
+)
+def test_confirmation_cannot_mutate_terminal_items(
+    database: Database, terminal_state: BatchItemState
+) -> None:
+    store = BatchImportStore(database)
+    batch = store.create_batch(valid_batch())
+    item = valid_item()
+    item.state = terminal_state
+    item.decision = BatchItemDecision.SKIP if terminal_state is BatchItemState.SKIPPED else None
+    store.insert_discovered_items(batch.id, [item])
+
+    with pytest.raises(DomainError) as error:
+        store.set_confirmation(
+            batch.id,
+            ConfirmBatchInput(
+                discovery_version=1,
+                items=[ConfirmBatchItem(item_id=item.id, decision="create")],
+            ),
+        )
+
+    assert error.value.code == "BATCH_STATE_CONFLICT"
+    persisted = store.get_item(item.id)
+    assert persisted is not None
+    assert (persisted.state, persisted.decision) == (terminal_state, item.decision)
+
+
+@pytest.mark.parametrize(
+    "terminal_state",
+    [BatchItemState.COMPLETED, BatchItemState.SKIPPED, BatchItemState.CANCELLED],
+)
+def test_child_reservation_cannot_mutate_terminal_items(
+    database: Database, terminal_state: BatchItemState
+) -> None:
+    store = BatchImportStore(database)
+    batch = store.create_batch(valid_batch())
+    item = valid_item()
+    item.state = terminal_state
+    item.selected = True
+    item.decision = BatchItemDecision.CREATE
+    store.insert_discovered_items(batch.id, [item])
+    job_id = "00000000-0000-0000-0000-000000000021"
+    ImportJobStore(database).create(
+        ImportJobRecord(id=job_id, source_kind="staged_file", source_value="{}")
+    )
+
+    with pytest.raises(DomainError) as error:
+        store.reserve_child_job(item.id, job_id)
+
+    assert error.value.code == "BATCH_STATE_CONFLICT"
+    persisted = store.get_item(item.id)
+    assert persisted is not None
+    assert (persisted.state, persisted.import_job_id) == (terminal_state, None)
+
+
+def test_child_reservation_does_not_create_placeholder_job(database: Database) -> None:
+    store = BatchImportStore(database)
+    batch = store.create_batch(valid_batch())
+    item = valid_item()
+    item.selected = True
+    item.decision = BatchItemDecision.CREATE
+    store.insert_discovered_items(batch.id, [item])
+    missing_job_id = "00000000-0000-0000-0000-000000000099"
+
+    with pytest.raises(DomainError) as error:
+        store.reserve_child_job(item.id, missing_job_id)
+
+    assert error.value.code == "BATCH_ITEM_JOB_NOT_FOUND"
+    assert ImportJobStore(database).get(missing_job_id) is None
+    assert store.get_item(item.id).import_job_id is None  # type: ignore[union-attr]
 
 
 def test_allocate_event_sequence_is_atomic_across_concurrent_sessions(tmp_path: Path) -> None:
