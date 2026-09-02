@@ -13,7 +13,7 @@ function dependencies() {
       cancel: vi.fn(),
       cleanup: vi.fn(),
     },
-    stagedFiles: { chooseAndStage: vi.fn() },
+    stagedFiles: { chooseAndStage: vi.fn(), stageDirectory: vi.fn() },
     shellOpenExternal: vi.fn(),
     ipcMain: {
       handle: vi.fn(),
@@ -135,6 +135,50 @@ describe("IPC handlers", () => {
     ).toMatchObject({
       code: "SOURCE_TOO_LARGE",
       message: "文件超过大小限制",
+    });
+  });
+
+  it("stages a directory only through its fixed zero-argument IPC channel", async () => {
+    const deps = dependencies();
+    deps.stagedFiles.stageDirectory.mockResolvedValue({
+      collectionId: "00000000-0000-0000-0000-000000000021",
+      displayName: "docs",
+      itemCount: 2,
+      totalBytes: 12,
+      selectedPath: "/private/user/docs",
+    });
+    const handlers = registerIpcHandlers(deps);
+
+    await expect(handlers["sources:stageDirectory"]({})).resolves.toEqual({
+      collectionId: "00000000-0000-0000-0000-000000000021",
+      displayName: "docs",
+      itemCount: 2,
+      totalBytes: 12,
+    });
+    expect(JSON.stringify(await handlers["sources:stageDirectory"]({}))).not.toContain("/private");
+    expect(() => handlers["sources:stageDirectory"]({}, "/attacker/path")).toThrow(/请求参数无效/);
+  });
+
+  it("maps directory staging failures without leaking a selected path", () => {
+    expect(
+      serializeIpcError({
+        code: "BATCH_SOURCE_CHANGED",
+        message: "hash failed at /private/user/docs/secret.md",
+      }),
+    ).toEqual({
+      code: "BATCH_SOURCE_CHANGED",
+      message: "目录内容在暂存期间发生变化",
+      retryable: false,
+    });
+    expect(
+      serializeIpcError({
+        code: "BATCH_LIMIT_EXCEEDED",
+        message: "1001 files under /private/user/docs",
+      }),
+    ).toEqual({
+      code: "BATCH_LIMIT_EXCEEDED",
+      message: "目录超过批量导入限制",
+      retryable: false,
     });
   });
 });

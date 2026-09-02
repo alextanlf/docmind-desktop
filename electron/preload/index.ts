@@ -21,6 +21,7 @@ import {
   SettingsViewSchema,
   SourcePreviewSchema,
   SourceRefSchema,
+  StagedCollectionSchema,
   StagedSourceSchema,
   YuqueStatusSchema,
 } from "../shared/contracts";
@@ -187,6 +188,10 @@ const api: DocMindApi = {
         return Promise.reject(new Error("INVALID_REQUEST"));
       return invoke(IPC_CHANNELS.dialogsChooseSource, StagedSourceSchema.nullable(), kind);
     },
+  },
+  sources: {
+    stageDirectory: () =>
+      invoke(IPC_CHANNELS.sourcesStageDirectory, StagedCollectionSchema.nullable()),
   },
   shell: {
     openExternal: (url) => {
