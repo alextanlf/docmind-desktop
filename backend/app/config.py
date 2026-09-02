@@ -36,6 +36,7 @@ class AppSettings(BaseSettings):
     embedding_device: str = "cpu"
     embedding_dimension: int = Field(default=768, gt=0)
     rag_similarity_threshold: float = Field(default=0.65, ge=-1.0, le=1.0)
+    staging_manifest_max_bytes: int = Field(default=2 * 1024 * 1024, gt=0)
 
     model_config = SettingsConfigDict(env_prefix="DOCMIND_", extra="ignore")
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import Field
@@ -21,6 +21,54 @@ BatchStateValue = Literal[
 ]
 BatchItemDecision = Literal["create", "update", "attach_remote", "skip"]
 BatchItemStateValue = Literal["discovered", "queued", "running", "completed", "skipped", "failed", "cancelled"]
+
+
+class DiscoveryRequest(WireModel):
+    batch_id: UUID
+    source_kind: BatchSourceKind
+    source_descriptor: dict[str, Any]
+    repository_id: UUID | None = None
+
+
+class CachedSourceRef(WireModel):
+    # Staged collection item identifiers are opaque; Electron currently uses UUIDs.
+    cache_id: str = Field(min_length=1, max_length=128)
+    media_type: str
+    byte_size: int = Field(ge=0)
+    sha256: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+
+
+class RemoteBinding(WireModel):
+    repository_id: str
+    document_id: str
+    document_url: str | None = None
+
+
+class DiscoveredSource(WireModel):
+    source_identity: str
+    source_revision: str
+    title: str
+    display_path: str
+    media_type: str
+    size_bytes: int = Field(ge=0)
+    cached_source: CachedSourceRef
+    remote_binding: RemoteBinding | None = None
+
+
+class DiscoveryProgress(WireModel):
+    stage: str
+    visited: int = Field(ge=0)
+    candidate_count: int = Field(ge=0)
+    rejected_count: int = Field(ge=0)
+    message: str
+
+
+class DiscoveryResult(WireModel):
+    sources: list[DiscoveredSource]
+    discovery_version: int = Field(ge=1)
+    rejected: list[dict[str, Any]] = Field(default_factory=list)
+    total_count: int = Field(ge=0)
+    rejected_count: int = Field(ge=0)
 
 
 class BatchImportView(WireModel):
