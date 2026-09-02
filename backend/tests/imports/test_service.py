@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
@@ -14,8 +16,11 @@ from app.config import AppSettings, EmbeddingSettings
 from app.core.embedding import FakeEmbeddingProvider
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
+from app.document.sources import SourceInspector
+from app.imports.batch_service import BatchService
 from app.imports.events import InMemoryEventBroker
 from app.imports.service import ImportService
+from app.schemas.batches import ConfirmBatchInput, ConfirmBatchItem
 from app.schemas.imports import (
     DownloadedDocument,
     ImportCreateRequest,
@@ -24,13 +29,22 @@ from app.schemas.imports import (
 )
 from app.schemas.yuque import YuqueDocument, YuqueDocumentContent
 from app.storage.models import (
+    BatchImportRecord,
+    BatchItemRecord,
+    BatchItemState,
+    BatchState,
     DocumentChunkRecord,
     DocumentRecord,
     ImportJobRecord,
     ImportStatus,
     RepositoryRecord,
 )
-from app.storage.repositories import DocumentStore, ImportJobStore, RepositoryStore
+from app.storage.repositories import (
+    BatchImportStore,
+    DocumentStore,
+    ImportJobStore,
+    RepositoryStore,
+)
 
 
 class FakeSourceInspector:
@@ -241,6 +255,225 @@ async def create_job(service: ImportService, source: FakeSourceInspector, decisi
             duplicate_decision=decision,
         )
     )
+
+
+def create_collection_batch(
+    service: ImportService,
+    database,
+    raw_bytes: bytes = b"# Nested guide\n\nUseful text",
+) -> tuple[BatchImportStore, BatchImportRecord, BatchItemRecord, Path]:
+    collection_id = str(uuid4())
+    cache_id = str(uuid4())
+    digest = hashlib.sha256(raw_bytes).hexdigest()
+    collection_root = service.settings.staging_dir / "collections" / collection_id
+    item_path = collection_root / "items" / cache_id
+    item_path.parent.mkdir(parents=True)
+    item_path.write_bytes(raw_bytes)
+    (collection_root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "rootId": "root-1",
+                "files": [
+                    {
+                        "relativePath": "docs/guide.md",
+                        "stagedId": cache_id,
+                        "mediaType": "text/markdown",
+                        "sizeBytes": len(raw_bytes),
+                        "sha256": digest,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = BatchImportStore(database)
+    batch = store.create_batch(
+        BatchImportRecord(
+            id=str(uuid4()),
+            source_kind="staged_directory",
+            source_descriptor_json=json.dumps({"collectionId": collection_id}),
+            repository_id="repository-1",
+            state=BatchState.AWAITING_CONFIRMATION,
+            discovery_version=1,
+            message="ready",
+        )
+    )
+    item = BatchItemRecord(
+        id=str(uuid4()),
+        source_identity="folder:root-1:docs/guide.md",
+        source_revision=digest,
+        title="Nested guide",
+        display_path="docs/guide.md",
+        media_type="text/markdown",
+        size_bytes=len(raw_bytes),
+        cached_source_json=json.dumps(
+            {
+                "cache_id": cache_id,
+                "media_type": "text/markdown",
+                "byte_size": len(raw_bytes),
+                "sha256": digest,
+            }
+        ),
+        allowed_actions_json=json.dumps(["create", "skip"]),
+    )
+    store.insert_discovered_items(batch.id, [item])
+    return store, batch, item, item_path
+
+
+@pytest.mark.asyncio
+async def test_batch_collection_child_parses_nested_cache_and_persists_source_identity(
+    database, tmp_path: Path
+) -> None:
+    service, _, _, _ = make_service(database, tmp_path)
+    service.source_inspector = SourceInspector(service.settings)
+    store, batch, item, _ = create_collection_batch(service, database)
+    coordinator = BatchService(
+        store=store,
+        import_service=service,
+        document_store=service.document_store,
+    )
+    confirmation = ConfirmBatchInput(
+        discovery_version=1,
+        items=[ConfirmBatchItem(item_id=item.id, decision="create")],
+    )
+
+    await coordinator.confirm(batch.id, confirmation)
+    reserved_item = store.get_item(item.id)
+    assert reserved_item is not None
+    job_id = reserved_item.import_job_id or ""
+    service.job_store.transition(
+        job_id,
+        expected={ImportStatus.PENDING},
+        target=ImportStatus.PARSING,
+        progress=0,
+        message="parsing",
+    )
+    service.job_store.fail(
+        job_id,
+        code="TRANSIENT",
+        message="retry",
+        retryable=True,
+    )
+    await service.retry(job_id)
+    retry_metadata = json.loads(service.job_store.get(job_id).source_value)  # type: ignore[union-attr]
+    assert retry_metadata["source_identity"] == item.source_identity
+    assert retry_metadata["source_revision"] == item.source_revision
+    await coordinator.continue_batch(batch.id)
+
+    persisted_item = store.get_item(item.id)
+    assert persisted_item is not None
+    assert persisted_item.state is BatchItemState.COMPLETED
+    job = service.job_store.get(persisted_item.import_job_id or "")
+    assert job is not None
+    metadata = json.loads(job.source_value)
+    assert metadata["source_identity"] == item.source_identity
+    assert metadata["source_revision"] == item.source_revision
+    document = service.document_store.get(job.document_id or "")
+    assert document is not None
+    assert (document.source_identity, document.source_revision) == (
+        item.source_identity,
+        item.source_revision,
+    )
+
+
+@pytest.mark.asyncio
+async def test_tampered_collection_cache_aborts_confirmation_without_jobs(
+    database, tmp_path: Path
+) -> None:
+    service, _, _, _ = make_service(database, tmp_path)
+    service.source_inspector = SourceInspector(service.settings)
+    store, batch, item, item_path = create_collection_batch(service, database)
+    item_path.write_bytes(b"# Tampered\n")
+    coordinator = BatchService(
+        store=store,
+        import_service=service,
+        document_store=service.document_store,
+    )
+
+    with pytest.raises(DomainError) as error:
+        await coordinator.confirm(
+            batch.id,
+            ConfirmBatchInput(
+                discovery_version=1,
+                items=[ConfirmBatchItem(item_id=item.id, decision="create")],
+            ),
+        )
+
+    assert error.value.code == "BATCH_STALE_CONFIRMATION"
+    assert service.job_store.list() == []
+    assert store.get(batch.id).state is BatchState.AWAITING_CONFIRMATION  # type: ignore[union-attr]
+    persisted_item = store.get_item(item.id)
+    assert persisted_item is not None
+    assert (persisted_item.state, persisted_item.decision, persisted_item.selected) == (
+        BatchItemState.DISCOVERED,
+        None,
+        False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_malformed_collection_cache_metadata_is_stable_confirmation_error(
+    database, tmp_path: Path
+) -> None:
+    service, _, _, _ = make_service(database, tmp_path)
+    service.source_inspector = SourceInspector(service.settings)
+    store, batch, item, _ = create_collection_batch(service, database)
+    with database.session() as session:
+        persisted = session.get(BatchItemRecord, item.id)
+        assert persisted is not None
+        persisted.cached_source_json = "not-json"
+
+    coordinator = BatchService(
+        store=store,
+        import_service=service,
+        document_store=service.document_store,
+    )
+    with pytest.raises(DomainError) as error:
+        await coordinator.confirm(
+            batch.id,
+            ConfirmBatchInput(
+                discovery_version=1,
+                items=[ConfirmBatchItem(item_id=item.id, decision="create")],
+            ),
+        )
+
+    assert error.value.code == "BATCH_STALE_CONFIRMATION"
+    assert service.job_store.list() == []
+
+
+@pytest.mark.asyncio
+async def test_collection_cache_is_revalidated_immediately_before_parsing(
+    database, tmp_path: Path
+) -> None:
+    service, _, _, _ = make_service(database, tmp_path)
+    service.source_inspector = SourceInspector(service.settings)
+    store, batch, item, item_path = create_collection_batch(service, database)
+    coordinator = BatchService(
+        store=store,
+        import_service=service,
+        document_store=service.document_store,
+    )
+    await coordinator.confirm(
+        batch.id,
+        ConfirmBatchInput(
+            discovery_version=1,
+            items=[ConfirmBatchItem(item_id=item.id, decision="create")],
+        ),
+    )
+    item_path.write_bytes(b"# Changed after confirmation\n")
+
+    await coordinator.continue_batch(batch.id)
+
+    persisted_item = store.get_item(item.id)
+    assert persisted_item is not None
+    assert (persisted_item.state, persisted_item.error_code) == (
+        BatchItemState.FAILED,
+        "BATCH_SOURCE_CHANGED",
+    )
+    job = service.job_store.get(persisted_item.import_job_id or "")
+    assert job is not None
+    assert (job.state, job.document_id) == (ImportStatus.FAILED, None)
+    assert service.document_store.list_for_repository("repository-1") == []
 
 
 async def create_full_update_job(

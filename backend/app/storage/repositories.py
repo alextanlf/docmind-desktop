@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import base64
+import inspect
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, text, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.orm import Session
 
 from app.api.errors import DomainError
 from app.imports.batch_state_machine import ensure_item_mutable, transition
@@ -36,6 +39,10 @@ from app.storage.models import (
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _stale_confirmation(message: str = "批次来源或目标已变化，请重新确认") -> DomainError:
+    return DomainError("BATCH_STALE_CONFIRMATION", message, 409, False)
 
 
 class RepositoryStore:
@@ -117,6 +124,16 @@ class DocumentStore:
             )
             return session.scalar(statement)
 
+    def find_by_identity(
+        self, repository_id: str, source_identity: str
+    ) -> DocumentRecord | None:
+        with self.database.session() as session:
+            statement = select(DocumentRecord).where(
+                DocumentRecord.repository_id == repository_id,
+                DocumentRecord.source_identity == source_identity,
+            )
+            return session.scalar(statement)
+
     def find_by_hash(self, repository_id: str, content_hash: str) -> DocumentRecord | None:
         with self.database.session() as session:
             statement = select(DocumentRecord).where(
@@ -134,6 +151,8 @@ class DocumentStore:
         raw_path: str,
         markdown_path: str,
         content_hash: str,
+        source_identity: str | None = None,
+        source_revision: str | None = None,
     ) -> DocumentRecord:
         with self.database.session() as session:
             document = session.get(DocumentRecord, document_id)
@@ -144,6 +163,10 @@ class DocumentStore:
             document.raw_path = raw_path
             document.markdown_path = markdown_path
             document.content_hash = content_hash
+            if source_identity is not None:
+                document.source_identity = source_identity
+            if source_revision is not None:
+                document.source_revision = source_revision
             document.source_type = "import"
             document.updated_at = utc_now()
             session.flush()
@@ -311,16 +334,25 @@ class ImportJobStore:
 
     def reserve(self, job: ImportJobRecord, *, fingerprint: str) -> ImportJobRecord:
         with self.database.session() as session:
-            statement = select(ImportJobRecord).where(
-                ImportJobRecord.repository_id == job.repository_id,
-                ImportJobRecord.state.in_(self._ACTIVE_STATES),
-            )
-            for active in session.scalars(statement):
-                if _source_fingerprint(active.source_value) == fingerprint:
-                    raise DomainError("IMPORT_ALREADY_RUNNING", "导入任务正在运行", 409)
-            session.add(job)
-            session.flush()
-            return job
+            return self.reserve_in_session(session, job, fingerprint=fingerprint)
+
+    def reserve_in_session(
+        self,
+        session: Session,
+        job: ImportJobRecord,
+        *,
+        fingerprint: str,
+    ) -> ImportJobRecord:
+        statement = select(ImportJobRecord).where(
+            ImportJobRecord.repository_id == job.repository_id,
+            ImportJobRecord.state.in_(self._ACTIVE_STATES),
+        )
+        for active in session.scalars(statement):
+            if _source_fingerprint(active.source_value) == fingerprint:
+                raise DomainError("IMPORT_ALREADY_RUNNING", "导入任务正在运行", 409)
+        session.add(job)
+        session.flush()
+        return job
 
     def get(self, job_id: str) -> ImportJobRecord | None:
         with self.database.session() as session:
@@ -621,7 +653,7 @@ class BatchImportStore:
             if batch is None:
                 raise DomainError("BATCH_NOT_FOUND", "批次不存在", 404)
             if batch.discovery_version != confirmation.discovery_version:
-                raise DomainError("BATCH_DISCOVERY_CONFLICT", "发现结果已更新，请重新确认", 409)
+                raise _stale_confirmation("发现结果已更新，请重新确认")
             if batch.state != BatchState.AWAITING_CONFIRMATION:
                 raise DomainError("BATCH_STATE_CONFLICT", "批次当前不可确认", 409)
             items = list(
@@ -635,6 +667,7 @@ class BatchImportStore:
             if not decisions.keys() <= item_ids:
                 raise DomainError("BATCH_CONFIRMATION_INVALID", "确认项不属于该批次", 422)
             for item in items:
+                ensure_item_mutable(item.state)
                 decision = decisions.get(item.id)
                 allowed_actions = _decode_allowed_actions(item.allowed_actions_json)
                 if decision is not None and decision.value not in allowed_actions:
@@ -658,30 +691,226 @@ class BatchImportStore:
             session.flush()
             return batch
 
+    def confirm_and_reserve(
+        self,
+        batch_id: str,
+        confirmation: ConfirmBatchInput,
+        *,
+        reserve_child: Callable[..., str],
+        reserve_children: Callable[..., dict[str, str]] | None = None,
+        validate_sources: Callable[..., Any] | None = None,
+    ) -> BatchImportRecord:
+        """Confirm a discovery snapshot and bind all children in one write transaction."""
+        decisions = {
+            str(item.item_id): BatchItemDecision(item.decision)
+            for item in confirmation.items
+        }
+        if len(decisions) != len(confirmation.items):
+            raise DomainError("BATCH_CONFIRMATION_INVALID", "确认项重复", 422)
+        with self.database.session() as session:
+            if self.database.url.startswith("sqlite"):
+                session.execute(text("BEGIN IMMEDIATE"))
+            batch = session.get(BatchImportRecord, batch_id)
+            if batch is None:
+                raise DomainError("BATCH_NOT_FOUND", "批次不存在", 404)
+            if batch.state != BatchState.AWAITING_CONFIRMATION:
+                raise DomainError("BATCH_STATE_CONFLICT", "批次当前不可确认", 409)
+            if batch.discovery_version != confirmation.discovery_version:
+                raise _stale_confirmation("发现结果已更新，请重新确认")
+            repository = (
+                session.get(RepositoryRecord, batch.repository_id)
+                if batch.repository_id is not None
+                else None
+            )
+            if repository is None or not repository.yuque_id:
+                raise _stale_confirmation("目标知识库已变化，请重新确认")
+            items = list(
+                session.scalars(
+                    select(BatchItemRecord)
+                    .where(BatchItemRecord.batch_id == batch_id)
+                    .order_by(BatchItemRecord.ordinal, BatchItemRecord.id)
+                )
+            )
+            item_ids = {item.id for item in items}
+            if not decisions.keys() <= item_ids:
+                raise DomainError("BATCH_CONFIRMATION_INVALID", "确认项不属于该批次", 422)
+
+            targets: dict[str, DocumentRecord | None] = {}
+            selected_items: list[BatchItemRecord] = []
+            for item in items:
+                ensure_item_mutable(item.state)
+                if item.state != BatchItemState.DISCOVERED or item.import_job_id is not None:
+                    raise DomainError("BATCH_STATE_CONFLICT", "批次项当前不可确认", 409)
+                decision = decisions.get(item.id)
+                if decision is None:
+                    continue
+                target = self._current_document_target(
+                    session,
+                    batch.repository_id or "",
+                    item,
+                )
+                current_actions = self._current_actions(item, target)
+                persisted_actions = set(_decode_allowed_actions(item.allowed_actions_json))
+                if (
+                    persisted_actions != current_actions
+                    or item.existing_document_id != (target.id if target is not None else None)
+                    or decision.value not in current_actions
+                    or (
+                        decision == BatchItemDecision.ATTACH_REMOTE
+                        and not _has_remote_binding(item.remote_binding_json)
+                    )
+                ):
+                    raise _stale_confirmation()
+                targets[item.id] = target
+                if decision != BatchItemDecision.SKIP:
+                    selected_items.append(item)
+
+            if validate_sources is not None and selected_items:
+                try:
+                    validation = validate_sources(
+                        selected_items,
+                        batch=batch,
+                        repository_id=batch.repository_id,
+                        session=session,
+                    )
+                except DomainError as error:
+                    if error.code in {"BATCH_SOURCE_CHANGED", "BATCH_STALE_CONFIRMATION"}:
+                        raise _stale_confirmation(error.message) from None
+                    raise
+                if inspect.isawaitable(validation):
+                    raise TypeError("batch source validation must be synchronous inside the transaction")
+
+            for item in items:
+                decision = decisions.get(item.id)
+                item.decision = decision
+                item.selected = decision not in {None, BatchItemDecision.SKIP}
+                if decision is not None:
+                    target = targets[item.id]
+                    item.existing_document_id = target.id if target is not None else None
+
+            try:
+                if reserve_children is not None and selected_items:
+                    job_ids = reserve_children(
+                        selected_items,
+                        batch=batch,
+                        repository_id=batch.repository_id,
+                        session=session,
+                    )
+                else:
+                    job_ids = {
+                        item.id: reserve_child(
+                            item,
+                            batch=batch,
+                            repository_id=batch.repository_id,
+                            session=session,
+                        )
+                        for item in selected_items
+                    }
+                if inspect.isawaitable(job_ids):
+                    raise TypeError("batch reservation must be synchronous inside the transaction")
+            except DomainError as error:
+                if error.code in {"BATCH_SOURCE_CHANGED", "BATCH_STALE_CONFIRMATION"}:
+                    raise _stale_confirmation(error.message) from None
+                raise
+
+            now = utc_now()
+            for item in items:
+                decision = decisions.get(item.id)
+                item.decision = decision
+                item.selected = decision not in {None, BatchItemDecision.SKIP}
+                item.existing_document_id = (
+                    targets[item.id].id
+                    if decision is not None and targets[item.id] is not None
+                    else None
+                )
+                if decision == BatchItemDecision.SKIP:
+                    item.state = BatchItemState.SKIPPED
+                elif decision is not None:
+                    job_id = job_ids.get(item.id)
+                    if not isinstance(job_id, str):
+                        raise RuntimeError("batch reservation did not return a child job id")
+                    session.flush()
+                    if session.get(ImportJobRecord, job_id) is None:
+                        raise RuntimeError("batch reservation did not persist its child job")
+                    item.import_job_id = job_id
+                    item.state = BatchItemState.QUEUED
+                item.updated_at = now
+
+            batch.selected_count = sum(item.selected for item in items)
+            batch.skipped_count = sum(
+                item.state == BatchItemState.SKIPPED for item in items
+            )
+            target_state = (
+                BatchState.RUNNING
+                if batch.selected_count
+                else BatchState.COMPLETED
+            )
+            transition(batch.state, target_state)
+            batch.state = target_state
+            batch.message = (
+                "批次导入中" if target_state == BatchState.RUNNING else "批次无待导入项"
+            )
+            if target_state == BatchState.RUNNING:
+                batch.started_at = now
+            else:
+                batch.completed_at = now
+                batch.progress = 100
+            batch.updated_at = now
+            session.flush()
+            return batch
+
+    @staticmethod
+    def _current_document_target(
+        session: Session,
+        repository_id: str,
+        item: BatchItemRecord,
+    ) -> DocumentRecord | None:
+        by_identity = session.scalar(
+            select(DocumentRecord).where(
+                DocumentRecord.repository_id == repository_id,
+                DocumentRecord.source_identity == item.source_identity,
+            )
+        )
+        if by_identity is not None:
+            return by_identity
+        revision = item.source_revision.removeprefix("sha256:")
+        if len(revision) != 64:
+            return None
+        return session.scalar(
+            select(DocumentRecord).where(
+                DocumentRecord.repository_id == repository_id,
+                DocumentRecord.content_hash == revision,
+            )
+        )
+
+    @staticmethod
+    def _current_actions(
+        item: BatchItemRecord,
+        target: DocumentRecord | None,
+    ) -> set[str]:
+        if target is not None:
+            return {BatchItemDecision.UPDATE.value, BatchItemDecision.SKIP.value}
+        if _has_remote_binding(item.remote_binding_json):
+            return {
+                BatchItemDecision.ATTACH_REMOTE.value,
+                BatchItemDecision.SKIP.value,
+            }
+        return {BatchItemDecision.CREATE.value, BatchItemDecision.SKIP.value}
+
     def reserve_child_job(self, item_id: str, import_job_id: str) -> BatchItemRecord:
         with self.database.session() as session:
             item = session.get(BatchItemRecord, item_id)
             if item is None:
                 raise DomainError("BATCH_ITEM_NOT_FOUND", "批次项不存在", 404)
+            ensure_item_mutable(item.state)
             if item.import_job_id is not None:
                 raise DomainError("BATCH_ITEM_ALREADY_RESERVED", "批次项已绑定子任务", 409)
             if not item.selected or item.decision is None:
                 raise DomainError("BATCH_STATE_CONFLICT", "批次项尚未确认", 409)
-            # The coordinator normally reserves the ImportJobRecord first.  A
-            # lightweight placeholder keeps the batch reservation durable when
-            # an alternate ImportService implementation allocates the id
-            # externally; the real service always replaces this with metadata.
             if session.get(ImportJobRecord, import_job_id) is None:
-                session.add(
-                    ImportJobRecord(
-                        id=import_job_id,
-                        source_kind="batch_child",
-                        source_value="{}",
-                        repository_id=None,
-                        message="等待导入",
-                    )
+                raise DomainError(
+                    "BATCH_ITEM_JOB_NOT_FOUND", "子任务不存在", 409
                 )
-                session.flush()
             item.import_job_id = import_job_id
             item.state = BatchItemState.QUEUED
             item.updated_at = utc_now()
@@ -748,12 +977,50 @@ class BatchImportStore:
             item = session.get(BatchItemRecord, item_id)
             if item is None:
                 raise DomainError("BATCH_ITEM_NOT_FOUND", "批次项不存在", 404)
-            if item.state in {BatchItemState.COMPLETED, BatchItemState.SKIPPED, BatchItemState.CANCELLED}:
+            if item.state not in {
+                BatchItemState.DISCOVERED,
+                BatchItemState.QUEUED,
+                BatchItemState.RUNNING,
+            }:
                 return item
             item.state = BatchItemState.CANCELLED
             item.updated_at = utc_now()
             session.flush()
             return item
+
+    def finish_cancel(self, batch_id: str) -> BatchImportRecord:
+        """Make selected item cancellation terminal before the parent transition."""
+        with self.database.session() as session:
+            batch = session.get(BatchImportRecord, batch_id)
+            if batch is None:
+                raise DomainError("BATCH_NOT_FOUND", "批次不存在", 404)
+            now = utc_now()
+            items = list(
+                session.scalars(
+                    select(BatchItemRecord).where(BatchItemRecord.batch_id == batch_id)
+                )
+            )
+            for item in items:
+                if item.selected and item.state in {
+                    BatchItemState.DISCOVERED,
+                    BatchItemState.QUEUED,
+                    BatchItemState.RUNNING,
+                }:
+                    item.state = BatchItemState.CANCELLED
+                    item.updated_at = now
+            if batch.state not in {
+                BatchState.COMPLETED,
+                BatchState.COMPLETED_WITH_ERRORS,
+                BatchState.FAILED,
+                BatchState.CANCELLED,
+            }:
+                transition(batch.state, BatchState.CANCELLED)
+                batch.state = BatchState.CANCELLED
+                batch.completed_at = now
+            batch.message = "批次已取消"
+            batch.updated_at = now
+            session.flush()
+            return batch
 
     def mark_failed(
         self, item_id: str, *, code: str, message: str, retryable: bool

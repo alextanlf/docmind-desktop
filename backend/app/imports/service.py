@@ -8,12 +8,17 @@ from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from pydantic import ValidationError
+from sqlalchemy.orm import Session
+
 from app.api.errors import DomainError
 from app.config import AppSettings
 from app.core.embedding import EmbeddingProvider
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
+from app.document.sources import CollectionCacheRequest
 from app.imports.events import EventType, ImportEventBroker
+from app.schemas.batches import CachedSourceRef
 from app.schemas.imports import (
     DownloadedDocument,
     ImportCreateRequest,
@@ -111,28 +116,82 @@ class ImportService:
             job = self.job_store.reserve(job_record, fingerprint=request.fingerprint)
         return _job_view(job)
 
-    async def reserve_batch_child(
-        self, item: BatchItemRecord, *, repository_id: str | None = None
+    def reserve_batch_child(
+        self,
+        item: BatchItemRecord,
+        *,
+        batch: Any | None = None,
+        repository_id: str | None = None,
+        session: Session | None = None,
+        _validated_collection_id: str | None = None,
     ) -> str:
-        """Atomically reserve the one import job owned by a confirmed batch item.
+        if batch is None or session is None:
+            raise DomainError("BATCH_STATE_CONFLICT", "批次子任务必须在确认事务中保留", 409)
+        collection_id = _validated_collection_id or self._collection_id(batch)
+        if _validated_collection_id is None:
+            requests = self._collection_cache_requests([item])
+            self.source_inspector.load_collection_caches(collection_id, requests)
+        return self._reserve_verified_batch_child(
+            item,
+            collection_id=collection_id,
+            repository_id=repository_id,
+            session=session,
+        )
 
-        Batch discovery has already verified the content snapshot.  The child
-        therefore carries the opaque staged identifier and verified fingerprint
-        in the same durable source metadata used by ordinary imports.
-        """
+    def reserve_batch_children(
+        self,
+        items: list[BatchItemRecord],
+        *,
+        batch: Any,
+        repository_id: str | None,
+        session: Session,
+    ) -> dict[str, str]:
+        collection_id = self._collection_id(batch)
+        requests = self._collection_cache_requests(items)
+        self.source_inspector.load_collection_caches(collection_id, requests)
+        return {
+            item.id: self.reserve_batch_child(
+                item,
+                batch=batch,
+                repository_id=repository_id,
+                session=session,
+                _validated_collection_id=collection_id,
+            )
+            for item in items
+        }
+
+    def validate_batch_sources(
+        self,
+        items: list[BatchItemRecord],
+        *,
+        batch: Any,
+        repository_id: str | None = None,
+        session: Session | None = None,
+    ) -> None:
+        """Revalidate immutable collection descriptors before confirmation writes."""
+        del repository_id, session
+        if not items:
+            return
+        collection_id = self._collection_id(batch)
+        requests = self._collection_cache_requests(items)
+        self.source_inspector.load_collection_caches(collection_id, requests)
+
+    def _reserve_verified_batch_child(
+        self,
+        item: BatchItemRecord,
+        *,
+        collection_id: str,
+        repository_id: str | None,
+        session: Session,
+    ) -> str:
         if item.import_job_id is not None:
             raise DomainError("BATCH_ITEM_ALREADY_RESERVED", "批次项已绑定子任务", 409)
-        if not item.selected or item.decision is None:
+        if item.decision is None:
             raise DomainError("BATCH_STATE_CONFLICT", "批次项尚未确认", 409)
-        try:
-            cached = json.loads(item.cached_source_json)
-        except (TypeError, json.JSONDecodeError):
-            cached = {}
-        if not isinstance(cached, dict) or not isinstance(cached.get("cache_id"), str):
-            raise DomainError("BATCH_SOURCE_CHANGED", "暂存文件引用无效", 409)
+        cached_ref = self._cached_ref(item)
         fingerprint = item.source_revision.removeprefix("sha256:")
         if len(fingerprint) != 64:
-            fingerprint = str(cached.get("sha256", ""))
+            fingerprint = cached_ref.sha256
         if len(fingerprint) != 64:
             raise DomainError("BATCH_SOURCE_CHANGED", "暂存文件指纹无效", 409)
         duplicate_decision = {
@@ -150,18 +209,73 @@ class ImportService:
             message="等待导入",
         )
         job.source_value = _encode_source_metadata(
-            value=cached["cache_id"],
+            value=str(cached_ref.cache_id),
             fingerprint=fingerprint,
             duplicate_decision=duplicate_decision,
             job_id=job.id,
+            source_identity=item.source_identity,
+            source_revision=item.source_revision,
+            collection_cache={
+                "collection_id": collection_id,
+                "cache_ref": cached_ref.model_dump(mode="json"),
+                "display_path": item.display_path,
+                "title": item.title,
+            },
         )
-        self.job_store.reserve(job, fingerprint=fingerprint)
+        self.job_store.reserve_in_session(session, job, fingerprint=fingerprint)
         if item.decision == BatchItemDecision.ATTACH_REMOTE:
-            self.job_store.merge_source_metadata(
-                job.id,
-                {"attach_remote": True, "remote_binding": _decode_json_object(item.remote_binding_json)},
+            metadata = json.loads(job.source_value)
+            metadata.update(
+                {
+                    "attach_remote": True,
+                    "remote_binding": _decode_json_object(item.remote_binding_json),
+                }
+            )
+            job.source_value = json.dumps(
+                metadata, ensure_ascii=False, separators=(",", ":")
             )
         return job.id
+
+    @staticmethod
+    def _collection_id(batch: Any) -> str:
+        try:
+            descriptor = json.loads(batch.source_descriptor_json)
+        except (TypeError, json.JSONDecodeError):
+            descriptor = None
+        collection_id = (
+            descriptor.get("collectionId") if isinstance(descriptor, dict) else None
+        )
+        if not isinstance(collection_id, str):
+            raise DomainError("BATCH_SOURCE_CHANGED", "暂存集合标识无效", 409, False)
+        return collection_id
+
+    @staticmethod
+    def _collection_cache_requests(
+        items: list[BatchItemRecord],
+    ) -> list[CollectionCacheRequest]:
+        requests: list[CollectionCacheRequest] = []
+        for item in items:
+            cached = ImportService._cached_ref(item)
+            requests.append(
+                CollectionCacheRequest(
+                    key=item.id,
+                    cache_ref=cached,
+                    source_identity=item.source_identity,
+                    source_revision=item.source_revision,
+                    display_path=item.display_path,
+                    title=item.title,
+                )
+            )
+        return requests
+
+    @staticmethod
+    def _cached_ref(item: BatchItemRecord) -> CachedSourceRef:
+        try:
+            return CachedSourceRef.model_validate(json.loads(item.cached_source_json))
+        except (TypeError, json.JSONDecodeError, ValidationError):
+            raise DomainError(
+                "BATCH_SOURCE_CHANGED", "暂存文件引用无效", 409, False
+            ) from None
 
 
     def get(self, job_id: str) -> ImportJobView:
@@ -282,7 +396,20 @@ class ImportService:
         metadata = _source_metadata(job)
         ref = SourceRef(kind=job.source_kind, value=metadata["value"])
         try:
-            downloaded: DownloadedDocument = await self.source_inspector.load(ref)
+            collection_cache = metadata["collection_cache"]
+            if collection_cache:
+                downloaded = self.source_inspector.load_collection_cache(
+                    collection_id=collection_cache["collection_id"],
+                    cache_ref=CachedSourceRef.model_validate(
+                        collection_cache["cache_ref"]
+                    ),
+                    source_identity=metadata["source_identity"],
+                    source_revision=metadata["source_revision"],
+                    display_path=collection_cache["display_path"],
+                    title=collection_cache["title"],
+                )
+            else:
+                downloaded = await self.source_inspector.load(ref)
         except DomainError as error:
             await self._fail(job_id, error.code, error.message, error.retryable)
             return False
@@ -633,6 +760,8 @@ class ImportService:
                     markdown_path=str(markdown_path),
                     source_type="import",
                     content_hash=metadata["fingerprint"],
+                    source_identity=metadata["source_identity"] or None,
+                    source_revision=metadata["source_revision"] or None,
                 )
             )
         else:
@@ -643,6 +772,8 @@ class ImportService:
                 raw_path=str(raw_path),
                 markdown_path=str(markdown_path),
                 content_hash=metadata["fingerprint"],
+                source_identity=metadata["source_identity"] or None,
+                source_revision=metadata["source_revision"] or None,
             )
 
     def _parsed_from_persisted(self, document: DocumentRecord) -> ParsedDocument:
@@ -825,6 +956,9 @@ def _encode_source_metadata(
     stale_vector_ids: list[str] | None = None,
     pending_created_vector_ids: list[str] | None = None,
     coherence_pending: bool = False,
+    source_identity: str = "",
+    source_revision: str = "",
+    collection_cache: dict[str, Any] | None = None,
 ) -> str:
     return json.dumps(
         {
@@ -837,6 +971,9 @@ def _encode_source_metadata(
             "stale_vector_ids": stale_vector_ids or [],
             "pending_created_vector_ids": pending_created_vector_ids or [],
             "coherence_pending": coherence_pending,
+            "source_identity": source_identity,
+            "source_revision": source_revision,
+            "collection_cache": collection_cache,
         },
         ensure_ascii=False,
         separators=(",", ":"),
@@ -875,6 +1012,9 @@ def _source_metadata(job: ImportJobRecord) -> dict[str, Any]:
         ):
             pending_created_vector_ids = []
         coherence_pending = metadata.get("coherence_pending") is True
+        source_identity = metadata.get("source_identity")
+        source_revision = metadata.get("source_revision")
+        collection_cache = metadata.get("collection_cache")
         return {
             "value": metadata["value"],
             "fingerprint": (
@@ -892,6 +1032,9 @@ def _source_metadata(job: ImportJobRecord) -> dict[str, Any]:
             "stale_vector_ids": stale_vector_ids,
             "pending_created_vector_ids": pending_created_vector_ids,
             "coherence_pending": coherence_pending,
+            "source_identity": source_identity if isinstance(source_identity, str) else "",
+            "source_revision": source_revision if isinstance(source_revision, str) else "",
+            "collection_cache": collection_cache if isinstance(collection_cache, dict) else None,
         }
     return {
         "value": job.source_value,
@@ -902,6 +1045,9 @@ def _source_metadata(job: ImportJobRecord) -> dict[str, Any]:
         "stale_vector_ids": [],
         "pending_created_vector_ids": [],
         "coherence_pending": False,
+        "source_identity": "",
+        "source_revision": "",
+        "collection_cache": None,
     }
 
 

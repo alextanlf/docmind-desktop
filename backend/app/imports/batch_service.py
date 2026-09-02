@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 from contextlib import suppress
 from typing import Any
 
@@ -33,7 +32,7 @@ class BatchService:
         self.event_broker = event_broker
         self._semaphores: dict[str, asyncio.Semaphore] = {}
         self._batch_locks: dict[str, asyncio.Lock] = {}
-        self._batch_tasks: dict[str, set[asyncio.Task[None]]] = {}
+        self._batch_tasks: dict[str, dict[str, asyncio.Task[None]]] = {}
 
     def get(self, batch_id: str):
         batch = self.store.get(batch_id)
@@ -42,27 +41,17 @@ class BatchService:
         return batch
 
     async def confirm(self, batch_id: str, confirmation) -> Any:  # type: ignore[no-untyped-def]
-        lock = self._batch_locks.setdefault(batch_id, asyncio.Lock())
-        async with lock:
-            batch = self.get(batch_id)
-            # set_confirmation performs the row-level state/version/decision
-            # transaction.  No child is reserved before it succeeds.
-            # Validate the discovered snapshot before persisting decisions so
-            # a stale confirmation leaves the batch awaiting confirmation.
-            self._validate_snapshot(self.store.list_item_records(batch_id))
-            batch = self.store.set_confirmation(batch_id, confirmation)
-            items = self.store.list_item_records(batch_id)
-            for item in items:
-                if item.selected and item.state == BatchItemState.DISCOVERED and item.import_job_id is None:
-                    child_id = await self._reserve_child(item, batch.repository_id)
-                    self.store.reserve_child_job(item.id, child_id)
-            if batch.selected_count == 0:
-                batch = self.store.set_state(batch_id, BatchState.COMPLETED, message="批次无待导入项")
-            else:
-                batch = self.store.set_state(batch_id, BatchState.RUNNING, message="批次导入中")
-            event_type: EventType = "done" if batch.state == BatchState.COMPLETED else "progress"
-            await self._publish(batch_id, event_type, self._progress_payload(batch))
-            return batch
+        batch = await asyncio.to_thread(
+            self.store.confirm_and_reserve,
+            batch_id,
+            confirmation,
+            reserve_child=self.import_service.reserve_batch_child,
+            reserve_children=getattr(self.import_service, "reserve_batch_children", None),
+            validate_sources=getattr(self.import_service, "validate_batch_sources", None),
+        )
+        event_type: EventType = "done" if batch.state == BatchState.COMPLETED else "progress"
+        await self._publish(batch_id, event_type, self._progress_payload(batch))
+        return batch
 
     async def continue_batch(self, batch_id: str) -> Any:
         lock = self._batch_locks.setdefault(batch_id, asyncio.Lock())
@@ -77,33 +66,37 @@ class BatchService:
             elif batch.state == BatchState.COMPLETED_WITH_ERRORS:
                 batch = self.store.set_state(batch_id, BatchState.RUNNING, message="批次重试中")
 
-            # A retry or a recovered batch may have selected items not yet
-            # reserved.  Reservation is idempotent at the item row boundary.
+            tasks = self._batch_tasks.setdefault(batch_id, {})
+            self._semaphores.setdefault(batch_id, asyncio.Semaphore(MAX_BATCH_CONCURRENCY))
             for item in self.store.list_item_records(batch_id):
-                if item.selected and item.state in {BatchItemState.DISCOVERED, BatchItemState.QUEUED} and item.import_job_id is None:
-                    child_id = await self._reserve_child(item, batch.repository_id)
-                    self.store.reserve_child_job(item.id, child_id)
-
-            tasks = self._batch_tasks.setdefault(batch_id, set())
-            if not tasks:
-                self._semaphores.setdefault(batch_id, asyncio.Semaphore(MAX_BATCH_CONCURRENCY))
-                for item in self.store.list_item_records(batch_id):
-                    if item.state == BatchItemState.QUEUED and item.import_job_id:
-                        task = asyncio.create_task(self._run_item(batch_id, item.id))
-                        tasks.add(task)
-                        task.add_done_callback(tasks.discard)
-        if tasks:
-            await asyncio.gather(*list(tasks), return_exceptions=True)
+                if (
+                    item.state == BatchItemState.QUEUED
+                    and item.import_job_id
+                    and (item.id not in tasks or tasks[item.id].done())
+                ):
+                    task = asyncio.create_task(self._run_item(batch_id, item.id))
+                    tasks[item.id] = task
+                    task.add_done_callback(
+                        lambda completed, item_id=item.id: self._discard_task(
+                            batch_id, item_id, completed
+                        )
+                    )
+            task_snapshot = list(tasks.values())
+        if task_snapshot:
+            await asyncio.gather(*task_snapshot, return_exceptions=True)
         return await self._aggregate(batch_id)
 
     async def cancel_batch(self, batch_id: str) -> Any:
         lock = self._batch_locks.setdefault(batch_id, asyncio.Lock())
         async with lock:
             batch = self.store.request_cancel(batch_id)
-            tasks = list(self._batch_tasks.get(batch_id, set()))
+            tasks = list(self._batch_tasks.get(batch_id, {}).values())
             # Unsheduled children must never start after cancellation.
             for item in self.store.list_item_records(batch_id):
-                if item.state == BatchItemState.QUEUED:
+                if item.selected and item.state in {
+                    BatchItemState.DISCOVERED,
+                    BatchItemState.QUEUED,
+                }:
                     self.store.mark_item_cancelled(item.id)
                 elif item.state == BatchItemState.RUNNING and item.import_job_id:
                     with suppress(Exception):
@@ -113,12 +106,7 @@ class BatchService:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         async with lock:
-            for item in self.store.list_item_records(batch_id):
-                if item.state in {BatchItemState.QUEUED, BatchItemState.RUNNING}:
-                    self.store.mark_item_cancelled(item.id)
-            batch = self.store.get(batch_id) or batch
-            if batch.state not in {BatchState.COMPLETED, BatchState.COMPLETED_WITH_ERRORS, BatchState.FAILED, BatchState.CANCELLED}:
-                batch = self.store.set_state(batch_id, BatchState.CANCELLED, message="批次已取消")
+            batch = self.store.finish_cancel(batch_id)
             await self._publish(batch_id, "done", self._progress_payload(batch))
             return batch
 
@@ -126,6 +114,13 @@ class BatchService:
         lock = self._batch_locks.setdefault(batch_id, asyncio.Lock())
         async with lock:
             batch = self.get(batch_id)
+            if batch.state in {
+                BatchState.COMPLETED,
+                BatchState.COMPLETED_WITH_ERRORS,
+                BatchState.FAILED,
+                BatchState.CANCELLED,
+            }:
+                raise DomainError("BATCH_STATE_CONFLICT", "批次当前不可重试", 409)
             item = self.store.get_item(item_id)
             if item is None or item.batch_id != batch_id:
                 raise DomainError("BATCH_ITEM_NOT_FOUND", "批次项不存在", 404)
@@ -140,15 +135,15 @@ class BatchService:
     def recover_on_startup(self) -> int:
         return self.store.recover_on_startup()
 
-    async def _reserve_child(self, item: Any, repository_id: str | None) -> str:
-        reserve = self.import_service.reserve_batch_child
-        try:
-            signature = inspect.signature(reserve)
-            if "repository_id" in signature.parameters:
-                return await reserve(item, repository_id=repository_id)
-        except (TypeError, ValueError):
-            pass
-        return await reserve(item)
+    def _discard_task(
+        self,
+        batch_id: str,
+        item_id: str,
+        completed: asyncio.Task[None],
+    ) -> None:
+        tasks = self._batch_tasks.get(batch_id)
+        if tasks is not None and tasks.get(item_id) is completed:
+            tasks.pop(item_id, None)
 
     async def _run_item(self, batch_id: str, item_id: str) -> None:
         semaphore = self._semaphores.setdefault(batch_id, asyncio.Semaphore(MAX_BATCH_CONCURRENCY))
@@ -208,25 +203,6 @@ class BatchService:
         del item_id
         batch = self.get(batch_id)
         await self._publish(batch_id, "progress", self._progress_payload(batch))
-
-    def _validate_snapshot(self, items: list[Any]) -> None:
-        """Reject confirmations whose discovered document snapshot is stale."""
-        if self.document_store is None:
-            return
-        for item in items:
-            document = None
-            if item.existing_document_id:
-                document = self.document_store.get(item.existing_document_id)
-                if document is None:
-                    raise DomainError("BATCH_DISCOVERY_CONFLICT", "文档已被删除，请重新发现", 409)
-            elif hasattr(self.document_store, "find_by_source"):
-                repository_id = self.get(item.batch_id).repository_id
-                document = self.document_store.find_by_source(repository_id or "", item.source_identity)
-            if document is not None:
-                current_hash = getattr(document, "content_hash", None) or getattr(document, "source_revision", None)
-                expected_hash = item.source_revision.removeprefix("sha256:")
-                if current_hash and expected_hash and current_hash.removeprefix("sha256:") != expected_hash:
-                    raise DomainError("BATCH_DISCOVERY_CONFLICT", "文档内容已变更，请重新发现", 409)
 
     async def _publish(self, batch_id: str, event_type: EventType, payload: dict[str, Any]) -> None:
         if self.event_broker is None:
