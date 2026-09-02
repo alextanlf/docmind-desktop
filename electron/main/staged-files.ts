@@ -14,6 +14,8 @@ import { basename, extname, isAbsolute, join, relative, sep } from "node:path";
 
 const MAX_DIRECTORY_FILES = 1_000;
 const MAX_DIRECTORY_BYTES = 2 * 1024 ** 3;
+const MAX_MARKDOWN_HTML_BYTES = 20 * 1024 * 1024;
+const MAX_PDF_BYTES = 100 * 1024 * 1024;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
@@ -56,6 +58,8 @@ type DirectoryStagingOptions = {
   dataDir: string;
   maxFileCount?: number;
   maxTotalBytes?: number;
+  maxPdfBytes?: number;
+  maxMarkdownBytes?: number;
 };
 
 const registryLocks = new Map<string, Promise<void>>();
@@ -122,6 +126,8 @@ export class StagedFileService {
       dataDir: this.opts.dataDir,
       maxFileCount: this.opts.maxDirectoryFiles,
       maxTotalBytes: this.opts.maxDirectoryBytes,
+      maxPdfBytes: this.opts.maxPdfBytes,
+      maxMarkdownBytes: this.opts.maxMarkdownBytes,
     });
   }
   async stageSelected(source: string, kind: "pdf" | "markdown"): Promise<StagedSource> {
@@ -219,6 +225,8 @@ export async function stageDirectoryForTest(options: {
   dataDir: string;
   maxFileCount?: number;
   maxTotalBytes?: number;
+  maxPdfBytes?: number;
+  maxMarkdownBytes?: number;
 }): Promise<StagedCollection> {
   return stageSelectedDirectory(options.selectedPath, options);
 }
@@ -248,16 +256,30 @@ async function stageSelectedDirectory(
 
   const maxFileCount = options.maxFileCount ?? MAX_DIRECTORY_FILES;
   const maxTotalBytes = options.maxTotalBytes ?? MAX_DIRECTORY_BYTES;
+  const maxPdfBytes = options.maxPdfBytes ?? MAX_PDF_BYTES;
+  const maxMarkdownBytes = options.maxMarkdownBytes ?? MAX_MARKDOWN_HTML_BYTES;
   if (
     !Number.isInteger(maxFileCount) ||
     maxFileCount < 0 ||
     maxFileCount > MAX_DIRECTORY_FILES ||
     !Number.isSafeInteger(maxTotalBytes) ||
     maxTotalBytes < 0 ||
-    maxTotalBytes > MAX_DIRECTORY_BYTES
+    maxTotalBytes > MAX_DIRECTORY_BYTES ||
+    !Number.isSafeInteger(maxPdfBytes) ||
+    maxPdfBytes < 0 ||
+    maxPdfBytes > MAX_PDF_BYTES ||
+    !Number.isSafeInteger(maxMarkdownBytes) ||
+    maxMarkdownBytes < 0 ||
+    maxMarkdownBytes > MAX_MARKDOWN_HTML_BYTES
   )
     throw batchLimitExceeded();
-  const candidates = await collectCandidates(canonicalRoot, maxFileCount, maxTotalBytes);
+  const candidates = await collectCandidates(
+    canonicalRoot,
+    maxFileCount,
+    maxTotalBytes,
+    maxPdfBytes,
+    maxMarkdownBytes,
+  );
   const totalBytes = candidates.reduce((total, candidate) => total + candidate.sizeBytes, 0);
   const rootId = await getOrCreateRootId(options.dataDir, canonicalRoot).catch((error) => {
     if (error instanceof StagedFileError) throw error;
@@ -304,6 +326,8 @@ async function collectCandidates(
   canonicalRoot: string,
   maxFileCount: number,
   maxTotalBytes: number,
+  maxPdfBytes: number,
+  maxMarkdownBytes: number,
 ): Promise<DirectoryCandidate[]> {
   const candidates: DirectoryCandidate[] = [];
   let totalBytes = 0;
@@ -331,6 +355,8 @@ async function collectCandidates(
       const relativePath = safeRelativePath(canonicalRoot, sourcePath);
       const sizeBytes = Number(stat.size);
       if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) throw batchLimitExceeded();
+      const maxFileBytes = mediaType === "application/pdf" ? maxPdfBytes : maxMarkdownBytes;
+      if (sizeBytes > maxFileBytes) throw batchLimitExceeded();
       totalBytes += sizeBytes;
       if (candidates.length + 1 > maxFileCount || totalBytes > maxTotalBytes)
         throw batchLimitExceeded();
