@@ -9,7 +9,7 @@ from app.storage.models import DocumentChunkRecord, DocumentRecord, RepositoryRe
 from app.storage.repositories import DocumentStore
 
 
-def test_upgrade_creates_all_phase_one_tables() -> None:
+def test_upgrade_creates_all_phase_one_and_two_a_tables() -> None:
     database = Database("sqlite+pysqlite:///:memory:")
     database.upgrade()
 
@@ -27,6 +27,8 @@ def test_upgrade_creates_all_phase_one_tables() -> None:
         "settings",
         "vector_cleanups",
         "document_mutations",
+        "batch_imports",
+        "batch_items",
     }
     database.engine.dispose()
 
@@ -46,7 +48,8 @@ def test_upgrade_creates_exact_phase_one_columns(database: Database) -> None:
     }
     assert {column["name"] for column in inspector.get_columns("documents")} == {
         "id", "repository_id", "yuque_id", "title", "source_url", "raw_path", "markdown_path",
-        "source_type", "content_hash", "chunk_count", "status", "yuque_url", "created_at", "updated_at",
+        "source_type", "content_hash", "chunk_count", "status", "yuque_url", "source_identity",
+        "source_revision", "created_at", "updated_at",
     }
     assert {column["name"] for column in inspector.get_columns("document_chunks")} == {
         "id", "document_id", "repository_id", "chunk_index", "text", "section_path", "page_number",
@@ -155,6 +158,7 @@ def test_migration_declares_defaults_indexes_and_foreign_key_actions(database: D
         "documents": {
             "ix_documents_repository_id": ["repository_id"],
             "ix_documents_source_url": ["source_url"],
+            "uq_documents_repository_source_identity": ["repository_id", "source_identity"],
         },
         "document_chunks": {
             "ix_document_chunks_document_id": ["document_id"],

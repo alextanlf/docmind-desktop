@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -10,8 +11,14 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.api.errors import DomainError
 from app.imports.state_machine import ensure_transition_allowed
+from app.schemas.batches import BatchItemPage, BatchItemView, ConfirmBatchInput
 from app.storage.database import Database
 from app.storage.models import (
+    BatchImportRecord,
+    BatchItemDecision,
+    BatchItemRecord,
+    BatchItemState,
+    BatchState,
     ChatRequestRecord,
     DocumentChunkRecord,
     DocumentMutationRecord,
@@ -254,7 +261,8 @@ class DocumentStore:
                 session.add(record)
             for field in (
                 "repository_id", "yuque_id", "title", "source_url", "raw_path", "markdown_path",
-                "source_type", "content_hash", "chunk_count", "status", "yuque_url",
+                "source_type", "content_hash", "chunk_count", "status", "yuque_url", "source_identity",
+                "source_revision",
             ):
                 if field in document:
                     setattr(record, field, document[field])
@@ -510,6 +518,284 @@ class ImportJobStore:
                 job.completed_at = now
                 job.updated_at = now
             return len(jobs)
+
+
+class BatchImportStore:
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def create_batch(self, batch: BatchImportRecord) -> BatchImportRecord:
+        batch.source_descriptor_json = _source_descriptor_json(batch.source_descriptor_json)
+        with self.database.session() as session:
+            session.add(batch)
+            session.flush()
+            return batch
+
+    def get(self, batch_id: str) -> BatchImportRecord | None:
+        with self.database.session() as session:
+            return session.get(BatchImportRecord, batch_id)
+
+    def list_items(
+        self,
+        batch_id: str,
+        cursor: str | None = None,
+        state: BatchItemState | str | None = None,
+        selected: bool | None = None,
+        *,
+        limit: int = 100,
+    ) -> BatchItemPage:
+        if not 1 <= limit <= 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        after = _decode_batch_item_cursor(cursor) if cursor is not None else None
+        with self.database.session() as session:
+            conditions = [BatchItemRecord.batch_id == batch_id]
+            if state is not None:
+                conditions.append(BatchItemRecord.state == BatchItemState(state))
+            if selected is not None:
+                conditions.append(BatchItemRecord.selected == selected)
+            if after is not None:
+                ordinal, item_id = after
+                conditions.append(
+                    or_(
+                        BatchItemRecord.ordinal > ordinal,
+                        and_(BatchItemRecord.ordinal == ordinal, BatchItemRecord.id > item_id),
+                    )
+                )
+            statement = (
+                select(BatchItemRecord)
+                .where(*conditions)
+                .order_by(BatchItemRecord.ordinal, BatchItemRecord.id)
+                .limit(limit + 1)
+            )
+            records = list(session.scalars(statement))
+            has_more = len(records) > limit
+            page_records = records[:limit]
+            next_cursor = _encode_batch_item_cursor(page_records[-1]) if has_more else None
+            return BatchItemPage(
+                items=[_batch_item_view(record) for record in page_records], next_cursor=next_cursor
+            )
+
+    def insert_discovered_items(
+        self, batch_id: str, items: list[BatchItemRecord]
+    ) -> list[BatchItemRecord]:
+        with self.database.session() as session:
+            batch = session.get(BatchImportRecord, batch_id)
+            if batch is None:
+                raise DomainError("BATCH_NOT_FOUND", "批次不存在", 404)
+            max_ordinal = session.scalar(
+                select(func.max(BatchItemRecord.ordinal)).where(BatchItemRecord.batch_id == batch_id)
+            )
+            next_ordinal = (int(max_ordinal) if max_ordinal is not None else -1) + 1
+            for offset, item in enumerate(items):
+                item.batch_id = batch_id
+                item.ordinal = next_ordinal + offset
+                item.cached_source_json = _cached_source_json(item.cached_source_json)
+                item.allowed_actions_json = _allowed_actions_json(item.allowed_actions_json)
+                session.add(item)
+            batch.total_count += len(items)
+            batch.updated_at = utc_now()
+            session.flush()
+            return items
+
+    def set_confirmation(self, batch_id: str, confirmation: ConfirmBatchInput) -> BatchImportRecord:
+        decisions = {str(item.item_id): BatchItemDecision(item.decision) for item in confirmation.items}
+        if len(decisions) != len(confirmation.items):
+            raise DomainError("BATCH_CONFIRMATION_INVALID", "确认项重复", 422)
+        with self.database.session() as session:
+            batch = session.get(BatchImportRecord, batch_id)
+            if batch is None:
+                raise DomainError("BATCH_NOT_FOUND", "批次不存在", 404)
+            if batch.discovery_version != confirmation.discovery_version:
+                raise DomainError("BATCH_DISCOVERY_CONFLICT", "发现结果已更新，请重新确认", 409)
+            if batch.state != BatchState.AWAITING_CONFIRMATION:
+                raise DomainError("BATCH_STATE_CONFLICT", "批次当前不可确认", 409)
+            items = list(
+                session.scalars(
+                    select(BatchItemRecord)
+                    .where(BatchItemRecord.batch_id == batch_id)
+                    .order_by(BatchItemRecord.ordinal)
+                )
+            )
+            item_ids = {item.id for item in items}
+            if not decisions.keys() <= item_ids:
+                raise DomainError("BATCH_CONFIRMATION_INVALID", "确认项不属于该批次", 422)
+            for item in items:
+                decision = decisions.get(item.id)
+                allowed_actions = _decode_allowed_actions(item.allowed_actions_json)
+                if decision is not None and decision.value not in allowed_actions:
+                    raise DomainError("BATCH_CONFIRMATION_INVALID", "批次项不允许该确认操作", 422)
+                if decision == BatchItemDecision.ATTACH_REMOTE and not _has_remote_binding(
+                    item.remote_binding_json
+                ):
+                    raise DomainError("BATCH_CONFIRMATION_INVALID", "attach_remote 需要远端绑定", 422)
+                item.decision = decision
+                item.selected = decision not in {None, BatchItemDecision.SKIP}
+                item.state = BatchItemState.SKIPPED if decision == BatchItemDecision.SKIP else BatchItemState.DISCOVERED
+                item.updated_at = utc_now()
+            batch.selected_count = sum(item.selected for item in items)
+            batch.skipped_count = sum(item.state == BatchItemState.SKIPPED for item in items)
+            batch.updated_at = utc_now()
+            session.flush()
+            return batch
+
+    def reserve_child_job(self, item_id: str, import_job_id: str) -> BatchItemRecord:
+        with self.database.session() as session:
+            item = session.get(BatchItemRecord, item_id)
+            if item is None:
+                raise DomainError("BATCH_ITEM_NOT_FOUND", "批次项不存在", 404)
+            if item.import_job_id is not None:
+                raise DomainError("BATCH_ITEM_ALREADY_RESERVED", "批次项已绑定子任务", 409)
+            if not item.selected or item.decision is None:
+                raise DomainError("BATCH_STATE_CONFLICT", "批次项尚未确认", 409)
+            item.import_job_id = import_job_id
+            item.state = BatchItemState.QUEUED
+            item.updated_at = utc_now()
+            session.flush()
+            return item
+
+    def update_counts(
+        self,
+        batch_id: str,
+        *,
+        total_count: int | None = None,
+        selected_count: int | None = None,
+        completed_count: int | None = None,
+        failed_count: int | None = None,
+        skipped_count: int | None = None,
+        progress: int | None = None,
+        message: str | None = None,
+    ) -> BatchImportRecord:
+        values = {
+            "total_count": total_count,
+            "selected_count": selected_count,
+            "completed_count": completed_count,
+            "failed_count": failed_count,
+            "skipped_count": skipped_count,
+            "progress": progress,
+            "message": message,
+        }
+        if any(value is not None and isinstance(value, int) and value < 0 for value in values.values()):
+            raise ValueError("batch counts and progress must be non-negative")
+        if progress is not None and progress > 100:
+            raise ValueError("progress must be at most 100")
+        with self.database.session() as session:
+            batch = session.get(BatchImportRecord, batch_id)
+            if batch is None:
+                raise DomainError("BATCH_NOT_FOUND", "批次不存在", 404)
+            for field, value in values.items():
+                if value is not None:
+                    setattr(batch, field, value)
+            batch.updated_at = utc_now()
+            session.flush()
+            return batch
+
+    def allocate_event_sequence(self, batch_id: str) -> int:
+        with self.database.session() as session:
+            batch = session.get(BatchImportRecord, batch_id)
+            if batch is None:
+                raise DomainError("BATCH_NOT_FOUND", "批次不存在", 404)
+            batch.last_event_sequence += 1
+            batch.updated_at = utc_now()
+            session.flush()
+            return batch.last_event_sequence
+
+    def recover_on_startup(self) -> int:
+        with self.database.session() as session:
+            batches = list(
+                session.scalars(select(BatchImportRecord).where(BatchImportRecord.state == BatchState.RUNNING))
+            )
+            now = utc_now()
+            for batch in batches:
+                batch.state = BatchState.PAUSED
+                batch.message = "应用重启导致批次暂停"
+                batch.updated_at = now
+            return len(batches)
+
+
+def _source_descriptor_json(value: Any) -> str:
+    return _encode_json(value, expected=dict, default={})
+
+
+def _cached_source_json(value: Any) -> str:
+    return _encode_json(value, expected=dict, default={})
+
+
+def _allowed_actions_json(value: Any) -> str:
+    return _encode_json(value, expected=list, default=[])
+
+
+def _encode_json(value: Any, *, expected: type, default: Any) -> str:
+    decoded = default if value is None else value
+    if isinstance(decoded, str):
+        try:
+            decoded = json.loads(decoded)
+        except json.JSONDecodeError as error:
+            raise ValueError("batch JSON must be valid") from error
+    if not isinstance(decoded, expected):
+        raise TypeError(f"batch JSON must encode a {expected.__name__}")
+    return json.dumps(decoded, ensure_ascii=False, separators=(",", ":"))
+
+
+def _batch_item_view(item: BatchItemRecord) -> BatchItemView:
+    allowed_actions = _decode_allowed_actions(item.allowed_actions_json)
+    return BatchItemView(
+        id=item.id,
+        batch_id=item.batch_id,
+        ordinal=item.ordinal,
+        title=item.title,
+        display_path=item.display_path,
+        media_type=item.media_type,
+        size_bytes=item.size_bytes,
+        source_revision=item.source_revision,
+        allowed_actions=allowed_actions,
+        selected=item.selected,
+        decision=item.decision,
+        state=item.state,
+        import_job_id=item.import_job_id,
+        error_code=item.error_code,
+        error_message=item.error_message,
+        retryable=item.retryable,
+    )
+
+
+def _decode_allowed_actions(value: str) -> list[str]:
+    allowed_actions = json.loads(value)
+    if not isinstance(allowed_actions, list) or not all(isinstance(action, str) for action in allowed_actions):
+        raise ValueError("allowed_actions_json must encode a list of strings")
+    return allowed_actions
+
+
+def _has_remote_binding(value: str | None) -> bool:
+    if value is None:
+        return False
+    try:
+        binding = json.loads(value)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(binding, dict):
+        return False
+    repository_id = binding.get("repository_id", binding.get("repositoryId"))
+    document_id = binding.get("document_id", binding.get("documentId"))
+    return (
+        isinstance(repository_id, str)
+        and bool(repository_id.strip())
+        and isinstance(document_id, str)
+        and bool(document_id.strip())
+    )
+
+
+def _encode_batch_item_cursor(item: BatchItemRecord) -> str:
+    value = f"{item.ordinal}:{item.id}".encode()
+    return base64.urlsafe_b64encode(value).decode().rstrip("=")
+
+
+def _decode_batch_item_cursor(cursor: str) -> tuple[int, str]:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        ordinal_text, item_id = base64.urlsafe_b64decode(padded.encode()).decode().split(":", 1)
+        return int(ordinal_text), item_id
+    except (UnicodeDecodeError, ValueError) as error:
+        raise ValueError("invalid batch item cursor") from error
 
 
 def _source_fingerprint(source_value: str) -> str | None:
