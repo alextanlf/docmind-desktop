@@ -5,6 +5,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -174,6 +175,29 @@ describe("staged directories", () => {
         [limitKey]: 4,
       }),
     ).rejects.toMatchObject({ code: "BATCH_LIMIT_EXCEEDED" });
+
+    const collections = join(dataDir, "imports", "staging", "collections");
+    const entries = await readdir(collections).catch(() => []);
+    expect(entries.filter((entry) => basename(entry).endsWith(".partial"))).toEqual([]);
+  });
+
+  it("rejects a source path replaced after copying from the original descriptor", async () => {
+    const fixtureRoot = join(workspace, "replaced");
+    await mkdir(fixtureRoot);
+    const sourcePath = join(fixtureRoot, "guide.md");
+    const backupPath = join(fixtureRoot, "guide.original.md");
+    await writeFile(sourcePath, "original");
+
+    await expect(
+      stageDirectoryForTest({
+        selectedPath: fixtureRoot,
+        dataDir,
+        beforeSourceRecheck: async (path) => {
+          await rename(path, backupPath);
+          await writeFile(path, "replacement");
+        },
+      }),
+    ).rejects.toMatchObject({ code: "BATCH_SOURCE_CHANGED" });
 
     const collections = join(dataDir, "imports", "staging", "collections");
     const entries = await readdir(collections).catch(() => []);
