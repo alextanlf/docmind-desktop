@@ -459,8 +459,33 @@ class ImportService:
                 return False
             try:
                 markdown = Path(document.markdown_path or "").read_text(encoding="utf-8")
+                if metadata.get("attach_remote"):
+                    binding = metadata.get("remote_binding") or {}
+                    remote_id = binding.get("document_id") or binding.get("documentId")
+                    remote_repository = binding.get("repository_id") or binding.get("repositoryId")
+                    remote_url = (
+                        binding.get("document_url")
+                        or binding.get("documentUrl")
+                        or binding.get("url")
+                        or binding.get("yuque_url")
+                        or binding.get("yuqueUrl")
+                    )
+                    if not isinstance(remote_id, str) or not remote_id:
+                        raise DomainError("UPLOAD_FAILED", "远端绑定缺少文档标识", 409, False)
+                    if remote_repository and remote_repository != repository.yuque_id:
+                        raise DomainError("UPLOAD_FAILED", "远端绑定知识库不匹配", 409, False)
+                    self.document_store.update_remote(
+                        document.id, yuque_id=remote_id, yuque_url=remote_url
+                    )
+                    if job.document_id is None:
+                        self.job_store.attach_document(job_id, document.id)
+                    remote = None
+                else:
+                    remote = None
                 remote_markdown = f"{markdown.rstrip()}\n\n<!-- {metadata['marker']} -->\n"
-                if document.yuque_id:
+                if metadata.get("attach_remote"):
+                    pass
+                elif document.yuque_id:
                     remote = await self.yuque_gateway.update_document(
                         UpdateYuqueDocumentRequest(
                             document_id=document.yuque_id,
@@ -491,11 +516,12 @@ class ImportService:
                                 content=remote_markdown,
                             )
                         )
-                self.document_store.update_remote(
-                    document.id, yuque_id=remote.yuque_id, yuque_url=remote.url
-                )
-                if job.document_id is None:
-                    self.job_store.attach_document(job_id, document.id)
+                if not metadata.get("attach_remote"):
+                    self.document_store.update_remote(
+                        document.id, yuque_id=remote.yuque_id, yuque_url=remote.url
+                    )
+                    if job.document_id is None:
+                        self.job_store.attach_document(job_id, document.id)
             except Exception:  # noqa: BLE001 - gateway failures map to a stable workflow code
                 await self._fail(job_id, "UPLOAD_FAILED", "写入语雀失败", True)
                 return False
@@ -1015,6 +1041,7 @@ def _source_metadata(job: ImportJobRecord) -> dict[str, Any]:
         source_identity = metadata.get("source_identity")
         source_revision = metadata.get("source_revision")
         collection_cache = metadata.get("collection_cache")
+        remote_binding = metadata.get("remote_binding")
         return {
             "value": metadata["value"],
             "fingerprint": (
@@ -1035,6 +1062,8 @@ def _source_metadata(job: ImportJobRecord) -> dict[str, Any]:
             "source_identity": source_identity if isinstance(source_identity, str) else "",
             "source_revision": source_revision if isinstance(source_revision, str) else "",
             "collection_cache": collection_cache if isinstance(collection_cache, dict) else None,
+            "attach_remote": metadata.get("attach_remote") is True,
+            "remote_binding": remote_binding if isinstance(remote_binding, dict) else None,
         }
     return {
         "value": job.source_value,
@@ -1048,6 +1077,8 @@ def _source_metadata(job: ImportJobRecord) -> dict[str, Any]:
         "source_identity": "",
         "source_revision": "",
         "collection_cache": None,
+        "attach_remote": False,
+        "remote_binding": None,
     }
 
 
