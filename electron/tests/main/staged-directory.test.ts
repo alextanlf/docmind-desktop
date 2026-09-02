@@ -157,4 +157,26 @@ describe("staged directories", () => {
     const entries = await readdir(collections).catch(() => []);
     expect(entries.filter((entry) => basename(entry).endsWith(".partial"))).toEqual([]);
   });
+
+  it.each([
+    ["markdown", "guide.md", "maxMarkdownBytes"],
+    ["html", "index.html", "maxMarkdownBytes"],
+    ["pdf", "guide.pdf", "maxPdfBytes"],
+  ] as const)("rejects an oversized %s file before copying", async (_kind, filename, limitKey) => {
+    const fixtureRoot = join(workspace, `oversized-${_kind}`);
+    await mkdir(fixtureRoot);
+    await writeFile(join(fixtureRoot, filename), "12345");
+
+    await expect(
+      stageDirectoryForTest({
+        selectedPath: fixtureRoot,
+        dataDir,
+        [limitKey]: 4,
+      }),
+    ).rejects.toMatchObject({ code: "BATCH_LIMIT_EXCEEDED" });
+
+    const collections = join(dataDir, "imports", "staging", "collections");
+    const entries = await readdir(collections).catch(() => []);
+    expect(entries.filter((entry) => basename(entry).endsWith(".partial"))).toEqual([]);
+  });
 });
