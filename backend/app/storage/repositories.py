@@ -10,6 +10,7 @@ from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.api.errors import DomainError
+from app.imports.batch_state_machine import ensure_item_mutable, transition
 from app.imports.state_machine import ensure_transition_allowed
 from app.schemas.batches import BatchItemPage, BatchItemView, ConfirmBatchInput
 from app.storage.database import Database
@@ -535,6 +536,20 @@ class BatchImportStore:
         with self.database.session() as session:
             return session.get(BatchImportRecord, batch_id)
 
+    def get_item(self, item_id: str) -> BatchItemRecord | None:
+        with self.database.session() as session:
+            return session.get(BatchItemRecord, item_id)
+
+    def list_item_records(self, batch_id: str) -> list[BatchItemRecord]:
+        with self.database.session() as session:
+            return list(
+                session.scalars(
+                    select(BatchItemRecord)
+                    .where(BatchItemRecord.batch_id == batch_id)
+                    .order_by(BatchItemRecord.ordinal, BatchItemRecord.id)
+                )
+            )
+
     def list_items(
         self,
         batch_id: str,
@@ -628,9 +643,14 @@ class BatchImportStore:
                     item.remote_binding_json
                 ):
                     raise DomainError("BATCH_CONFIRMATION_INVALID", "attach_remote 需要远端绑定", 422)
-                item.decision = decision
-                item.selected = decision not in {None, BatchItemDecision.SKIP}
-                item.state = BatchItemState.SKIPPED if decision == BatchItemDecision.SKIP else BatchItemState.DISCOVERED
+                # Preserve a previously reserved child when a confirmation
+                # request is retried after a partial transaction.
+                if item.import_job_id is None:
+                    item.decision = decision
+                    item.selected = decision not in {None, BatchItemDecision.SKIP}
+                    item.state = BatchItemState.SKIPPED if decision == BatchItemDecision.SKIP else BatchItemState.DISCOVERED
+                elif decision != item.decision:
+                    raise DomainError("BATCH_CONFIRMATION_INVALID", "已保留的批次项决策不可修改", 422)
                 item.updated_at = utc_now()
             batch.selected_count = sum(item.selected for item in items)
             batch.skipped_count = sum(item.state == BatchItemState.SKIPPED for item in items)
@@ -647,8 +667,147 @@ class BatchImportStore:
                 raise DomainError("BATCH_ITEM_ALREADY_RESERVED", "批次项已绑定子任务", 409)
             if not item.selected or item.decision is None:
                 raise DomainError("BATCH_STATE_CONFLICT", "批次项尚未确认", 409)
+            # The coordinator normally reserves the ImportJobRecord first.  A
+            # lightweight placeholder keeps the batch reservation durable when
+            # an alternate ImportService implementation allocates the id
+            # externally; the real service always replaces this with metadata.
+            if session.get(ImportJobRecord, import_job_id) is None:
+                session.add(
+                    ImportJobRecord(
+                        id=import_job_id,
+                        source_kind="batch_child",
+                        source_value="{}",
+                        repository_id=None,
+                        message="等待导入",
+                    )
+                )
+                session.flush()
             item.import_job_id = import_job_id
             item.state = BatchItemState.QUEUED
+            item.updated_at = utc_now()
+            session.flush()
+            return item
+
+    def set_state(self, batch_id: str, target: BatchState, *, message: str | None = None) -> BatchImportRecord:
+        with self.database.session() as session:
+            batch = session.get(BatchImportRecord, batch_id)
+            if batch is None:
+                raise DomainError("BATCH_NOT_FOUND", "批次不存在", 404)
+            if batch.state != target:
+                transition(batch.state, target)
+                batch.state = target
+                if target == BatchState.RUNNING and batch.started_at is None:
+                    batch.started_at = utc_now()
+                if target in {
+                    BatchState.COMPLETED,
+                    BatchState.COMPLETED_WITH_ERRORS,
+                    BatchState.FAILED,
+                    BatchState.CANCELLED,
+                }:
+                    batch.completed_at = utc_now()
+            if message is not None:
+                batch.message = message
+            batch.updated_at = utc_now()
+            session.flush()
+            return batch
+
+    def request_cancel(self, batch_id: str) -> BatchImportRecord:
+        with self.database.session() as session:
+            batch = session.get(BatchImportRecord, batch_id)
+            if batch is None:
+                raise DomainError("BATCH_NOT_FOUND", "批次不存在", 404)
+            if batch.state in {
+                BatchState.COMPLETED,
+                BatchState.COMPLETED_WITH_ERRORS,
+                BatchState.FAILED,
+                BatchState.CANCELLED,
+            }:
+                return batch
+            batch.cancel_requested = True
+            batch.updated_at = utc_now()
+            session.flush()
+            return batch
+
+    def mark_item_running(self, item_id: str) -> BatchItemRecord:
+        with self.database.session() as session:
+            item = session.get(BatchItemRecord, item_id)
+            if item is None:
+                raise DomainError("BATCH_ITEM_NOT_FOUND", "批次项不存在", 404)
+            if item.state == BatchItemState.RUNNING:
+                return item
+            ensure_item_mutable(item.state)
+            if item.state != BatchItemState.QUEUED:
+                raise DomainError("BATCH_STATE_CONFLICT", "批次项未排队", 409)
+            item.state = BatchItemState.RUNNING
+            item.updated_at = utc_now()
+            session.flush()
+            return item
+
+    def mark_item_cancelled(self, item_id: str) -> BatchItemRecord:
+        with self.database.session() as session:
+            item = session.get(BatchItemRecord, item_id)
+            if item is None:
+                raise DomainError("BATCH_ITEM_NOT_FOUND", "批次项不存在", 404)
+            if item.state in {BatchItemState.COMPLETED, BatchItemState.SKIPPED, BatchItemState.CANCELLED}:
+                return item
+            item.state = BatchItemState.CANCELLED
+            item.updated_at = utc_now()
+            session.flush()
+            return item
+
+    def mark_failed(
+        self, item_id: str, *, code: str, message: str, retryable: bool
+    ) -> BatchItemRecord:
+        with self.database.session() as session:
+            item = session.get(BatchItemRecord, item_id)
+            if item is None:
+                raise DomainError("BATCH_ITEM_NOT_FOUND", "批次项不存在", 404)
+            if item.state in {BatchItemState.COMPLETED, BatchItemState.SKIPPED, BatchItemState.CANCELLED}:
+                return item
+            item.state = BatchItemState.FAILED
+            item.error_code = code
+            item.error_message = message
+            item.retryable = retryable
+            item.updated_at = utc_now()
+            session.flush()
+            return item
+
+    def mark_item_queued(self, item_id: str) -> BatchItemRecord:
+        with self.database.session() as session:
+            item = session.get(BatchItemRecord, item_id)
+            if item is None:
+                raise DomainError("BATCH_ITEM_NOT_FOUND", "批次项不存在", 404)
+            if item.state in {BatchItemState.COMPLETED, BatchItemState.SKIPPED, BatchItemState.CANCELLED}:
+                raise DomainError("BATCH_STATE_CONFLICT", "批次项已完成，无法重试", 409)
+            item.state = BatchItemState.QUEUED
+            item.error_code = None
+            item.error_message = None
+            item.retryable = False
+            item.updated_at = utc_now()
+            session.flush()
+            return item
+
+    def sync_child_terminal(self, item_id: str, child: ImportJobRecord | Any) -> BatchItemRecord:
+        state_value = getattr(child, "state", None)
+        if isinstance(state_value, str):
+            state_value = ImportStatus(state_value)
+        with self.database.session() as session:
+            item = session.get(BatchItemRecord, item_id)
+            if item is None:
+                raise DomainError("BATCH_ITEM_NOT_FOUND", "批次项不存在", 404)
+            if item.state in {BatchItemState.COMPLETED, BatchItemState.SKIPPED, BatchItemState.CANCELLED}:
+                return item
+            if state_value == ImportStatus.COMPLETED:
+                item.state = BatchItemState.COMPLETED
+            elif state_value == ImportStatus.CANCELLED:
+                item.state = BatchItemState.CANCELLED
+            elif state_value == ImportStatus.FAILED:
+                item.state = BatchItemState.FAILED
+                item.error_code = getattr(child, "error_code", None)
+                item.error_message = getattr(child, "error_message", None)
+                item.retryable = bool(getattr(child, "retryable", False))
+            else:
+                return item
             item.updated_at = utc_now()
             session.flush()
             return item
@@ -706,15 +865,35 @@ class BatchImportStore:
 
     def recover_on_startup(self) -> int:
         with self.database.session() as session:
-            batches = list(
-                session.scalars(select(BatchImportRecord).where(BatchImportRecord.state == BatchState.RUNNING))
-            )
+            batches = list(session.scalars(select(BatchImportRecord)))
             now = utc_now()
+            recovered = 0
             for batch in batches:
-                batch.state = BatchState.PAUSED
-                batch.message = "应用重启导致批次暂停"
-                batch.updated_at = now
-            return len(batches)
+                if batch.state == BatchState.DISCOVERING:
+                    batch.state = BatchState.FAILED
+                    batch.error_code = "BATCH_APP_RESTARTED"
+                    batch.error_message = "应用重启导致目录发现中断"
+                    batch.retryable = True
+                    batch.message = "应用重启导致目录发现中断"
+                    batch.completed_at = now
+                    batch.updated_at = now
+                    recovered += 1
+                elif batch.state == BatchState.RUNNING:
+                    batch.state = BatchState.PAUSED
+                    batch.message = "应用重启导致批次暂停"
+                    batch.updated_at = now
+                    recovered += 1
+                if batch.state == BatchState.PAUSED:
+                    active_items = session.scalars(
+                        select(BatchItemRecord).where(
+                            BatchItemRecord.batch_id == batch.id,
+                            BatchItemRecord.state == BatchItemState.RUNNING,
+                        )
+                    )
+                    for item in active_items:
+                        item.state = BatchItemState.QUEUED
+                        item.updated_at = now
+            return recovered
 
 
 def _source_descriptor_json(value: Any) -> str:
