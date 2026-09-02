@@ -28,6 +28,8 @@ from app.schemas.yuque import (
     YuqueDocument,
 )
 from app.storage.models import (
+    BatchItemDecision,
+    BatchItemRecord,
     DocumentChunkRecord,
     DocumentRecord,
     ImportJobRecord,
@@ -108,6 +110,59 @@ class ImportService:
             )
             job = self.job_store.reserve(job_record, fingerprint=request.fingerprint)
         return _job_view(job)
+
+    async def reserve_batch_child(
+        self, item: BatchItemRecord, *, repository_id: str | None = None
+    ) -> str:
+        """Atomically reserve the one import job owned by a confirmed batch item.
+
+        Batch discovery has already verified the content snapshot.  The child
+        therefore carries the opaque staged identifier and verified fingerprint
+        in the same durable source metadata used by ordinary imports.
+        """
+        if item.import_job_id is not None:
+            raise DomainError("BATCH_ITEM_ALREADY_RESERVED", "批次项已绑定子任务", 409)
+        if not item.selected or item.decision is None:
+            raise DomainError("BATCH_STATE_CONFLICT", "批次项尚未确认", 409)
+        try:
+            cached = json.loads(item.cached_source_json)
+        except (TypeError, json.JSONDecodeError):
+            cached = {}
+        if not isinstance(cached, dict) or not isinstance(cached.get("cache_id"), str):
+            raise DomainError("BATCH_SOURCE_CHANGED", "暂存文件引用无效", 409)
+        fingerprint = item.source_revision.removeprefix("sha256:")
+        if len(fingerprint) != 64:
+            fingerprint = str(cached.get("sha256", ""))
+        if len(fingerprint) != 64:
+            raise DomainError("BATCH_SOURCE_CHANGED", "暂存文件指纹无效", 409)
+        duplicate_decision = {
+            BatchItemDecision.SKIP: "skip",
+            BatchItemDecision.UPDATE: "update",
+            BatchItemDecision.ATTACH_REMOTE: "update",
+            BatchItemDecision.CREATE: "create",
+        }[BatchItemDecision(item.decision)]
+        job = ImportJobRecord(
+            id=str(uuid4()),
+            source_kind="staged_file",
+            source_value="",
+            repository_id=repository_id,
+            document_id=item.existing_document_id,
+            message="等待导入",
+        )
+        job.source_value = _encode_source_metadata(
+            value=cached["cache_id"],
+            fingerprint=fingerprint,
+            duplicate_decision=duplicate_decision,
+            job_id=job.id,
+        )
+        self.job_store.reserve(job, fingerprint=fingerprint)
+        if item.decision == BatchItemDecision.ATTACH_REMOTE:
+            self.job_store.merge_source_metadata(
+                job.id,
+                {"attach_remote": True, "remote_binding": _decode_json_object(item.remote_binding_json)},
+            )
+        return job.id
+
 
     def get(self, job_id: str) -> ImportJobView:
         return _job_view(self._job(job_id))
@@ -848,3 +903,13 @@ def _source_metadata(job: ImportJobRecord) -> dict[str, Any]:
         "pending_created_vector_ids": [],
         "coherence_pending": False,
     }
+
+
+def _decode_json_object(value: str | None) -> dict[str, Any]:
+    if value is None:
+        return {}
+    try:
+        decoded = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
