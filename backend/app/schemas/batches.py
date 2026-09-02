@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import Field
@@ -126,3 +126,36 @@ class ConfirmBatchItem(WireModel):
 class ConfirmBatchInput(WireModel):
     discovery_version: int = Field(ge=1)
     items: list[ConfirmBatchItem] = Field(max_length=1000)
+
+
+class StagedDirectoryBatchRequest(WireModel):
+    kind: Literal["staged_directory"]
+    source_id: str = Field(min_length=1, alias="sourceId")
+    repository_id: UUID = Field(alias="repositoryId")
+
+
+class WebBatchRequest(WireModel):
+    kind: Literal["web"]
+    source_id: str = Field(min_length=1, alias="sourceId")
+    repository_id: UUID = Field(alias="repositoryId")
+
+
+class YuqueRepositoryBatchRequest(WireModel):
+    kind: Literal["yuque_repository"]
+    source_id: str = Field(min_length=1, alias="sourceId")
+    repository_id: UUID = Field(alias="repositoryId")
+
+
+class SearchResultsBatchRequest(WireModel):
+    kind: Literal["search_results"]
+    source_id: str = Field(min_length=1, alias="sourceId")
+    repository_id: UUID = Field(alias="repositoryId")
+
+
+CreateBatchRequest = Annotated[
+    StagedDirectoryBatchRequest
+    | WebBatchRequest
+    | YuqueRepositoryBatchRequest
+    | SearchResultsBatchRequest,
+    Field(discriminator="kind"),
+]
