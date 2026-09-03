@@ -92,6 +92,7 @@ class BatchImportView(WireModel):
     started_at: datetime | None
     completed_at: datetime | None
     updated_at: datetime
+    last_event_sequence: int = Field(ge=0)
 
 
 class BatchItemView(WireModel):

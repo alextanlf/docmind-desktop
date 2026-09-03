@@ -49,6 +49,7 @@ def _view(batch: BatchImportRecord) -> BatchImportView:
             "started_at": batch.started_at,
             "completed_at": batch.completed_at,
             "updated_at": batch.updated_at,
+            "last_event_sequence": batch.last_event_sequence,
         }
     )
 

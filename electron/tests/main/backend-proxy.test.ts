@@ -2,6 +2,17 @@ import { describe, expect, it, vi } from "vitest";
 import { BackendProxy, collectSse } from "../../main/backend-proxy";
 
 describe("BackendProxy", () => {
+  it("allows batch import event streams", () => {
+    const proxy = new BackendProxy({ request: vi.fn(() => new Promise<Response>(() => {})), send: vi.fn() });
+    expect(() => proxy.openStream({
+      requestId: "00000000-0000-0000-0000-000000000101",
+      route: "/api/import-batches/00000000-0000-0000-0000-000000000101/events",
+      body: undefined,
+      sender: { send: vi.fn() },
+      controller: { abort: vi.fn() } as unknown as AbortController,
+    })).not.toThrow();
+  });
+
   it("parses split SSE frames, preserves order, and ignores duplicates", async () => {
     const events = await collectSse([
       'id: 1\ndata: {"requestId":"00000000-0000-0000-0000-000000000001","type":"pro',

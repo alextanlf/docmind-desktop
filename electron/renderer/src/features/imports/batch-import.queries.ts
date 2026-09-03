@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import type { ConfirmBatchInput, CreateBatchInput, RetryBatchInput } from "../../../../shared/contracts";
+import { appQueryClient } from "../../app/query-client";
 
 export const batchKeys = {
   all: ["batches"] as const,
@@ -22,17 +23,17 @@ export function useBatchItemsQuery(batchId: string | null) {
 }
 
 export function useCreateBatchMutation() {
-  return useMutation({ mutationFn: (input: CreateBatchInput) => window.docmind.batches.create(input) });
+  return useMutation({ mutationFn: (input: CreateBatchInput) => window.docmind.batches.create(input), onSuccess: (batch) => { if (batch) appQueryClient.setQueryData(batchKeys.batch(batch.id), batch); } });
 }
 export function useConfirmBatchMutation() {
-  return useMutation({ mutationFn: ({ batchId, input }: { batchId: string; input: ConfirmBatchInput }) => window.docmind.batches.confirm(batchId, input) });
+  return useMutation({ mutationFn: ({ batchId, input }: { batchId: string; input: ConfirmBatchInput }) => window.docmind.batches.confirm(batchId, input), onSuccess: (batch) => { if (batch) appQueryClient.setQueryData(batchKeys.batch(batch.id), batch); } });
 }
 export function useCancelBatchMutation() {
-  return useMutation({ mutationFn: (batchId: string) => window.docmind.batches.cancel(batchId) });
+  return useMutation({ mutationFn: (batchId: string) => window.docmind.batches.cancel(batchId), onSuccess: (batch) => { if (batch) appQueryClient.setQueryData(batchKeys.batch(batch.id), batch); } });
 }
 export function useContinueBatchMutation() {
-  return useMutation({ mutationFn: (batchId: string) => window.docmind.batches.continue(batchId) });
+  return useMutation({ mutationFn: (batchId: string) => window.docmind.batches.continue(batchId), onSuccess: (batch) => { if (batch) appQueryClient.setQueryData(batchKeys.batch(batch.id), batch); } });
 }
 export function useRetryBatchMutation() {
-  return useMutation({ mutationFn: ({ batchId, input }: { batchId: string; input?: RetryBatchInput }) => window.docmind.batches.retry(batchId, input) });
+  return useMutation({ mutationFn: ({ batchId, input }: { batchId: string; input?: RetryBatchInput }) => window.docmind.batches.retry(batchId, input), onSuccess: (batch) => { if (batch) appQueryClient.setQueryData(batchKeys.batch(batch.id), batch); } });
 }
