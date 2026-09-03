@@ -11,6 +11,9 @@ const terminal = new Set<BatchImport["state"]>(["completed", "completed_with_err
 function patchBatch(current: BatchImport, event: EventEnvelope): BatchImport {
   const p = event.payload as Partial<BatchProgressPayload>;
   const counts = p.counts;
+  const validStage = ["discovering", "awaiting_confirmation", "running", "paused"].includes(p.stage ?? "");
+  const validItemState = ["discovered", "queued", "running", "completed", "skipped", "failed", "cancelled"].includes(p.itemState ?? "");
+  if (!validStage || (p.itemId !== null && p.itemId !== undefined && typeof p.itemId !== "string") || (p.itemState !== null && p.itemState !== undefined && !validItemState)) return current;
   return { ...current, progress: typeof p.progress === "number" ? p.progress : current.progress, message: typeof p.message === "string" ? p.message : current.message, state: typeof p.state === "string" && ["discovering", "awaiting_confirmation", "running", "paused", "completed", "completed_with_errors", "failed", "cancelled"].includes(p.state) ? p.state as BatchImport["state"] : current.state, completedCount: counts && typeof counts.completed === "number" ? counts.completed : current.completedCount, failedCount: counts && typeof counts.failed === "number" ? counts.failed : current.failedCount, skippedCount: counts && typeof counts.skipped === "number" ? counts.skipped : current.skippedCount, totalCount: counts && typeof counts.total === "number" ? counts.total : current.totalCount, selectedCount: counts && typeof counts.selected === "number" ? counts.selected : current.selectedCount };
 }
 export function BatchProgress({ batchId }: { batchId: string }) {

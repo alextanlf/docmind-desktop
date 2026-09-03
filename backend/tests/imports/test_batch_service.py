@@ -254,10 +254,12 @@ async def test_discover_batch_persists_candidates_and_allowed_actions(tmp_path: 
     repository_id = "00000000-0000-0000-0000-000000000001"
     with database.session() as session:
         session.add(RepositoryRecord(id=repository_id, yuque_id="remote-1", name="Repo"))
+    broker = InMemoryEventBroker()
     service = BatchService(
         store=store,
         import_service=FakeImportService(),
         staging_root=staging_root,
+        event_broker=broker,
     )
     batch = service.create_batch(
         StagedDirectoryBatchRequest(
@@ -265,6 +267,10 @@ async def test_discover_batch_persists_candidates_and_allowed_actions(tmp_path: 
         )
     )
     await service.discover_batch(batch.id)
+    stream = broker.subscribe(batch.id, 0)
+    first_event = await asyncio.wait_for(anext(stream), timeout=1)
+    assert first_event.payload["stage"] == "awaiting_confirmation"
+    assert set(first_event.payload["counts"]) == {"total", "selected", "completed", "failed", "skipped"}
     persisted = store.get(batch.id)
     assert persisted is not None
     assert persisted.state is BatchState.AWAITING_CONFIRMATION, (persisted.error_code, persisted.error_message)
@@ -307,6 +313,9 @@ async def test_terminal_event_is_replayed_once_for_completed_with_errors_batch(d
     assert len(events) == 1
     assert events[0].type == "done"
     assert events[0].payload["state"] == "completed_with_errors"
+    assert events[0].payload["stage"] == "running"
+    assert "counts" in events[0].payload
+    assert events[0].payload["itemId"] is None
 
 
 def test_discovery_persists_duplicate_target_and_actions(database) -> None:

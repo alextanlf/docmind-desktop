@@ -15,7 +15,7 @@ describe("批量导入进度", () => {
     await waitFor(() => expect(get).toHaveBeenCalledWith("00000000-0000-0000-0000-000000000101"));
     await waitFor(() => expect(api.batches.subscribe).toHaveBeenCalledWith("00000000-0000-0000-0000-000000000101", 42, expect.any(Function)));
     expect(screen.getByRole("progressbar", { name: "批量导入进度" })).toBeInTheDocument();
-    onEvent?.({ requestId: "00000000-0000-0000-0000-000000000101", type: "progress", sequence: 43, payload: { progress: 100, state: "completed", message: "完成", counts: { total: 1, selected: 1, completed: 1, failed: 0, skipped: 0 } } });
+    onEvent?.({ requestId: "00000000-0000-0000-0000-000000000101", type: "progress", sequence: 43, payload: { progress: 100, state: "completed", stage: "running", message: "完成", counts: { total: 1, selected: 1, completed: 1, failed: 0, skipped: 0 }, itemId: null, itemState: null } });
     await waitFor(() => expect(screen.getByText("1/1 已完成，0 失败，0 跳过")).toBeInTheDocument());
   });
 });

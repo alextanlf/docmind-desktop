@@ -450,6 +450,7 @@ button:disabled {
   border: 1px solid var(--line-strong);
   border-radius: 6px;
 }
+.mode-segmented-control { grid-template-columns: repeat(2, 1fr); }
 .segmented-control button {
   min-height: 34px;
   border: 0;

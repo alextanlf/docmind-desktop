@@ -127,7 +127,7 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
             <li className={step === 2 ? "is-active" : ""}>2 预览与目标</li>
             <li className={step === 3 ? "is-active" : ""}>3 确认导入</li>
           </ol>
-          <div aria-label="导入模式" className="segmented-control" role="radiogroup">
+          <div aria-label="导入模式" className="segmented-control mode-segmented-control" role="radiogroup">
             <label className={mode === "single" ? "is-active" : ""}><input type="radio" name="import-mode" checked={mode === "single"} onChange={() => { reset(); setBatchDiscoveryVersion(1); setMode("single"); }} />单篇</label>
             <label className={mode === "batch" ? "is-active" : ""}><input type="radio" name="import-mode" checked={mode === "batch"} onChange={() => { reset(); setBatchDiscoveryVersion(1); setMode("batch"); }} />批量</label>
           </div>

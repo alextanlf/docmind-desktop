@@ -314,7 +314,10 @@ export type BatchProgressPayload = {
   progress: number;
   state: BatchImport["state"];
   message: string;
+  stage: "discovering" | "awaiting_confirmation" | "running" | "paused";
   counts: { total: number; selected: number; completed: number; failed: number; skipped: number };
+  itemId: string | null;
+  itemState: BatchItem["state"] | null;
 };
 
 export interface StreamSubscription {
