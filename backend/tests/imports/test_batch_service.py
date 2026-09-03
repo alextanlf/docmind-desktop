@@ -270,7 +270,7 @@ async def test_discover_batch_persists_candidates_and_allowed_actions(tmp_path: 
     stream = broker.subscribe(batch.id, 0)
     first_event = await asyncio.wait_for(anext(stream), timeout=1)
     assert first_event.payload["stage"] == "awaiting_confirmation"
-    assert set(first_event.payload["counts"]) == {"total", "selected", "completed", "failed", "skipped"}
+    assert first_event.payload["counts"] == {"total": 1, "selected": 0, "completed": 0, "failed": 0, "skipped": 0}
     persisted = store.get(batch.id)
     assert persisted is not None
     assert persisted.state is BatchState.AWAITING_CONFIRMATION, (persisted.error_code, persisted.error_message)
