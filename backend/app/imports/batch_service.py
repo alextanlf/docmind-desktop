@@ -118,6 +118,7 @@ class BatchService:
                     size_bytes=source.size_bytes,
                     cached_source_json=source.cached_source.model_dump(mode="json"),
                     remote_binding_json=(source.remote_binding.model_dump(mode="json") if source.remote_binding else None),
+                    allowed_actions_json="[]",
                 )
                 for source in result.sources
             ]

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -9,7 +11,7 @@ import pytest
 from app.api.errors import DomainError
 from app.imports.batch_service import BatchService
 from app.imports.events import InMemoryEventBroker
-from app.schemas.batches import ConfirmBatchInput, ConfirmBatchItem
+from app.schemas.batches import ConfirmBatchInput, ConfirmBatchItem, StagedDirectoryBatchRequest
 from app.storage.database import Database
 from app.storage.models import (
     BatchImportRecord,
@@ -219,6 +221,55 @@ async def test_scheduler_never_runs_more_than_three_children(database) -> None:
     await service.continue_batch(batch.id)
     assert imports.max_active == 3
     assert store.get(batch.id).state is BatchState.COMPLETED  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_discover_batch_persists_candidates_and_allowed_actions(tmp_path: Path, database) -> None:
+    staging_root = tmp_path / "staging"
+    collection_id = "00000000-0000-0000-0000-000000000010"
+    staged_id = "00000000-0000-0000-0000-000000000011"
+    collection = staging_root / "collections" / collection_id
+    items_dir = collection / "items"
+    items_dir.mkdir(parents=True)
+    payload = b"# Guide\n"
+    (items_dir / staged_id).write_bytes(payload)
+    (collection / "manifest.json").write_text(
+        json.dumps(
+            {
+                "rootId": "root-1",
+                "files": [
+                    {
+                        "relativePath": "guide.md",
+                        "stagedId": staged_id,
+                        "mediaType": "text/markdown",
+                        "sizeBytes": len(payload),
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = BatchImportStore(database)
+    repository_id = "00000000-0000-0000-0000-000000000001"
+    with database.session() as session:
+        session.add(RepositoryRecord(id=repository_id, yuque_id="remote-1", name="Repo"))
+    service = BatchService(
+        store=store,
+        import_service=FakeImportService(),
+        staging_root=staging_root,
+    )
+    batch = service.create_batch(
+        StagedDirectoryBatchRequest(
+            kind="staged_directory", sourceId=collection_id, repositoryId=repository_id
+        )
+    )
+    await service.discover_batch(batch.id)
+    persisted = store.get(batch.id)
+    assert persisted is not None
+    assert persisted.state is BatchState.AWAITING_CONFIRMATION, (persisted.error_code, persisted.error_message)
+    item = store.list_item_records(batch.id)[0]
+    assert json.loads(item.allowed_actions_json) == ["create", "skip"]
 
 
 @pytest.mark.asyncio
