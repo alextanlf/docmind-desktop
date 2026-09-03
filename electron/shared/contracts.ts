@@ -259,6 +259,15 @@ export const BatchItemSchema = z.object({
   errorMessage: z.string().nullable(),
   retryable: z.boolean(),
 });
+export const BatchProgressPayloadSchema = z.object({
+  progress: z.number().int().min(0).max(100),
+  state: z.enum(["discovering", "awaiting_confirmation", "running", "paused", "completed", "completed_with_errors", "failed", "cancelled"]),
+  message: z.string(),
+  stage: z.enum(["discovering", "awaiting_confirmation", "running", "paused"]),
+  counts: z.object({ total: z.number().int().nonnegative(), selected: z.number().int().nonnegative(), completed: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), skipped: z.number().int().nonnegative() }),
+  itemId: id.nullable(),
+  itemState: z.enum(["discovered", "queued", "running", "completed", "skipped", "failed", "cancelled"]).nullable(),
+});
 export const BatchItemPageSchema = z.object({ items: z.array(BatchItemSchema), nextCursor: z.string().nullable() });
 export const CreateBatchInputSchema = z.object({
   kind: z.literal("staged_directory"),
@@ -303,6 +312,7 @@ export type StagedSource = z.infer<typeof StagedSourceSchema>;
 export type StagedCollection = z.infer<typeof StagedCollectionSchema>;
 export type BatchImport = z.infer<typeof BatchImportSchema>;
 export type BatchItem = z.infer<typeof BatchItemSchema>;
+export type BatchProgressPayload = z.infer<typeof BatchProgressPayloadSchema>;
 export type BatchItemPage = z.infer<typeof BatchItemPageSchema>;
 export type CreateBatchInput = z.infer<typeof CreateBatchInputSchema>;
 export type ConfirmBatchInput = z.infer<typeof ConfirmBatchInputSchema>;
@@ -310,15 +320,6 @@ export type RetryBatchInput = z.infer<typeof RetryBatchInputSchema>;
 export type ChatStreamInput = z.infer<typeof ChatStreamInputSchema>;
 
 export type BatchProgressCounts = Pick<BatchImport, "totalCount" | "selectedCount" | "completedCount" | "failedCount" | "skippedCount">;
-export type BatchProgressPayload = {
-  progress: number;
-  state: BatchImport["state"];
-  message: string;
-  stage: "discovering" | "awaiting_confirmation" | "running" | "paused";
-  counts: { total: number; selected: number; completed: number; failed: number; skipped: number };
-  itemId: string | null;
-  itemState: BatchItem["state"] | null;
-};
 
 export interface StreamSubscription {
   requestId: string;
@@ -412,5 +413,6 @@ export const schemas = {
   StagedCollectionSchema,
   BatchImportSchema,
   BatchItemSchema,
+  BatchProgressPayloadSchema,
   BatchItemPageSchema,
 };
