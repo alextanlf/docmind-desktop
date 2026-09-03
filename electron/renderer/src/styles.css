@@ -52,6 +52,15 @@ body {
   font-size: 14px;
   line-height: 1.5;
 }
+
+.batch-candidate-table-wrap { max-height: 360px; overflow: auto; border: 1px solid var(--line); }
+.batch-candidate-table { width: 100%; border-collapse: collapse; }
+.batch-candidate-table th, .batch-candidate-table td { padding: 8px; border-bottom: 1px solid var(--line); text-align: left; }
+.batch-secondary-column { color: var(--muted); }
+.batch-source-step { gap: 14px; }
+@media (max-width: 1100px) {
+  .batch-secondary-column { display: none; }
+}
 button,
 input,
 select,

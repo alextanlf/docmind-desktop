@@ -24,6 +24,11 @@ import {
   StagedCollectionSchema,
   StagedSourceSchema,
   YuqueStatusSchema,
+  BatchImportSchema,
+  BatchItemPageSchema,
+  CreateBatchInputSchema,
+  ConfirmBatchInputSchema,
+  RetryBatchInputSchema,
 } from "../shared/contracts";
 import type { DocMindApi, EventEnvelope } from "../shared/contracts";
 
@@ -192,6 +197,21 @@ const api: DocMindApi = {
   sources: {
     stageDirectory: () =>
       invoke(IPC_CHANNELS.sourcesStageDirectory, StagedCollectionSchema.nullable()),
+  },
+  batches: {
+    create: (input) => invoke(IPC_CHANNELS.batchesCreate, BatchImportSchema, CreateBatchInputSchema.parse(input)),
+    get: (batchId) => invoke(IPC_CHANNELS.batchesGet, BatchImportSchema, uuid(batchId)),
+    list: () => invoke(IPC_CHANNELS.batchesList, BatchImportSchema.array()),
+    listItems: (batchId, cursor) => invoke(IPC_CHANNELS.batchesListItems, BatchItemPageSchema, uuid(batchId), cursor ?? null),
+    confirm: (batchId, input) => invoke(IPC_CHANNELS.batchesConfirm, BatchImportSchema, uuid(batchId), ConfirmBatchInputSchema.parse(input)),
+    cancel: (batchId) => invoke(IPC_CHANNELS.batchesCancel, BatchImportSchema, uuid(batchId)),
+    continue: (batchId) => invoke(IPC_CHANNELS.batchesContinue, BatchImportSchema, uuid(batchId)),
+    retry: (batchId, input) => invoke(IPC_CHANNELS.batchesRetry, BatchImportSchema, uuid(batchId), input ? RetryBatchInputSchema.parse(input) : undefined),
+    subscribe: (batchId, afterSequence, onEvent) => {
+      const id = uuid(batchId);
+      if (!Number.isInteger(afterSequence) || afterSequence < 0) throw new Error("INVALID_REQUEST");
+      return subscription(IPC_CHANNELS.batchesSubscribe, id, [id, afterSequence], onEvent);
+    },
   },
   shell: {
     openExternal: (url) => {
