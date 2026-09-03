@@ -218,6 +218,58 @@ export const StagedCollectionSchema = z.object({
   itemCount: z.number().int().min(0).max(1000),
   totalBytes: z.number().int().nonnegative().max(2 * 1024 ** 3),
 });
+export const BatchImportSchema = z.object({
+  id,
+  sourceKind: z.enum(["staged_directory", "web", "yuque_repository", "search_results"]),
+  repositoryId: id,
+  state: z.enum(["discovering", "awaiting_confirmation", "running", "paused", "completed", "completed_with_errors", "failed", "cancelled"]),
+  discoveryVersion: z.number().int().positive(),
+  totalCount: z.number().int().nonnegative(),
+  selectedCount: z.number().int().nonnegative(),
+  completedCount: z.number().int().nonnegative(),
+  failedCount: z.number().int().nonnegative(),
+  skippedCount: z.number().int().nonnegative(),
+  progress: z.number().int().min(0).max(100),
+  message: z.string(),
+  errorCode: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+  retryable: z.boolean(),
+  cancelRequested: z.boolean(),
+  createdAt: timestamp,
+  startedAt: timestamp.nullable(),
+  completedAt: timestamp.nullable(),
+  updatedAt: timestamp,
+  lastEventSequence: z.number().int().nonnegative().optional(),
+});
+export const BatchItemSchema = z.object({
+  id,
+  batchId: id,
+  ordinal: z.number().int().nonnegative(),
+  title: text(240),
+  displayPath: text(4_000),
+  mediaType: z.string(),
+  sizeBytes: z.number().int().nonnegative(),
+  sourceRevision: z.string().min(1),
+  allowedActions: z.array(z.enum(["create", "update", "attach_remote", "skip"])),
+  selected: z.boolean(),
+  decision: z.enum(["create", "update", "attach_remote", "skip"]).nullable(),
+  state: z.enum(["discovered", "queued", "running", "completed", "skipped", "failed", "cancelled"]),
+  importJobId: id.nullable(),
+  errorCode: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+  retryable: z.boolean(),
+});
+export const BatchItemPageSchema = z.object({ items: z.array(BatchItemSchema), nextCursor: z.string().nullable() });
+export const CreateBatchInputSchema = z.object({
+  kind: z.literal("staged_directory"),
+  sourceId: id,
+  repositoryId: id,
+});
+export const ConfirmBatchInputSchema = z.object({
+  discoveryVersion: z.number().int().positive(),
+  items: z.array(z.object({ itemId: id, decision: z.enum(["create", "update", "attach_remote", "skip"]) })).max(1000),
+});
+export const RetryBatchInputSchema = z.object({ itemIds: z.array(id).max(1000).optional() });
 export const ChatStreamInputSchema = z.object({
   requestId: id,
   sessionId: id,
@@ -249,6 +301,12 @@ export type EventEnvelope = z.infer<typeof EventEnvelopeSchema>;
 export type BackendEventEnvelope = z.infer<typeof BackendEventEnvelopeSchema>;
 export type StagedSource = z.infer<typeof StagedSourceSchema>;
 export type StagedCollection = z.infer<typeof StagedCollectionSchema>;
+export type BatchImport = z.infer<typeof BatchImportSchema>;
+export type BatchItem = z.infer<typeof BatchItemSchema>;
+export type BatchItemPage = z.infer<typeof BatchItemPageSchema>;
+export type CreateBatchInput = z.infer<typeof CreateBatchInputSchema>;
+export type ConfirmBatchInput = z.infer<typeof ConfirmBatchInputSchema>;
+export type RetryBatchInput = z.infer<typeof RetryBatchInputSchema>;
 export type ChatStreamInput = z.infer<typeof ChatStreamInputSchema>;
 
 export interface StreamSubscription {
@@ -259,6 +317,17 @@ export interface StreamSubscription {
 
 export interface SourcesApi {
   stageDirectory(): Promise<StagedCollection | null>;
+}
+export interface BatchesApi {
+  create(input: CreateBatchInput): Promise<BatchImport>;
+  get(batchId: string): Promise<BatchImport>;
+  list(): Promise<BatchImport[]>;
+  listItems(batchId: string, cursor?: string | null): Promise<BatchItemPage>;
+  confirm(batchId: string, input: ConfirmBatchInput): Promise<BatchImport>;
+  cancel(batchId: string): Promise<BatchImport>;
+  continue(batchId: string): Promise<BatchImport>;
+  retry(batchId: string, input?: RetryBatchInput): Promise<BatchImport>;
+  subscribe(batchId: string, afterSequence: number, onEvent: (event: EventEnvelope) => void): StreamSubscription;
 }
 
 export interface DocMindApi {
@@ -310,6 +379,7 @@ export interface DocMindApi {
     chooseSource(kind: "pdf" | "markdown"): Promise<StagedSource | null>;
   };
   sources: SourcesApi;
+  batches: BatchesApi;
   shell: { openExternal(url: string): Promise<void> };
 }
 
@@ -329,4 +399,7 @@ export const schemas = {
   BackendEventEnvelopeSchema,
   StagedSourceSchema,
   StagedCollectionSchema,
+  BatchImportSchema,
+  BatchItemSchema,
+  BatchItemPageSchema,
 };

@@ -133,6 +133,8 @@ export function installDocMindApi(overrides?: {
   chat?: Partial<DocMindApi["chat"]>;
   dialogs?: Partial<DocMindApi["dialogs"]>;
   shell?: Partial<DocMindApi["shell"]>;
+  sources?: Partial<DocMindApi["sources"]>;
+  batches?: Partial<DocMindApi["batches"]>;
 }) {
   const api = {
     settings: {
@@ -197,6 +199,22 @@ export function installDocMindApi(overrides?: {
     shell: {
       openExternal: vi.fn().mockResolvedValue(undefined),
       ...overrides?.shell,
+    },
+    sources: {
+      stageDirectory: vi.fn().mockResolvedValue(null),
+      ...overrides?.sources,
+    },
+    batches: {
+      create: vi.fn(),
+      get: vi.fn(),
+      list: vi.fn().mockResolvedValue([]),
+      listItems: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
+      confirm: vi.fn(),
+      cancel: vi.fn(),
+      continue: vi.fn(),
+      retry: vi.fn(),
+      subscribe: vi.fn().mockReturnValue({ requestId: "batch", cancel: vi.fn(), detach: vi.fn() }),
+      ...overrides?.batches,
     },
   };
 

@@ -17,6 +17,7 @@ import { SessionList } from "../features/chat/SessionList";
 import { useMessagesQuery } from "../features/chat/chat.queries";
 import { ImportDialog } from "../features/imports/ImportDialog";
 import { ImportProgress } from "../features/imports/ImportProgress";
+import { BatchProgress } from "../features/imports/BatchProgress";
 import { useImportJobQuery } from "../features/imports/imports.queries";
 import { useImportStore } from "../features/imports/import-store";
 import { DocumentEditor } from "../features/repositories/DocumentEditor";
@@ -72,6 +73,7 @@ export function Workspace() {
   const [selectedSession, setSelectedSession] = useState<SessionSummary | null>(null);
   const [selectedRepositoryIds, setSelectedRepositoryIds] = useState<string[]>([]);
   const jobId = useImportStore((state) => state.jobId);
+  const batchId = useImportStore((state) => state.batchId);
   const importJob = useImportJobQuery(jobId);
   const selectedDocument = useDocumentQuery(selectedDocumentId);
   const repositories = useRepositoriesQuery();
@@ -275,6 +277,7 @@ export function Workspace() {
           />
         </div>
       ) : null}
+      {batchId ? <div className="workspace-import-progress"><BatchProgress batchId={batchId} /></div> : null}
     </main>
   );
 }

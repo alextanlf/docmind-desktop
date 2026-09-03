@@ -25,6 +25,11 @@ import {
   StagedSourceSchema,
   StagedCollectionSchema,
   YuqueStatusSchema,
+  BatchImportSchema,
+  BatchItemPageSchema,
+  CreateBatchInputSchema,
+  ConfirmBatchInputSchema,
+  RetryBatchInputSchema,
 } from "../shared/contracts";
 
 const require = createRequire(import.meta.url);
@@ -186,6 +191,46 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         requestId: id,
         afterSequence,
         route: `/api/imports/${id}/events`,
+        headers: { "Last-Event-ID": String(afterSequence) },
+        sender: event.sender ?? { send: () => {} },
+      });
+    },
+    [IPC_CHANNELS.batchesCreate]: (_event, input) =>
+      proxy.requestJson("/api/import-batches", jsonInit("POST", parse(CreateBatchInputSchema, input)), BatchImportSchema),
+    [IPC_CHANNELS.batchesGet]: (_event, batchId) => {
+      const id = parse(UUID, batchId);
+      return proxy.requestJson(`/api/import-batches/${id}`, {}, BatchImportSchema);
+    },
+    [IPC_CHANNELS.batchesList]: () => proxy.requestJson("/api/import-batches", {}, z.array(BatchImportSchema)),
+    [IPC_CHANNELS.batchesListItems]: (_event, batchId, cursor) => {
+      const id = parse(UUID, batchId);
+      const query = typeof cursor === "string" && cursor.length > 0 ? `?cursor=${encodeURIComponent(cursor)}` : "";
+      return proxy.requestJson(`/api/import-batches/${id}/items${query}`, {}, BatchItemPageSchema);
+    },
+    [IPC_CHANNELS.batchesConfirm]: (_event, batchId, input) => {
+      const id = parse(UUID, batchId);
+      return proxy.requestJson(`/api/import-batches/${id}/confirm`, jsonInit("POST", parse(ConfirmBatchInputSchema, input)), BatchImportSchema);
+    },
+    [IPC_CHANNELS.batchesCancel]: (_event, batchId) => {
+      const id = parse(UUID, batchId);
+      return proxy.requestJson(`/api/import-batches/${id}/cancel`, jsonInit("POST"), BatchImportSchema);
+    },
+    [IPC_CHANNELS.batchesContinue]: (_event, batchId) => {
+      const id = parse(UUID, batchId);
+      return proxy.requestJson(`/api/import-batches/${id}/continue`, jsonInit("POST"), BatchImportSchema);
+    },
+    [IPC_CHANNELS.batchesRetry]: (_event, batchId, input) => {
+      const id = parse(UUID, batchId);
+      return proxy.requestJson(`/api/import-batches/${id}/retry`, jsonInit("POST", input === undefined ? undefined : parse(RetryBatchInputSchema, input)), BatchImportSchema);
+    },
+    [IPC_CHANNELS.batchesSubscribe]: (event, batchId, afterSequence) => {
+      const id = parse(UUID, batchId);
+      if (!Number.isInteger(afterSequence) || afterSequence < 0)
+        throw new DocMindClientError("INVALID_REQUEST", "事件序号无效");
+      return proxy.openStream({
+        requestId: id,
+        afterSequence,
+        route: `/api/import-batches/${id}/events`,
         headers: { "Last-Event-ID": String(afterSequence) },
         sender: event.sender ?? { send: () => {} },
       });

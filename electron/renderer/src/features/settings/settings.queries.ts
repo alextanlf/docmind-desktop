@@ -38,6 +38,9 @@ export function clientErrorMessage(error: unknown): string {
     BACKEND_UNAVAILABLE: "本地服务暂不可用，请稍后重试",
     EMBEDDING_DOWNLOAD_FAILED: "Embedding 模型下载失败，请检查网络后重试",
     YUQUE_LOGIN_REQUIRED: "语雀登录已失效，请重新登录",
+    BATCH_STALE_CONFIRMATION: "目录内容已变化，请重新选择目录后再试",
+    BATCH_SOURCE_CHANGED: "目录内容已变化，请重新选择目录",
+    BATCH_STATE_CONFLICT: "批量导入状态已变化，请刷新后重试",
   };
   if (value?.code && messages[value.code]) return messages[value.code];
   if (

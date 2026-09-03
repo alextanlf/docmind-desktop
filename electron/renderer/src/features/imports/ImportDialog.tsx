@@ -10,6 +10,8 @@ import { ConfirmStep } from "./ConfirmStep";
 import { useImportStore } from "./import-store";
 import { PreviewStep } from "./PreviewStep";
 import { SourceStep } from "./SourceStep";
+import { BatchSourceStep } from "./BatchSourceStep";
+import { BatchCandidateStep } from "./BatchCandidateStep";
 
 type ImportDialogProps = {
   open: boolean;
@@ -28,12 +30,17 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
   const setRepositoryId = useImportStore((state) => state.setRepositoryId);
   const setDuplicateDecision = useImportStore((state) => state.setDuplicateDecision);
   const setJobId = useImportStore((state) => state.setJobId);
+  const batchId = useImportStore((state) => state.batchId);
+  const setBatchId = useImportStore((state) => state.setBatchId);
+  const batchDecisions = useImportStore((state) => state.batchId ? state.batchDecisions[state.batchId] ?? {} : {});
   const reset = useImportStore((state) => state.reset);
   const repositories = useRepositoriesQuery();
   const embedding = useEmbeddingStatusQuery();
   const [pending, setPending] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState("");
+  const [mode, setMode] = useState<"single" | "batch">("single");
+  const [batchDiscoveryVersion, setBatchDiscoveryVersion] = useState(1);
   const inspectionGeneration = useRef(0);
   const openRef = useRef(open);
   openRef.current = open;
@@ -44,6 +51,7 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
   function close() {
     inspectionGeneration.current += 1;
     reset();
+    setMode("single");
     onClose();
   }
   async function inspect(currentSource: SourceRef) {
@@ -87,6 +95,18 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
       setPending(false);
     }
   }
+  async function confirmBatch() {
+    if (!batchId) return;
+    setPending(true); setError("");
+    try {
+      const current = await window.docmind.batches.get(batchId).catch(() => null);
+      const items = Object.entries(batchDecisions).map(([itemId, decision]) => ({ itemId, decision }));
+      await window.docmind.batches.confirm(batchId, { discoveryVersion: current?.discoveryVersion ?? batchDiscoveryVersion, items });
+      setBatchId(batchId);
+      onClose();
+    } catch (cause) { setError(clientErrorMessage(cause)); }
+    finally { setPending(false); }
+  }
   const selectedRepository = repositories.data?.find(
     (repository) => repository.id === repositoryId,
   );
@@ -100,6 +120,10 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
             <li className={step === 2 ? "is-active" : ""}>2 预览与目标</li>
             <li className={step === 3 ? "is-active" : ""}>3 确认导入</li>
           </ol>
+          <div aria-label="导入模式" className="segmented-control" role="radiogroup">
+            <label><input type="radio" name="import-mode" checked={mode === "single"} onChange={() => { setMode("single"); setBatchId(null); }} />单篇</label>
+            <label><input type="radio" name="import-mode" checked={mode === "batch"} onChange={() => setMode("batch")} />批量</label>
+          </div>
         </div>
         <button
           aria-label="关闭导入窗口"
@@ -112,7 +136,9 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
         </button>
       </header>
       <div className="import-dialog-content">
-        {step === 1 ? <SourceStep onContinue={inspect} /> : null}
+        {step === 1 && mode === "single" ? <SourceStep onContinue={inspect} /> : null}
+        {step === 1 && mode === "batch" ? <BatchSourceStep repositories={repositories.data ?? []} onCreated={(id, version) => { setBatchId(id); setBatchDiscoveryVersion(version); setStep(2); }} /> : null}
+        {step === 2 && mode === "batch" && batchId ? <BatchCandidateStep batchId={batchId} onConfirm={() => void confirmBatch()} onCancel={close} /> : null}
         {step === 2 && preview ? (
           <PreviewStep
             duplicateDecision={duplicateDecision}
