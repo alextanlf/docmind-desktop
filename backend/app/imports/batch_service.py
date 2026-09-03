@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import suppress
 from contextvars import ContextVar
+from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from app.api.errors import DomainError
+from app.document.discovery import DirectoryDiscovery
 from app.imports.events import EventType, ImportEventBroker
-from app.storage.models import BatchItemState, BatchState
+from app.schemas.batches import (
+    BatchItemPage,
+    CreateBatchRequest,
+    DiscoveryRequest,
+    StagedDirectoryBatchRequest,
+)
+from app.storage.models import BatchImportRecord, BatchItemState, BatchState
 from app.storage.repositories import BatchImportStore
 
 MAX_BATCH_CONCURRENCY = 3
@@ -24,6 +34,9 @@ class BatchService:
         document_store: Any | None = None,
         event_broker: ImportEventBroker | None = None,
         max_concurrency: int = MAX_BATCH_CONCURRENCY,
+        staging_root: Path | None = None,
+        manifest_max_bytes: int = 2 * 1024 * 1024,
+        batch_max_items: int = 1000,
     ) -> None:
         if max_concurrency != MAX_BATCH_CONCURRENCY:
             raise ValueError("batch concurrency is fixed at three")
@@ -31,6 +44,9 @@ class BatchService:
         self.import_service = import_service
         self.document_store = document_store
         self.event_broker = event_broker
+        self.staging_root = Path(staging_root).resolve() if staging_root is not None else None
+        self.manifest_max_bytes = manifest_max_bytes
+        self.batch_max_items = batch_max_items
         self._semaphores: dict[str, asyncio.Semaphore] = {}
         self._batch_locks: dict[str, asyncio.Lock] = {}
         self._batch_tasks: dict[str, dict[str, asyncio.Task[None]]] = {}
@@ -44,6 +60,99 @@ class BatchService:
         if batch is None:
             raise DomainError("BATCH_NOT_FOUND", "批次不存在", 404)
         return batch
+
+    def list_batches(self) -> list[Any]:
+        return self.store.list_batches()
+
+    def list_items(self, batch_id: str, **kwargs: Any) -> BatchItemPage:
+        self.get(batch_id)
+        try:
+            return self.store.list_items(batch_id, **kwargs)
+        except ValueError:
+            raise DomainError("INVALID_REQUEST", "分页参数无效", 422) from None
+
+    def create_batch(self, body: CreateBatchRequest) -> BatchImportRecord:
+        if not isinstance(body, StagedDirectoryBatchRequest):
+            raise DomainError("INVALID_REQUEST", "当前仅支持 staged_directory 来源", 422)
+        batch = BatchImportRecord(
+            source_kind=body.kind,
+            source_descriptor_json=json.dumps({"collectionId": str(body.source_id)}, separators=(",", ":")),
+            repository_id=str(body.repository_id),
+            state=BatchState.DISCOVERING,
+            message="正在发现目录",
+        )
+        return self.store.create_batch(batch)
+
+    async def discover_batch(self, batch_id: str) -> None:
+        batch = self.get(batch_id)
+        if self.staging_root is None:
+            self.store.fail_discovery(batch_id, code="IMPORT_FAILED", message="目录发现失败", retryable=False)
+            return
+        try:
+            descriptor = json.loads(batch.source_descriptor_json)
+            discovery = DirectoryDiscovery(self.staging_root, self.manifest_max_bytes)
+
+            async def emit(progress: Any) -> None:
+                await self._publish(batch_id, "progress", progress.model_dump(mode="json"))
+
+            result = await discovery.discover(
+                DiscoveryRequest(
+                    batch_id=UUID(batch_id),
+                    source_kind="staged_directory",
+                    source_descriptor=descriptor,
+                    repository_id=UUID(batch.repository_id) if batch.repository_id else None,
+                ),
+                emit,
+            )
+            if len(result.sources) > self.batch_max_items:
+                raise DomainError("BATCH_LIMIT_EXCEEDED", "目录文件数量超过限制", 413)
+            from app.storage.models import BatchItemRecord
+
+            items = [
+                BatchItemRecord(
+                    source_identity=source.source_identity,
+                    source_revision=source.source_revision,
+                    title=source.title,
+                    display_path=source.display_path,
+                    media_type=source.media_type,
+                    size_bytes=source.size_bytes,
+                    cached_source_json=source.cached_source.model_dump(mode="json"),
+                    remote_binding_json=(source.remote_binding.model_dump(mode="json") if source.remote_binding else None),
+                )
+                for source in result.sources
+            ]
+            self.store.insert_discovered_items(batch_id, items)
+            self.store.set_state(batch_id, BatchState.AWAITING_CONFIRMATION, message="目录发现完成")
+        except asyncio.CancelledError:
+            self.store.fail_discovery(batch_id, code="BATCH_APP_RESTARTED", message="应用重启导致目录发现中断", retryable=True)
+            raise
+        except DomainError as error:
+            self.store.fail_discovery(batch_id, code=error.code, message=error.message, retryable=False)
+        except Exception:  # noqa: BLE001 - discovery boundary maps ordinary failures
+            self.store.fail_discovery(batch_id, code="IMPORT_FAILED", message="目录发现失败", retryable=False)
+
+    async def ensure_terminal_event(self, batch_id: str) -> None:
+        batch = self.get(batch_id)
+        if self.event_broker is None or batch.state not in {
+            BatchState.COMPLETED,
+            BatchState.COMPLETED_WITH_ERRORS,
+            BatchState.FAILED,
+            BatchState.CANCELLED,
+        }:
+            return
+        terminal = await self.event_broker.terminal(batch_id)
+        if terminal is not None:
+            return
+        event_type: EventType = "error" if batch.state == BatchState.FAILED else "done"
+        payload = {
+            "progress": batch.progress,
+            "state": batch.state.value,
+            "message": batch.message,
+        }
+        if event_type == "error":
+            payload.update({"code": batch.error_code, "retryable": batch.retryable})
+        sequence = self.store.allocate_event_sequence(batch_id)
+        await self.event_broker.publish(batch_id, event_type, payload, sequence=sequence)
 
     async def confirm(self, batch_id: str, confirmation) -> Any:  # type: ignore[no-untyped-def]
         batch = await asyncio.to_thread(
@@ -142,6 +251,9 @@ class BatchService:
             return batch
 
     async def retry_item(self, batch_id: str, item_id: str) -> Any:
+        return await self.retry_items(batch_id, [item_id])
+
+    async def retry_items(self, batch_id: str, item_ids: list[str] | None = None) -> Any:
         lock = self._batch_locks.setdefault(batch_id, asyncio.Lock())
         async with lock:
             batch = self.get(batch_id)
@@ -151,13 +263,21 @@ class BatchService:
                 BatchState.CANCELLED,
             }:
                 raise DomainError("BATCH_STATE_CONFLICT", "批次当前不可重试", 409)
-            item = self.store.get_item(item_id)
-            if item is None or item.batch_id != batch_id:
-                raise DomainError("BATCH_ITEM_NOT_FOUND", "批次项不存在", 404)
-            if item.state != BatchItemState.FAILED or not item.retryable or not item.import_job_id:
+            items = self.store.list_item_records(batch_id)
+            by_id = {item.id: item for item in items}
+            if item_ids is not None:
+                for item_id in item_ids:
+                    if item_id not in by_id:
+                        raise DomainError("BATCH_ITEM_NOT_FOUND", "批次项不存在", 404)
+                candidates = [by_id[item_id] for item_id in item_ids]
+            else:
+                candidates = items
+            candidates = [item for item in candidates if item.state == BatchItemState.FAILED and item.retryable and item.import_job_id]
+            if not candidates:
                 raise DomainError("BATCH_STATE_CONFLICT", "批次项不可重试", 409)
-            await self.import_service.retry(item.import_job_id)
-            self.store.mark_item_queued(item_id)
+            for item in candidates:
+                await self.import_service.retry(item.import_job_id)
+                self.store.mark_item_queued(item.id)
             if batch.state == BatchState.COMPLETED_WITH_ERRORS:
                 self.store.set_state(batch_id, BatchState.RUNNING, message="批次重试中")
         return await self.continue_batch(batch_id)

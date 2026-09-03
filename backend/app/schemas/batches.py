@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import ConfigDict, Field, HttpUrl
 
 from app.schemas.common import WireModel
 
@@ -128,27 +128,39 @@ class ConfirmBatchInput(WireModel):
     items: list[ConfirmBatchItem] = Field(max_length=1000)
 
 
+class RetryBatchInput(WireModel):
+    model_config = ConfigDict(extra="forbid")
+    item_ids: list[UUID] | None = Field(default=None, max_length=1000, alias="itemIds")
+
+
 class StagedDirectoryBatchRequest(WireModel):
+    model_config = ConfigDict(extra="forbid")
     kind: Literal["staged_directory"]
-    source_id: str = Field(min_length=1, alias="sourceId")
+    source_id: UUID = Field(alias="sourceId")
     repository_id: UUID = Field(alias="repositoryId")
 
 
 class WebBatchRequest(WireModel):
+    model_config = ConfigDict(extra="forbid")
     kind: Literal["web"]
-    source_id: str = Field(min_length=1, alias="sourceId")
+    entry_url: HttpUrl = Field(alias="entryUrl")
     repository_id: UUID = Field(alias="repositoryId")
+    max_depth: int = Field(ge=0, le=5, alias="maxDepth")
+    max_pages: int = Field(gt=0, le=200, alias="maxPages")
+    use_sitemap: bool = Field(alias="useSitemap")
 
 
 class YuqueRepositoryBatchRequest(WireModel):
+    model_config = ConfigDict(extra="forbid")
     kind: Literal["yuque_repository"]
-    source_id: str = Field(min_length=1, alias="sourceId")
     repository_id: UUID = Field(alias="repositoryId")
 
 
 class SearchResultsBatchRequest(WireModel):
+    model_config = ConfigDict(extra="forbid")
     kind: Literal["search_results"]
-    source_id: str = Field(min_length=1, alias="sourceId")
+    search_run_id: UUID = Field(alias="searchRunId")
+    result_ids: list[UUID] = Field(min_length=1, max_length=10, alias="resultIds")
     repository_id: UUID = Field(alias="repositoryId")
 
 

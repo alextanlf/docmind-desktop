@@ -8,6 +8,7 @@ import pytest
 
 from app.api.errors import DomainError
 from app.imports.batch_service import BatchService
+from app.imports.events import InMemoryEventBroker
 from app.schemas.batches import ConfirmBatchInput, ConfirmBatchItem
 from app.storage.database import Database
 from app.storage.models import (
@@ -218,6 +219,64 @@ async def test_scheduler_never_runs_more_than_three_children(database) -> None:
     await service.continue_batch(batch.id)
     assert imports.max_active == 3
     assert store.get(batch.id).state is BatchState.COMPLETED  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_retry_items_without_selection_retries_all_failed_items(database) -> None:
+    store = BatchImportStore(database)
+    batch = make_batch(store, count=2)
+    imports = FakeImportService()
+    service = BatchService(store=store, import_service=imports)
+    await service.confirm(batch.id, confirm_all(store, batch))
+    items = store.list_item_records(batch.id)
+    with database.session() as session:
+        parent = session.get(BatchImportRecord, batch.id)
+        assert parent is not None
+        parent.state = BatchState.COMPLETED_WITH_ERRORS
+        for item in items:
+            persisted = session.get(BatchItemRecord, item.id)
+            assert persisted is not None
+            persisted.state = BatchItemState.FAILED
+            persisted.retryable = True
+    await service.retry_items(batch.id)
+    assert all(item.state is BatchItemState.COMPLETED for item in store.list_item_records(batch.id))
+
+
+@pytest.mark.asyncio
+async def test_terminal_event_is_replayed_once_for_completed_with_errors_batch(database) -> None:
+    store = BatchImportStore(database)
+    batch = make_batch(store, count=0)
+    store.set_state(batch.id, BatchState.RUNNING)
+    store.set_state(batch.id, BatchState.COMPLETED_WITH_ERRORS, message="partial")
+    broker = InMemoryEventBroker()
+    service = BatchService(store=store, import_service=FakeImportService(), event_broker=broker)
+    await service.ensure_terminal_event(batch.id)
+    await service.ensure_terminal_event(batch.id)
+    events = [event async for event in broker.subscribe(batch.id, 0)]
+    assert len(events) == 1
+    assert events[0].type == "done"
+    assert events[0].payload["state"] == "completed_with_errors"
+
+
+def test_discovery_persists_duplicate_target_and_actions(database) -> None:
+    store = BatchImportStore(database)
+    batch = make_batch(store, count=0)
+    item = BatchItemRecord(
+        source_identity="folder:root:1.md",
+        source_revision="a" * 64,
+        title="Doc",
+        display_path="1.md",
+        media_type="text/markdown",
+        size_bytes=1,
+        cached_source_json=json.dumps({"cache_id": str(uuid4()), "media_type": "text/markdown", "byte_size": 1, "sha256": "a" * 64}),
+        allowed_actions_json=json.dumps(["create", "skip"]),
+    )
+    with database.session() as session:
+        session.add(DocumentRecord(id=str(uuid4()), repository_id="repository-1", source_identity=item.source_identity, content_hash="b" * 64, title="existing"))
+    store.insert_discovered_items(batch.id, [item])
+    persisted = store.list_item_records(batch.id)[0]
+    assert persisted.existing_document_id is not None
+    assert json.loads(persisted.allowed_actions_json) == ["update", "skip"]
 
 
 @pytest.mark.asyncio

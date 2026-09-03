@@ -167,6 +167,9 @@ def create_app(
             import_service=app.state.import_service,
             document_store=document_store,
             event_broker=InMemoryEventBroker(retention=100),
+            staging_root=runtime_settings.staging_dir,
+            manifest_max_bytes=runtime_settings.staging_manifest_max_bytes,
+            batch_max_items=runtime_settings.batch_max_items,
         )
         app.state.batch_service.recover_on_startup()
         runtime_llm_provider = fake_llm_provider or _RuntimeLLMProvider(

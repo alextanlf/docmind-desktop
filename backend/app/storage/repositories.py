@@ -589,6 +589,14 @@ class BatchImportStore:
         with self.database.session() as session:
             return session.get(BatchImportRecord, batch_id)
 
+    def list_batches(self) -> list[BatchImportRecord]:
+        with self.database.session() as session:
+            return list(
+                session.scalars(
+                    select(BatchImportRecord).order_by(BatchImportRecord.created_at.desc())
+                )
+            )
+
     def get_item(self, item_id: str) -> BatchItemRecord | None:
         with self.database.session() as session:
             return session.get(BatchItemRecord, item_id)
@@ -658,12 +666,66 @@ class BatchImportStore:
                 item.batch_id = batch_id
                 item.ordinal = next_ordinal + offset
                 item.cached_source_json = _cached_source_json(item.cached_source_json)
-                item.allowed_actions_json = _allowed_actions_json(item.allowed_actions_json)
+                target = self._document_target(session, batch.repository_id, item)
+                item.existing_document_id = target.id if target is not None else None
+                supplied_actions = _decode_allowed_actions(item.allowed_actions_json)
+                # Legacy callers may provide an attach_remote snapshot before
+                # the binding is persisted; retain it so confirmation returns
+                # the stable binding validation error.
+                if "attach_remote" in supplied_actions and not _has_remote_binding(item.remote_binding_json):
+                    actions = supplied_actions
+                else:
+                    actions = (
+                        ["update", "skip"]
+                        if target is not None
+                        else (["attach_remote", "skip"] if _has_remote_binding(item.remote_binding_json) else ["create", "skip"])
+                    )
+                item.allowed_actions_json = _allowed_actions_json(actions)
                 session.add(item)
             batch.total_count += len(items)
             batch.updated_at = utc_now()
             session.flush()
             return items
+
+    @staticmethod
+    def _document_target(session: Session, repository_id: str | None, item: BatchItemRecord) -> DocumentRecord | None:
+        if not repository_id:
+            return None
+        target = session.scalar(
+            select(DocumentRecord).where(
+                DocumentRecord.repository_id == repository_id,
+                DocumentRecord.source_identity == item.source_identity,
+            )
+        )
+        if target is not None:
+            return target
+        revision = item.source_revision.removeprefix("sha256:")
+        if len(revision) != 64:
+            return None
+        return session.scalar(
+            select(DocumentRecord).where(
+                DocumentRecord.repository_id == repository_id,
+                DocumentRecord.content_hash == revision,
+            )
+        )
+
+    def fail_discovery(self, batch_id: str, *, code: str, message: str, retryable: bool) -> BatchImportRecord:
+        with self.database.session() as session:
+            batch = session.get(BatchImportRecord, batch_id)
+            if batch is None:
+                raise DomainError("BATCH_NOT_FOUND", "批次不存在", 404)
+            now = utc_now()
+            if batch.state == BatchState.DISCOVERING:
+                transition(batch.state, BatchState.FAILED)
+                batch.state = BatchState.FAILED
+            batch.error_code = code
+            batch.error_message = message
+            batch.retryable = retryable
+            batch.message = message
+            batch.completed_at = now
+            batch.updated_at = now
+            session.flush()
+            return batch
 
     def set_confirmation(self, batch_id: str, confirmation: ConfirmBatchInput) -> BatchImportRecord:
         decisions = {str(item.item_id): BatchItemDecision(item.decision) for item in confirmation.items}
