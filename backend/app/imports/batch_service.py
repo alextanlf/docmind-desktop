@@ -100,7 +100,9 @@ class BatchService:
                     self._progress_payload(
                         batch_snapshot,
                         stage=progress.stage if progress.stage in {"discovering", "awaiting_confirmation", "running", "paused"} else "discovering",
-                        counts={"total": progress.candidate_count + progress.rejected_count, "selected": progress.candidate_count, "completed": 0, "failed": 0, "skipped": progress.rejected_count},
+                        # Discovery candidates are not selected until confirmation; rejected
+                        # entries remain diagnostics and are excluded from durable batch totals.
+                        counts={"total": progress.candidate_count, "selected": 0, "completed": 0, "failed": 0, "skipped": 0},
                     ),
                 )
 
