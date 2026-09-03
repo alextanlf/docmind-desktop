@@ -12,6 +12,7 @@ import { PreviewStep } from "./PreviewStep";
 import { SourceStep } from "./SourceStep";
 import { BatchSourceStep } from "./BatchSourceStep";
 import { BatchCandidateStep } from "./BatchCandidateStep";
+import { useConfirmBatchMutation } from "./batch-import.queries";
 
 type ImportDialogProps = {
   open: boolean;
@@ -33,6 +34,7 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
   const batchId = useImportStore((state) => state.batchId);
   const setBatchId = useImportStore((state) => state.setBatchId);
   const batchDecisions = useImportStore((state) => state.batchId ? state.batchDecisions[state.batchId] ?? {} : {});
+  const batchItems = useImportStore((state) => state.batchId ? state.batchItems[state.batchId] ?? [] : []);
   const reset = useImportStore((state) => state.reset);
   const repositories = useRepositoriesQuery();
   const embedding = useEmbeddingStatusQuery();
@@ -40,6 +42,7 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState("");
   const [mode, setMode] = useState<"single" | "batch">("single");
+  const confirmBatchMutation = useConfirmBatchMutation();
   const [batchDiscoveryVersion, setBatchDiscoveryVersion] = useState(1);
   const inspectionGeneration = useRef(0);
   const openRef = useRef(open);
@@ -100,8 +103,12 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
     setPending(true); setError("");
     try {
       const current = await window.docmind.batches.get(batchId).catch(() => null);
-      const items = Object.entries(batchDecisions).map(([itemId, decision]) => ({ itemId, decision }));
-      await window.docmind.batches.confirm(batchId, { discoveryVersion: current?.discoveryVersion ?? batchDiscoveryVersion, items });
+      const items = batchItems.map((item) => {
+        const local = batchDecisions[item.id];
+        const decision = local ?? (item.selected && item.decision && item.allowedActions.includes(item.decision) ? item.decision : item.selected ? (item.allowedActions.find((a) => a !== "skip") ?? "skip") : "skip");
+        return { itemId: item.id, decision };
+      });
+      await confirmBatchMutation.mutateAsync({ batchId, input: { discoveryVersion: current?.discoveryVersion ?? batchDiscoveryVersion, items } });
       setBatchId(batchId);
       onClose();
     } catch (cause) { setError(clientErrorMessage(cause)); }
@@ -121,8 +128,8 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
             <li className={step === 3 ? "is-active" : ""}>3 确认导入</li>
           </ol>
           <div aria-label="导入模式" className="segmented-control" role="radiogroup">
-            <label><input type="radio" name="import-mode" checked={mode === "single"} onChange={() => { setMode("single"); setBatchId(null); }} />单篇</label>
-            <label><input type="radio" name="import-mode" checked={mode === "batch"} onChange={() => setMode("batch")} />批量</label>
+            <label className={mode === "single" ? "is-active" : ""}><input type="radio" name="import-mode" checked={mode === "single"} onChange={() => { reset(); setBatchDiscoveryVersion(1); setMode("single"); }} />单篇</label>
+            <label className={mode === "batch" ? "is-active" : ""}><input type="radio" name="import-mode" checked={mode === "batch"} onChange={() => { reset(); setBatchDiscoveryVersion(1); setMode("batch"); }} />批量</label>
           </div>
         </div>
         <button
@@ -138,7 +145,7 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
       <div className="import-dialog-content">
         {step === 1 && mode === "single" ? <SourceStep onContinue={inspect} /> : null}
         {step === 1 && mode === "batch" ? <BatchSourceStep repositories={repositories.data ?? []} onCreated={(id, version) => { setBatchId(id); setBatchDiscoveryVersion(version); setStep(2); }} /> : null}
-        {step === 2 && mode === "batch" && batchId ? <BatchCandidateStep batchId={batchId} onConfirm={() => void confirmBatch()} onCancel={close} /> : null}
+        {step === 2 && mode === "batch" && batchId ? <BatchCandidateStep batchId={batchId} onConfirm={() => void confirmBatch()} onCancel={close} pending={pending} /> : null}
         {step === 2 && preview ? (
           <PreviewStep
             duplicateDecision={duplicateDecision}

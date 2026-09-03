@@ -43,6 +43,7 @@ def test_batch_view_serializes_camel_case_wire_contract() -> None:
         started_at=None,
         completed_at=None,
         updated_at=datetime.now(UTC),
+        last_event_sequence=0,
     )
 
     assert {"sourceKind", "repositoryId", "discoveryVersion", "createdAt"}.issubset(

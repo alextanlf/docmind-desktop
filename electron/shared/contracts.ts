@@ -309,6 +309,14 @@ export type ConfirmBatchInput = z.infer<typeof ConfirmBatchInputSchema>;
 export type RetryBatchInput = z.infer<typeof RetryBatchInputSchema>;
 export type ChatStreamInput = z.infer<typeof ChatStreamInputSchema>;
 
+export type BatchProgressCounts = Pick<BatchImport, "totalCount" | "selectedCount" | "completedCount" | "failedCount" | "skippedCount">;
+export type BatchProgressPayload = {
+  progress: number;
+  state: BatchImport["state"];
+  message: string;
+  counts: { total: number; selected: number; completed: number; failed: number; skipped: number };
+};
+
 export interface StreamSubscription {
   requestId: string;
   cancel(): void;

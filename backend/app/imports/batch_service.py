@@ -351,9 +351,9 @@ class BatchService:
         return batch
 
     async def _publish_progress(self, batch_id: str, item_id: str) -> None:
-        del item_id
         batch = self.get(batch_id)
-        await self._publish(batch_id, "progress", self._progress_payload(batch))
+        item = self.store.get_item(item_id)
+        await self._publish(batch_id, "progress", self._progress_payload(batch, stage="import", item_id=item_id, item_state=item.state.value if item else None))
 
     async def _publish(self, batch_id: str, event_type: EventType, payload: dict[str, Any]) -> None:
         if self.event_broker is None:
@@ -362,11 +362,21 @@ class BatchService:
         await self.event_broker.publish(batch_id, event_type, payload, sequence=sequence)
 
     @staticmethod
-    def _progress_payload(batch: Any) -> dict[str, Any]:
+    def _progress_payload(batch: Any, *, stage: str = "batch", item_id: str | None = None, item_state: str | None = None) -> dict[str, Any]:
         return {
             "progress": batch.progress,
             "state": batch.state.value if hasattr(batch.state, "value") else str(batch.state),
             "message": batch.message,
+            "stage": stage,
+            "counts": {
+                "total": batch.total_count,
+                "selected": batch.selected_count,
+                "completed": batch.completed_count,
+                "failed": batch.failed_count,
+                "skipped": batch.skipped_count,
+            },
+            "itemId": item_id,
+            "itemState": item_state,
         }
 
 

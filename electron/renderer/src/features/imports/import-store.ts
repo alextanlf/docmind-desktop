@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { SourcePreview, SourceRef } from "../../../../shared/contracts";
+import type { BatchItem, SourcePreview, SourceRef } from "../../../../shared/contracts";
 
 export type ImportStep = 1 | 2 | 3;
 export type DuplicateDecision = "skip" | "update" | null;
@@ -13,6 +13,7 @@ type ImportState = {
   jobId: string | null;
   batchId: string | null;
   batchDecisions: Record<string, Record<string, BatchDecision>>;
+  batchItems: Record<string, BatchItem[]>;
   setStep: (step: ImportStep) => void;
   setSource: (source: SourceRef | null) => void;
   setPreview: (preview: SourcePreview | null) => void;
@@ -21,6 +22,7 @@ type ImportState = {
   setJobId: (jobId: string | null) => void;
   setBatchId: (batchId: string | null) => void;
   setBatchDecision: (batchId: string, itemId: string, decision: BatchDecision) => void;
+  setBatchItems: (batchId: string, items: BatchItem[]) => void;
   reset: () => void;
 };
 const initialState = {
@@ -32,6 +34,7 @@ const initialState = {
   jobId: null,
   batchId: null,
   batchDecisions: {},
+  batchItems: {},
 };
 export const useImportStore = create<ImportState>((set) => ({
   ...initialState,
@@ -43,5 +46,6 @@ export const useImportStore = create<ImportState>((set) => ({
   setJobId: (jobId) => set({ jobId }),
   setBatchId: (batchId) => set({ batchId }),
   setBatchDecision: (batchId, itemId, decision) => set((state) => ({ batchDecisions: { ...state.batchDecisions, [batchId]: { ...(state.batchDecisions[batchId] ?? {}), [itemId]: decision } } })),
+  setBatchItems: (batchId, items) => set((state) => ({ batchItems: { ...state.batchItems, [batchId]: items } })),
   reset: () => set(initialState),
 }));

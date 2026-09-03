@@ -59,7 +59,7 @@ type ActiveStream = {
 };
 
 const STREAM_ROUTE =
-  /^\/api\/(?:imports\/[0-9a-f-]{36}\/events|sessions\/[0-9a-f-]{36}\/messages\/stream)$/;
+  /^\/api\/(?:imports\/[0-9a-f-]{36}\/events|import-batches\/[0-9a-f-]{36}\/events|sessions\/[0-9a-f-]{36}\/messages\/stream)$/;
 
 export class BackendProxy {
   private readonly requestFn: RequestFn;
