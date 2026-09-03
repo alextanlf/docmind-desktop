@@ -93,7 +93,16 @@ class BatchService:
             discovery = DirectoryDiscovery(self.staging_root, self.manifest_max_bytes)
 
             async def emit(progress: Any) -> None:
-                await self._publish(batch_id, "progress", progress.model_dump(mode="json"))
+                batch_snapshot = self.get(batch_id)
+                await self._publish(
+                    batch_id,
+                    "progress",
+                    self._progress_payload(
+                        batch_snapshot,
+                        stage=progress.stage if progress.stage in {"discovering", "awaiting_confirmation", "running", "paused"} else "discovering",
+                        counts={"total": progress.candidate_count + progress.rejected_count, "selected": progress.candidate_count, "completed": 0, "failed": 0, "skipped": progress.rejected_count},
+                    ),
+                )
 
             result = await discovery.discover(
                 DiscoveryRequest(
@@ -145,11 +154,7 @@ class BatchService:
         if terminal is not None:
             return
         event_type: EventType = "error" if batch.state == BatchState.FAILED else "done"
-        payload = {
-            "progress": batch.progress,
-            "state": batch.state.value,
-            "message": batch.message,
-        }
+        payload = self._progress_payload(batch, stage="running")
         if event_type == "error":
             payload.update({"code": batch.error_code, "retryable": batch.retryable})
         sequence = self.store.allocate_event_sequence(batch_id)
@@ -362,13 +367,16 @@ class BatchService:
         await self.event_broker.publish(batch_id, event_type, payload, sequence=sequence)
 
     @staticmethod
-    def _progress_payload(batch: Any, *, stage: str = "batch", item_id: str | None = None, item_state: str | None = None) -> dict[str, Any]:
+    def _progress_payload(batch: Any, *, stage: str | None = None, item_id: str | None = None, item_state: str | None = None, counts: dict[str, int] | None = None) -> dict[str, Any]:
+        valid_stages = {"discovering", "awaiting_confirmation", "running", "paused"}
+        if stage not in valid_stages:
+            stage = {"discovering": "discovering", "awaiting_confirmation": "awaiting_confirmation", "paused": "paused"}.get(getattr(batch.state, "value", batch.state), "running")
         return {
             "progress": batch.progress,
             "state": batch.state.value if hasattr(batch.state, "value") else str(batch.state),
             "message": batch.message,
             "stage": stage,
-            "counts": {
+            "counts": counts or {
                 "total": batch.total_count,
                 "selected": batch.selected_count,
                 "completed": batch.completed_count,
