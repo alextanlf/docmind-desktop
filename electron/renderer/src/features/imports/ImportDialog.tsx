@@ -18,8 +18,9 @@ type ImportDialogProps = {
   open: boolean;
   onClose: () => void;
   onImported?: (job: ImportJob) => void;
+  openBatchConfirmation?: boolean;
 };
-export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
+export function ImportDialog({ open, onClose, onImported, openBatchConfirmation = false }: ImportDialogProps) {
   const step = useImportStore((state) => state.step);
   const source = useImportStore((state) => state.source);
   const preview = useImportStore((state) => state.preview);
@@ -50,6 +51,12 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
   useEffect(() => {
     if (!open) inspectionGeneration.current += 1;
   }, [open]);
+  useEffect(() => {
+    if (open && openBatchConfirmation && batchId) {
+      setMode("batch");
+      setStep(2);
+    }
+  }, [batchId, open, openBatchConfirmation, setStep]);
   if (!open) return null;
   function close() {
     inspectionGeneration.current += 1;

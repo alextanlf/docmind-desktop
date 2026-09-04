@@ -6,6 +6,8 @@ import {
   Library,
   PanelRightOpen,
   Settings,
+  Square,
+  Trash2,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -14,7 +16,7 @@ import { IconButton } from "../components/IconButton";
 import { ChatPanel } from "../features/chat/ChatPanel";
 import { RepositoryScope } from "../features/chat/RepositoryScope";
 import { SessionList } from "../features/chat/SessionList";
-import { useMessagesQuery } from "../features/chat/chat.queries";
+import { useDeleteSessionMutation, useEndSessionMutation, useMessagesQuery } from "../features/chat/chat.queries";
 import { ImportDialog } from "../features/imports/ImportDialog";
 import { ImportProgress } from "../features/imports/ImportProgress";
 import { BatchProgress } from "../features/imports/BatchProgress";
@@ -62,6 +64,7 @@ export function Workspace() {
   const toggleSidebar = useUiStore((state) => state.toggleSidebar);
   const referencePanelOpen = useUiStore((state) => state.referencePanelOpen);
   const setReferencePanelOpen = useUiStore((state) => state.setReferencePanelOpen);
+  const openDistillation = useUiStore((state) => state.openDistillation);
   const sidebarToggleRef = useRef<HTMLButtonElement>(null);
   const importNavigationRef = useRef<HTMLButtonElement>(null);
   const sidebarFocusTransferPending = useRef(false);
@@ -70,11 +73,15 @@ export function Workspace() {
   }, []);
   const forcedIconRail = useForcedIconRail(prepareSidebarFocusTransfer);
   const [importOpen, setImportOpen] = useState(false);
+  const [openBatchConfirmation, setOpenBatchConfirmation] = useState(false);
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
   const [selectedSession, setSelectedSession] = useState<SessionSummary | null>(null);
   const [selectedRepositoryIds, setSelectedRepositoryIds] = useState<string[]>([]);
+  const [sessionConfirmation, setSessionConfirmation] = useState<"end" | "delete" | null>(null);
+  const sessionActionsRef = useRef<HTMLDivElement>(null);
   const jobId = useImportStore((state) => state.jobId);
   const batchId = useImportStore((state) => state.batchId);
+  const setBatchId = useImportStore((state) => state.setBatchId);
   const importJob = useImportJobQuery(jobId);
   const selectedDocument = useDocumentQuery(selectedDocumentId);
   const repositories = useRepositoriesQuery();
@@ -83,7 +90,27 @@ export function Workspace() {
   );
   const sessionMessages = useMessagesQuery(selectedSession?.id ?? null);
   const stream = useChatStreamStore();
+  const endSession = useEndSessionMutation();
+  const deleteSession = useDeleteSessionMutation();
+  const selectedSessionStreaming = stream.sessionId === selectedSession?.id && stream.status === "streaming";
 
+  const closeSessionConfirmation = () => {
+    setSessionConfirmation(null);
+    requestAnimationFrame(() =>
+      sessionActionsRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus(),
+    );
+  };
+
+  const confirmSessionAction = async () => {
+    if (!selectedSession || !sessionConfirmation) return;
+    if (sessionConfirmation === "end") {
+      setSelectedSession(await endSession.mutateAsync(selectedSession.id));
+    } else {
+      await deleteSession.mutateAsync(selectedSession.id);
+      setSelectedSession(null);
+    }
+    closeSessionConfirmation();
+  };
   useLayoutEffect(() => {
     if (!forcedIconRail || !sidebarFocusTransferPending.current) return;
     sidebarFocusTransferPending.current = false;
@@ -239,8 +266,13 @@ export function Workspace() {
                 repositories={repositories.data ?? []}
                 selectedRepositoryIds={selectedRepositoryIds}
               />
+              <div className="session-actions" ref={sessionActionsRef}>
+                <button aria-label="知识蒸馏" className="button button-secondary" disabled={selectedSessionStreaming} onClick={() => void window.docmind.memory.createDistillation(selectedSession.id).then((draft) => openDistillation(draft.id))} type="button">知识蒸馏</button>
+                {selectedSession.endedAt ? null : <button className="button button-secondary" disabled={selectedSessionStreaming || endSession.isPending} onClick={() => setSessionConfirmation("end")} type="button"><Square aria-hidden="true" size={15} />结束会话</button>}
+                <button className="icon-button" aria-label="删除会话" disabled={selectedSessionStreaming || deleteSession.isPending} onClick={() => setSessionConfirmation("delete")} type="button"><Trash2 aria-hidden="true" size={16} /></button>
+              </div>
             </header>
-            <ChatPanel repositoryIds={selectedRepositoryIds} sessionId={selectedSession.id} />
+            <ChatPanel ended={Boolean(selectedSession.endedAt)} repositoryIds={selectedRepositoryIds} sessionId={selectedSession.id} />
           </div>
         ) : (
           <div className="chat-workspace">
@@ -268,11 +300,17 @@ export function Workspace() {
         )}
       </section>
       <aside aria-label="引用资料" className="workspace-reference w-[320px]">
-        <ReferencePanel citations={citations} />
+        <ReferencePanel
+          citations={citations}
+          onBatchCreated={(id) => { setBatchId(id); setOpenBatchConfirmation(true); setImportOpen(true); }}
+          repositoryId={selectedRepositoryIds[0] ?? null}
+          sessionId={selectedSession?.id ?? null}
+        />
       </aside>
       <ImportDialog
-        onClose={() => setImportOpen(false)}
-        onImported={() => setImportOpen(false)}
+        onClose={() => { setImportOpen(false); setOpenBatchConfirmation(false); }}
+        onImported={() => { setImportOpen(false); setOpenBatchConfirmation(false); }}
+        openBatchConfirmation={openBatchConfirmation}
         open={importOpen}
       />
       {importJob.data ? (
@@ -284,6 +322,20 @@ export function Workspace() {
         </div>
       ) : null}
       {batchId ? <div className="workspace-import-progress"><BatchProgress batchId={batchId} /></div> : null}
+      {sessionConfirmation ? (
+        <div className="modal-backdrop">
+          <section aria-labelledby="session-confirmation-title" aria-modal="true" className="confirmation-dialog" role="dialog">
+            <h2 id="session-confirmation-title">{sessionConfirmation === "end" ? "结束会话" : "删除会话"}</h2>
+            <p>{sessionConfirmation === "end" ? "结束后会话将变为只读。" : "将删除会话、消息和摘要，此操作不可撤销。"}</p>
+            <div className="confirmation-actions">
+              <button className="button button-secondary" onClick={closeSessionConfirmation} type="button">取消</button>
+              <button autoFocus className="button button-primary" disabled={endSession.isPending || deleteSession.isPending} onClick={() => void confirmSessionAction()} type="button">
+                {sessionConfirmation === "end" ? "确认结束会话" : "确认删除会话"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }

@@ -59,7 +59,7 @@ type ActiveStream = {
 };
 
 const STREAM_ROUTE =
-  /^\/api\/(?:imports\/[0-9a-f-]{36}\/events|import-batches\/[0-9a-f-]{36}\/events|sessions\/[0-9a-f-]{36}\/messages\/stream)$/;
+  /^\/api\/(?:imports\/[0-9a-f-]{36}\/events|import-batches\/[0-9a-f-]{36}\/events|distillations\/[0-9a-f-]{36}\/events|sessions\/[0-9a-f-]{36}\/messages\/(?:stream|[0-9a-f-]{36}\/web-search\/stream))$/;
 
 export class BackendProxy {
   private readonly requestFn: RequestFn;
@@ -127,8 +127,8 @@ export class BackendProxy {
       throw new DocMindClientError("INVALID_REQUEST", "流式请求路径无效");
     if (this.active.has(options.requestId))
       throw new DocMindClientError("STREAM_ACTIVE", "该请求已有活动流");
-    const isChat = options.route.includes("/messages/stream");
-    const routeSession = options.route.match(/^\/api\/sessions\/([^/]+)\/messages\/stream$/)?.[1];
+    const routeSession = options.route.match(/^\/api\/sessions\/([^/]+)\/messages\//)?.[1];
+    const isChat = routeSession !== undefined;
     const sessionId = options.sessionId ?? routeSession;
     if (isChat && sessionId) {
       const current = this.chatSessions.get(sessionId);

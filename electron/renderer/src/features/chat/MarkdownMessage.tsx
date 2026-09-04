@@ -146,7 +146,7 @@ export function MarkdownMessage({
   citationScope?: string;
 }) {
   const scoped = citations.map((citation) => ({
-    id: `${citationScope ?? "message"}:${citation.sourceId}:${citation.chunkId}`,
+    id: `${citationScope ?? "message"}:${citation.sourceId}:${citation.kind === "memory" ? citation.memoryId : citation.kind === "web" ? citation.resultId : citation.chunkId}`,
     citation,
   }));
   const citationsBySourceId = new Map(scoped.map((item) => [item.citation.sourceId, item]));

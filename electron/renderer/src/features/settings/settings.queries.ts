@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { WebSearchSettingsInput } from "../../../../shared/contracts";
 
 export const settingsKeys = {
   root: ["settings"] as const,
@@ -20,6 +21,11 @@ export function useEmbeddingStatusQuery() {
 
 export function useYuqueStatusQuery() {
   return useQuery({ queryKey: settingsKeys.yuque, queryFn: () => window.docmind.yuque.status() });
+}
+
+export function useSaveWebSearchMutation() {
+  const client = useQueryClient();
+  return useMutation({ mutationFn: (input: WebSearchSettingsInput) => window.docmind.settings.saveWebSearch(input), onSuccess: (settings) => client.setQueryData(settingsKeys.root, settings) });
 }
 
 export function clientErrorMessage(error: unknown): string {
