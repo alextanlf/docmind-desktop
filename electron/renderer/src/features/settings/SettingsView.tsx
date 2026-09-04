@@ -1,8 +1,9 @@
-import { Database, KeyRound, MessageSquareText, RefreshCw } from "lucide-react";
+import { Database, Globe, KeyRound, MessageSquareText, RefreshCw } from "lucide-react";
 import { DiagnosticsSection } from "./DiagnosticsSection";
 import { EmbeddingStatus } from "./EmbeddingStatus";
 import { ModelSettingsForm } from "./ModelSettingsForm";
 import { YuqueStatus } from "./YuqueStatus";
+import { WebSearchSettings } from "./WebSearchSettings";
 import { clientErrorMessage, useSettingsQuery } from "./settings.queries";
 
 export function SettingsView() {
@@ -59,6 +60,7 @@ export function SettingsView() {
         </div>
         <YuqueStatus />
       </section>
+      <section className="settings-section" aria-labelledby="web-search-settings-title"><div className="section-heading"><Globe aria-hidden="true" size={18} /><div><h2 id="web-search-settings-title">联网搜索</h2><p>本地证据不足时控制是否访问 Tavily</p></div></div><WebSearchSettings settings={settings.data} /></section>
       <section className="settings-section" aria-labelledby="diagnostics-settings-title">
         <div className="section-heading">
           <Database aria-hidden="true" size={18} />

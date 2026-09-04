@@ -68,6 +68,7 @@ describe("流式对话", () => {
     });
 
     await waitFor(() => expect(screen.getByText("@State 用于状态。")).toBeVisible());
+    expect(useChatStreamStore.getState().userMessage).toBe("");
     expect(stream.cancel).not.toHaveBeenCalled();
   });
 

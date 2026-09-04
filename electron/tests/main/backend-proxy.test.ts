@@ -128,6 +128,35 @@ describe("BackendProxy", () => {
     proxy.cleanup();
   });
 
+  it("allows phase2 streams and applies chat concurrency to search continuation", () => {
+    const proxy = new BackendProxy({
+      request: vi.fn(() => new Promise<Response>(() => {})),
+    });
+    const sessionId = "00000000-0000-0000-0000-000000000003";
+    proxy.openStream({
+      requestId: "00000000-0000-0000-0000-000000000104",
+      sessionId,
+      route: `/api/sessions/${sessionId}/messages/00000000-0000-0000-0000-000000000105/web-search/stream`,
+      sender: { send: vi.fn() },
+    });
+    expect(() =>
+      proxy.openStream({
+        requestId: "00000000-0000-0000-0000-000000000106",
+        sessionId,
+        route: `/api/sessions/${sessionId}/messages/stream`,
+        sender: { send: vi.fn() },
+      }),
+    ).toThrow(/active chat stream|活动聊天流/);
+    expect(() =>
+      proxy.openStream({
+        requestId: "00000000-0000-0000-0000-000000000107",
+        route: "/api/distillations/00000000-0000-0000-0000-000000000108/events",
+        sender: { send: vi.fn() },
+      }),
+    ).not.toThrow();
+    proxy.cleanup();
+  });
+
   it("starts import replay after the requested sequence", async () => {
     const sent: unknown[] = [];
     const body = new ReadableStream<Uint8Array>({

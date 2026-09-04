@@ -18,7 +18,11 @@ type ChatStreamState = {
   status: ChatStreamStatus;
   error: string | null;
   subscription: StreamSubscription | null;
-  start: (input: { requestId: string; sessionId: string; userMessage: string }) => void;
+  searchSuggestion: { userMessageId: string } | null;
+  continuationUserMessageId: string | null;
+  streamMode: "chat" | "search";
+  warning: string | null;
+  start: (input: { requestId: string; sessionId: string; userMessage: string; continuationUserMessageId?: string }) => void;
   attachSubscription: (subscription: StreamSubscription) => void;
   detachForSession: (sessionId: string) => void;
   applyEvent: (event: EventEnvelope) => boolean;
@@ -37,13 +41,18 @@ const initialState = {
   status: "idle" as ChatStreamStatus,
   error: null,
   subscription: null,
+  searchSuggestion: null,
+  continuationUserMessageId: null,
+  streamMode: "chat" as const,
+  warning: null,
 };
 
 function mergeCitations(current: Citation[], incoming: Citation[]) {
-  const known = new Set(current.map((citation) => `${citation.sourceId}:${citation.chunkId}`));
+  const identity = (citation: Citation) => `${citation.sourceId}:${citation.kind === "memory" ? citation.memoryId : citation.kind === "web" ? citation.resultId : citation.chunkId}`;
+  const known = new Set(current.map(identity));
   return incoming.reduce<Citation[]>(
     (result, citation) => {
-      const key = `${citation.sourceId}:${citation.chunkId}`;
+      const key = identity(citation);
       if (!known.has(key)) {
         known.add(key);
         result.push(citation);
@@ -72,7 +81,7 @@ function errorMessage(payload: Record<string, unknown>) {
 
 export const useChatStreamStore = create<ChatStreamState>((set, get) => ({
   ...initialState,
-  start: ({ requestId, sessionId, userMessage }) =>
+  start: ({ requestId, sessionId, userMessage, continuationUserMessageId }) =>
     set({
       requestId,
       sessionId,
@@ -83,6 +92,10 @@ export const useChatStreamStore = create<ChatStreamState>((set, get) => ({
       status: "streaming",
       error: null,
       subscription: null,
+      searchSuggestion: null,
+      continuationUserMessageId: continuationUserMessageId ?? null,
+      streamMode: continuationUserMessageId ? "search" : "chat",
+      warning: null,
     }),
   attachSubscription: (subscription) => {
     if (get().requestId === subscription.requestId) set({ subscription });
@@ -114,7 +127,14 @@ export const useChatStreamStore = create<ChatStreamState>((set, get) => ({
       return true;
     }
     if (event.type === "done") {
-      set({ ...initialState, lastSequence: event.sequence });
+      const suggested = event.payload.searchSuggested === true && typeof event.payload.userMessageId === "string" ? { userMessageId: event.payload.userMessageId } : null;
+      const rawWarning = event.payload.warning;
+      const warning = typeof rawWarning === "string"
+        ? rawWarning
+        : rawWarning && typeof rawWarning === "object" && typeof (rawWarning as Record<string, unknown>).message === "string"
+          ? (rawWarning as Record<string, string>).message
+          : null;
+      set({ ...initialState, sessionId: current.sessionId, userMessage: suggested ? current.userMessage : "", searchSuggestion: suggested, warning, lastSequence: event.sequence });
       return true;
     }
     if (event.type === "error") {

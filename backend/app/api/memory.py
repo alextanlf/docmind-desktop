@@ -130,12 +130,12 @@ def list_memories(request: Request, repository_ids_raw: str = Query(alias="repos
     items: list[MemoryItemView] = []
     with request.app.state.database.session() as db:
         if kind in {None, "session_summary"}:
-            for record in db.scalars(select(SessionSummaryRecord).where(SessionSummaryRecord.state == "ready")):
+            for record in db.scalars(select(SessionSummaryRecord)):
                 scopes = json.loads(record.repository_ids_json or "[]")
                 if set(scopes) & set(repository_ids):
                     items.append(MemoryItemView(id=record.id, kind="session_summary", title="会话摘要", excerpt=(record.content or "")[:300], repository_ids=scopes, session_id=record.session_id, source_id=record.id))
         if kind in {None, "distillation"}:
-            for record in db.scalars(select(DistillationRecord).where(DistillationRecord.state.in_(("saved", "saved_unindexed")))):
+            for record in db.scalars(select(DistillationRecord).where(DistillationRecord.state != "saving")):
                 scopes = json.loads(record.repository_ids_json or "[]")
                 if set(scopes) & set(repository_ids):
                     items.append(MemoryItemView(id=record.id, kind="distillation", title=record.title, excerpt=record.content[:300], repository_ids=scopes, session_id=record.session_id, source_id=record.id))

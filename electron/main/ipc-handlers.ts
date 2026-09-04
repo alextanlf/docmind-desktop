@@ -30,6 +30,16 @@ import {
   CreateBatchInputSchema,
   ConfirmBatchInputSchema,
   RetryBatchInputSchema,
+  DistillationEditSchema,
+  DistillationTargetSchema,
+  DistillationViewSchema,
+  MemoryItemPageSchema,
+  MemoryListInputSchema,
+  SessionMemorySummarySchema,
+  WebSearchSettingsInputSchema,
+  WebSearchRunSchema,
+  SearchImportInputSchema,
+  ChatSearchInputSchema,
 } from "../shared/contracts";
 
 const require = createRequire(import.meta.url);
@@ -109,6 +119,7 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
       proxy.requestJson("/api/settings/model/test", jsonInit("POST"), ModelConnectionResultSchema),
     [IPC_CHANNELS.settingsClearDiagnostics]: () =>
       proxy.requestVoid("/api/settings/diagnostics/clear", jsonInit("POST")),
+    [IPC_CHANNELS.settingsSaveWebSearch]: (_event, input) => proxy.requestJson("/api/settings/web-search", jsonInit("PUT", parse(WebSearchSettingsInputSchema, input)), SettingsViewSchema),
     [IPC_CHANNELS.embeddingStatus]: () =>
       proxy.requestJson("/api/embedding/status", {}, ModelStatusSchema),
     [IPC_CHANNELS.embeddingPrepare]: () =>
@@ -259,6 +270,7 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
           message: data.message,
           repositoryIds: data.repositoryIds,
           requestId: data.requestId,
+          webSearchPermission: data.webSearchPermission,
         },
         sender: event.sender ?? { send: () => {} },
         ...(afterSequence === undefined
@@ -269,6 +281,72 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
             }),
       };
       return afterSequence === undefined ? proxy.openStream(options) : proxy.resumeStream(options);
+    },
+    [IPC_CHANNELS.chatSearchStream]: (event, input, afterSequence) => {
+      const data = parse(ChatSearchInputSchema, input);
+      if (afterSequence !== undefined && (!Number.isInteger(afterSequence) || afterSequence < 0)) throw new DocMindClientError("INVALID_REQUEST", "事件序号无效");
+      const options = { requestId: data.requestId, sessionId: data.sessionId, route: `/api/sessions/${data.sessionId}/messages/${data.userMessageId}/web-search/stream`, body: { requestId: data.requestId, repositoryIds: data.repositoryIds }, sender: event.sender ?? { send: () => {} }, ...(afterSequence === undefined ? {} : { afterSequence, headers: { "Last-Event-ID": String(afterSequence) } }) };
+      return afterSequence === undefined ? proxy.openStream(options) : proxy.resumeStream(options);
+    },
+    [IPC_CHANNELS.webSearchGetRun]: (_event, runId, sessionId) => proxy.requestJson(`/api/search/runs/${parse(UUID, runId)}?session_id=${parse(UUID, sessionId)}`, {}, WebSearchRunSchema),
+    [IPC_CHANNELS.webSearchCreateImportBatch]: (_event, runId, input) => proxy.requestJson(`/api/web-search/runs/${parse(UUID, runId)}/import-batch`, jsonInit("POST", parse(SearchImportInputSchema, input)), BatchImportSchema),
+    [IPC_CHANNELS.memoryEndSession]: (_event, sessionId) => {
+      const id = parse(UUID, sessionId);
+      return proxy.requestJson(`/api/sessions/${id}/end`, jsonInit("POST"), SessionSummarySchema);
+    },
+    [IPC_CHANNELS.memoryDeleteSession]: (_event, sessionId, confirm) => {
+      const id = parse(UUID, sessionId);
+      if (confirm !== true) throw new DocMindClientError("INVALID_REQUEST", "必须确认删除");
+      return proxy.requestVoid(`/api/sessions/${id}`, jsonInit("DELETE", { confirm: true }));
+    },
+    [IPC_CHANNELS.memoryGetSummary]: (_event, sessionId) => {
+      const id = parse(UUID, sessionId);
+      return proxy.requestJson(`/api/sessions/${id}/summary`, {}, SessionMemorySummarySchema.nullable());
+    },
+    [IPC_CHANNELS.memoryRegenerateSummary]: (_event, sessionId) => {
+      const id = parse(UUID, sessionId);
+      return proxy.requestJson(`/api/sessions/${id}/summary/regenerate`, jsonInit("POST"), SessionMemorySummarySchema);
+    },
+    [IPC_CHANNELS.memoryDeleteSummary]: (_event, sessionId) => {
+      const id = parse(UUID, sessionId);
+      return proxy.requestVoid(`/api/sessions/${id}/summary`, jsonInit("DELETE"));
+    },
+    [IPC_CHANNELS.memoryCreateDistillation]: (_event, sessionId) => {
+      const id = parse(UUID, sessionId);
+      return proxy.requestJson(`/api/sessions/${id}/distillations`, jsonInit("POST"), DistillationViewSchema);
+    },
+    [IPC_CHANNELS.memoryGetDistillation]: (_event, distillationId) => {
+      const id = parse(UUID, distillationId);
+      return proxy.requestJson(`/api/distillations/${id}`, {}, DistillationViewSchema);
+    },
+    [IPC_CHANNELS.memoryUpdateDistillation]: (_event, distillationId, input) => {
+      const id = parse(UUID, distillationId);
+      return proxy.requestJson(`/api/distillations/${id}`, jsonInit("PUT", parse(DistillationEditSchema, input)), DistillationViewSchema);
+    },
+    [IPC_CHANNELS.memoryRegenerateDistillation]: (_event, distillationId) => {
+      const id = parse(UUID, distillationId);
+      return proxy.requestJson(`/api/distillations/${id}/regenerate`, jsonInit("POST"), DistillationViewSchema);
+    },
+    [IPC_CHANNELS.memorySaveDistillation]: (_event, distillationId, input) => {
+      const id = parse(UUID, distillationId);
+      return proxy.requestJson(`/api/distillations/${id}/save`, jsonInit("POST", parse(DistillationTargetSchema, input)), DistillationViewSchema);
+    },
+    [IPC_CHANNELS.memoryDeleteDistillation]: (_event, distillationId) => {
+      const id = parse(UUID, distillationId);
+      return proxy.requestVoid(`/api/distillations/${id}`, jsonInit("DELETE"));
+    },
+    [IPC_CHANNELS.memoryList]: (_event, input) => {
+      const data = parse(MemoryListInputSchema, input);
+      const query = new URLSearchParams({ repositoryIds: data.repositoryIds.join(",") });
+      if (data.kind) query.set("kind", data.kind);
+      if (data.cursor) query.set("cursor", data.cursor);
+      return proxy.requestJson(`/api/memories?${query}`, {}, MemoryItemPageSchema);
+    },
+    [IPC_CHANNELS.memorySubscribeDistillation]: (event, distillationId, afterSequence) => {
+      const id = parse(UUID, distillationId);
+      if (!Number.isInteger(afterSequence) || afterSequence < 0)
+        throw new DocMindClientError("INVALID_REQUEST", "事件序号无效");
+      return proxy.openStream({ requestId: id, afterSequence, route: `/api/distillations/${id}/events`, headers: { "Last-Event-ID": String(afterSequence) }, sender: event.sender ?? { send: () => {} } });
     },
     [IPC_CHANNELS.dialogsChooseSource]: (_event, kind) => {
       if (kind !== "pdf" && kind !== "markdown")
@@ -331,7 +409,9 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
       if (
         channel === IPC_CHANNELS.streamCancel ||
         channel === IPC_CHANNELS.importsSubscribe ||
-        channel === IPC_CHANNELS.chatStream
+        channel === IPC_CHANNELS.chatStream ||
+        channel === IPC_CHANNELS.chatSearchStream ||
+        channel === IPC_CHANNELS.memorySubscribeDistillation
       ) {
         ipcMain.on(channel, (event: IpcEvent, ...args: any[]) => {
           try {
@@ -430,7 +510,7 @@ function sanitizeSerialized(value: {
 }
 
 function emitStreamError(channel: string, event: IpcEvent, args: any[], error: unknown): void {
-  const requestId = channel === IPC_CHANNELS.chatStream ? args[0]?.requestId : args[0];
+  const requestId = channel === IPC_CHANNELS.chatStream || channel === IPC_CHANNELS.chatSearchStream ? args[0]?.requestId : args[0];
   if (typeof requestId !== "string" || !z.string().uuid().safeParse(requestId).success) return;
   const serialized = serializeIpcError(error);
   try {

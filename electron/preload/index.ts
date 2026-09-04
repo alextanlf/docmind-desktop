@@ -29,6 +29,16 @@ import {
   CreateBatchInputSchema,
   ConfirmBatchInputSchema,
   RetryBatchInputSchema,
+  DistillationEditSchema,
+  DistillationTargetSchema,
+  DistillationViewSchema,
+  MemoryItemPageSchema,
+  MemoryListInputSchema,
+  SessionMemorySummarySchema,
+  WebSearchSettingsInputSchema,
+  WebSearchRunSchema,
+  SearchImportInputSchema,
+  ChatSearchInputSchema,
 } from "../shared/contracts";
 import type { DocMindApi, EventEnvelope } from "../shared/contracts";
 
@@ -114,6 +124,7 @@ const api: DocMindApi = {
       ),
     testModel: () => invoke(IPC_CHANNELS.settingsTestModel, ModelConnectionResultSchema),
     clearDiagnostics: () => invoke(IPC_CHANNELS.settingsClearDiagnostics, z.undefined()),
+    saveWebSearch: (input) => invoke(IPC_CHANNELS.settingsSaveWebSearch, SettingsViewSchema, WebSearchSettingsInputSchema.parse(input)),
   },
   embedding: {
     status: () => invoke(IPC_CHANNELS.embeddingStatus, ModelStatusSchema),
@@ -185,6 +196,37 @@ const api: DocMindApi = {
       if (afterSequence !== undefined && (!Number.isInteger(afterSequence) || afterSequence < 0))
         throw new Error("INVALID_REQUEST");
       return subscription(IPC_CHANNELS.chatStream, data.requestId, [data], onEvent, afterSequence);
+    },
+    searchStream: (input, onEvent, afterSequence) => {
+      const data = ChatSearchInputSchema.parse(input);
+      if (afterSequence !== undefined && (!Number.isInteger(afterSequence) || afterSequence < 0)) throw new Error("INVALID_REQUEST");
+      return subscription(IPC_CHANNELS.chatSearchStream, data.requestId, [data], onEvent, afterSequence);
+    },
+  },
+  webSearch: {
+    getRun: (runId, sessionId) => invoke(IPC_CHANNELS.webSearchGetRun, WebSearchRunSchema, uuid(runId), uuid(sessionId)),
+    createImportBatch: (runId, input) => invoke(IPC_CHANNELS.webSearchCreateImportBatch, BatchImportSchema, uuid(runId), SearchImportInputSchema.parse(input)),
+  },
+  memory: {
+    endSession: (sessionId) => invoke(IPC_CHANNELS.memoryEndSession, SessionSummarySchema, uuid(sessionId)),
+    deleteSession: (sessionId, confirm) => {
+      if (confirm !== true) return Promise.reject(new Error("INVALID_REQUEST"));
+      return invoke(IPC_CHANNELS.memoryDeleteSession, z.undefined(), uuid(sessionId), true);
+    },
+    getSummary: (sessionId) => invoke(IPC_CHANNELS.memoryGetSummary, SessionMemorySummarySchema.nullable(), uuid(sessionId)),
+    regenerateSummary: (sessionId) => invoke(IPC_CHANNELS.memoryRegenerateSummary, SessionMemorySummarySchema, uuid(sessionId)),
+    deleteSummary: (sessionId) => invoke(IPC_CHANNELS.memoryDeleteSummary, z.undefined(), uuid(sessionId)),
+    createDistillation: (sessionId) => invoke(IPC_CHANNELS.memoryCreateDistillation, DistillationViewSchema, uuid(sessionId)),
+    getDistillation: (distillationId) => invoke(IPC_CHANNELS.memoryGetDistillation, DistillationViewSchema, uuid(distillationId)),
+    updateDistillation: (distillationId, input) => invoke(IPC_CHANNELS.memoryUpdateDistillation, DistillationViewSchema, uuid(distillationId), DistillationEditSchema.parse(input)),
+    regenerateDistillation: (distillationId) => invoke(IPC_CHANNELS.memoryRegenerateDistillation, DistillationViewSchema, uuid(distillationId)),
+    saveDistillation: (distillationId, input) => invoke(IPC_CHANNELS.memorySaveDistillation, DistillationViewSchema, uuid(distillationId), DistillationTargetSchema.parse(input)),
+    deleteDistillation: (distillationId) => invoke(IPC_CHANNELS.memoryDeleteDistillation, z.undefined(), uuid(distillationId)),
+    list: (input) => invoke(IPC_CHANNELS.memoryList, MemoryItemPageSchema, MemoryListInputSchema.parse(input)),
+    subscribeDistillation: (distillationId, afterSequence, onEvent) => {
+      const id = uuid(distillationId);
+      if (!Number.isInteger(afterSequence) || afterSequence < 0) throw new Error("INVALID_REQUEST");
+      return subscription(IPC_CHANNELS.memorySubscribeDistillation, id, [id], onEvent, afterSequence);
     },
   },
   dialogs: {

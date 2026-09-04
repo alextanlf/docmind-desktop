@@ -25,6 +25,7 @@ export const readySettings: SettingsView = {
   hasApiKey: true,
   dataPath: "/Users/test/Library/Application Support/DocMind",
   screenshotCount: 2,
+  webSearch: { provider: "tavily", mode: "ask", maxResults: 5, hasApiKey: false },
 };
 
 export const unavailableEmbedding: ModelStatus = {
@@ -113,6 +114,7 @@ export const session: SessionSummary = {
 };
 
 export const citation: Citation = {
+  kind: "document",
   sourceId: "S1",
   chunkId: "chunk-state-1",
   documentId: document.id,
@@ -135,6 +137,8 @@ export function installDocMindApi(overrides?: {
   shell?: Partial<DocMindApi["shell"]>;
   sources?: Partial<DocMindApi["sources"]>;
   batches?: Partial<DocMindApi["batches"]>;
+  memory?: Partial<DocMindApi["memory"]>;
+  webSearch?: Partial<DocMindApi["webSearch"]>;
 }) {
   const api = {
     settings: {
@@ -142,6 +146,7 @@ export function installDocMindApi(overrides?: {
       saveModel: vi.fn().mockResolvedValue(readySettings),
       testModel: vi.fn().mockResolvedValue({ connected: true, latencyMs: 86 }),
       clearDiagnostics: vi.fn().mockResolvedValue(undefined),
+      saveWebSearch: vi.fn().mockResolvedValue(readySettings),
       ...overrides?.settings,
     },
     embedding: {
@@ -190,7 +195,29 @@ export function installDocMindApi(overrides?: {
       createSession: vi.fn().mockResolvedValue(session),
       listMessages: vi.fn().mockResolvedValue([]),
       stream: vi.fn(),
+      searchStream: vi.fn(),
       ...overrides?.chat,
+    },
+    webSearch: {
+      getRun: vi.fn(),
+      createImportBatch: vi.fn(),
+      ...overrides?.webSearch,
+    },
+    memory: {
+      endSession: vi.fn().mockResolvedValue({ ...session, endedAt: "2026-08-31T09:00:00Z" }),
+      deleteSession: vi.fn().mockResolvedValue(undefined),
+      getSummary: vi.fn().mockResolvedValue(null),
+      regenerateSummary: vi.fn(),
+      deleteSummary: vi.fn().mockResolvedValue(undefined),
+      createDistillation: vi.fn(),
+      getDistillation: vi.fn(),
+      updateDistillation: vi.fn(),
+      regenerateDistillation: vi.fn(),
+      saveDistillation: vi.fn(),
+      deleteDistillation: vi.fn().mockResolvedValue(undefined),
+      list: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
+      subscribeDistillation: vi.fn().mockReturnValue({ requestId: "00000000-0000-0000-0000-000000000026", cancel: vi.fn(), detach: vi.fn() }),
+      ...overrides?.memory,
     },
     dialogs: {
       chooseSource: vi.fn().mockResolvedValue(source),
