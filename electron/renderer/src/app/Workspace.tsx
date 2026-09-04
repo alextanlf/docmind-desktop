@@ -29,6 +29,7 @@ import {
   useRepositoriesQuery,
 } from "../features/repositories/repository.queries";
 import { SettingsView } from "../features/settings/SettingsView";
+import { MemoryView } from "../features/memory/MemoryView";
 import { useChatStreamStore } from "../stores/chat-stream-store";
 import { useUiStore } from "../stores/ui-store";
 
@@ -184,6 +185,9 @@ export function Workspace() {
             <FilePlus2 aria-hidden="true" size={17} />
             <span>导入文档</span>
           </button>
+          <button aria-label="记忆" onClick={() => setActiveView("memory")} type="button">
+            <BookOpen aria-hidden="true" size={17} /><span>记忆</span>
+          </button>
         </nav>
         <div className="sidebar-library">
           <RepositoryTree
@@ -218,6 +222,8 @@ export function Workspace() {
         ) : null}
         {activeView === "settings" ? (
           <SettingsView />
+        ) : activeView === "memory" ? (
+          <MemoryView />
         ) : selectedDocument.data ? (
           <DocumentEditor
             document={selectedDocument.data}

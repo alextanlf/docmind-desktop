@@ -332,6 +332,11 @@ class SourceInspector:
         display_path: str,
         title: str,
     ) -> DownloadedDocument:
+        if collection_id.startswith("remote/"):
+            path = self.collection_store.staging_dir / collection_id / str(cache_ref.cache_id)
+            snapshot = read_file_snapshot(path, expected_size=cache_ref.byte_size, expected_hash=cache_ref.sha256, max_bytes=self.html_markdown_max_bytes, collect_bytes=True)
+            verify_file_snapshot(path, snapshot)
+            return DownloadedDocument(title=title, source_url=display_path, media_type=cache_ref.media_type, raw_bytes=snapshot.raw_bytes or b"", local_path=path)
         return self.collection_store.load(
             collection_id,
             CollectionCacheRequest(

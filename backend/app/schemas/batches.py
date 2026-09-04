@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import ConfigDict, Field, HttpUrl
+from pydantic import ConfigDict, Field, HttpUrl, model_validator
 
 from app.schemas.common import WireModel
 
@@ -146,15 +146,29 @@ class WebBatchRequest(WireModel):
     kind: Literal["web"]
     entry_url: HttpUrl = Field(alias="entryUrl")
     repository_id: UUID = Field(alias="repositoryId")
-    max_depth: int = Field(ge=0, le=5, alias="maxDepth")
-    max_pages: int = Field(gt=0, le=200, alias="maxPages")
-    use_sitemap: bool = Field(alias="useSitemap")
+    max_depth: int = Field(default=5, ge=0, le=5, alias="maxDepth")
+    max_pages: int = Field(default=200, gt=0, le=200, alias="maxPages")
+    use_sitemap: bool = Field(default=True, alias="useSitemap")
+
+    @model_validator(mode="after")
+    def no_userinfo(self):
+        if self.entry_url.username or self.entry_url.password:
+            raise ValueError("网页入口不得包含用户信息")
+        return self
+
+class CrawlDiagnostic(WireModel):
+    canonical_url: HttpUrl
+    reason: Literal["robots_denied", "scope_rejected", "unsupported_media", "limit_reached", "fetch_failed"]
+    message: str
 
 
 class YuqueRepositoryBatchRequest(WireModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["yuque_repository"]
     repository_id: UUID = Field(alias="repositoryId")
+
+WebBatchInput = WebBatchRequest
+YuqueBatchInput = YuqueRepositoryBatchRequest
 
 
 class SearchResultsBatchRequest(WireModel):

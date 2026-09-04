@@ -5,12 +5,13 @@ import inspect
 import json
 from collections.abc import Callable
 from contextvars import ContextVar
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import and_, delete, event, func, or_, select, text, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.errors import DomainError
@@ -25,16 +26,22 @@ from app.storage.models import (
     BatchItemState,
     BatchState,
     ChatRequestRecord,
+    CrawlEntryRecord,
+    CrawlEntryState,
     DocumentChunkRecord,
     DocumentMutationRecord,
     DocumentRecord,
     ImportJobRecord,
     ImportStatus,
+    MemoryChunkRecord,
     MessageRecord,
     RepositoryRecord,
     SessionRecord,
+    SessionSummaryRecord,
     SettingRecord,
     VectorCleanupRecord,
+    WebSearchResultRecord,
+    WebSearchRunRecord,
 )
 
 
@@ -57,7 +64,11 @@ class RepositoryStore:
 
     def list(self) -> list[RepositoryRecord]:
         with self.database.session() as session:
-            return list(session.scalars(select(RepositoryRecord).order_by(RepositoryRecord.created_at.desc())))
+            return list(
+                session.scalars(
+                    select(RepositoryRecord).order_by(RepositoryRecord.created_at.desc())
+                )
+            )
 
     def get(self, repository_id: str) -> RepositoryRecord | None:
         with self.database.session() as session:
@@ -74,22 +85,105 @@ class RepositoryStore:
         self, *, yuque_id: str, name: str, description: str | None, yuque_url: str | None
     ) -> RepositoryRecord:
         with self.database.session() as session:
-            record = session.scalar(select(RepositoryRecord).where(RepositoryRecord.yuque_id == yuque_id))
+            record = session.scalar(
+                select(RepositoryRecord).where(RepositoryRecord.yuque_id == yuque_id)
+            )
             if record is None:
                 record = RepositoryRecord(
-                    yuque_id=yuque_id,
-                    name=name,
-                    description=description,
-                    yuque_url=yuque_url,
+                    yuque_id=yuque_id, name=name, description=description, yuque_url=yuque_url
                 )
                 session.add(record)
             else:
-                record.name = name
-                record.description = description
-                record.yuque_url = yuque_url
-                record.updated_at = utc_now()
+                record.name, record.description, record.yuque_url, record.updated_at = (
+                    name,
+                    description,
+                    yuque_url,
+                    utc_now(),
+                )
             session.flush()
             return record
+
+
+class WebSearchRunStore:
+    def __init__(self, database: Database):
+        self.database = database
+
+    def create(
+        self, *, request_id: str, session_id: str, user_message_id: str, query: str
+    ) -> WebSearchRunRecord:
+        with self.database.session() as s:
+            existing = s.scalar(
+                select(WebSearchRunRecord).where(WebSearchRunRecord.request_id == request_id)
+            )
+            if existing is not None:
+                return existing
+            row = WebSearchRunRecord(
+                request_id=request_id,
+                session_id=session_id,
+                user_message_id=user_message_id,
+                query=query,
+                status="running",
+            )
+            s.add(row)
+            try:
+                s.flush()
+            except IntegrityError:
+                s.rollback()
+                return s.scalar(
+                    select(WebSearchRunRecord).where(WebSearchRunRecord.request_id == request_id)
+                )
+            return row
+
+    def by_request_id(self, request_id: str) -> WebSearchRunRecord | None:
+        with self.database.session() as s:
+            return s.scalar(
+                select(WebSearchRunRecord).where(WebSearchRunRecord.request_id == request_id)
+            )
+
+    def complete(self, run_id: str, results: list[Any]) -> WebSearchRunRecord:
+        with self.database.session() as s:
+            run = s.get(WebSearchRunRecord, run_id)
+            for r in results:
+                s.add(
+                    WebSearchResultRecord(
+                        run_id=run_id,
+                        rank=r.rank,
+                        canonical_url=str(r.canonical_url),
+                        title=r.title,
+                        snippet=r.snippet,
+                        content=r.content,
+                    )
+                )
+            run.status = "completed"
+            run.completed_at = utc_now()
+            s.flush()
+            return run
+
+    def get(self, run_id: str) -> WebSearchRunRecord | None:
+        with self.database.session() as s:
+            return s.get(WebSearchRunRecord, run_id)
+
+    def fail(self, run_id: str, *, error_code: str) -> WebSearchRunRecord:
+        """Persist a terminal failure without retaining a stale completion timestamp."""
+        with self.database.session() as s:
+            run = s.get(WebSearchRunRecord, run_id)
+            if run is None:
+                raise DomainError("SEARCH_RUN_NOT_FOUND", "搜索任务不存在", 404)
+            run.status = "failed"
+            run.error_code = error_code
+            run.completed_at = None
+            s.flush()
+            return run
+
+    def results(self, run_id: str) -> list[WebSearchResultRecord]:
+        with self.database.session() as s:
+            return list(
+                s.scalars(
+                    select(WebSearchResultRecord)
+                    .where(WebSearchResultRecord.run_id == run_id)
+                    .order_by(WebSearchResultRecord.rank)
+                )
+            )
 
 
 class DocumentStore:
@@ -130,9 +224,7 @@ class DocumentStore:
             )
             return session.scalar(statement)
 
-    def find_by_identity(
-        self, repository_id: str, source_identity: str
-    ) -> DocumentRecord | None:
+    def find_by_identity(self, repository_id: str, source_identity: str) -> DocumentRecord | None:
         with self.database.session() as session:
             statement = select(DocumentRecord).where(
                 DocumentRecord.repository_id == repository_id,
@@ -231,7 +323,9 @@ class DocumentStore:
             document = session.get(DocumentRecord, document_id)
             if document is None:
                 return
-            session.execute(delete(DocumentChunkRecord).where(DocumentChunkRecord.document_id == document_id))
+            session.execute(
+                delete(DocumentChunkRecord).where(DocumentChunkRecord.document_id == document_id)
+            )
             for chunk in chunks:
                 chunk.document_id = document_id
                 chunk.repository_id = document.repository_id
@@ -267,9 +361,11 @@ class DocumentStore:
 
     def list_chunks(self, document_id: str) -> list[DocumentChunkRecord]:
         with self.database.session() as session:
-            statement = select(DocumentChunkRecord).where(
-                DocumentChunkRecord.document_id == document_id
-            ).order_by(DocumentChunkRecord.chunk_index)
+            statement = (
+                select(DocumentChunkRecord)
+                .where(DocumentChunkRecord.document_id == document_id)
+                .order_by(DocumentChunkRecord.chunk_index)
+            )
             return list(session.scalars(statement))
 
     def delete_local(self, document_id: str) -> None:
@@ -287,11 +383,25 @@ class DocumentStore:
         with self.database.session() as session:
             record = session.get(DocumentRecord, document["id"])
             if record is None:
-                record = DocumentRecord(id=document["id"], repository_id=document["repository_id"], title=document["title"])
+                record = DocumentRecord(
+                    id=document["id"],
+                    repository_id=document["repository_id"],
+                    title=document["title"],
+                )
                 session.add(record)
             for field in (
-                "repository_id", "yuque_id", "title", "source_url", "raw_path", "markdown_path",
-                "source_type", "content_hash", "chunk_count", "status", "yuque_url", "source_identity",
+                "repository_id",
+                "yuque_id",
+                "title",
+                "source_url",
+                "raw_path",
+                "markdown_path",
+                "source_type",
+                "content_hash",
+                "chunk_count",
+                "status",
+                "yuque_url",
+                "source_identity",
                 "source_revision",
             ):
                 if field in document:
@@ -302,7 +412,9 @@ class DocumentStore:
                     value = datetime.fromisoformat(value)
                 if value is not None:
                     setattr(record, field, value)
-            session.execute(delete(DocumentChunkRecord).where(DocumentChunkRecord.document_id == record.id))
+            session.execute(
+                delete(DocumentChunkRecord).where(DocumentChunkRecord.document_id == record.id)
+            )
             for chunk in chunks:
                 session.add(chunk)
             session.flush()
@@ -329,15 +441,29 @@ class ImportJobStore:
             session.flush()
             return job
 
-    def create_cleanup(self, *, repository_id: str, document_id: str, vector_ids: list[str]) -> ImportJobRecord:
-        payload = json.dumps({"repository_id": repository_id, "document_id": document_id, "vector_ids": vector_ids})
+    def create_cleanup(
+        self, *, repository_id: str, document_id: str, vector_ids: list[str]
+    ) -> ImportJobRecord:
+        payload = json.dumps(
+            {"repository_id": repository_id, "document_id": document_id, "vector_ids": vector_ids}
+        )
         return self.create(
-            ImportJobRecord(id=str(uuid4()), source_kind="api_cleanup", source_value=payload, repository_id=repository_id, document_id=document_id)
+            ImportJobRecord(
+                id=str(uuid4()),
+                source_kind="api_cleanup",
+                source_value=payload,
+                repository_id=repository_id,
+                document_id=document_id,
+            )
         )
 
     def list_cleanups(self) -> list[ImportJobRecord]:
         with self.database.session() as session:
-            return list(session.scalars(select(ImportJobRecord).where(ImportJobRecord.source_kind == "api_cleanup")))
+            return list(
+                session.scalars(
+                    select(ImportJobRecord).where(ImportJobRecord.source_kind == "api_cleanup")
+                )
+            )
 
     def delete_job(self, job_id: str) -> None:
         with self.database.session() as session:
@@ -381,7 +507,9 @@ class ImportJobStore:
 
     def list(self) -> list[ImportJobRecord]:
         with self.database.session() as session:
-            return list(session.scalars(select(ImportJobRecord).order_by(ImportJobRecord.created_at)))
+            return list(
+                session.scalars(select(ImportJobRecord).order_by(ImportJobRecord.created_at))
+            )
 
     def transition(
         self,
@@ -433,23 +561,17 @@ class ImportJobStore:
             session.flush()
             return job
 
-    def merge_source_metadata(
-        self, job_id: str, updates: dict[str, Any]
-    ) -> ImportJobRecord:
+    def merge_source_metadata(self, job_id: str, updates: dict[str, Any]) -> ImportJobRecord:
         with self.database.session() as session:
             job = session.get(ImportJobRecord, job_id)
             if job is None:
                 raise DomainError("IMPORT_STATE_CONFLICT", "导入任务状态冲突", 409)
             metadata = _normalized_source_metadata(job)
             requested_sequence = updates.get("last_event_sequence")
-            if isinstance(requested_sequence, int) and not isinstance(
-                requested_sequence, bool
-            ):
+            if isinstance(requested_sequence, int) and not isinstance(requested_sequence, bool):
                 updates = {
                     **updates,
-                    "last_event_sequence": max(
-                        metadata["last_event_sequence"], requested_sequence
-                    ),
+                    "last_event_sequence": max(metadata["last_event_sequence"], requested_sequence),
                 }
             metadata.update(updates)
             metadata["version"] = 2
@@ -551,7 +673,9 @@ class ImportJobStore:
 
     def recover_interrupted(self) -> int:
         with self.database.session() as session:
-            statement = select(ImportJobRecord).where(ImportJobRecord.state.in_(self._INTERRUPTED_STATES))
+            statement = select(ImportJobRecord).where(
+                ImportJobRecord.state.in_(self._INTERRUPTED_STATES)
+            )
             jobs = list(session.scalars(statement))
             now = utc_now()
             for job in jobs:
@@ -659,7 +783,9 @@ class BatchImportStore:
             if batch is None:
                 raise DomainError("BATCH_NOT_FOUND", "批次不存在", 404)
             max_ordinal = session.scalar(
-                select(func.max(BatchItemRecord.ordinal)).where(BatchItemRecord.batch_id == batch_id)
+                select(func.max(BatchItemRecord.ordinal)).where(
+                    BatchItemRecord.batch_id == batch_id
+                )
             )
             next_ordinal = (int(max_ordinal) if max_ordinal is not None else -1) + 1
             for offset, item in enumerate(items):
@@ -672,13 +798,19 @@ class BatchImportStore:
                 # Legacy callers may provide an attach_remote snapshot before
                 # the binding is persisted; retain it so confirmation returns
                 # the stable binding validation error.
-                if "attach_remote" in supplied_actions and not _has_remote_binding(item.remote_binding_json):
+                if "attach_remote" in supplied_actions and not _has_remote_binding(
+                    item.remote_binding_json
+                ):
                     actions = supplied_actions
                 else:
                     actions = (
                         ["update", "skip"]
                         if target is not None
-                        else (["attach_remote", "skip"] if _has_remote_binding(item.remote_binding_json) else ["create", "skip"])
+                        else (
+                            ["attach_remote", "skip"]
+                            if _has_remote_binding(item.remote_binding_json)
+                            else ["create", "skip"]
+                        )
                     )
                 item.allowed_actions_json = _allowed_actions_json(actions)
                 session.add(item)
@@ -688,7 +820,9 @@ class BatchImportStore:
             return items
 
     @staticmethod
-    def _document_target(session: Session, repository_id: str | None, item: BatchItemRecord) -> DocumentRecord | None:
+    def _document_target(
+        session: Session, repository_id: str | None, item: BatchItemRecord
+    ) -> DocumentRecord | None:
         if not repository_id:
             return None
         target = session.scalar(
@@ -709,7 +843,9 @@ class BatchImportStore:
             )
         )
 
-    def fail_discovery(self, batch_id: str, *, code: str, message: str, retryable: bool) -> BatchImportRecord:
+    def fail_discovery(
+        self, batch_id: str, *, code: str, message: str, retryable: bool
+    ) -> BatchImportRecord:
         with self.database.session() as session:
             batch = session.get(BatchImportRecord, batch_id)
             if batch is None:
@@ -728,7 +864,9 @@ class BatchImportStore:
             return batch
 
     def set_confirmation(self, batch_id: str, confirmation: ConfirmBatchInput) -> BatchImportRecord:
-        decisions = {str(item.item_id): BatchItemDecision(item.decision) for item in confirmation.items}
+        decisions = {
+            str(item.item_id): BatchItemDecision(item.decision) for item in confirmation.items
+        }
         if len(decisions) != len(confirmation.items):
             raise DomainError("BATCH_CONFIRMATION_INVALID", "确认项重复", 422)
         with self.database.session() as session:
@@ -758,15 +896,23 @@ class BatchImportStore:
                 if decision == BatchItemDecision.ATTACH_REMOTE and not _has_remote_binding(
                     item.remote_binding_json
                 ):
-                    raise DomainError("BATCH_CONFIRMATION_INVALID", "attach_remote 需要远端绑定", 422)
+                    raise DomainError(
+                        "BATCH_CONFIRMATION_INVALID", "attach_remote 需要远端绑定", 422
+                    )
                 # Preserve a previously reserved child when a confirmation
                 # request is retried after a partial transaction.
                 if item.import_job_id is None:
                     item.decision = decision
                     item.selected = decision not in {None, BatchItemDecision.SKIP}
-                    item.state = BatchItemState.SKIPPED if decision == BatchItemDecision.SKIP else BatchItemState.DISCOVERED
+                    item.state = (
+                        BatchItemState.SKIPPED
+                        if decision == BatchItemDecision.SKIP
+                        else BatchItemState.DISCOVERED
+                    )
                 elif decision != item.decision:
-                    raise DomainError("BATCH_CONFIRMATION_INVALID", "已保留的批次项决策不可修改", 422)
+                    raise DomainError(
+                        "BATCH_CONFIRMATION_INVALID", "已保留的批次项决策不可修改", 422
+                    )
                 item.updated_at = utc_now()
             batch.selected_count = sum(item.selected for item in items)
             batch.skipped_count = sum(item.state == BatchItemState.SKIPPED for item in items)
@@ -785,8 +931,7 @@ class BatchImportStore:
     ) -> BatchImportRecord:
         """Confirm a discovery snapshot and bind all children in one write transaction."""
         decisions = {
-            str(item.item_id): BatchItemDecision(item.decision)
-            for item in confirmation.items
+            str(item.item_id): BatchItemDecision(item.decision) for item in confirmation.items
         }
         if len(decisions) != len(confirmation.items):
             raise DomainError("BATCH_CONFIRMATION_INVALID", "确认项重复", 422)
@@ -817,8 +962,7 @@ class BatchImportStore:
         if self.database.url.startswith("sqlite"):
             session.execute(text("BEGIN IMMEDIATE"))
         decisions = {
-            str(item.item_id): BatchItemDecision(item.decision)
-            for item in confirmation.items
+            str(item.item_id): BatchItemDecision(item.decision) for item in confirmation.items
         }
         batch = session.get(BatchImportRecord, batch_id)
         if batch is None:
@@ -888,7 +1032,9 @@ class BatchImportStore:
                     raise _stale_confirmation(error.message) from None
                 raise
             if inspect.isawaitable(validation):
-                raise TypeError("batch source validation must be synchronous inside the transaction")
+                raise TypeError(
+                    "batch source validation must be synchronous inside the transaction"
+                )
 
         for item in items:
             decision = decisions.get(item.id)
@@ -912,8 +1058,7 @@ class BatchImportStore:
             created_job_ids.update(
                 obj.id
                 for obj in current_session.new
-                if isinstance(obj, ImportJobRecord)
-                and obj.id not in existing_job_ids
+                if isinstance(obj, ImportJobRecord) and obj.id not in existing_job_ids
             )
 
         event.listen(session, "after_flush", track_new_jobs)
@@ -937,24 +1082,22 @@ class BatchImportStore:
                 }
             if inspect.isawaitable(job_ids):
                 raise TypeError("batch reservation must be synchronous inside the transaction")
-            if not isinstance(job_ids, dict) or set(job_ids) != {item.id for item in selected_items}:
+            if not isinstance(job_ids, dict) or set(job_ids) != {
+                item.id for item in selected_items
+            }:
                 raise RuntimeError("batch reservation returned invalid child mapping")
             # Flush once more so callbacks that only add a child (without
             # calling ``flush`` themselves) are tracked by the listener.
             session.flush()
             allowed_job_ids = reserved_marker | created_job_ids
-            returned_job_ids = [
-                value for value in job_ids.values() if isinstance(value, str)
-            ]
+            returned_job_ids = [value for value in job_ids.values() if isinstance(value, str)]
             if len(returned_job_ids) != len(set(returned_job_ids)):
                 raise RuntimeError("batch reservation returned duplicate child jobs")
             if created_job_ids - set(returned_job_ids):
                 raise RuntimeError("batch reservation created unmapped child jobs")
             for item in selected_items:
                 job_id = job_ids[item.id]
-                if not isinstance(job_id, str) or (
-                    job_id not in allowed_job_ids
-                ):
+                if not isinstance(job_id, str) or (job_id not in allowed_job_ids):
                     raise RuntimeError("batch reservation must use the confirmation session")
                 if job_id in existing_job_ids:
                     raise RuntimeError("batch reservation returned an existing child job")
@@ -967,13 +1110,17 @@ class BatchImportStore:
                     raise RuntimeError("batch reservation returned mismatched child fingerprint")
         except DomainError as error:
             if created_job_ids:
-                session.execute(delete(ImportJobRecord).where(ImportJobRecord.id.in_(created_job_ids)))
+                session.execute(
+                    delete(ImportJobRecord).where(ImportJobRecord.id.in_(created_job_ids))
+                )
             if error.code in {"BATCH_SOURCE_CHANGED", "BATCH_STALE_CONFIRMATION"}:
                 raise _stale_confirmation(error.message) from None
             raise
         except (TypeError, RuntimeError):
             if created_job_ids:
-                session.execute(delete(ImportJobRecord).where(ImportJobRecord.id.in_(created_job_ids)))
+                session.execute(
+                    delete(ImportJobRecord).where(ImportJobRecord.id.in_(created_job_ids))
+                )
             raise
         finally:
             event.remove(session, "after_flush", track_new_jobs)
@@ -1002,19 +1149,11 @@ class BatchImportStore:
             item.updated_at = now
 
         batch.selected_count = sum(item.selected for item in items)
-        batch.skipped_count = sum(
-            item.state == BatchItemState.SKIPPED for item in items
-        )
-        target_state = (
-            BatchState.RUNNING
-            if batch.selected_count
-            else BatchState.COMPLETED
-        )
+        batch.skipped_count = sum(item.state == BatchItemState.SKIPPED for item in items)
+        target_state = BatchState.RUNNING if batch.selected_count else BatchState.COMPLETED
         transition(batch.state, target_state)
         batch.state = target_state
-        batch.message = (
-            "批次导入中" if target_state == BatchState.RUNNING else "批次无待导入项"
-        )
+        batch.message = "批次导入中" if target_state == BatchState.RUNNING else "批次无待导入项"
         if target_state == BatchState.RUNNING:
             batch.started_at = now
         else:
@@ -1073,16 +1212,16 @@ class BatchImportStore:
             if not item.selected or item.decision is None:
                 raise DomainError("BATCH_STATE_CONFLICT", "批次项尚未确认", 409)
             if session.get(ImportJobRecord, import_job_id) is None:
-                raise DomainError(
-                    "BATCH_ITEM_JOB_NOT_FOUND", "子任务不存在", 409
-                )
+                raise DomainError("BATCH_ITEM_JOB_NOT_FOUND", "子任务不存在", 409)
             item.import_job_id = import_job_id
             item.state = BatchItemState.QUEUED
             item.updated_at = utc_now()
             session.flush()
             return item
 
-    def set_state(self, batch_id: str, target: BatchState, *, message: str | None = None) -> BatchImportRecord:
+    def set_state(
+        self, batch_id: str, target: BatchState, *, message: str | None = None
+    ) -> BatchImportRecord:
         with self.database.session() as session:
             batch = session.get(BatchImportRecord, batch_id)
             if batch is None:
@@ -1168,9 +1307,7 @@ class BatchImportStore:
                 return batch
             now = utc_now()
             items = list(
-                session.scalars(
-                    select(BatchItemRecord).where(BatchItemRecord.batch_id == batch_id)
-                )
+                session.scalars(select(BatchItemRecord).where(BatchItemRecord.batch_id == batch_id))
             )
             for item in items:
                 if item.selected and item.state in {
@@ -1188,7 +1325,16 @@ class BatchImportStore:
             batch.completed_count = sum(item.state == BatchItemState.COMPLETED for item in items)
             batch.failed_count = sum(item.state == BatchItemState.FAILED for item in items)
             batch.skipped_count = sum(item.state == BatchItemState.SKIPPED for item in items)
-            finished = sum(item.state in {BatchItemState.COMPLETED, BatchItemState.FAILED, BatchItemState.SKIPPED, BatchItemState.CANCELLED} for item in items)
+            finished = sum(
+                item.state
+                in {
+                    BatchItemState.COMPLETED,
+                    BatchItemState.FAILED,
+                    BatchItemState.SKIPPED,
+                    BatchItemState.CANCELLED,
+                }
+                for item in items
+            )
             batch.progress = int(finished * 100 / len(items)) if items else 100
             batch.message = "批次已取消"
             batch.updated_at = now
@@ -1202,7 +1348,11 @@ class BatchImportStore:
             item = session.get(BatchItemRecord, item_id)
             if item is None:
                 raise DomainError("BATCH_ITEM_NOT_FOUND", "批次项不存在", 404)
-            if item.state in {BatchItemState.COMPLETED, BatchItemState.SKIPPED, BatchItemState.CANCELLED}:
+            if item.state in {
+                BatchItemState.COMPLETED,
+                BatchItemState.SKIPPED,
+                BatchItemState.CANCELLED,
+            }:
                 return item
             item.state = BatchItemState.FAILED
             item.error_code = code
@@ -1217,7 +1367,11 @@ class BatchImportStore:
             item = session.get(BatchItemRecord, item_id)
             if item is None:
                 raise DomainError("BATCH_ITEM_NOT_FOUND", "批次项不存在", 404)
-            if item.state in {BatchItemState.COMPLETED, BatchItemState.SKIPPED, BatchItemState.CANCELLED}:
+            if item.state in {
+                BatchItemState.COMPLETED,
+                BatchItemState.SKIPPED,
+                BatchItemState.CANCELLED,
+            }:
                 raise DomainError("BATCH_STATE_CONFLICT", "批次项已完成，无法重试", 409)
             item.state = BatchItemState.QUEUED
             item.error_code = None
@@ -1235,7 +1389,11 @@ class BatchImportStore:
             item = session.get(BatchItemRecord, item_id)
             if item is None:
                 raise DomainError("BATCH_ITEM_NOT_FOUND", "批次项不存在", 404)
-            if item.state in {BatchItemState.COMPLETED, BatchItemState.SKIPPED, BatchItemState.CANCELLED}:
+            if item.state in {
+                BatchItemState.COMPLETED,
+                BatchItemState.SKIPPED,
+                BatchItemState.CANCELLED,
+            }:
                 return item
             if state_value == ImportStatus.COMPLETED:
                 item.state = BatchItemState.COMPLETED
@@ -1273,7 +1431,9 @@ class BatchImportStore:
             "progress": progress,
             "message": message,
         }
-        if any(value is not None and isinstance(value, int) and value < 0 for value in values.values()):
+        if any(
+            value is not None and isinstance(value, int) and value < 0 for value in values.values()
+        ):
             raise ValueError("batch counts and progress must be non-negative")
         if progress is not None and progress > 100:
             raise ValueError("progress must be at most 100")
@@ -1336,6 +1496,109 @@ class BatchImportStore:
             return recovered
 
 
+class CrawlEntryStore:
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def upsert_frontier(self, entry: CrawlEntryRecord) -> CrawlEntryRecord:
+        # The unique (batch_id, canonical_url) constraint is the source of
+        # truth under concurrent discovery. Two workers may both observe no
+        # row; let one insert win, then resolve the loser to the committed row.
+        try:
+            with self.database.session() as session:
+                existing = session.scalar(
+                    select(CrawlEntryRecord).where(
+                        CrawlEntryRecord.batch_id == entry.batch_id,
+                        CrawlEntryRecord.canonical_url == entry.canonical_url,
+                    )
+                )
+                if existing:
+                    return existing
+                session.add(entry)
+                session.flush()
+                return entry
+        except IntegrityError:
+            with self.database.session() as session:
+                existing = session.scalar(
+                    select(CrawlEntryRecord).where(
+                        CrawlEntryRecord.batch_id == entry.batch_id,
+                        CrawlEntryRecord.canonical_url == entry.canonical_url,
+                    )
+                )
+                if existing:
+                    return existing
+            raise
+
+    def claim(self, batch_id: str) -> CrawlEntryRecord | None:
+        with self.database.session() as session:
+            # Select a deterministic candidate, then condition the UPDATE on
+            # the still-pending state. If another worker won the race, retry
+            # against the next pending entry rather than returning a duplicate.
+            while True:
+                candidate = session.scalar(
+                    select(CrawlEntryRecord)
+                    .where(
+                        CrawlEntryRecord.batch_id == batch_id,
+                        CrawlEntryRecord.state == CrawlEntryState.PENDING,
+                    )
+                    .order_by(CrawlEntryRecord.depth, CrawlEntryRecord.id)
+                    .limit(1)
+                )
+                if candidate is None:
+                    return None
+                now = datetime.now(UTC)
+                result = session.execute(
+                    update(CrawlEntryRecord)
+                    .where(
+                        CrawlEntryRecord.id == candidate.id,
+                        CrawlEntryRecord.state == CrawlEntryState.PENDING,
+                    )
+                    .values(state=CrawlEntryState.FETCHING, updated_at=now)
+                )
+                if result.rowcount:
+                    session.expire(candidate)
+                    return session.get(CrawlEntryRecord, candidate.id)
+
+    def mark_fetched(self, entry_id: str, **kwargs: Any) -> CrawlEntryRecord | None:
+        # Persist completion time for recovery/audit; callers may still supply
+        # an explicit timestamp (e.g. deterministic tests).
+        kwargs.setdefault("fetched_at", utc_now())
+        return self._mark(entry_id, CrawlEntryState.FETCHED, **kwargs)
+
+    def mark_rejected(self, entry_id: str, **kwargs: Any) -> CrawlEntryRecord | None:
+        return self._mark(entry_id, CrawlEntryState.REJECTED, **kwargs)
+
+    def _mark(
+        self, entry_id: str, state: CrawlEntryState, **kwargs: Any
+    ) -> CrawlEntryRecord | None:
+        with self.database.session() as session:
+            row = session.get(CrawlEntryRecord, entry_id)
+            if row is None:
+                return None
+            row.state = state
+            row.updated_at = datetime.now(UTC)
+            for key, value in kwargs.items():
+                setattr(row, key, value)
+            session.flush()
+            return row
+
+    def release_fetching_on_restart(self, batch_id: str) -> int:
+        with self.database.session() as session:
+            result = session.execute(
+                update(CrawlEntryRecord)
+                .where(
+                    CrawlEntryRecord.batch_id == batch_id,
+                    CrawlEntryRecord.state == CrawlEntryState.FETCHING,
+                )
+                .values(
+                    state=CrawlEntryState.FAILED,
+                    error_code="APP_RESTARTED",
+                    updated_at=datetime.now(UTC),
+                )
+            )
+            return result.rowcount
+
+
 def _source_descriptor_json(value: Any) -> str:
     return _encode_json(value, expected=dict, default={})
 
@@ -1384,7 +1647,9 @@ def _batch_item_view(item: BatchItemRecord) -> BatchItemView:
 
 def _decode_allowed_actions(value: str) -> list[str]:
     allowed_actions = json.loads(value)
-    if not isinstance(allowed_actions, list) or not all(isinstance(action, str) for action in allowed_actions):
+    if not isinstance(allowed_actions, list) or not all(
+        isinstance(action, str) for action in allowed_actions
+    ):
         raise ValueError("allowed_actions_json must encode a list of strings")
     return allowed_actions
 
@@ -1484,9 +1749,7 @@ def _normalized_source_metadata(job: ImportJobRecord) -> dict[str, Any]:
         "upload_intent": {"marker": marker},
         "last_event_sequence": last_event_sequence,
         "stale_vector_ids": list(dict.fromkeys(stale_vector_ids)),
-        "pending_created_vector_ids": list(
-            dict.fromkeys(pending_created_vector_ids)
-        ),
+        "pending_created_vector_ids": list(dict.fromkeys(pending_created_vector_ids)),
     }
 
 
@@ -1498,7 +1761,9 @@ class ConversationStore:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    def create_session(self, repository_ids: list[str], *, title: str | None = None) -> SessionRecord:
+    def create_session(
+        self, repository_ids: list[str], *, title: str | None = None
+    ) -> SessionRecord:
         with self.database.session() as session:
             record = SessionRecord(title=title, repository_scope_json=json.dumps(repository_ids))
             session.add(record)
@@ -1511,23 +1776,60 @@ class ConversationStore:
 
     def list_sessions(self) -> list[SessionRecord]:
         with self.database.session() as session:
-            return list(session.scalars(select(SessionRecord).order_by(SessionRecord.updated_at.desc())))
+            return list(
+                session.scalars(select(SessionRecord).order_by(SessionRecord.updated_at.desc()))
+            )
 
     def list_messages(self, session_id: str) -> list[MessageRecord]:
         with self.database.session() as session:
-            statement = select(MessageRecord).where(MessageRecord.session_id == session_id).order_by(
-                MessageRecord.created_at.asc()
+            statement = (
+                select(MessageRecord)
+                .where(MessageRecord.session_id == session_id)
+                .order_by(MessageRecord.created_at.asc())
             )
             return list(session.scalars(statement))
 
+    def get_message(self, message_id: str) -> MessageRecord | None:
+        with self.database.session() as session:
+            return session.get(MessageRecord, message_id)
+
     def add_message(self, message: MessageRecord) -> MessageRecord:
         with self.database.session() as session:
+            parent = session.get(SessionRecord, message.session_id)
+            if parent is not None and parent.ended_at is not None:
+                raise DomainError("SESSION_ENDED", "会话已结束", 409)
             session.add(message)
             parent = session.get(SessionRecord, message.session_id)
             if parent is not None:
                 parent.updated_at = utc_now()
             session.flush()
             return message
+
+    def mark_message_activity(self, session_id: str) -> None:
+        from datetime import timedelta
+
+        with self.database.session() as session:
+            parent = session.get(SessionRecord, session_id)
+            if parent is not None:
+                parent.updated_at = utc_now()
+                parent.summary_due_at = utc_now() + timedelta(minutes=30)
+
+    def end_session(self, session_id: str) -> SessionRecord:
+        with self.database.session() as session:
+            parent = session.get(SessionRecord, session_id)
+            if parent is None:
+                raise DomainError("SESSION_NOT_FOUND", "会话不存在", 404)
+            if parent.ended_at is None:
+                parent.ended_at = utc_now()
+            return parent
+
+    def delete_session(self, session_id: str, *, confirm: bool = False) -> None:
+        if not confirm:
+            raise DomainError("CONFIRM_REQUIRED", "需要确认", 400)
+        with self.database.session() as session:
+            parent = session.get(SessionRecord, session_id)
+            if parent is not None:
+                session.delete(parent)
 
     def claim_chat_request(
         self, request_id: str, session_id: str
@@ -1566,7 +1868,13 @@ class VectorCleanupStore:
 
     def create(self, repository_id: str, document_id: str, vector_ids: list[str]) -> None:
         with self.database.session() as session:
-            session.add(VectorCleanupRecord(repository_id=repository_id, document_id=document_id, vector_ids_json=json.dumps(vector_ids)))
+            session.add(
+                VectorCleanupRecord(
+                    repository_id=repository_id,
+                    document_id=document_id,
+                    vector_ids_json=json.dumps(vector_ids),
+                )
+            )
 
     def list(self) -> list[VectorCleanupRecord]:
         with self.database.session() as session:
@@ -1577,6 +1885,138 @@ class VectorCleanupStore:
             record = session.get(VectorCleanupRecord, cleanup_id)
             if record is not None:
                 session.delete(record)
+
+
+class MemoryStore:
+    def __init__(self, database: Database):
+        self.database = database
+
+    def upsert_summary(self, session_id: str, repository_ids: list[str]):
+        if not repository_ids:
+            raise DomainError("MEMORY_SCOPE_INVALID", "repository scope required", 400)
+        with self.database.session() as s:
+            if s.get(SessionRecord, session_id) is None:
+                raise DomainError("SESSION_NOT_FOUND", "会话不存在", 404)
+            rec = s.scalar(
+                select(SessionSummaryRecord).where(SessionSummaryRecord.session_id == session_id)
+            )
+            if rec is None:
+                rec = SessionSummaryRecord(
+                    session_id=session_id, repository_ids_json=json.dumps(repository_ids)
+                )
+                s.add(rec)
+            else:
+                rec.repository_ids_json = json.dumps(repository_ids)
+                rec.updated_at = utc_now()
+            s.flush()
+            return rec
+
+    def get_summary(self, session_id: str):
+        with self.database.session() as s:
+            return s.scalar(
+                select(SessionSummaryRecord).where(SessionSummaryRecord.session_id == session_id)
+            )
+
+    def claim_due_summary(self, now: datetime):
+        with self.database.session() as s:
+            parent = s.scalar(
+                select(SessionRecord)
+                .where(
+                    SessionRecord.summary_due_at.is_not(None), SessionRecord.summary_due_at <= now
+                )
+                .order_by(SessionRecord.summary_due_at, SessionRecord.id)
+                .limit(1)
+            )
+            if parent is None:
+                return None
+            summary = s.scalar(
+                select(SessionSummaryRecord).where(SessionSummaryRecord.session_id == parent.id)
+            )
+            if summary is None:
+                summary = SessionSummaryRecord(
+                    session_id=parent.id, repository_ids_json=parent.repository_scope_json
+                )
+                s.add(summary)
+                s.flush()
+            claimed = s.execute(
+                update(SessionSummaryRecord)
+                .where(
+                    SessionSummaryRecord.id == summary.id,
+                    SessionSummaryRecord.state != "generating",
+                )
+                .values(state="generating", error_code=None, retryable=False, updated_at=now)
+            )
+            if not claimed.rowcount:
+                return None
+            parent.summary_due_at = None
+            s.flush()
+            return summary
+
+    def begin_summary(self, session_id: str, now: datetime):
+        with self.database.session() as s:
+            parent = s.get(SessionRecord, session_id)
+            if parent is None:
+                raise DomainError("SESSION_NOT_FOUND", "会话不存在", 404)
+            summary = s.scalar(
+                select(SessionSummaryRecord).where(SessionSummaryRecord.session_id == session_id)
+            )
+            if summary is None:
+                summary = SessionSummaryRecord(
+                    session_id=session_id, repository_ids_json=parent.repository_scope_json
+                )
+                s.add(summary)
+            summary.state = "generating"
+            summary.error_code = None
+            summary.retryable = False
+            summary.updated_at = now
+            parent.summary_due_at = None
+            s.flush()
+            return summary
+
+    def complete_summary(self, summary_id: str, *, content: str, topics: list[str], now: datetime):
+        with self.database.session() as s:
+            summary = s.get(SessionSummaryRecord, summary_id)
+            if summary is None:
+                raise DomainError("SUMMARY_NOT_FOUND", "摘要不存在", 404)
+            summary.state = "ready"
+            summary.content = content
+            summary.topics_json = json.dumps(topics, ensure_ascii=False)
+            summary.error_code = None
+            summary.retryable = False
+            summary.updated_at = now
+            s.flush()
+            return summary
+
+    def fail_summary(self, summary_id: str, *, now: datetime):
+        with self.database.session() as s:
+            summary = s.get(SessionSummaryRecord, summary_id)
+            if summary is None:
+                raise DomainError("SUMMARY_NOT_FOUND", "摘要不存在", 404)
+            summary.state = "failed"
+            summary.error_code = "SUMMARY_GENERATION_FAILED"
+            summary.retryable = True
+            summary.updated_at = now
+            parent = s.get(SessionRecord, summary.session_id)
+            if parent is not None:
+                parent.summary_due_at = now + timedelta(minutes=5)
+            s.flush()
+            return summary
+
+    def add_memory_chunk(self, summary_id: str, repository_id: str | None, text: str):
+        if not repository_id:
+            raise DomainError("MEMORY_SCOPE_INVALID", "memory scope required", 400)
+        with self.database.session() as s:
+            summary = s.get(SessionSummaryRecord, summary_id)
+            if summary is None or repository_id not in json.loads(
+                summary.repository_ids_json or "[]"
+            ):
+                raise DomainError("MEMORY_SCOPE_INVALID", "memory scope mismatch", 403)
+            rec = MemoryChunkRecord(
+                summary_id=summary_id, repository_id=repository_id, text=text, chunk_index=0
+            )
+            s.add(rec)
+            s.flush()
+            return rec
 
 
 class DocumentMutationStore:

@@ -10,6 +10,7 @@ from uuid import UUID
 
 from app.api.errors import DomainError
 from app.document.discovery import DirectoryDiscovery
+from app.document.web_discovery import WebDiscovery
 from app.imports.events import EventType, ImportEventBroker
 from app.schemas.batches import (
     BatchItemPage,
@@ -19,6 +20,7 @@ from app.schemas.batches import (
 )
 from app.storage.models import BatchImportRecord, BatchItemState, BatchState
 from app.storage.repositories import BatchImportStore
+from app.yuque.discovery import YuqueDiscovery
 
 MAX_BATCH_CONCURRENCY = 3
 
@@ -37,6 +39,8 @@ class BatchService:
         staging_root: Path | None = None,
         manifest_max_bytes: int = 2 * 1024 * 1024,
         batch_max_items: int = 1000,
+        web_discovery: WebDiscovery | None = None,
+        yuque_discovery: YuqueDiscovery | None = None,
     ) -> None:
         if max_concurrency != MAX_BATCH_CONCURRENCY:
             raise ValueError("batch concurrency is fixed at three")
@@ -47,6 +51,8 @@ class BatchService:
         self.staging_root = Path(staging_root).resolve() if staging_root is not None else None
         self.manifest_max_bytes = manifest_max_bytes
         self.batch_max_items = batch_max_items
+        self.web_discovery = web_discovery
+        self.yuque_discovery = yuque_discovery
         self._semaphores: dict[str, asyncio.Semaphore] = {}
         self._batch_locks: dict[str, asyncio.Lock] = {}
         self._batch_tasks: dict[str, dict[str, asyncio.Task[None]]] = {}
@@ -73,11 +79,19 @@ class BatchService:
 
     def create_batch(self, body: CreateBatchRequest) -> BatchImportRecord:
         if not isinstance(body, StagedDirectoryBatchRequest):
-            raise DomainError("INVALID_REQUEST", "当前仅支持 staged_directory 来源", 422)
+            if body.kind not in {"web", "yuque_repository"}:
+                raise DomainError("INVALID_REQUEST", "来源类型无效", 422)
+            descriptor = body.model_dump(by_alias=True, mode="json")
+            source_kind = body.kind
+            repository_id = str(body.repository_id)
+        else:
+            descriptor = {"collectionId": str(body.source_id)}
+            source_kind = body.kind
+            repository_id = str(body.repository_id)
         batch = BatchImportRecord(
-            source_kind=body.kind,
-            source_descriptor_json=json.dumps({"collectionId": str(body.source_id)}, separators=(",", ":")),
-            repository_id=str(body.repository_id),
+            source_kind=source_kind,
+            source_descriptor_json=json.dumps(descriptor, separators=(",", ":")),
+            repository_id=repository_id,
             state=BatchState.DISCOVERING,
             message="正在发现目录",
         )
@@ -85,12 +99,21 @@ class BatchService:
 
     async def discover_batch(self, batch_id: str) -> None:
         batch = self.get(batch_id)
-        if self.staging_root is None:
+        if batch.source_kind == "staged_directory" and self.staging_root is None:
             self.store.fail_discovery(batch_id, code="IMPORT_FAILED", message="目录发现失败", retryable=False)
             return
         try:
             descriptor = json.loads(batch.source_descriptor_json)
-            discovery = DirectoryDiscovery(self.staging_root, self.manifest_max_bytes)
+            if batch.source_kind == "staged_directory":
+                discovery = DirectoryDiscovery(self.staging_root, self.manifest_max_bytes)
+            elif batch.source_kind == "web":
+                discovery = self.web_discovery
+            elif batch.source_kind == "yuque_repository":
+                discovery = self.yuque_discovery
+            else:
+                discovery = None
+            if discovery is None:
+                raise DomainError("IMPORT_FAILED", "未配置对应发现器", 503, True)
 
             async def emit(progress: Any) -> None:
                 batch_snapshot = self.get(batch_id)
@@ -109,7 +132,7 @@ class BatchService:
             result = await discovery.discover(
                 DiscoveryRequest(
                     batch_id=UUID(batch_id),
-                    source_kind="staged_directory",
+                    source_kind=batch.source_kind,
                     source_descriptor=descriptor,
                     repository_id=UUID(batch.repository_id) if batch.repository_id else None,
                 ),
@@ -139,7 +162,7 @@ class BatchService:
             self.store.fail_discovery(batch_id, code="BATCH_APP_RESTARTED", message="应用重启导致目录发现中断", retryable=True)
             raise
         except DomainError as error:
-            self.store.fail_discovery(batch_id, code=error.code, message=error.message, retryable=False)
+            self.store.fail_discovery(batch_id, code=error.code, message=error.message, retryable=error.retryable)
         except Exception:  # noqa: BLE001 - discovery boundary maps ordinary failures
             self.store.fail_discovery(batch_id, code="IMPORT_FAILED", message="目录发现失败", retryable=False)
 

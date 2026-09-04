@@ -97,3 +97,13 @@ async def list_messages(request: Request, session_id: str) -> list[MessageView]:
             )
         )
     return views
+
+@router.post("/{session_id}/end")
+async def end_session(request: Request, session_id: str):
+    return await request.app.state.summary_service.end_session(session_id)
+
+@router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_session(request: Request, session_id: str, body: dict):
+    if body.get("confirm") is not True:
+        raise DomainError("CONFIRM_REQUIRED", "需要确认", 400)
+    _conversation_store(request).delete_session(session_id, confirm=True)

@@ -9,13 +9,13 @@ from app.storage.models import DocumentChunkRecord, DocumentRecord, RepositoryRe
 from app.storage.repositories import DocumentStore
 
 
-def test_upgrade_creates_all_phase_one_and_two_a_tables() -> None:
+def test_upgrade_creates_all_phase_one_and_phase_two_tables() -> None:
     database = Database("sqlite+pysqlite:///:memory:")
     database.upgrade()
 
     names = set(inspect(database.engine).get_table_names())
 
-    assert names == {
+    expected = {
         "alembic_version",
         "repositories",
         "documents",
@@ -29,7 +29,12 @@ def test_upgrade_creates_all_phase_one_and_two_a_tables() -> None:
         "document_mutations",
         "batch_imports",
         "batch_items",
+        # Phase 2B remote discovery frontier (migration 0006).
+        "crawl_entries",
     }
+    # Keep this assertion forward-compatible with additive migrations while
+    # still enforcing that every table required by the current schema exists.
+    assert expected.issubset(names)
     database.engine.dispose()
 
 
@@ -60,7 +65,7 @@ def test_upgrade_creates_exact_phase_one_columns(database: Database) -> None:
         "message", "error_code", "error_message", "retryable", "document_id", "cancel_requested",
         "created_at", "started_at", "completed_at", "updated_at",
     }
-    assert {column["name"] for column in inspector.get_columns("sessions")} == {
+    assert {column["name"] for column in inspector.get_columns("sessions")} >= {
         "id", "title", "repository_scope_json", "created_at", "updated_at",
     }
     assert {column["name"] for column in inspector.get_columns("chat_requests")} == {

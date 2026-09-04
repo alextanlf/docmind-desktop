@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type ActiveView = "workspace" | "settings";
+export type ActiveView = "workspace" | "settings" | "memory";
 
 type UiState = {
   activeView: ActiveView;

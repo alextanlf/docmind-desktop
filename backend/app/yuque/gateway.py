@@ -69,6 +69,8 @@ class FakeYuqueGateway:
         self._logged_in = False
         self._active_contexts = 0
         self.max_concurrent_contexts = 0
+        self.read_calls: list[str] = []
+        self.write_calls: list[str] = []
 
     async def login_status(self) -> LoginStatus:
         async with self._serialized():
@@ -89,6 +91,7 @@ class FakeYuqueGateway:
             return list(self._repositories.values())
 
     async def create_repository(self, request: CreateRepositoryRequest) -> YuqueRepository:
+        self.write_calls.append("create_repository")
         async with self._serialized():
             self._require_login(allow_first_use=True)
             repository_id = f"repo-{len(self._repositories) + 1}"
@@ -99,6 +102,7 @@ class FakeYuqueGateway:
             return repository
 
     async def list_documents(self, repository_id: str) -> list[YuqueDocument]:
+        self.read_calls.append("list_documents")
         async with self._serialized():
             self._require_login(allow_first_use=True)
             self._repository(repository_id)
@@ -109,6 +113,7 @@ class FakeYuqueGateway:
             ]
 
     async def create_document(self, request: CreateYuqueDocumentRequest) -> YuqueDocument:
+        self.write_calls.append("create_document")
         async with self._serialized():
             self._require_login(allow_first_use=True)
             self._repository(request.repository_id)
@@ -146,12 +151,14 @@ class FakeYuqueGateway:
             return document is not None and document.repository_id == repository_id
 
     async def read_document(self, document_id: str) -> YuqueDocumentContent:
+        self.read_calls.append("read_document")
         async with self._serialized():
             self._require_login(allow_first_use=True)
             document = self._document(document_id)
             return document.model_copy(update={"content": _strip_mutation_marker(document.content)})
 
     async def update_document(self, request: UpdateYuqueDocumentRequest) -> YuqueDocument:
+        self.write_calls.append("update_document")
         async with self._serialized():
             self._require_login(allow_first_use=True)
             document = self._document(request.document_id).model_copy(
@@ -161,6 +168,7 @@ class FakeYuqueGateway:
             return _document_summary(document)
 
     async def delete_document(self, document_id: str) -> None:
+        self.write_calls.append("delete_document")
         async with self._serialized():
             self._require_login(allow_first_use=True)
             self._document(document_id)
@@ -207,6 +215,8 @@ class PlaywrightYuqueGateway:
 
     def __init__(self, settings: AppSettings) -> None:
         self.settings = settings
+        self.read_calls: list[str] = []
+        self.write_calls: list[str] = []
         self._context_lock = asyncio.Lock()
         self._login_lock = asyncio.Lock()
         self._playwright: Any | None = None
@@ -263,6 +273,7 @@ class PlaywrightYuqueGateway:
             )
 
     async def create_repository(self, request: CreateRepositoryRequest) -> YuqueRepository:
+        self.write_calls.append("create_repository")
         async with self._background_page("create-repository") as operation:
             page, request_id = operation
             dashboard = DashboardPage(page, self.settings.screenshots_dir, request_id)
@@ -296,6 +307,7 @@ class PlaywrightYuqueGateway:
             return await repository.with_retry("list-documents", list_documents)
 
     async def create_document(self, request: CreateYuqueDocumentRequest) -> YuqueDocument:
+        self.write_calls.append("create_document")
         async with self._background_page("create-document") as operation:
             page, request_id = operation
             repository = RepositoryPage(page, self.settings.screenshots_dir, request_id)
@@ -370,6 +382,7 @@ class PlaywrightYuqueGateway:
         )
 
     async def read_document(self, document_id: str) -> YuqueDocumentContent:
+        self.read_calls.append("read_document")
         return await self._read_document(document_id, strip_mutation_marker=True)
 
     async def _read_document(
@@ -395,6 +408,7 @@ class PlaywrightYuqueGateway:
             return await editor.with_retry("read-document", read)
 
     async def update_document(self, request: UpdateYuqueDocumentRequest) -> YuqueDocument:
+        self.write_calls.append("update_document")
         async with self._background_page("update-document") as operation:
             page, request_id = operation
             editor = EditorPage(page, self.settings.screenshots_dir, request_id)
@@ -413,6 +427,7 @@ class PlaywrightYuqueGateway:
             return await editor.with_retry("update-document", update)
 
     async def delete_document(self, document_id: str) -> None:
+        self.write_calls.append("delete_document")
         async with self._background_page("delete-document") as operation:
             page, request_id = operation
             repository = RepositoryPage(page, self.settings.screenshots_dir, request_id)

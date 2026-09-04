@@ -19,7 +19,19 @@ from app.storage.models import (
     BatchState,
     ImportJobRecord,
 )
-from app.storage.repositories import BatchImportStore, ImportJobStore
+from app.storage.repositories import BatchImportStore, CrawlEntryStore, ImportJobStore
+
+
+def test_batch_and_crawl_store_method_boundaries_are_distinct() -> None:
+    """Batch lifecycle methods must not be captured by the crawl store class."""
+    assert hasattr(BatchImportStore, "get")
+    assert hasattr(BatchImportStore, "allocate_event_sequence")
+    assert hasattr(BatchImportStore, "recover_on_startup")
+    assert hasattr(CrawlEntryStore, "claim")
+    assert hasattr(CrawlEntryStore, "upsert_frontier")
+    assert not hasattr(CrawlEntryStore, "get")
+    assert not hasattr(CrawlEntryStore, "allocate_event_sequence")
+    assert not hasattr(CrawlEntryStore, "recover_on_startup")
 
 
 def valid_batch() -> BatchImportRecord:
