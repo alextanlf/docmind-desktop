@@ -28,6 +28,7 @@ from app.api.search import router as search_router
 from app.api.sessions import router as sessions_router
 from app.api.settings import SettingsService
 from app.api.settings import router as settings_router
+from app.api.web_search import router as web_search_router
 from app.api.yuque import router as yuque_router
 from app.chat.service import ChatService
 from app.config import AppSettings, get_settings
@@ -270,6 +271,8 @@ def create_app(
             event_broker=InMemoryEventBroker(retention=None),
             message_activity_callback=lambda session_id: summary_service.record_message_activity(session_id),
             memory_retriever=memory_retriever,
+            search_service=app.state.search_service,
+            settings_service=app.state.settings_service,
         )
         app.state.chat_service = chat_service
         app.state.distillation_service = DistillationService(
@@ -325,6 +328,7 @@ def create_app(
     app.include_router(sessions_router)
     app.include_router(chat_router)
     app.include_router(search_router)
+    app.include_router(web_search_router)
     app.include_router(memory_router)
 
     @app.get("/health", response_model=HealthResponse)

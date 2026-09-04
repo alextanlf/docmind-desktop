@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from typing import Literal
+
+from pydantic import Field
+
 from app.core.llm import ModelConfig, ModelConnectionResult
 from app.schemas.common import WireModel
+from app.schemas.web_search import WebSearchSettings
 
 MODEL_PRESETS = {
     "deepseek": ("https://api.deepseek.com/v1", "deepseek-chat"),
@@ -24,6 +29,13 @@ class SettingsView(WireModel):
     has_api_key: bool
     data_path: str
     screenshot_count: int
+    web_search: WebSearchSettings
+
+
+class WebSearchSettingsUpdate(WireModel):
+    mode: Literal["off", "ask", "auto"]
+    max_results: int = Field(ge=1, le=10)
+    api_key: str | None = None
 
 
 __all__ = [
@@ -33,4 +45,5 @@ __all__ = [
     "ModelSettingsUpdate",
     "ModelSettingsView",
     "SettingsView",
+    "WebSearchSettingsUpdate",
 ]

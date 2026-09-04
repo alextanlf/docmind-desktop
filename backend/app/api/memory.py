@@ -32,7 +32,7 @@ def _summary_view(record: SessionSummaryRecord) -> SessionMemorySummaryView:
 
 
 def _distillation_view(record: DistillationRecord) -> DistillationView:
-    return DistillationView(id=record.id, session_id=record.session_id, title=record.title, content=record.content, key_points=json.loads(record.key_points_json or "[]"), sources=json.loads(record.sources_json or "[]"), repository_ids=json.loads(record.repository_ids_json or "[]"), state=record.state, storage_target=record.target, local_path=record.local_path, document_id=record.document_id, source_url=record.remote_url, error_code=record.error_code, retryable=record.retryable, created_at=record.created_at, updated_at=record.updated_at)
+    return DistillationView(id=record.id, session_id=record.session_id, title=record.title, content=record.content, key_points=json.loads(record.key_points_json or "[]"), sources=json.loads(record.sources_json or "[]"), repository_ids=json.loads(record.repository_ids_json or "[]"), state=record.state, storage_target=record.target, local_path=record.local_path, document_id=record.document_id, yuque_url=record.remote_url, error_code=record.error_code, retryable=record.retryable, created_at=record.created_at, updated_at=record.updated_at)
 
 
 @router.get("/sessions/{session_id}/summary", response_model=SessionMemorySummaryView | None)

@@ -212,7 +212,10 @@ class DistillationService:
                     await self.indexer.index_distillation(identifier)
                 except Exception:  # noqa: BLE001 - persistence succeeded independently
                     with self.store.database.session() as db:
-                        db.get(DistillationRecord, identifier).state = "saved_unindexed"
+                        pending = db.get(DistillationRecord, identifier)
+                        pending.state = "saved_unindexed"
+                        pending.error_code = "MEMORY_INDEX_FAILED"
+                        pending.retryable = True
             result = self.get(identifier)
             await self._emit(result)
             return result

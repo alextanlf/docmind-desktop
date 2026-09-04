@@ -45,7 +45,7 @@ class SearchService:
         try:
             response = await self.provider.search(SearchRequest(query=request.query, max_results=getattr(request, 'max_results', 5)))
             self.run_store.complete(row.id, response.results)
-            return SearchRunView(id=UUID(row.id), status="completed", results=response.results)
+            return SearchRunView(id=UUID(row.id), status="completed", results=self.run_store.results(row.id))
         except Exception as exc:
             self.run_store.fail(row.id, error_code="SEARCH_PROVIDER_ERROR")
             raise DomainError("SEARCH_PROVIDER_ERROR", "搜索服务暂时不可用", 502, True) from exc

@@ -60,8 +60,12 @@ class SummaryService:
                 raise DomainError("SESSION_NOT_FOUND", "会话不存在", 404)
             parent.ended_at = parent.ended_at or now
             parent.summary_due_at = now
-        await self.regenerate(session_id)
         return self.store.get_session(session_id)
+
+    async def generate_session(self, session_id: str) -> None:
+        claimed = self.memory_store.claim_summary(session_id, self.clock())
+        if claimed is not None:
+            await self._generate(claimed)
 
     async def _generate(self, summary):
         try:

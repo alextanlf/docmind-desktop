@@ -31,7 +31,18 @@ class MemoryCitation(WireModel):
     session_id: str | None = None
 
 
-Citation = Annotated[DocumentCitation | MemoryCitation, Field(discriminator="kind")]
+class WebCitation(WireModel):
+    kind: Literal["web"] = "web"
+    source_id: str
+    search_run_id: str
+    result_id: str
+    title: str
+    excerpt: str
+    source_url: str
+    retrieved_at: datetime
+
+
+Citation = Annotated[DocumentCitation | MemoryCitation | WebCitation, Field(discriminator="kind")]
 CitationRef = DocumentCitation
 
 
@@ -40,12 +51,20 @@ class ChatStreamRequest(WireModel):
     session_id: str
     message: str
     repository_ids: list[str]
+    web_search_permission: Literal["inherit", "off", "explicit"] = "inherit"
+    existing_user_message_id: str | None = None
 
 
 class ChatMessageBody(WireModel):
     message: str
     repository_ids: list[str]
     request_id: UUID
+    web_search_permission: Literal["inherit", "off", "explicit"] = "inherit"
+
+
+class ChatSearchContinuation(WireModel):
+    request_id: UUID
+    repository_ids: list[str]
 
 
 class MessageView(WireModel):

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import cast
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, BackgroundTasks, Request, status
 from pydantic import TypeAdapter
 
 from app.api.errors import DomainError
@@ -106,8 +106,10 @@ async def list_messages(request: Request, session_id: str) -> list[MessageView]:
     return views
 
 @router.post("/{session_id}/end")
-async def end_session(request: Request, session_id: str):
-    return _view(await request.app.state.summary_service.end_session(session_id))
+async def end_session(request: Request, session_id: str, background_tasks: BackgroundTasks):
+    session = await request.app.state.summary_service.end_session(session_id)
+    background_tasks.add_task(request.app.state.summary_service.generate_session, session_id)
+    return _view(session)
 
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_session(request: Request, session_id: str, body: dict):
