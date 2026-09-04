@@ -15,7 +15,7 @@ from fastapi.exceptions import RequestValidationError
 
 from app.api.auth import require_runtime_token
 from app.api.chat import router as chat_router
-from app.api.documents import recover_document_mutations
+from app.api.documents import recover_document_mutations, save_distillation_document
 from app.api.documents import router as documents_router
 from app.api.embedding import router as embedding_router
 from app.api.errors import DomainError, domain_error_handler, request_validation_handler
@@ -51,7 +51,9 @@ from app.imports.batch_service import BatchService
 from app.imports.events import InMemoryEventBroker
 from app.imports.service import ImportService
 from app.memory.distillation import DistillationService
+from app.memory.indexer import MemoryIndexer
 from app.memory.persistence import LocalKnowledgeStore
+from app.memory.retriever import MemoryRetriever
 from app.memory.summary import SummaryScheduler, SummaryService
 from app.schemas.common import HealthResponse
 from app.search.service import SearchService
@@ -237,6 +239,25 @@ def create_app(
                     )
                 app.state.vector_cleanup_store.delete(cleanup.id)
         app.state.conversation_store = conversation_store
+        memory_store = MemoryStore(database)
+        memory_store.recover_interrupted()
+        memory_indexer = MemoryIndexer(database, runtime_embedding_provider, vector_store)
+        memory_retriever = MemoryRetriever(database, runtime_embedding_provider, vector_store)
+        await memory_indexer.replay_cleanups()
+        await memory_indexer.replay_pending_indexes()
+        summary_service = SummaryService(
+            conversation_store,
+            memory_store,
+            llm=runtime_llm_provider,
+            indexer=memory_indexer,
+        )
+        summary_scheduler = SummaryScheduler(summary_service)
+        app.state.summary_scheduler = summary_scheduler
+        app.state.memory_store = memory_store
+        app.state.memory_indexer = memory_indexer
+        app.state.memory_retriever = memory_retriever
+        app.state.summary_service = summary_service
+        app.state.distillation_event_broker = InMemoryEventBroker(retention=None)
         chat_service = ChatService(
             retriever=HybridRetriever(
                 database=database,
@@ -248,22 +269,18 @@ def create_app(
             conversation_store=conversation_store,
             event_broker=InMemoryEventBroker(retention=None),
             message_activity_callback=lambda session_id: summary_service.record_message_activity(session_id),
+            memory_retriever=memory_retriever,
         )
         app.state.chat_service = chat_service
-        summary_service = SummaryService(
-            conversation_store,
-            MemoryStore(database),
-            llm=runtime_llm_provider,
-        )
-        summary_scheduler = SummaryScheduler(summary_service)
-        app.state.summary_scheduler = summary_scheduler
-        app.state.memory_store = summary_service.memory_store
-        app.state.summary_service = summary_service
         app.state.distillation_service = DistillationService(
             conversation_store,
             runtime_llm_provider,
             LocalKnowledgeStore(runtime_settings.data_dir),
             yuque_gateway=runtime_yuque_gateway,
+            mutation_store=app.state.document_mutation_store,
+            indexer=memory_indexer,
+            document_saver=lambda **kwargs: save_distillation_document(app, **kwargs),
+            event_broker=app.state.distillation_event_broker,
         )
         summary_task = asyncio.create_task(summary_scheduler.run())
         await app.state.import_service.recover_pending_vector_cleanup()

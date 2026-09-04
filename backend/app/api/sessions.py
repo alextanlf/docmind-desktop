@@ -4,9 +4,10 @@ import json
 from typing import cast
 
 from fastapi import APIRouter, Request, status
+from pydantic import TypeAdapter
 
 from app.api.errors import DomainError
-from app.schemas.chat import CitationRef, MessageView
+from app.schemas.chat import Citation, MessageView
 from app.schemas.sessions import SessionCreate, SessionSummary
 from app.storage.models import SessionRecord
 from app.storage.repositories import ConversationStore, DocumentStore, RepositoryStore
@@ -44,6 +45,7 @@ def _view(record: SessionRecord) -> SessionSummary:
         repository_ids=_scope(record),
         created_at=record.created_at,
         updated_at=record.updated_at,
+        ended_at=record.ended_at,
     )
 
 
@@ -82,7 +84,12 @@ async def list_messages(request: Request, session_id: str) -> list[MessageView]:
     views: list[MessageView] = []
     for message in _conversation_store(request).list_messages(session_id):
         try:
-            citations = [CitationRef.model_validate(item) for item in json.loads(message.citations_json)]
+            citations = [
+                TypeAdapter(Citation).validate_python(
+                    {"kind": "document", **item} if "kind" not in item else item
+                )
+                for item in json.loads(message.citations_json)
+            ]
         except (TypeError, ValueError):
             citations = []
         views.append(
@@ -100,7 +107,7 @@ async def list_messages(request: Request, session_id: str) -> list[MessageView]:
 
 @router.post("/{session_id}/end")
 async def end_session(request: Request, session_id: str):
-    return await request.app.state.summary_service.end_session(session_id)
+    return _view(await request.app.state.summary_service.end_session(session_id))
 
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_session(request: Request, session_id: str, body: dict):

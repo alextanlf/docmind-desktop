@@ -28,12 +28,14 @@ from app.storage.models import (
     ChatRequestRecord,
     CrawlEntryRecord,
     CrawlEntryState,
+    DistillationRecord,
     DocumentChunkRecord,
     DocumentMutationRecord,
     DocumentRecord,
     ImportJobRecord,
     ImportStatus,
     MemoryChunkRecord,
+    MemoryVectorCleanupRecord,
     MessageRecord,
     RepositoryRecord,
     SessionRecord,
@@ -1829,6 +1831,21 @@ class ConversationStore:
         with self.database.session() as session:
             parent = session.get(SessionRecord, session_id)
             if parent is not None:
+                summary_ids = list(session.scalars(select(SessionSummaryRecord.id).where(SessionSummaryRecord.session_id == session_id)))
+                draft_ids = list(session.scalars(select(DistillationRecord.id).where(DistillationRecord.session_id == session_id, DistillationRecord.state.not_in(("saved", "saved_unindexed")))))
+                summary_vectors = list(session.scalars(select(MemoryChunkRecord.vector_id).where(MemoryChunkRecord.summary_id.in_(summary_ids)))) if summary_ids else []
+                draft_vectors = list(session.scalars(select(MemoryChunkRecord.vector_id).where(MemoryChunkRecord.distillation_id.in_(draft_ids)))) if draft_ids else []
+                if summary_vectors:
+                    session.add(MemoryVectorCleanupRecord(collection="_session_summaries", vector_ids_json=json.dumps(summary_vectors)))
+                if draft_vectors:
+                    session.add(MemoryVectorCleanupRecord(collection="_distilled_knowledge", vector_ids_json=json.dumps(draft_vectors)))
+                session.query(DistillationRecord).filter(
+                    DistillationRecord.session_id == session_id,
+                    DistillationRecord.state.in_(("saved", "saved_unindexed")),
+                ).update({DistillationRecord.session_id: None}, synchronize_session=False)
+                session.query(DistillationRecord).filter(
+                    DistillationRecord.session_id == session_id
+                ).delete(synchronize_session=False)
                 session.delete(parent)
 
     def claim_chat_request(
@@ -1892,8 +1909,6 @@ class MemoryStore:
         self.database = database
 
     def upsert_summary(self, session_id: str, repository_ids: list[str]):
-        if not repository_ids:
-            raise DomainError("MEMORY_SCOPE_INVALID", "repository scope required", 400)
         with self.database.session() as s:
             if s.get(SessionRecord, session_id) is None:
                 raise DomainError("SESSION_NOT_FOUND", "会话不存在", 404)
@@ -1984,6 +1999,8 @@ class MemoryStore:
             summary.error_code = None
             summary.retryable = False
             summary.updated_at = now
+            parent = s.get(SessionRecord, summary.session_id)
+            summary.source_updated_at = parent.updated_at if parent is not None else now
             s.flush()
             return summary
 
@@ -2012,11 +2029,87 @@ class MemoryStore:
             ):
                 raise DomainError("MEMORY_SCOPE_INVALID", "memory scope mismatch", 403)
             rec = MemoryChunkRecord(
-                summary_id=summary_id, repository_id=repository_id, text=text, chunk_index=0
+                summary_id=summary_id, repository_id=repository_id, text=text, chunk_index=0,
+                vector_id=f"memory:session_summary:{summary_id}:{repository_id}:0",
             )
             s.add(rec)
             s.flush()
             return rec
+
+    def replace_memory_chunks(
+        self, kind: str, source_id: str, chunks: list[tuple[str, int, str, str]]
+    ) -> tuple[list[str], list[MemoryChunkRecord]]:
+        if not chunks:
+            raise DomainError("MEMORY_SCOPE_INVALID", "memory scope required", 400)
+        foreign_key = "summary_id" if kind == "session_summary" else "distillation_id"
+        with self.database.session() as session:
+            query = session.query(MemoryChunkRecord).filter(
+                getattr(MemoryChunkRecord, foreign_key) == source_id
+            )
+            old_ids = [record.vector_id for record in query.all()]
+            query.delete(synchronize_session=False)
+            records = []
+            for repository_id, index, text, vector_id in chunks:
+                record = MemoryChunkRecord(
+                    repository_id=repository_id,
+                    chunk_index=index,
+                    text=text,
+                    vector_id=vector_id,
+                    **{foreign_key: source_id},
+                )
+                session.add(record)
+                records.append(record)
+            session.flush()
+            return old_ids, records
+
+    def create_vector_cleanup(self, collection: str, vector_ids: list[str], *, source_kind: str | None = None, source_id: str | None = None):
+        if not vector_ids:
+            return None
+        with self.database.session() as session:
+            record = MemoryVectorCleanupRecord(
+                collection=collection, vector_ids_json=json.dumps(vector_ids), source_kind=source_kind, source_id=source_id
+            )
+            session.add(record)
+            session.flush()
+            return record
+
+    def list_vector_cleanups(self):
+        with self.database.session() as session:
+            return list(session.scalars(select(MemoryVectorCleanupRecord)))
+
+    def delete_vector_cleanup(self, cleanup_id: str) -> None:
+        with self.database.session() as session:
+            record = session.get(MemoryVectorCleanupRecord, cleanup_id)
+            if record is not None:
+                session.delete(record)
+
+    def owned_vector_ids(self, vector_ids: list[str]) -> set[str]:
+        if not vector_ids:
+            return set()
+        with self.database.session() as session:
+            return set(session.scalars(select(MemoryChunkRecord.vector_id).where(MemoryChunkRecord.vector_id.in_(vector_ids))))
+
+    def mark_memory_chunks_indexed(self, vector_ids: list[str]) -> None:
+        with self.database.session() as session:
+            session.query(MemoryChunkRecord).filter(MemoryChunkRecord.vector_id.in_(vector_ids)).update({MemoryChunkRecord.indexed: True}, synchronize_session=False)
+
+    def pending_memory_sources(self) -> tuple[set[str], set[str]]:
+        with self.database.session() as session:
+            records = list(session.scalars(select(MemoryChunkRecord).where(MemoryChunkRecord.indexed.is_(False))))
+            return ({record.summary_id for record in records if record.summary_id}, {record.distillation_id for record in records if record.distillation_id})
+
+    def recover_interrupted(self, now: datetime | None = None) -> tuple[int, int]:
+        now = now or utc_now()
+        with self.database.session() as session:
+            summaries = session.query(SessionSummaryRecord).filter(SessionSummaryRecord.state == "generating").update(
+                {SessionSummaryRecord.state: "failed", SessionSummaryRecord.error_code: "SUMMARY_GENERATION_INTERRUPTED", SessionSummaryRecord.retryable: True, SessionSummaryRecord.updated_at: now},
+                synchronize_session=False,
+            )
+            distillations = session.query(DistillationRecord).filter(DistillationRecord.state.in_(("generating", "saving"))).update(
+                {DistillationRecord.state: "failed", DistillationRecord.error_code: "DISTILLATION_INTERRUPTED", DistillationRecord.retryable: True, DistillationRecord.updated_at: now},
+                synchronize_session=False,
+            )
+            return summaries, distillations
 
 
 class DocumentMutationStore:

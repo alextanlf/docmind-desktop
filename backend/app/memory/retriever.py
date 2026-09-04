@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from app.storage.models import DistillationRecord, SessionSummaryRecord
+from app.storage.models import DistillationRecord, MemoryChunkRecord, SessionSummaryRecord
 
 
 @dataclass(frozen=True)
@@ -34,19 +34,27 @@ class MemoryRetriever:
         hits = []
         for repository_id in repository_ids:
             for collection in ("_session_summaries", "_distilled_knowledge"):
-                hits.extend(self.vector_store.query_memory(collection, embedding, top_k, repository_id=repository_id))
+                hits.extend(self.vector_store.query_memory(collection, embedding, max(top_k * 3, top_k), repository_id=repository_id))
         hits.sort(key=lambda h: (-h.similarity, h.id))
-        hits = hits[:top_k]
-        source_ids = {str(h.metadata.get("source_id")) for h in hits}
+        vector_ids = {h.id for h in hits}
         with self.database.session() as session:
-            summaries = {r.id: r for r in session.scalars(select(SessionSummaryRecord).where(SessionSummaryRecord.id.in_(source_ids)))}
-            distillations = {r.id: r for r in session.scalars(select(DistillationRecord).where(DistillationRecord.id.in_(source_ids)))}
+            owners = {r.vector_id: r for r in session.scalars(select(MemoryChunkRecord).where(MemoryChunkRecord.vector_id.in_(vector_ids)))}
+            summaries = {r.id: r.state for r in session.scalars(select(SessionSummaryRecord).where(SessionSummaryRecord.id.in_([o.summary_id for o in owners.values() if o.summary_id])))}
+            distillations = {r.id: r.state for r in session.scalars(select(DistillationRecord).where(DistillationRecord.id.in_([o.distillation_id for o in owners.values() if o.distillation_id])))}
         result: list[MemoryHit] = []
         for hit in hits:
+            owner = owners.get(hit.id)
+            if owner is None or not owner.indexed or owner.repository_id not in repository_ids:
+                continue
             source_id = str(hit.metadata.get("source_id", ""))
             kind = str(hit.metadata.get("kind", ""))
-            record = summaries.get(source_id) if kind == "session_summary" else distillations.get(source_id)
-            if record is None:
+            if kind == "session_summary":
+                if owner.summary_id != source_id or summaries.get(source_id) != "ready":
+                    continue
+            elif kind == "distillation":
+                if owner.distillation_id != source_id or distillations.get(source_id) not in {"saved", "saved_unindexed"}:
+                    continue
+            else:
                 continue
             result.append(MemoryHit(hit.id, kind, source_id, hit.text, str(hit.metadata.get("repository_id")), hit.similarity, hit.metadata))
-        return result
+        return result[:top_k]

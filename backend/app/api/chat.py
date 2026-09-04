@@ -66,6 +66,8 @@ async def stream_message(request: Request, session_id: str) -> StreamingResponse
     message = body.message.strip()
     repository_ids = body.repository_ids
     session = _session(_conversation_store(request), session_id)
+    if session.ended_at is not None:
+        raise DomainError("SESSION_ENDED", "会话已结束", 409)
     try:
         scope = json.loads(session.repository_scope_json)
     except (TypeError, json.JSONDecodeError):
