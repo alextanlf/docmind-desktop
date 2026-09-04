@@ -245,6 +245,8 @@ class ImportService:
         collection_id = (
             descriptor.get("collectionId") if isinstance(descriptor, dict) else None
         )
+        if not isinstance(collection_id, str) and getattr(batch, "source_kind", None) in {"web", "yuque_repository"}:
+            return f"remote/{batch.id}"
         if not isinstance(collection_id, str):
             raise DomainError("BATCH_SOURCE_CHANGED", "暂存集合标识无效", 409, False)
         return collection_id

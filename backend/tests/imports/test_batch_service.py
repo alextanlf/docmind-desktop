@@ -11,7 +11,7 @@ import pytest
 from app.api.errors import DomainError
 from app.imports.batch_service import BatchService
 from app.imports.events import InMemoryEventBroker
-from app.schemas.batches import ConfirmBatchInput, ConfirmBatchItem, StagedDirectoryBatchRequest
+from app.schemas.batches import ConfirmBatchInput, ConfirmBatchItem, StagedDirectoryBatchRequest, DiscoveryResult
 from app.storage.database import Database
 from app.storage.models import (
     BatchImportRecord,

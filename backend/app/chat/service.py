@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 from typing import Any
 
@@ -30,6 +30,7 @@ class ChatService:
         conversation_store: ConversationStore,
         event_broker: ImportEventBroker,
         terminal_replay_ttl_seconds: float = _DEFAULT_TERMINAL_REPLAY_TTL_SECONDS,
+        message_activity_callback: Callable[[str], None] | None = None,
     ) -> None:
         self.retriever = retriever
         self.llm = llm
@@ -48,6 +49,7 @@ class ChatService:
         self._fallback_ready: dict[str, asyncio.Event] = {}
         self._start_lock = asyncio.Lock()
         self._stopped = False
+        self._message_activity_callback = message_activity_callback
 
     async def stream(
         self, request: ChatStreamRequest, *, after_sequence: int = 0
@@ -56,21 +58,15 @@ class ChatService:
         subscription = self.event_broker.subscribe(key, after_sequence)
         helper_tasks: set[asyncio.Task[Any]] = set()
 
-        def create_helper_locked(
-            awaitable: Awaitable[Any], label: str
-        ) -> asyncio.Task[Any]:
-            task = asyncio.create_task(
-                awaitable, name=f"chat-stream:{key}:{label}"
-            )
+        def create_helper_locked(awaitable: Awaitable[Any], label: str) -> asyncio.Task[Any]:
+            task = asyncio.create_task(awaitable, name=f"chat-stream:{key}:{label}")
             helper_tasks.add(task)
             self._subscription_helpers.add(task)
             task.add_done_callback(self._subscription_helpers.discard)
             return task
 
         async with self._lifecycle_lock:
-            restored_terminal = await self._ensure_producer(
-                key, request, after_sequence
-            )
+            restored_terminal = await self._ensure_producer(key, request, after_sequence)
             self._active_subscribers[key] = self._active_subscribers.get(key, 0) + 1
             next_event = create_helper_locked(anext(subscription), "next-event")
         if restored_terminal:
@@ -116,9 +112,7 @@ class ChatService:
                 async with self._lifecycle_lock:
                     if self._stopped:
                         raise asyncio.CancelledError
-                    next_event = create_helper_locked(
-                        anext(subscription), "next-event"
-                    )
+                    next_event = create_helper_locked(anext(subscription), "next-event")
         finally:
             for task in helper_tasks:
                 if not task.done():
@@ -176,17 +170,13 @@ class ChatService:
                 return False
             if self._stopped:
                 raise RuntimeError("chat service is stopped")
-            record, claimed = self.conversation_store.claim_chat_request(
-                key, request.session_id
-            )
+            record, claimed = self.conversation_store.claim_chat_request(key, request.session_id)
             self._started_request_ids.add(key)
             self._fallback_ready[key] = asyncio.Event()
             if not claimed:
                 terminal_type, payload = _terminal_from_record(record)
                 if record.terminal_type is None:
-                    self.conversation_store.complete_chat_request(
-                        key, terminal_type, payload
-                    )
+                    self.conversation_store.complete_chat_request(key, terminal_type, payload)
                 await self._publish(
                     key,
                     terminal_type,
@@ -242,19 +232,15 @@ class ChatService:
                 )
             )
             user_persisted = True
+            if self._message_activity_callback is not None:
+                self._message_activity_callback(request.session_id)
             history = self.conversation_store.list_messages(request.session_id)[-20:]
-            result = await self.retriever.search(
-                request.message, request.repository_ids, top_k=5
-            )
+            result = await self.retriever.search(request.message, request.repository_ids, top_k=5)
             sources = _source_map(result.hits)
             await self._publish(
                 key,
                 "citations",
-                {
-                    "citations": [
-                        source.model_dump(by_alias=True) for source in sources.values()
-                    ]
-                },
+                {"citations": [source.model_dump(by_alias=True) for source in sources.values()]},
             )
             if not sources:
                 assistant_persistence_attempted = True
@@ -287,9 +273,7 @@ class ChatService:
             answer = "".join(answer_parts)
             citations = parse_citations(answer, sources)
             assistant_persistence_attempted = True
-            assistant = self._persist_assistant(
-                request.session_id, answer, citations, "completed"
-            )
+            assistant = self._persist_assistant(request.session_id, answer, citations, "completed")
             terminal = {"messageId": assistant.id}
             self.conversation_store.complete_chat_request(key, "done", terminal)
             await self._publish(key, "done", terminal)
@@ -331,7 +315,7 @@ class ChatService:
         citations: list[CitationRef],
         generation_status: str,
     ) -> MessageRecord:
-        return self.conversation_store.add_message(
+        message = self.conversation_store.add_message(
             MessageRecord(
                 session_id=session_id,
                 role="assistant",
@@ -344,6 +328,9 @@ class ChatService:
                 generation_status=generation_status,
             )
         )
+        if self._message_activity_callback is not None:
+            self._message_activity_callback(session_id)
+        return message
 
     async def _publish(
         self,
@@ -353,9 +340,7 @@ class ChatService:
         *,
         sequence: int | None = None,
     ) -> None:
-        event = await self.event_broker.publish(
-            key, event_type, payload, sequence=sequence
-        )
+        event = await self.event_broker.publish(key, event_type, payload, sequence=sequence)
         self._last_sequences[key] = event.sequence
 
 

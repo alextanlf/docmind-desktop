@@ -18,6 +18,9 @@ _METADATA_KEYS = {
     "chunk_index",
     "source_type",
     "page_number",
+    "repository_id",
+    "source_id",
+    "kind",
 }
 @dataclass(frozen=True)
 class VectorHit:
@@ -65,7 +68,43 @@ class PersistentVectorStore:
         except Exception as error:
             raise _index_error("向量索引写入失败") from error
 
-    def query(self, repository_id: str, embedding: list[float], top_k: int) -> list[VectorHit]:
+    def upsert_memory(self, collection: str, ids, embeddings, texts, metadatas) -> None:
+        if not (len(ids) == len(texts) == len(embeddings) == len(metadatas)):
+            raise _index_error("向量索引数据长度不一致")
+        if not ids:
+            return
+        try:
+            self.client.get_or_create_collection(collection, metadata={"hnsw:space": "cosine"}).upsert(
+                ids=ids, documents=texts, embeddings=embeddings, metadatas=[self._metadata(m) for m in metadatas]
+            )
+        except Exception as error:
+            raise _index_error("记忆向量索引写入失败") from error
+
+    def query_memory(self, collection: str, embedding: list[float], top_k: int, *, repository_id: str | None = None):
+        try:
+            target = self.client.get_collection(collection)
+            kwargs = {"query_embeddings": [embedding], "n_results": top_k, "include": ["documents", "metadatas", "distances"]}
+            if repository_id:
+                kwargs["where"] = {"repository_id": repository_id}
+            result = target.query(**kwargs)
+            docs = result.get("documents", [[]])[0]
+            metas = result.get("metadatas", [[]])[0]
+            distances = result.get("distances", [[]])[0]
+            return [VectorHit(id="", text=d or "", similarity=1 - float(dist), metadata=m or {}) for d, m, dist in zip(docs, metas, distances)]
+        except NotFoundError:
+            return []
+
+    def delete_memory(self, collection: str, ids: list[str]) -> None:
+        if not ids:
+            return
+        try:
+            self.client.get_collection(collection).delete(ids=ids)
+        except NotFoundError:
+            return
+        except Exception as error:
+            raise _index_error("记忆向量删除失败") from error
+
+    def query(self, repository_id: str, embedding: list[float], top_k: int, *, where: dict[str, Any] | None = None) -> list[VectorHit]:
         if top_k <= 0:
             return []
         try:
@@ -77,9 +116,10 @@ class PersistentVectorStore:
         except Exception as error:
             raise _index_error("向量索引集合不可用") from error
         try:
-            result = collection.query(
-                query_embeddings=[embedding], n_results=top_k, include=["documents", "metadatas", "distances"]
-            )
+            kwargs = {"query_embeddings": [embedding], "n_results": top_k, "include": ["documents", "metadatas", "distances"]}
+            if where:
+                kwargs["where"] = where
+            result = collection.query(**kwargs)
         except Exception as error:
             raise _index_error("向量索引查询失败") from error
         hits: list[VectorHit] = []

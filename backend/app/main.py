@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from threading import Lock
 
+import httpx
 from fastapi import Depends, FastAPI
 from fastapi.exceptions import RequestValidationError
 
@@ -19,8 +21,10 @@ from app.api.embedding import router as embedding_router
 from app.api.errors import DomainError, domain_error_handler, request_validation_handler
 from app.api.import_batches import router as import_batches_router
 from app.api.imports import router as imports_router
+from app.api.memory import router as memory_router
 from app.api.repositories import router as repositories_router
 from app.api.request_limits import RequestBodyLimitMiddleware
+from app.api.search import router as search_router
 from app.api.sessions import router as sessions_router
 from app.api.settings import SettingsService
 from app.api.settings import router as settings_router
@@ -40,23 +44,34 @@ from app.core.retrieval import HybridRetriever
 from app.core.secrets import KeyringSecretStore, MemorySecretStore, SecretStore
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
+from app.document.safe_http import SafeHttpClient
 from app.document.sources import SourceInspector
+from app.document.web_discovery import WebDiscovery
 from app.imports.batch_service import BatchService
 from app.imports.events import InMemoryEventBroker
 from app.imports.service import ImportService
+from app.memory.distillation import DistillationService
+from app.memory.persistence import LocalKnowledgeStore
+from app.memory.summary import SummaryScheduler, SummaryService
 from app.schemas.common import HealthResponse
+from app.search.service import SearchService
+from app.search.tavily import TavilyProvider
 from app.storage.database import Database
 from app.storage.repositories import (
     BatchImportStore,
     ConversationStore,
+    CrawlEntryStore,
     DocumentMutationStore,
     DocumentStore,
     ImportJobStore,
+    MemoryStore,
     RepositoryStore,
     SettingStore,
     VectorCleanupStore,
+    WebSearchRunStore,
 )
 from app.storage.vectorstore import PersistentVectorStore
+from app.yuque.discovery import YuqueDiscovery
 from app.yuque.gateway import PlaywrightYuqueGateway, YuqueGateway
 
 
@@ -162,6 +177,18 @@ def create_app(
             event_broker=InMemoryEventBroker(),
         )
         app.state.batch_store = BatchImportStore(database)
+        class _SystemResolver:
+            async def resolve(self, host: str):
+                infos = await asyncio.to_thread(socket.getaddrinfo, host, None, type=socket.SOCK_STREAM)
+                return list({info[4][0] for info in infos})
+        web_discovery = WebDiscovery(
+            SafeHttpClient(resolver=_SystemResolver(), transport=httpx.AsyncHTTPTransport()),
+            runtime_settings.staging_dir,
+            frontier=CrawlEntryStore(database),
+        )
+        yuque_discovery = YuqueDiscovery(
+            runtime_yuque_gateway, repository_store, runtime_settings.staging_dir
+        )
         app.state.batch_service = BatchService(
             store=app.state.batch_store,
             import_service=app.state.import_service,
@@ -170,8 +197,20 @@ def create_app(
             staging_root=runtime_settings.staging_dir,
             manifest_max_bytes=runtime_settings.staging_manifest_max_bytes,
             batch_max_items=runtime_settings.batch_max_items,
+            web_discovery=web_discovery,
+            yuque_discovery=yuque_discovery,
         )
         app.state.batch_service.recover_on_startup()
+        class _LazyTavily:
+            async def search(self, req):
+                try:
+                    key = runtime_secret_store.get("web-search:tavily")
+                except (DomainError, OSError):
+                    key = None
+                if not key:
+                    raise RuntimeError("search key unavailable")
+                return await TavilyProvider(key).search(req)
+        app.state.search_service = SearchService(_LazyTavily(), WebSearchRunStore(database), runtime_secret_store)
         runtime_llm_provider = fake_llm_provider or _RuntimeLLMProvider(
             app.state.settings_service,
             runtime_secret_store,
@@ -208,8 +247,25 @@ def create_app(
             llm=runtime_llm_provider,
             conversation_store=conversation_store,
             event_broker=InMemoryEventBroker(retention=None),
+            message_activity_callback=lambda session_id: summary_service.record_message_activity(session_id),
         )
         app.state.chat_service = chat_service
+        summary_service = SummaryService(
+            conversation_store,
+            MemoryStore(database),
+            llm=runtime_llm_provider,
+        )
+        summary_scheduler = SummaryScheduler(summary_service)
+        app.state.summary_scheduler = summary_scheduler
+        app.state.memory_store = summary_service.memory_store
+        app.state.summary_service = summary_service
+        app.state.distillation_service = DistillationService(
+            conversation_store,
+            runtime_llm_provider,
+            LocalKnowledgeStore(runtime_settings.data_dir),
+            yuque_gateway=runtime_yuque_gateway,
+        )
+        summary_task = asyncio.create_task(summary_scheduler.run())
         await app.state.import_service.recover_pending_vector_cleanup()
         try:
             yield
@@ -220,6 +276,8 @@ def create_app(
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
             await chat_service.stop()
+            summary_scheduler.stop()
+            await summary_task
             await runtime_yuque_gateway.close()
             database.engine.dispose()
 
@@ -249,6 +307,8 @@ def create_app(
     app.include_router(documents_router)
     app.include_router(sessions_router)
     app.include_router(chat_router)
+    app.include_router(search_router)
+    app.include_router(memory_router)
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
