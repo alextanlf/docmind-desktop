@@ -21,9 +21,11 @@ class SummaryService:
         *,
         llm: LLMProvider,
         clock: Callable[[], datetime] | None = None,
+        indexer=None,
     ) -> None:
         self.store, self.memory_store, self.llm = store, memory_store, llm
         self.clock = clock or (lambda: datetime.now(UTC))
+        self.indexer = indexer
 
     def record_message_activity(self, session_id: str) -> None:
         now = self.clock()
@@ -58,7 +60,7 @@ class SummaryService:
                 raise DomainError("SESSION_NOT_FOUND", "会话不存在", 404)
             parent.ended_at = parent.ended_at or now
             parent.summary_due_at = now
-        await self.run_due(now)
+        await self.regenerate(session_id)
         return self.store.get_session(session_id)
 
     async def _generate(self, summary):
@@ -73,9 +75,15 @@ class SummaryService:
                 for line in content.splitlines()
                 if line.startswith(("#", "- "))
             ][:20]
-            return self.memory_store.complete_summary(
+            completed = self.memory_store.complete_summary(
                 summary.id, content=content, topics=topics, now=self.clock()
             )
+            if self.indexer is not None and completed.repository_ids_json != "[]":
+                try:
+                    await self.indexer.index_summary(completed.id)
+                except Exception:  # noqa: BLE001, S110 - summary remains authoritative in SQLite
+                    pass
+            return completed
         except Exception:  # noqa: BLE001 - provider boundary must persist a retryable state
             return self.memory_store.fail_summary(summary.id, now=self.clock())
 

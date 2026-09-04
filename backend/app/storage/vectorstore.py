@@ -87,10 +87,11 @@ class PersistentVectorStore:
             if repository_id:
                 kwargs["where"] = {"repository_id": repository_id}
             result = target.query(**kwargs)
+            identifiers = result.get("ids", [[]])[0]
             docs = result.get("documents", [[]])[0]
             metas = result.get("metadatas", [[]])[0]
             distances = result.get("distances", [[]])[0]
-            return [VectorHit(id="", text=d or "", similarity=1 - float(dist), metadata=m or {}) for d, m, dist in zip(docs, metas, distances)]
+            return [VectorHit(id=str(i), text=d or "", similarity=1 - float(dist), metadata=m or {}) for i, d, m, dist in zip(identifiers, docs, metas, distances)]
         except NotFoundError:
             return []
 

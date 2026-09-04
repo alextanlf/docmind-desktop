@@ -12,7 +12,8 @@ from app.chat.prompts import build_rag_prompt
 from app.core.llm import ChatRequest, LLMMessage, LLMProvider
 from app.core.retrieval import HybridRetriever
 from app.imports.events import EventEnvelope, EventType, ImportEventBroker
-from app.schemas.chat import ChatStreamRequest, CitationRef
+from app.memory.retriever import MemoryHit, MemoryRetriever
+from app.schemas.chat import ChatStreamRequest, Citation, CitationRef, MemoryCitation
 from app.schemas.retrieval import RetrievalHit
 from app.storage.models import MessageRecord
 from app.storage.repositories import ConversationStore
@@ -31,6 +32,7 @@ class ChatService:
         event_broker: ImportEventBroker,
         terminal_replay_ttl_seconds: float = _DEFAULT_TERMINAL_REPLAY_TTL_SECONDS,
         message_activity_callback: Callable[[str], None] | None = None,
+        memory_retriever: MemoryRetriever | None = None,
     ) -> None:
         self.retriever = retriever
         self.llm = llm
@@ -50,6 +52,7 @@ class ChatService:
         self._start_lock = asyncio.Lock()
         self._stopped = False
         self._message_activity_callback = message_activity_callback
+        self.memory_retriever = memory_retriever
 
     async def stream(
         self, request: ChatStreamRequest, *, after_sequence: int = 0
@@ -237,6 +240,12 @@ class ChatService:
             history = self.conversation_store.list_messages(request.session_id)[-20:]
             result = await self.retriever.search(request.message, request.repository_ids, top_k=5)
             sources = _source_map(result.hits)
+            memory_hits = (
+                await self.memory_retriever.search(request.message, request.repository_ids, top_k=5)
+                if self.memory_retriever is not None
+                else []
+            )
+            sources.update(_memory_source_map(memory_hits))
             await self._publish(
                 key,
                 "citations",
@@ -256,7 +265,7 @@ class ChatService:
 
             chat_request = ChatRequest(
                 messages=_history_with_prompt(
-                    history, user_message.id, request.message, result.hits
+                    history, user_message.id, request.message, result.hits, memory_hits
                 )
             )
             sanitizer = URLStreamSanitizer()
@@ -312,7 +321,7 @@ class ChatService:
         self,
         session_id: str,
         content: str,
-        citations: list[CitationRef],
+        citations: list[Citation],
         generation_status: str,
     ) -> MessageRecord:
         message = self.conversation_store.add_message(
@@ -360,13 +369,33 @@ def _source_map(hits: list[RetrievalHit]) -> dict[str, CitationRef]:
     }
 
 
+def _memory_source_map(hits: list[MemoryHit]) -> dict[str, MemoryCitation]:
+    return {
+        f"M{index}": MemoryCitation(
+            source_id=f"M{index}",
+            title="会话摘要" if hit.kind == "session_summary" else "知识蒸馏",
+            excerpt=hit.text,
+            memory_kind=hit.kind,
+            memory_id=hit.source_id,
+            session_id=hit.metadata.get("session_id"),
+        )
+        for index, hit in enumerate(hits[:5], start=1)
+    }
+
+
 def _history_with_prompt(
     history: list[MessageRecord],
     current_message_id: str,
     query: str,
     hits: list[RetrievalHit],
+    memory_hits: list[MemoryHit] | None = None,
 ) -> list[LLMMessage]:
     prompt = build_rag_prompt(query, hits)
+    if memory_hits:
+        memory_context = "\n\n跨会话记忆（仅可引用已注册的 M#）：\n" + "\n\n".join(
+            f"[M{index}] {hit.text}" for index, hit in enumerate(memory_hits[:5], start=1)
+        )
+        prompt += memory_context
     messages = [LLMMessage(role=message.role, content=message.content) for message in history]
     for index in range(len(history) - 1, -1, -1):
         if history[index].id == current_message_id:

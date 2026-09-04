@@ -3,17 +3,17 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from app.schemas.chat import CitationRef
+from app.schemas.chat import Citation
 
-_CITATION_PATTERN = re.compile(r"(?<!\[)\[(S[1-9]\d*)\](?!\])")
+_CITATION_PATTERN = re.compile(r"(?<!\[)\[([SM][1-9]\d*)\](?!\])")
 _URL_PREFIXES = ("http://", "https://")
 _URL_TERMINATORS = frozenset("，。！？、；;）)]}>,'\"‘’“”")
 
 _URLState = Literal["text", "scheme", "authority", "path"]
 
 
-def parse_citations(answer: str, sources: dict[str, CitationRef]) -> list[CitationRef]:
-    citations: list[CitationRef] = []
+def parse_citations(answer: str, sources: dict[str, Citation]) -> list[Citation]:
+    citations: list[Citation] = []
     seen: set[str] = set()
     for match in _CITATION_PATTERN.finditer(answer):
         source_id = match.group(1)

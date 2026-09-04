@@ -368,6 +368,7 @@ class SessionRecord(Base):
 
 class SessionSummaryRecord(Base):
     __tablename__ = "session_summaries"
+    __table_args__ = (CheckConstraint("state IN ('pending','generating','ready','stale','failed')", name="ck_session_summaries_state"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id", ondelete="CASCADE"), unique=True)
     state: Mapped[str] = mapped_column(String(16), default="pending")
@@ -375,35 +376,55 @@ class SessionSummaryRecord(Base):
     topics_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
     repository_ids_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
     error_code: Mapped[str | None] = mapped_column(String(128))
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     retryable: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
 class DistillationRecord(Base):
     __tablename__ = "distillations"
+    __table_args__ = (
+        CheckConstraint("state IN ('generating','draft','saving','saved','saved_unindexed','failed')", name="ck_distillations_state"),
+        CheckConstraint("target IS NULL OR target IN ('local','yuque')", name="ck_distillations_target"),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     session_id: Mapped[str | None] = mapped_column(ForeignKey("sessions.id", ondelete="SET NULL"))
     title: Mapped[str] = mapped_column(String(512)); content: Mapped[str] = mapped_column(Text)
     key_points_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
+    sources_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
     repository_ids_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
     state: Mapped[str] = mapped_column(String(24), default="draft")
     target: Mapped[str | None] = mapped_column(String(16)); created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now); updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    target_repository_id: Mapped[str | None] = mapped_column(ForeignKey("repositories.id", ondelete="SET NULL"), nullable=True)
+    document_id: Mapped[str | None] = mapped_column(ForeignKey("documents.id", ondelete="SET NULL"), nullable=True)
     local_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     content_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     remote_document_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     remote_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retryable: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    saved_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    last_event_sequence: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
 
 class MemoryChunkRecord(Base):
     __tablename__ = "memory_chunks"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     summary_id: Mapped[str | None] = mapped_column(ForeignKey("session_summaries.id", ondelete="CASCADE"))
     distillation_id: Mapped[str | None] = mapped_column(ForeignKey("distillations.id", ondelete="CASCADE"))
-    repository_id: Mapped[str] = mapped_column(String(36)); text: Mapped[str] = mapped_column(Text); chunk_index: Mapped[int] = mapped_column(Integer)
+    repository_id: Mapped[str] = mapped_column(ForeignKey("repositories.id", ondelete="CASCADE")); text: Mapped[str] = mapped_column(Text); chunk_index: Mapped[int] = mapped_column(Integer)
+    vector_id: Mapped[str] = mapped_column(String(512), unique=True, index=True)
+    token_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    indexed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
 class MemoryVectorCleanupRecord(Base):
     __tablename__ = "memory_vector_cleanups"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     collection: Mapped[str] = mapped_column(String(64)); vector_ids_json: Mapped[str] = mapped_column(Text); created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    source_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
 
 class ChatRequestRecord(Base):
