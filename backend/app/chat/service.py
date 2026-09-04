@@ -15,7 +15,7 @@ from app.core.llm import ChatRequest, LLMMessage, LLMProvider
 from app.core.retrieval import HybridRetriever
 from app.imports.events import EventEnvelope, EventType, ImportEventBroker
 from app.memory.retriever import MemoryHit, MemoryRetriever
-from app.schemas.chat import ChatStreamRequest, Citation, CitationRef, MemoryCitation
+from app.schemas.chat import ChatStreamRequest, Citation, DocumentCitation, MemoryCitation
 from app.schemas.retrieval import RetrievalHit
 from app.schemas.web_search import SearchRunRequest
 from app.storage.models import MessageRecord
@@ -383,9 +383,9 @@ class ChatService:
         self._last_sequences[key] = event.sequence
 
 
-def _source_map(hits: list[RetrievalHit]) -> dict[str, CitationRef]:
+def _source_map(hits: list[RetrievalHit]) -> dict[str, DocumentCitation]:
     return {
-        f"S{index}": CitationRef(
+        f"S{index}": DocumentCitation(
             source_id=f"S{index}",
             chunk_id=hit.chunk_id,
             document_id=hit.document_id,

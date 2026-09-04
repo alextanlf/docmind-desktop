@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from app.schemas.chat import Citation, CitationRef, MemoryCitation, WebCitation
+from app.schemas.chat import Citation, DocumentCitation, MemoryCitation, WebCitation
 
 
 @dataclass(frozen=True)
@@ -16,7 +16,7 @@ class ContextAssembler:
     def assemble(self, document_hits: list, memory_hits: list) -> ContextBundle:
         sources: list[Citation] = []
         for index, hit in enumerate(document_hits[:5], 1):
-            sources.append(CitationRef(source_id=f"S{index}", chunk_id=hit.chunk_id, document_id=hit.document_id, title=hit.document_title, section_path=hit.section_path, page_number=hit.page_number, excerpt=hit.text, source_url=hit.source_url))
+            sources.append(DocumentCitation(source_id=f"S{index}", chunk_id=hit.chunk_id, document_id=hit.document_id, title=hit.document_title, section_path=hit.section_path, page_number=hit.page_number, excerpt=hit.text, source_url=hit.source_url))
         seen: set[tuple[str, str]] = set()
         for hit in memory_hits:
             key = (hit.kind, hit.source_id)
