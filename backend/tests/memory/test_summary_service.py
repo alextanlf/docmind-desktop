@@ -17,6 +17,6 @@ async def test_end_session_generates_that_exact_session(database):
     second = conversations.create_session([])
     service = SummaryService(conversations, MemoryStore(database), llm=LLM())
     await service.end_session(second.id)
+    await service.generate_session(second.id)
     assert MemoryStore(database).get_summary(second.id).state == "ready"
     assert MemoryStore(database).get_summary(first.id) is None
-

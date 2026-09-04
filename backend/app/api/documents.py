@@ -632,6 +632,20 @@ async def recover_document_mutations(app) -> int:  # type: ignore[no-untyped-def
     recovered = 0
     for record in _mutation_store(request).list():
         if record.operation == "distillation_create":
+            payload = _intent_payload(record)
+            try:
+                await save_distillation_document(
+                    app,
+                    repository_id=record.repository_id,
+                    distillation_id=record.id,
+                    title=str(payload.get("requested_title", "")),
+                    content=str(payload.get("requested_content", "")),
+                )
+                recovered += 1
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001, S112 - retry on next recovery pass
+                continue
             continue
         if not _claim_mutation(app, record.id):
             continue
@@ -790,7 +804,7 @@ async def save_distillation_document(
     if intent is None:
         intent = _mutation_store(request).create(
             mutation_id=mutation_id,
-            operation="create",
+            operation="distillation_create",
             repository_id=repository_id,
             document_id=existing.id if existing else None,
             payload={

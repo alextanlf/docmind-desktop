@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import cast
+from typing import Annotated, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Query, Request
@@ -34,7 +34,7 @@ async def create_run(request: Request, body: SearchRunRequest):
     return {"id": view.id, "status": view.status, "results": [_result(r) for r in view.results]}
 
 @router.get("/runs/{run_id}")
-async def get_run(request: Request, run_id: UUID, session_id: UUID = Query(...)):
+async def get_run(request: Request, run_id: UUID, session_id: Annotated[UUID, Query()]):
     run = _service(request).run_store.get(str(run_id))
     if run is None:
         raise DomainError("SEARCH_RUN_NOT_FOUND", "搜索任务不存在", 404)
@@ -44,7 +44,7 @@ async def get_run(request: Request, run_id: UUID, session_id: UUID = Query(...))
             "results": [_result(r) for r in _service(request).run_store.results(run.id)]}
 
 @router.get("/runs/{run_id}/results", response_model=list[SearchResultView])
-async def list_results(request: Request, run_id: UUID, session_id: UUID = Query(...), limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0, le=10000)):
+async def list_results(request: Request, run_id: UUID, session_id: Annotated[UUID, Query()], limit: Annotated[int, Query(ge=1, le=100)] = 50, offset: Annotated[int, Query(ge=0, le=10000)] = 0):
     run = _service(request).run_store.get(str(run_id))
     if run is None:
         raise DomainError("SEARCH_RUN_NOT_FOUND", "搜索任务不存在", 404)

@@ -40,9 +40,8 @@ class MemoryIndexer:
             (repository_id, 0, content, f"memory:{kind}:{source_id}:{repository_id}:0")
             for repository_id in repositories
         ]
-        old_ids, _ = self.store.replace_memory_chunks(kind, source_id, chunks)
+        old_ids, _, cleanup = self.store.replace_memory_chunks(kind, source_id, chunks, collection=collection)
         stale_ids = [identifier for identifier in old_ids if identifier not in {c[3] for c in chunks}]
-        cleanup = self.store.create_vector_cleanup(collection, stale_ids, source_kind=kind, source_id=source_id)
         vectors = await self.embedding_provider.embed_documents([content])
         for repository_id, _, text, identifier in chunks:
             self.vector_store.upsert_memory(collection, [identifier], vectors, [text], [{"repository_id": repository_id, "source_id": source_id, "kind": kind, "vector_id": identifier, "session_id": session_id or ""}])
@@ -63,7 +62,7 @@ class MemoryIndexer:
                 continue
         for distillation_id in distillations:
             try:
-                await self.index_distillation(distillation_id)
+                await self.retry_unindexed(distillation_id)
                 completed += 1
             except Exception:  # noqa: BLE001, S112 - pending ownership is durable
                 continue
@@ -74,6 +73,8 @@ class MemoryIndexer:
         with self.database.session() as session:
             record = session.get(DistillationRecord, distillation_id)
             record.state = "saved"
+            record.error_code = None
+            record.retryable = False
             record.last_event_sequence += 1
         with self.database.session() as session:
             return session.get(DistillationRecord, distillation_id)

@@ -5,7 +5,7 @@ from typing import Literal
 
 from app.schemas.chat import Citation
 
-_CITATION_PATTERN = re.compile(r"(?<!\[)\[([SM][1-9]\d*)\](?!\])")
+_CITATION_PATTERN = re.compile(r"(?<!\[)\[([SMW][1-9]\d*)\](?!\])")
 _URL_PREFIXES = ("http://", "https://")
 _URL_TERMINATORS = frozenset("，。！？、；;）)]}>,'\"‘’“”")
 

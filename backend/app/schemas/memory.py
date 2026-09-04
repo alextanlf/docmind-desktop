@@ -36,8 +36,8 @@ class DistillationView(WireModel):
     state: Literal['generating','draft','saving','saved','saved_unindexed','failed']
     storage_target: Literal['local','yuque'] | None = None
     local_path: str | None = None
-    document_id: str | None = None
-    source_url: str | None = None
+    document_id: UUID | None = None
+    yuque_url: str | None = None
     error_code: str | None = None
     retryable: bool = False
     created_at: datetime

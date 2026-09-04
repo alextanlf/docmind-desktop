@@ -1988,6 +1988,23 @@ class MemoryStore:
             s.flush()
             return summary
 
+    def claim_summary(self, session_id: str, now: datetime):
+        with self.database.session() as s:
+            parent = s.get(SessionRecord, session_id)
+            if parent is None:
+                raise DomainError("SESSION_NOT_FOUND", "会话不存在", 404)
+            summary = s.scalar(select(SessionSummaryRecord).where(SessionSummaryRecord.session_id == session_id))
+            if summary is None:
+                summary = SessionSummaryRecord(session_id=session_id, repository_ids_json=parent.repository_scope_json)
+                s.add(summary)
+                s.flush()
+            claimed = s.execute(update(SessionSummaryRecord).where(SessionSummaryRecord.id == summary.id, SessionSummaryRecord.state != "generating").values(state="generating", error_code=None, retryable=False, updated_at=now))
+            if not claimed.rowcount:
+                return None
+            parent.summary_due_at = None
+            s.flush()
+            return summary
+
     def complete_summary(self, summary_id: str, *, content: str, topics: list[str], now: datetime):
         with self.database.session() as s:
             summary = s.get(SessionSummaryRecord, summary_id)
@@ -2037,8 +2054,8 @@ class MemoryStore:
             return rec
 
     def replace_memory_chunks(
-        self, kind: str, source_id: str, chunks: list[tuple[str, int, str, str]]
-    ) -> tuple[list[str], list[MemoryChunkRecord]]:
+        self, kind: str, source_id: str, chunks: list[tuple[str, int, str, str]], *, collection: str | None = None
+    ) -> tuple[list[str], list[MemoryChunkRecord], MemoryVectorCleanupRecord | None]:
         if not chunks:
             raise DomainError("MEMORY_SCOPE_INVALID", "memory scope required", 400)
         foreign_key = "summary_id" if kind == "session_summary" else "distillation_id"
@@ -2047,6 +2064,8 @@ class MemoryStore:
                 getattr(MemoryChunkRecord, foreign_key) == source_id
             )
             old_ids = [record.vector_id for record in query.all()]
+            new_ids = {chunk[3] for chunk in chunks}
+            stale_ids = [identifier for identifier in old_ids if identifier not in new_ids]
             query.delete(synchronize_session=False)
             records = []
             for repository_id, index, text, vector_id in chunks:
@@ -2060,7 +2079,12 @@ class MemoryStore:
                 session.add(record)
                 records.append(record)
             session.flush()
-            return old_ids, records
+            cleanup = None
+            if stale_ids and collection:
+                cleanup = MemoryVectorCleanupRecord(collection=collection, vector_ids_json=json.dumps(stale_ids), source_kind=kind, source_id=source_id)
+                session.add(cleanup)
+                session.flush()
+            return old_ids, records, cleanup
 
     def create_vector_cleanup(self, collection: str, vector_ids: list[str], *, source_kind: str | None = None, source_id: str | None = None):
         if not vector_ids:

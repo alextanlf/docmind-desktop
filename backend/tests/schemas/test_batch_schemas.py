@@ -6,7 +6,12 @@ from uuid import uuid4
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from app.schemas.batches import BatchImportView, ConfirmBatchInput, ConfirmBatchItem, CreateBatchRequest
+from app.schemas.batches import (
+    BatchImportView,
+    ConfirmBatchInput,
+    ConfirmBatchItem,
+    CreateBatchRequest,
+)
 
 
 def test_batch_confirmation_schema_rejects_more_than_1000_items() -> None:
