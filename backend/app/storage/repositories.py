@@ -1878,6 +1878,18 @@ class ConversationStore:
             session.flush()
             return record
 
+    def allocate_distillation_event_sequence(self, distillation_id: str) -> int:
+        with self.database.session() as session:
+            sequence = session.execute(
+                update(DistillationRecord)
+                .where(DistillationRecord.id == distillation_id)
+                .values(last_event_sequence=DistillationRecord.last_event_sequence + 1)
+                .returning(DistillationRecord.last_event_sequence)
+            ).scalar_one_or_none()
+            if sequence is None:
+                raise DomainError("DISTILLATION_NOT_FOUND", "蒸馏不存在", 404)
+            return int(sequence)
+
 
 class VectorCleanupStore:
     def __init__(self, database: Database) -> None:

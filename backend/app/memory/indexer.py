@@ -75,7 +75,6 @@ class MemoryIndexer:
             record.state = "saved"
             record.error_code = None
             record.retryable = False
-            record.last_event_sequence += 1
         with self.database.session() as session:
             return session.get(DistillationRecord, distillation_id)
 

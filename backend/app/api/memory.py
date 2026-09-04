@@ -94,6 +94,8 @@ async def distillation_events(distillation_id: UUID, request: Request):
     view = _distillation_view(record)
     try:
         after_sequence = int(request.headers.get("Last-Event-ID", "0"))
+        if after_sequence < 0:
+            raise ValueError
     except ValueError as error:
         raise DomainError("INVALID_CURSOR", "事件游标无效", 400) from error
     sequence = record.last_event_sequence
@@ -101,15 +103,12 @@ async def distillation_events(distillation_id: UUID, request: Request):
     payload = json.dumps({"request_id": str(distillation_id), "type": event_type, "sequence": sequence, "payload": view.model_dump(mode="json", by_alias=True)}, ensure_ascii=False)
     async def stream():
         terminal = await request.app.state.distillation_event_broker.terminal(str(distillation_id))
-        if terminal is not None and terminal.sequence > after_sequence:
-            data = json.dumps(terminal.model_dump(mode="json"), ensure_ascii=False)
-            yield f"id: {terminal.sequence}\ndata: {data}\n\n"
-            return
-        if after_sequence < sequence:
+        if terminal is None and record.state in {"draft", "saved", "saved_unindexed", "failed"} and after_sequence < sequence:
             yield f"id: {sequence}\ndata: {payload}\n\n"
             return
         async for event in request.app.state.distillation_event_broker.subscribe(str(distillation_id), after_sequence):
-            data = json.dumps(event.model_dump(mode="json"), ensure_ascii=False)
+            envelope = event.model_copy(update={"request_id": distillation_id})
+            data = json.dumps(envelope.model_dump(mode="json"), ensure_ascii=False)
             yield f"id: {event.sequence}\ndata: {data}\n\n"
             if event.type in {"done", "error"}:
                 return

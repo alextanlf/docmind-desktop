@@ -43,7 +43,6 @@ class WebCitation(WireModel):
 
 
 Citation = Annotated[DocumentCitation | MemoryCitation | WebCitation, Field(discriminator="kind")]
-CitationRef = DocumentCitation
 
 
 class ChatStreamRequest(WireModel):
