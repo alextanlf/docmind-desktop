@@ -20,6 +20,8 @@ type ImportDialogProps = {
   onImported?: (job: ImportJob) => void;
   openBatchConfirmation?: boolean;
 };
+const EMPTY_DECISIONS: Record<string, "include" | "skip" | "defer"> = {};
+const EMPTY_ITEMS: never[] = [];
 export function ImportDialog({ open, onClose, onImported, openBatchConfirmation = false }: ImportDialogProps) {
   const step = useImportStore((state) => state.step);
   const source = useImportStore((state) => state.source);
@@ -34,8 +36,8 @@ export function ImportDialog({ open, onClose, onImported, openBatchConfirmation 
   const setJobId = useImportStore((state) => state.setJobId);
   const batchId = useImportStore((state) => state.batchId);
   const setBatchId = useImportStore((state) => state.setBatchId);
-  const batchDecisions = useImportStore((state) => state.batchId ? state.batchDecisions[state.batchId] ?? {} : {});
-  const batchItems = useImportStore((state) => state.batchId ? state.batchItems[state.batchId] ?? [] : []);
+  const batchDecisions = useImportStore((state) => state.batchId ? state.batchDecisions[state.batchId] ?? EMPTY_DECISIONS : EMPTY_DECISIONS);
+  const batchItems = useImportStore((state) => state.batchId ? state.batchItems[state.batchId] ?? EMPTY_ITEMS : EMPTY_ITEMS);
   const reset = useImportStore((state) => state.reset);
   const repositories = useRepositoriesQuery();
   const embedding = useEmbeddingStatusQuery();
@@ -112,7 +114,8 @@ export function ImportDialog({ open, onClose, onImported, openBatchConfirmation 
       const current = await window.docmind.batches.get(batchId).catch(() => null);
       const items = batchItems.map((item) => {
         const local = batchDecisions[item.id];
-        const decision = local ?? (item.selected && item.decision && item.allowedActions.includes(item.decision) ? item.decision : item.selected ? (item.allowedActions.find((a) => a !== "skip") ?? "skip") : "skip");
+        const normalized = local === "include" ? "create" : local === "defer" ? "skip" : local;
+        const decision = normalized ?? (item.selected && item.decision && item.allowedActions.includes(item.decision) ? item.decision : item.selected ? (item.allowedActions.find((a) => a !== "skip") ?? "skip") : "skip");
         return { itemId: item.id, decision };
       });
       await confirmBatchMutation.mutateAsync({ batchId, input: { discoveryVersion: current?.discoveryVersion ?? batchDiscoveryVersion, items } });

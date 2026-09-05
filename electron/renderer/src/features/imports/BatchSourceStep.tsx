@@ -1,5 +1,5 @@
 import { FolderOpen } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { clientErrorMessage } from "../settings/settings.queries";
 import type { Repository } from "../../../../shared/contracts";
 import { useCreateBatchMutation } from "./batch-import.queries";
@@ -12,6 +12,7 @@ export function BatchSourceStep({ repositories, onCreated }: { repositories: Rep
   const [useSitemap, setUseSitemap] = useState(true);
   const [repositoryId, setRepositoryId] = useState(repositories[0]?.id ?? "");
   const [error, setError] = useState("");
+  useEffect(() => { if (!repositoryId && repositories[0]) setRepositoryId(repositories[0].id); }, [repositoryId, repositories]);
   const createBatch = useCreateBatchMutation();
   async function chooseDirectory() {
     const selectedRepositoryId = repositoryId || repositories[0]?.id;

@@ -2,13 +2,14 @@ import { useEffect, useMemo } from "react";
 import type { BatchItem } from "../../../../shared/contracts";
 import { useBatchItemsQuery, useBatchQuery } from "./batch-import.queries";
 import { useImportStore } from "./import-store";
+const EMPTY_DECISIONS: Record<string, "include" | "skip" | "defer"> = {};
 
 export function BatchCandidateStep({ batchId, onConfirm, onCancel, pending = false }: { batchId: string; onConfirm: () => void; onCancel: () => void; pending?: boolean }) {
   const batch = useBatchQuery(batchId);
   const items = useBatchItemsQuery(batchId);
   const setDecision = useImportStore((s) => s.setBatchDecision);
   const setBatchItems = useImportStore((s) => s.setBatchItems);
-  const decisions = useImportStore((s) => s.batchDecisions[batchId] ?? {});
+  const decisions = useImportStore((s) => s.batchDecisions[batchId] ?? EMPTY_DECISIONS);
   const allItems = useMemo(() => items.data?.pages.flatMap((p) => p.items) ?? [], [items.data]);
   useEffect(() => setBatchItems(batchId, allItems), [batchId, allItems, setBatchItems]);
   function effectiveDecision(item: BatchItem) {
