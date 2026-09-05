@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { DistillationTarget } from "../../../../shared/contracts";
 import { useRepositoriesQuery } from "../repositories/repository.queries";
 import { useDistillationMutations, useDistillationQuery } from "./memory.queries";
+import { distillationCoordinator } from "./distillation-coordinator";
 
 export function DistillationEditor({ distillationId }: { distillationId: string }) {
   return <DistillationEditorDraft key={distillationId} distillationId={distillationId} />;
@@ -55,7 +56,7 @@ function DistillationEditorDraft({ distillationId }: { distillationId: string })
     if (scheduledRevision.current === sequence) return updateQueue.current;
     scheduledRevision.current = sequence;
     const edit = { title, content, keyPoints };
-    updateQueue.current = updateQueue.current.catch(() => undefined).then(async () => {
+    updateQueue.current = distillationCoordinator.enqueue(distillationId, async () => {
       try {
         await actions.update.mutateAsync(edit);
         persistedRevision.current = sequence;
@@ -79,8 +80,11 @@ function DistillationEditorDraft({ distillationId }: { distillationId: string })
     setBusy(true);
     setError(null);
     try {
-      await update();
-      await submit();
+      const flushed = update();
+      await distillationCoordinator.enqueue(distillationId, async () => {
+        await flushed;
+        return submit();
+      });
     } catch (failure) {
       showError(failure);
     } finally {

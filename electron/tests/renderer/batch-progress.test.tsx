@@ -45,6 +45,35 @@ function renderProgress() {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><BatchProgress batchId={failedBatch.id} /></QueryClientProvider>);
 }
 
+it("recovers the failed items page before submitting every retryable child", async () => {
+  const second = { ...failedItem, id: "00000000-0000-0000-0000-000000000115" };
+  const listItems = vi.fn().mockResolvedValueOnce({ items: [failedItem], nextCursor: "page2" })
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValue({ items: [second], nextCursor: null });
+  const api = installDocMindApi({ batches: { get: vi.fn().mockResolvedValue(failedBatch), listItems } });
+  renderProgress();
+  expect(await screen.findByRole("alert")).toHaveTextContent("批次项加载失败");
+  expect(screen.getByRole("button", { name: "重试批量导入" })).toBeDisabled();
+  expect(api.batches.retry).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "重试加载批次项" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "重试批量导入" })).toBeEnabled());
+  expect(listItems.mock.calls.map((call) => call[1])).toEqual([null, "page2", "page2"]);
+  fireEvent.click(screen.getByRole("button", { name: "重试批量导入" }));
+  await waitFor(() => expect(api.batches.retry).toHaveBeenCalledWith(failedBatch.id, { itemIds: [failedItem.id, second.id] }));
+});
+
+it("offers item loading recovery even when the first page fails", async () => {
+  const listItems = vi.fn().mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValue({ items: [failedItem], nextCursor: null });
+  installDocMindApi({ batches: { get: vi.fn().mockResolvedValue(failedBatch), listItems } });
+  renderProgress();
+  expect(await screen.findByRole("alert")).toHaveTextContent("批次项加载失败");
+  expect(screen.queryByRole("button", { name: "重试批量导入" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "重试加载批次项" }));
+  expect(await screen.findByRole("button", { name: "重试批量导入" })).toBeEnabled();
+  expect(listItems.mock.calls.map((call) => call[1])).toEqual([null, null]);
+});
+
 it("retries persisted failed children after remount and resumes replay from the new snapshot", async () => {
   const running = { ...failedBatch, state: "running" as const, progress: 50, lastEventSequence: 47 };
   let finishRetry!: (batch: BatchImport) => void;

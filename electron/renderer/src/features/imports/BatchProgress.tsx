@@ -140,6 +140,20 @@ export function BatchProgress({ batchId }: { batchId: string }) {
         </p>
       ) : null}
       <div className="import-progress-actions">
+        {batch.state === "completed_with_errors" && items.isError ? (
+          <div>
+            <p className="editor-error" role="alert">批次项加载失败，请重试加载后再重试导入</p>
+            <button
+              aria-label="重试加载批次项"
+              className="button button-secondary"
+              disabled={items.isFetching}
+              onClick={() => { void (isFetchNextPageError ? fetchNextPage() : items.refetch()); }}
+              type="button"
+            >
+              重试加载
+            </button>
+          </div>
+        ) : null}
         {!isTerminal ? (
           <button
             aria-label="取消批量导入"

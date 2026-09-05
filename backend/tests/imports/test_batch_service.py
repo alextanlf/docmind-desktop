@@ -31,6 +31,159 @@ from app.storage.models import (
 from app.storage.repositories import BatchImportStore, DocumentStore, ImportJobStore
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["retry", "continue"])
+@pytest.mark.parametrize("restarted", [False, True])
+async def test_api_starts_slow_batch_and_replays_new_epoch(database, operation, restarted):
+    import httpx
+    from fastapi import FastAPI
+
+    from app.api.import_batches import router
+
+    class SlowImports(FakeImportService):
+        async def run(self, job_id):
+            self.active += 1
+            await self.release.wait()
+            self.jobs[job_id] = ImportStatus.COMPLETED
+
+    store = BatchImportStore(database)
+    batch = make_batch(store, count=1)
+    imports = SlowImports()
+    broker = InMemoryEventBroker()
+    service = BatchService(store=store, import_service=imports, event_broker=broker)
+    await service.confirm(batch.id, confirm_all(store, batch))
+    item = store.list_item_records(batch.id)[0]
+    with database.session() as session:
+        parent = session.get(BatchImportRecord, batch.id)
+        repository_id = str(uuid4())
+        session.add(RepositoryRecord(id=repository_id, yuque_id="slow-api", name="Slow"))
+        session.flush()
+        parent.repository_id = repository_id
+        parent.state = BatchState.COMPLETED_WITH_ERRORS if operation == "retry" else BatchState.PAUSED
+        child = session.get(BatchItemRecord, item.id)
+        child.state = BatchItemState.FAILED if operation == "retry" else BatchItemState.QUEUED
+        child.retryable = True
+    await service.ensure_terminal_event(batch.id)
+    old_cursor = service.get(batch.id).last_event_sequence
+    if restarted:
+        broker = InMemoryEventBroker()
+        service = BatchService(store=BatchImportStore(database), import_service=imports, event_broker=broker)
+    app = FastAPI()
+    app.include_router(router)
+    app.state.batch_service = service
+    app.state.import_tasks = set()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        request = asyncio.create_task(client.post(f"/api/import-batches/{batch.id}/{operation}"))
+        try:
+            done, _ = await asyncio.wait({request}, timeout=0.5)
+            assert request in done, "HTTP must return while child execution is blocked"
+            response = request.result()
+            assert response.status_code == 200
+            assert response.json()["state"] == "running"
+            stream = broker.subscribe(batch.id, old_cursor)
+            event = await asyncio.wait_for(anext(stream), 0.5)
+            assert event.type == "progress"
+            assert event.sequence > old_cursor
+            await stream.aclose()
+            replay = broker.subscribe(batch.id, 0)
+            first = await asyncio.wait_for(anext(replay), 0.5)
+            assert first.type == "progress"
+            if operation == "retry":
+                assert first.sequence > old_cursor
+            await replay.aclose()
+        finally:
+            imports.release.set()
+            await request
+            await asyncio.gather(*app.state.import_tasks)
+        terminal = await broker.terminal(batch.id)
+        assert terminal.type == "done"
+        assert terminal.sequence > event.sequence
+        assert service.get(batch.id).last_event_sequence == terminal.sequence
+
+
+@pytest.mark.asyncio
+async def test_concurrent_retry_deduplicates_selection_and_rejects_second_request(database):
+    class SlowImports(FakeImportService):
+        def __init__(self):
+            super().__init__()
+            self.retries = []
+
+        async def retry(self, job_id):
+            self.retries.append(job_id)
+            await asyncio.sleep(0)
+            return await super().retry(job_id)
+
+        async def run(self, job_id):
+            await self.release.wait()
+            self.jobs[job_id] = ImportStatus.COMPLETED
+
+    store = BatchImportStore(database)
+    batch = make_batch(store, count=1)
+    imports = SlowImports()
+    service = BatchService(store=store, import_service=imports, event_broker=InMemoryEventBroker())
+    await service.confirm(batch.id, confirm_all(store, batch))
+    item = store.list_item_records(batch.id)[0]
+    store.mark_failed(item.id, code="IMPORT_FAILED", message="retry", retryable=True)
+    store.set_state(batch.id, BatchState.COMPLETED_WITH_ERRORS)
+    try:
+        results = await asyncio.gather(
+            service.retry_items(batch.id, [item.id, item.id], wait=False),
+            service.retry_items(batch.id, [item.id], wait=False),
+            return_exceptions=True,
+        )
+        assert results[0].state is BatchState.RUNNING
+        assert isinstance(results[1], DomainError)
+        assert results[1].code == "BATCH_STATE_CONFLICT"
+        assert imports.retries == [item.import_job_id]
+    finally:
+        imports.release.set()
+        await service.continue_batch(batch.id)
+
+
+@pytest.mark.asyncio
+async def test_terminal_snapshot_cannot_close_a_concurrent_retry(database):
+    class GatedBroker(InMemoryEventBroker):
+        def __init__(self):
+            super().__init__()
+            self.entered = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def terminal(self, job_id):
+            terminal = await super().terminal(job_id)
+            self.entered.set()
+            await self.release.wait()
+            return terminal
+
+    class SlowImports(FakeImportService):
+        async def run(self, job_id):
+            await self.release.wait()
+            self.jobs[job_id] = ImportStatus.COMPLETED
+
+    store = BatchImportStore(database)
+    batch = make_batch(store, count=1)
+    imports = SlowImports()
+    broker = GatedBroker()
+    service = BatchService(store=store, import_service=imports, event_broker=broker)
+    await service.confirm(batch.id, confirm_all(store, batch))
+    item = store.list_item_records(batch.id)[0]
+    store.mark_failed(item.id, code="IMPORT_FAILED", message="retry", retryable=True)
+    store.set_state(batch.id, BatchState.COMPLETED_WITH_ERRORS)
+    snapshot = asyncio.create_task(service.ensure_terminal_event(batch.id))
+    await asyncio.wait_for(broker.entered.wait(), 1)
+    retry = asyncio.create_task(service.retry_items(batch.id, wait=False))
+    try:
+        await asyncio.sleep(0.02)
+        broker.release.set()
+        await asyncio.gather(snapshot, retry)
+        assert await broker.terminal(batch.id) is None
+        assert service.get(batch.id).state is BatchState.RUNNING
+    finally:
+        broker.release.set()
+        imports.release.set()
+        await asyncio.gather(snapshot, retry)
+        await service.continue_batch(batch.id)
+
+
 def make_batch(store: BatchImportStore, *, state: BatchState = BatchState.AWAITING_CONFIRMATION, count: int = 4) -> BatchImportRecord:
     with store.database.session() as session:
         if session.get(RepositoryRecord, "repository-1") is None:
