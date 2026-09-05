@@ -10,7 +10,7 @@ describe("批量导入进度", () => {
   it("fetches the current batch before replaying progress events", async () => {
     const get = vi.fn().mockResolvedValue({ id: "00000000-0000-0000-0000-000000000101", state: "running", progress: 20, discoveryVersion: 3, totalCount: 1, selectedCount: 1, completedCount: 0, failedCount: 0, skippedCount: 0, message: "运行中", sourceKind: "staged_directory", repositoryId: "00000000-0000-0000-0000-000000000021", errorCode: null, errorMessage: null, retryable: false, cancelRequested: false, createdAt: "2026-09-01T00:00:00Z", startedAt: null, completedAt: null, updatedAt: "2026-09-01T00:00:00Z", lastEventSequence: 42 });
     let onEvent: ((event: any) => void) | undefined;
-    const api = installDocMindApi({ batches: { get, subscribe: vi.fn((_id, _after, callback) => { onEvent = callback; return { cancel: vi.fn(), detach: vi.fn() }; }) } });
+    const api = installDocMindApi({ batches: { get, subscribe: vi.fn((_id, _after, callback) => { onEvent = callback; return { requestId: "batch-test", cancel: vi.fn(), detach: vi.fn() }; }) } });
     render(<AppProviders><BatchProgress batchId="00000000-0000-0000-0000-000000000101" /></AppProviders>);
     await waitFor(() => expect(get).toHaveBeenCalledWith("00000000-0000-0000-0000-000000000101"));
     await waitFor(() => expect(api.batches.subscribe).toHaveBeenCalledWith("00000000-0000-0000-0000-000000000101", 42, expect.any(Function)));

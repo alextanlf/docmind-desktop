@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ConfirmBatchInput, CreateBatchInput, RetryBatchInput } from "../../../../shared/contracts";
 import { appQueryClient } from "../../app/query-client";
 
@@ -23,7 +23,7 @@ export function useBatchItemsQuery(batchId: string | null) {
 }
 
 export function useCreateBatchMutation() {
-  return useMutation({ mutationFn: (input: CreateBatchInput) => window.docmind.batches.create(input), onSuccess: (batch) => { if (batch) appQueryClient.setQueryData(batchKeys.batch(batch.id), batch); } });
+  const client = useQueryClient(); return useMutation({ mutationFn: (input: CreateBatchInput) => window.docmind.batches.create(input), onSuccess: (batch) => { if (batch) client.setQueryData(batchKeys.batch(batch.id), batch); } });
 }
 export function useConfirmBatchMutation() {
   return useMutation({ mutationFn: ({ batchId, input }: { batchId: string; input: ConfirmBatchInput }) => window.docmind.batches.confirm(batchId, input), onSuccess: (batch) => { if (batch) appQueryClient.setQueryData(batchKeys.batch(batch.id), batch); } });
