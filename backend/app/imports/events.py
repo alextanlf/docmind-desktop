@@ -32,7 +32,7 @@ class ImportEventBroker(Protocol):
 
     def subscribe(self, job_id: str, after_sequence: int) -> AsyncIterator[EventEnvelope]: ...
 
-    async def reopen(self, job_id: str) -> None: ...
+    async def reopen(self, job_id: str, *, clear_history: bool = False) -> None: ...
 
     async def terminal(self, job_id: str) -> EventEnvelope | None: ...
 
@@ -91,10 +91,12 @@ class InMemoryEventBroker:
             job.condition.notify_all()
             return event
 
-    async def reopen(self, job_id: str) -> None:
+    async def reopen(self, job_id: str, *, clear_history: bool = False) -> None:
         job = await self._job(job_id)
         async with job.condition:
             job.terminal = None
+            if clear_history:
+                job.events.clear()
             job.request_id = uuid4()
 
     async def terminal(self, job_id: str) -> EventEnvelope | None:

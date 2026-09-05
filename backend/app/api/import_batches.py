@@ -112,13 +112,19 @@ async def cancel_batch(batch_id: UUID, request: Request) -> BatchImportView:
 
 @router.post("/{batch_id}/continue", response_model=BatchImportView)
 async def continue_batch(batch_id: UUID, request: Request) -> BatchImportView:
-    return _view(await _service(request).continue_batch(str(batch_id)))
+    service = _service(request)
+    batch = await service.continue_batch(str(batch_id), wait=False)
+    _schedule(request, service.continue_batch(str(batch_id)))
+    return _view(batch)
 
 
 @router.post("/{batch_id}/retry", response_model=BatchImportView)
 async def retry_batch_item_body(batch_id: UUID, request: Request, body: RetryBatchInput | None = None) -> BatchImportView:
     item_ids = None if body is None or not body.item_ids else [str(item_id) for item_id in body.item_ids]
-    return _view(await _service(request).retry_items(str(batch_id), item_ids))
+    service = _service(request)
+    batch = await service.retry_items(str(batch_id), item_ids, wait=False)
+    _schedule(request, service.continue_batch(str(batch_id)))
+    return _view(batch)
 
 
 @router.get("/{batch_id}/events")

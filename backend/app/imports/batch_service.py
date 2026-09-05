@@ -167,6 +167,11 @@ class BatchService:
             self.store.fail_discovery(batch_id, code="IMPORT_FAILED", message="目录发现失败", retryable=False)
 
     async def ensure_terminal_event(self, batch_id: str) -> None:
+        lock = self._batch_locks.setdefault(batch_id, asyncio.Lock())
+        async with lock:
+            await self._ensure_terminal_event(batch_id)
+
+    async def _ensure_terminal_event(self, batch_id: str) -> None:
         batch = self.get(batch_id)
         if self.event_broker is None or batch.state not in {
             BatchState.COMPLETED,
@@ -198,7 +203,7 @@ class BatchService:
         await self._publish(batch_id, event_type, self._progress_payload(batch))
         return batch
 
-    async def continue_batch(self, batch_id: str) -> Any:
+    async def continue_batch(self, batch_id: str, *, wait: bool = True) -> Any:
         lock = self._batch_locks.setdefault(batch_id, asyncio.Lock())
         async with lock:
             batch = self.get(batch_id)
@@ -208,8 +213,9 @@ class BatchService:
                 raise DomainError("BATCH_STATE_CONFLICT", "批次尚未确认", 409)
             if batch.state == BatchState.PAUSED:
                 batch = self.store.set_state(batch_id, BatchState.RUNNING, message="批次继续导入")
+                await self._publish(batch_id, "progress", self._progress_payload(batch))
             elif batch.state == BatchState.COMPLETED_WITH_ERRORS:
-                batch = self.store.set_state(batch_id, BatchState.RUNNING, message="批次重试中")
+                return batch
 
             tasks = self._batch_tasks.setdefault(batch_id, {})
             self._semaphores.setdefault(batch_id, asyncio.Semaphore(MAX_BATCH_CONCURRENCY))
@@ -227,9 +233,12 @@ class BatchService:
                         )
                     )
             task_snapshot = list(tasks.values())
+        if not wait:
+            return self.get(batch_id)
         if task_snapshot:
             await asyncio.gather(*task_snapshot, return_exceptions=True)
-        return await self._aggregate(batch_id)
+        async with lock:
+            return await self._aggregate(batch_id)
 
     async def cancel_batch(self, batch_id: str) -> Any:
         active_batches = self._cancel_context.get()
@@ -284,7 +293,7 @@ class BatchService:
     async def retry_item(self, batch_id: str, item_id: str) -> Any:
         return await self.retry_items(batch_id, [item_id])
 
-    async def retry_items(self, batch_id: str, item_ids: list[str] | None = None) -> Any:
+    async def retry_items(self, batch_id: str, item_ids: list[str] | None = None, *, wait: bool = True) -> Any:
         lock = self._batch_locks.setdefault(batch_id, asyncio.Lock())
         async with lock:
             batch = self.get(batch_id)
@@ -300,7 +309,7 @@ class BatchService:
                 for item_id in item_ids:
                     if item_id not in by_id:
                         raise DomainError("BATCH_ITEM_NOT_FOUND", "批次项不存在", 404)
-                candidates = [by_id[item_id] for item_id in item_ids]
+                candidates = [by_id[item_id] for item_id in dict.fromkeys(item_ids)]
             else:
                 candidates = items
             candidates = [item for item in candidates if item.state == BatchItemState.FAILED and item.retryable and item.import_job_id]
@@ -310,8 +319,11 @@ class BatchService:
                 await self.import_service.retry(item.import_job_id)
                 self.store.mark_item_queued(item.id)
             if batch.state == BatchState.COMPLETED_WITH_ERRORS:
-                self.store.set_state(batch_id, BatchState.RUNNING, message="批次重试中")
-        return await self.continue_batch(batch_id)
+                batch = self.store.set_state(batch_id, BatchState.RUNNING, message="批次重试中")
+                if self.event_broker is not None:
+                    await self.event_broker.reopen(batch_id, clear_history=True)
+            await self._publish(batch_id, "progress", self._progress_payload(batch))
+        return await self.continue_batch(batch_id, wait=wait)
 
     def recover_on_startup(self) -> int:
         return self.store.recover_on_startup()

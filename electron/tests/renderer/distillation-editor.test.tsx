@@ -32,8 +32,67 @@ function setup(state: Distillation["state"] = "draft") {
   installDocMindApi({ memory: { getDistillation, updateDistillation, saveDistillation, regenerateDistillation } });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const view = render(<QueryClientProvider client={client}><DistillationEditor distillationId={draft.id} /></QueryClientProvider>);
-  return { ...view, client, pending, updateDistillation, saveDistillation, regenerateDistillation };
+  return { ...view, client, pending, updateDistillation, saveDistillation, regenerateDistillation, readStored: () => stored };
 }
+
+it.each([false, true])("orders remounted same-ID edits after old queued work, predecessor failure=%s", async (failFirst) => {
+  const api = setup();
+  const title = await screen.findByLabelText("蒸馏标题");
+  fireEvent.change(title, { target: { value: "A" } });
+  fireEvent.blur(title);
+  await waitFor(() => expect(api.pending).toHaveLength(1));
+  fireEvent.change(title, { target: { value: "B" } });
+  fireEvent.blur(title);
+  api.unmount();
+  render(<QueryClientProvider client={api.client}><DistillationEditor distillationId={draft.id} /></QueryClientProvider>);
+  const nextTitle = await screen.findByLabelText("蒸馏标题");
+  fireEvent.change(nextTitle, { target: { value: "C" } });
+  fireEvent.blur(nextTitle);
+  await act(async () => {
+    if (failFirst) api.pending[0].reject(new Error("A failed"));
+    else api.pending[0].resolve(draft);
+  });
+  await waitFor(() => expect(api.pending.length).toBeGreaterThanOrEqual(2));
+  expect(nextTitle).toHaveValue("C");
+  await act(async () => api.pending[1].resolve(draft));
+  await waitFor(() => expect(api.pending).toHaveLength(3));
+  expect(nextTitle).toHaveValue("C");
+  await act(async () => api.pending[2].resolve(draft));
+  await waitFor(() => expect(api.readStored().title).toBe("C"));
+  expect(api.updateDistillation.mock.calls.map(([, edit]) => edit.title)).toEqual(["A", "B", "C"]);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("retains a confirmed save on unmount ahead of a new instance operation", async () => {
+  const api = setup();
+  fireEvent.change(await screen.findByLabelText("蒸馏标题"), { target: { value: "Confirmed" } });
+  fireEvent.click(screen.getByRole("radio", { name: "仅本地" }));
+  fireEvent.click(screen.getByRole("button", { name: "保存知识" }));
+  await waitFor(() => expect(api.pending).toHaveLength(1));
+  api.unmount();
+  render(<QueryClientProvider client={api.client}><DistillationEditor distillationId={draft.id} /></QueryClientProvider>);
+  fireEvent.click(await screen.findByRole("button", { name: "重新生成" }));
+  await act(async () => api.pending[0].resolve(draft));
+  await waitFor(() => expect(api.saveDistillation).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(api.regenerateDistillation).toHaveBeenCalledTimes(1));
+  expect(api.saveDistillation.mock.invocationCallOrder[0]).toBeLessThan(api.regenerateDistillation.mock.invocationCallOrder[0]);
+});
+
+it("does not block another ID behind an outstanding update", async () => {
+  const api = setup();
+  fireEvent.change(await screen.findByLabelText("蒸馏标题"), { target: { value: "Pending" } });
+  fireEvent.blur(screen.getByLabelText("蒸馏标题"));
+  await waitFor(() => expect(api.pending).toHaveLength(1));
+  api.unmount();
+  const nextId = "00000000-0000-0000-0000-000000000027";
+  render(<QueryClientProvider client={api.client}><DistillationEditor distillationId={nextId} /></QueryClientProvider>);
+  fireEvent.change(await screen.findByLabelText("蒸馏标题"), { target: { value: "Independent" } });
+  fireEvent.blur(screen.getByLabelText("蒸馏标题"));
+  await waitFor(() => expect(api.pending).toHaveLength(2));
+  await act(async () => api.pending[1].resolve(draft));
+  expect(api.updateDistillation).toHaveBeenLastCalledWith(nextId, expect.objectContaining({ title: "Independent" }));
+  await act(async () => api.pending[0].resolve(draft));
+});
 
 it("serializes full edits and holds a double-click save behind every blur", async () => {
   const api = setup();
