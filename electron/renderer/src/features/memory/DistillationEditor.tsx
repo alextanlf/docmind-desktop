@@ -5,6 +5,10 @@ import { useRepositoriesQuery } from "../repositories/repository.queries";
 import { useDistillationMutations, useDistillationQuery } from "./memory.queries";
 
 export function DistillationEditor({ distillationId }: { distillationId: string }) {
+  return <DistillationEditorDraft key={distillationId} distillationId={distillationId} />;
+}
+
+function DistillationEditorDraft({ distillationId }: { distillationId: string }) {
   const query = useDistillationQuery(distillationId);
   const { refetch } = query;
   const actions = useDistillationMutations(distillationId);
@@ -15,9 +19,15 @@ export function DistillationEditor({ distillationId }: { distillationId: string 
   const [target, setTarget] = useState<"local" | "yuque" | null>(null);
   const [repositoryId, setRepositoryId] = useState("");
   const updateQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const revision = useRef(0);
+  const persistedRevision = useRef(0);
+  const scheduledRevision = useRef(0);
+  const operation = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const lastSequence = useRef(0);
   useEffect(() => {
-    if (query.data) {
+    if (query.data && revision.current === persistedRevision.current) {
       setTitle(query.data.title);
       setContent(query.data.content);
       setKeyPoints(query.data.keyPoints);
@@ -39,19 +49,52 @@ export function DistillationEditor({ distillationId }: { distillationId: string 
   if (query.isPending) return <p>正在读取蒸馏草稿…</p>;
   if (!query.data) return <p role="alert">无法读取蒸馏草稿。</p>;
   const update = () => {
+    if (query.data.state !== "draft" || revision.current === persistedRevision.current)
+      return updateQueue.current;
+    const sequence = revision.current;
+    if (scheduledRevision.current === sequence) return updateQueue.current;
+    scheduledRevision.current = sequence;
     const edit = { title, content, keyPoints };
-    updateQueue.current = actions.update.mutateAsync(edit);
+    updateQueue.current = updateQueue.current.catch(() => undefined).then(async () => {
+      try {
+        await actions.update.mutateAsync(edit);
+        persistedRevision.current = sequence;
+        setError(null);
+      } catch (failure) {
+        if (scheduledRevision.current === sequence) scheduledRevision.current = 0;
+        throw failure;
+      }
+    });
     return updateQueue.current;
+  };
+  const showError = (failure: unknown) => {
+    setError(failure instanceof Error ? failure.message : "操作失败，请重试。");
+  };
+  const blur = () => {
+    if (!operation.current) void update().catch(showError);
+  };
+  const run = async (submit: () => Promise<unknown>) => {
+    if (operation.current) return;
+    operation.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      await update();
+      await submit();
+    } catch (failure) {
+      showError(failure);
+    } finally {
+      operation.current = false;
+      setBusy(false);
+    }
   };
   const save = async () => {
     if (!target) return;
     const input: DistillationTarget = target === "local" ? { target } : { target, repositoryId };
-    await updateQueue.current;
-    await actions.save.mutateAsync(input);
+    await run(() => actions.save.mutateAsync(input));
   };
   const regenerate = async () => {
-    await updateQueue.current;
-    await actions.regenerate.mutateAsync();
+    await run(() => actions.regenerate.mutateAsync());
   };
   return (
     <section className="distillation-editor" aria-label="蒸馏编辑器">
@@ -61,14 +104,15 @@ export function DistillationEditor({ distillationId }: { distillationId: string 
           <input
             aria-label="蒸馏标题"
             value={title}
-            onBlur={update}
-            onChange={(event) => setTitle(event.target.value)}
+            disabled={busy || query.data.state !== "draft"}
+            onBlur={blur}
+            onChange={(event) => { revision.current += 1; setTitle(event.target.value); }}
           />
         </label>
         <button
           className="button button-secondary"
           disabled={
-            actions.regenerate.isPending || actions.update.isPending || actions.save.isPending
+            busy || !["draft", "failed"].includes(query.data.state)
           }
           onClick={() => void regenerate()}
           type="button"
@@ -82,8 +126,9 @@ export function DistillationEditor({ distillationId }: { distillationId: string 
         <textarea
           aria-label="蒸馏正文"
           value={content}
-          onBlur={update}
-          onChange={(event) => setContent(event.target.value)}
+          disabled={busy || query.data.state !== "draft"}
+          onBlur={blur}
+          onChange={(event) => { revision.current += 1; setContent(event.target.value); }}
         />
       </label>
       <label>
@@ -91,8 +136,9 @@ export function DistillationEditor({ distillationId }: { distillationId: string 
         <textarea
           aria-label="关键要点"
           value={keyPoints.join("\n")}
-          onBlur={update}
-          onChange={(event) => setKeyPoints(event.target.value.split("\n").filter(Boolean))}
+          disabled={busy || query.data.state !== "draft"}
+          onBlur={blur}
+          onChange={(event) => { revision.current += 1; setKeyPoints(event.target.value.split("\n").filter(Boolean)); }}
         />
       </label>
       <section aria-label="保存目标" className="memory-target">
@@ -132,6 +178,7 @@ export function DistillationEditor({ distillationId }: { distillationId: string 
         ) : null}
       </section>
       <div className="memory-save-row">
+        {error ? <p role="alert">{error}</p> : null}
         <span role="status">
           {query.data.state === "saved_unindexed"
             ? "已保存，等待索引"
@@ -146,7 +193,7 @@ export function DistillationEditor({ distillationId }: { distillationId: string 
           disabled={
             !target ||
             (target === "yuque" && !repositoryId) ||
-            actions.save.isPending
+            busy || ["generating", "saving"].includes(query.data.state)
           }
           onClick={() => void save()}
           type="button"
