@@ -1,18 +1,19 @@
 import { Play, RotateCcw, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { BatchProgressPayloadSchema } from "../../../../shared/contracts";
 import type {
   BatchImport,
   EventEnvelope,
   BatchProgressPayload,
 } from "../../../../shared/contracts";
-import { appQueryClient } from "../../app/query-client";
 import { clientErrorMessage } from "../settings/settings.queries";
 import { batchKeys } from "./batch-import.queries";
 import {
   useCancelBatchMutation,
   useContinueBatchMutation,
   useRetryBatchMutation,
+  useBatchItemsQuery,
 } from "./batch-import.queries";
 
 const lastSequences = new Map<string, number>();
@@ -58,6 +59,16 @@ function patchBatch(current: BatchImport, event: EventEnvelope): BatchImport {
 export function BatchProgress({ batchId }: { batchId: string }) {
   const [batch, setBatch] = useState<BatchImport | null>(null);
   const [error, setError] = useState("");
+  const [replayAttempt, setReplayAttempt] = useState(0);
+  const client = useQueryClient();
+  const items = useBatchItemsQuery(batch?.state === "completed_with_errors" ? batchId : null);
+  const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = items;
+  useEffect(() => {
+    if (hasNextPage && !isFetchingNextPage && !isFetchNextPageError) void fetchNextPage();
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
+  const retryItemIds = items.data?.pages.flatMap((page) => page.items)
+    .filter((item) => item.state === "failed" && item.retryable && item.importJobId)
+    .map((item) => item.id) ?? [];
   const cancelMutation = useCancelBatchMutation();
   const continueMutation = useContinueBatchMutation();
   const retryMutation = useRetryBatchMutation();
@@ -88,11 +99,16 @@ export function BatchProgress({ batchId }: { batchId: string }) {
       sub.current?.cancel();
       sub.current = null;
     };
-  }, [batchId]);
+  }, [batchId, replayAttempt]);
   useEffect(() => {
     if (batch && terminal.has(batch.state))
-      void appQueryClient.invalidateQueries({ queryKey: batchKeys.batch(batchId) });
-  }, [batch, batchId]);
+      void client.invalidateQueries({ queryKey: batchKeys.batch(batchId) });
+  }, [batch, batchId, client]);
+  const resumeProgress = (current: BatchImport) => {
+    setBatch(current);
+    void client.invalidateQueries({ queryKey: batchKeys.items(batchId) });
+    setReplayAttempt((attempt) => attempt + 1);
+  };
   if (!batch)
     return error ? (
       <p className="editor-error" role="alert">
@@ -129,7 +145,7 @@ export function BatchProgress({ batchId }: { batchId: string }) {
             aria-label="取消批量导入"
             disabled={cancelMutation.isPending}
             className="button button-secondary"
-            onClick={() => void cancelMutation.mutateAsync(batchId)}
+            onClick={() => cancelMutation.mutate(batchId, { onSuccess: setBatch })}
             type="button"
           >
             <Square aria-hidden="true" size={15} />
@@ -141,19 +157,19 @@ export function BatchProgress({ batchId }: { batchId: string }) {
             aria-label="继续批量导入"
             disabled={continueMutation.isPending}
             className="button button-secondary"
-            onClick={() => void continueMutation.mutateAsync(batchId)}
+            onClick={() => continueMutation.mutate(batchId, { onSuccess: resumeProgress })}
             type="button"
           >
             <Play aria-hidden="true" size={15} />
             继续
           </button>
         ) : null}
-        {batch.state === "failed" && batch.retryable ? (
+        {batch.state === "completed_with_errors" && retryItemIds.length > 0 ? (
           <button
             aria-label="重试批量导入"
-            disabled={retryMutation.isPending}
+            disabled={retryMutation.isPending || items.isFetching || items.isError || hasNextPage}
             className="button button-secondary"
-            onClick={() => void retryMutation.mutateAsync({ batchId })}
+            onClick={() => retryMutation.mutate({ batchId, input: { itemIds: retryItemIds } }, { onSuccess: resumeProgress })}
             type="button"
           >
             <RotateCcw aria-hidden="true" size={15} />
