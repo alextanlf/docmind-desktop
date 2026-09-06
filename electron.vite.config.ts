@@ -10,6 +10,7 @@ export default defineConfig({
   },
   preload: {
     build: {
+      externalizeDeps: false,
       rollupOptions: { input: resolve(__dirname, "electron/preload/index.ts") },
     },
   },

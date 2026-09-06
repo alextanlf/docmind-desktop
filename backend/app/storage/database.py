@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 from alembic import command
@@ -9,6 +10,15 @@ from alembic.config import Config
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
+
+# Batch confirmation must keep all child reservations in one supplied
+# SQLAlchemy session.  This module-scoped context marker lets every Database
+# instance reject accidental nested sessions opened by a reservation callback
+# before they can commit outside the confirmation transaction.
+_confirmation_session: ContextVar[Session | None] = ContextVar(
+    "database_confirmation_session",
+    default=None,
+)
 
 
 class Database:
@@ -37,6 +47,10 @@ class Database:
 
     @contextmanager
     def session(self) -> Generator[Session, None, None]:
+        if _confirmation_session.get() is not None:
+            raise RuntimeError(
+                "database sessions cannot be nested during batch confirmation"
+            )
         session = self._sessions()
         try:
             yield session
@@ -46,6 +60,15 @@ class Database:
             raise
         finally:
             session.close()
+
+    @contextmanager
+    def bind_confirmation_session(self, session: Session) -> Generator[None, None, None]:
+        """Mark the supplied session as the only session allowed in a confirmation callback."""
+        token = _confirmation_session.set(session)
+        try:
+            yield
+        finally:
+            _confirmation_session.reset(token)
 
     def upgrade(self) -> None:
         backend_dir = Path(__file__).resolve().parents[2]

@@ -160,12 +160,12 @@ describe("preload bridge", () => {
       fingerprint: "a".repeat(64),
       warnings: [],
     });
-    expect(parsed.sourceUrl).toBeNull();
+    expect((parsed as any).sourceUrl).toBeNull();
   });
 
   it("masks local staged paths from citation responses", () => {
     const parsed = CitationSchema.parse({
-      sourceId: "staged-source",
+      sourceId: "S1",
       chunkId: "chunk-1",
       documentId: "00000000-0000-0000-0000-000000000009",
       title: "指南",
@@ -174,7 +174,7 @@ describe("preload bridge", () => {
       excerpt: "内容",
       sourceUrl: "file:///private/staging/guide.md",
     });
-    expect(parsed.sourceUrl).toBeNull();
+    expect((parsed as any).sourceUrl).toBeNull();
   });
 
   it("unwraps a resolved IPC error envelope without losing stable fields", async () => {

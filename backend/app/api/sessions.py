@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 from typing import cast
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, BackgroundTasks, Request, status
+from pydantic import TypeAdapter
 
 from app.api.errors import DomainError
-from app.schemas.chat import CitationRef, MessageView
+from app.schemas.chat import Citation, MessageView
 from app.schemas.sessions import SessionCreate, SessionSummary
 from app.storage.models import SessionRecord
 from app.storage.repositories import ConversationStore, DocumentStore, RepositoryStore
@@ -44,6 +45,7 @@ def _view(record: SessionRecord) -> SessionSummary:
         repository_ids=_scope(record),
         created_at=record.created_at,
         updated_at=record.updated_at,
+        ended_at=record.ended_at,
     )
 
 
@@ -52,6 +54,22 @@ def _session(request: Request, session_id: str) -> SessionRecord:
     if session is None:
         raise _not_found()
     return session
+
+
+def _persisted_citation(item: object) -> Citation:
+    if not isinstance(item, dict):
+        raise TypeError("citation must be an object")
+    citation = dict(item)
+    if "kind" not in citation:
+        source_id = citation.get("sourceId", citation.get("source_id"))
+        if not isinstance(source_id, str) or not source_id:
+            raise ValueError("citation source id is required")
+        kind_by_prefix = {"S": "document", "M": "memory", "W": "web"}
+        kind = kind_by_prefix.get(source_id[0])
+        if kind is None:
+            raise ValueError("citation source id prefix is invalid")
+        citation["kind"] = kind
+    return TypeAdapter(Citation).validate_python(citation)
 
 
 @router.get("", response_model=list[SessionSummary])
@@ -82,7 +100,10 @@ async def list_messages(request: Request, session_id: str) -> list[MessageView]:
     views: list[MessageView] = []
     for message in _conversation_store(request).list_messages(session_id):
         try:
-            citations = [CitationRef.model_validate(item) for item in json.loads(message.citations_json)]
+            citations = [
+                _persisted_citation(item)
+                for item in json.loads(message.citations_json)
+            ]
         except (TypeError, ValueError):
             citations = []
         views.append(
@@ -97,3 +118,15 @@ async def list_messages(request: Request, session_id: str) -> list[MessageView]:
             )
         )
     return views
+
+@router.post("/{session_id}/end")
+async def end_session(request: Request, session_id: str, background_tasks: BackgroundTasks):
+    session = await request.app.state.summary_service.end_session(session_id)
+    background_tasks.add_task(request.app.state.summary_service.generate_session, session_id)
+    return _view(session)
+
+@router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_session(request: Request, session_id: str, body: dict):
+    if body.get("confirm") is not True:
+        raise DomainError("CONFIRM_REQUIRED", "需要确认", 400)
+    _conversation_store(request).delete_session(session_id, confirm=True)

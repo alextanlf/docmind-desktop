@@ -80,11 +80,11 @@ class E2EControlledFakeEmbeddingProvider(FakeEmbeddingProvider):
         self.delay_seconds = delay_seconds
 
     async def ensure_ready(self):  # type: ignore[no-untyped-def]
-        if self.control.consume("delay-next-import"):
-            await asyncio.sleep(self.delay_seconds)
         return await super().ensure_ready()
 
     async def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        if self.control.consume("delay-next-import"):
+            await asyncio.sleep(self.delay_seconds)
         if self.control.consume("fail-next-index"):
             raise DomainError("INDEX_FAILED", "嵌入模型不可用", 503, True)
         return await super().embed_documents(texts)

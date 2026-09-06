@@ -15,7 +15,7 @@ if (e2eRuntime && process.env.DOCMIND_E2E_DATA_DIR) {
   app.setPath("userData", process.env.DOCMIND_E2E_DATA_DIR);
 }
 
-function stagedFilesForRuntime(dataDir: string) {
+function stagedFilesForRuntime(dataDir: string): StagedFileService {
   return new StagedFileService({
     dataDir,
     ...(e2eRuntime

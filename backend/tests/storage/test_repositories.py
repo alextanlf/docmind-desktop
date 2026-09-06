@@ -16,6 +16,10 @@ from app.core.secrets import MemorySecretStore
 from app.main import create_app
 from app.storage.database import Database
 from app.storage.models import (
+    BatchImportRecord,
+    BatchSourceKind,
+    CrawlEntryRecord,
+    CrawlEntryState,
     DocumentChunkRecord,
     DocumentRecord,
     ImportJobRecord,
@@ -27,11 +31,32 @@ from app.storage.models import (
 )
 from app.storage.repositories import (
     ConversationStore,
+    CrawlEntryStore,
     DocumentStore,
     ImportJobStore,
     RepositoryStore,
     SettingStore,
 )
+
+
+def test_crawl_claim_only_transitions_pending_once(database: Database) -> None:
+    with database.session() as session:
+        session.add(BatchImportRecord(id="batch-1", source_kind=BatchSourceKind.WEB))
+        session.add(CrawlEntryRecord(id="crawl-1", batch_id="batch-1", canonical_url="https://example.test", depth=0))
+    store = CrawlEntryStore(database)
+    first = store.claim("batch-1")
+    second = store.claim("batch-1")
+    assert first is not None and first.state == CrawlEntryState.FETCHING
+    assert second is None
+
+
+def test_crawl_frontier_upsert_returns_existing_row(database: Database) -> None:
+    store = CrawlEntryStore(database)
+    with database.session() as session:
+        session.add(BatchImportRecord(id="batch-2", source_kind=BatchSourceKind.WEB))
+    first = store.upsert_frontier(CrawlEntryRecord(id="crawl-a", batch_id="batch-2", canonical_url="https://example.test", depth=0))
+    second = store.upsert_frontier(CrawlEntryRecord(id="crawl-b", batch_id="batch-2", canonical_url="https://example.test", depth=1))
+    assert second.id == first.id
 
 
 def test_repository_upsert_updates_remote_record_without_duplicate(database: Database) -> None:

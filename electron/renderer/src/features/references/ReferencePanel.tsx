@@ -5,6 +5,7 @@ import { IconButton } from "../../components/IconButton";
 import { useUiStore } from "../../stores/ui-store";
 import type { ScopedCitation } from "./citation-types";
 import { openExternalUrl, isHttpUrl } from "./external-links";
+import { SearchResultPicker } from "../search/SearchResultPicker";
 
 const DRAWER_QUERY = "(max-width: 1180px)";
 
@@ -26,12 +27,25 @@ function useDrawerLayout() {
 }
 
 function sourceLocation(citation: Citation) {
+  if (citation.kind === "memory")
+    return citation.memoryKind === "distillation" ? "知识蒸馏" : "会话摘要";
+  if (citation.kind === "web") return "联网搜索";
   if (citation.sectionPath) return citation.sectionPath;
   if (citation.pageNumber) return `第 ${citation.pageNumber} 页`;
   return "未标记位置";
 }
 
-export function ReferencePanel({ citations }: { citations: (Citation | ScopedCitation)[] }) {
+export function ReferencePanel({
+  citations,
+  sessionId = null,
+  repositoryId = null,
+  onBatchCreated,
+}: {
+  citations: (Citation | ScopedCitation)[];
+  sessionId?: string | null;
+  repositoryId?: string | null;
+  onBatchCreated?(batchId: string): void;
+}) {
   const activeCitationId = useUiStore((state) => state.activeCitationId);
   const open = useUiStore((state) => state.referencePanelOpen);
   const setOpen = useUiStore((state) => state.setReferencePanelOpen);
@@ -40,17 +54,24 @@ export function ReferencePanel({ citations }: { citations: (Citation | ScopedCit
   const closeRef = useRef<HTMLButtonElement>(null);
   const pendingFocusTriggerId = useRef<string | null>(null);
   const drawer = useDrawerLayout();
+  const [searchPickerOpen, setSearchPickerOpen] = useState(false);
   const citationsById = useMemo(() => {
     const map = new Map<string, Citation>();
     citations.forEach((item) => {
       if ("id" in item) map.set(item.id, item.citation);
       else {
-        if (!map.has(item.sourceId) || isHttpUrl(item.sourceUrl ?? ""))
+        const identity =
+          item.kind === "memory"
+            ? item.memoryId
+            : item.kind === "web"
+              ? item.resultId
+              : item.chunkId;
+        if (!map.has(item.sourceId) || (item.kind !== "memory" && isHttpUrl(item.sourceUrl ?? "")))
           map.set(item.sourceId, item);
-        if (!map.has(`message-1:${item.sourceId}:${item.chunkId}`))
-          map.set(`message-1:${item.sourceId}:${item.chunkId}`, item);
-        if (!map.has(`message-2:${item.sourceId}:${item.chunkId}`))
-          map.set(`message-2:${item.sourceId}:${item.chunkId}`, item);
+        if (!map.has(`message-1:${item.sourceId}:${identity}`))
+          map.set(`message-1:${item.sourceId}:${identity}`, item);
+        if (!map.has(`message-2:${item.sourceId}:${identity}`))
+          map.set(`message-2:${item.sourceId}:${identity}`, item);
       }
     });
     return map;
@@ -108,8 +129,17 @@ export function ReferencePanel({ citations }: { citations: (Citation | ScopedCit
           <span className="reference-source-id">{activeCitation.sourceId}</span>
           <h2>{activeCitation.title}</h2>
           <p className="reference-location">{sourceLocation(activeCitation)}</p>
+          {activeCitation.kind === "web" ? (
+            <p className="reference-metadata">
+              {activeCitation.sourceUrl}
+              <br />
+              检索于 {new Date(activeCitation.retrievedAt).toLocaleString()}
+            </p>
+          ) : null}
           <blockquote>{activeCitation.excerpt}</blockquote>
-          {activeCitation.sourceUrl && isHttpUrl(activeCitation.sourceUrl) ? (
+          {activeCitation.kind !== "memory" &&
+          activeCitation.sourceUrl &&
+          isHttpUrl(activeCitation.sourceUrl) ? (
             <div className="reference-footer">
               <button
                 className="reference-open-source"
@@ -119,6 +149,28 @@ export function ReferencePanel({ citations }: { citations: (Citation | ScopedCit
                 <ExternalLink aria-hidden="true" size={15} />
                 打开原始来源
               </button>
+            </div>
+          ) : null}
+          {activeCitation.kind === "web" && sessionId && repositoryId && onBatchCreated ? (
+            <div className="reference-search-import">
+              <button
+                className="button button-secondary"
+                onClick={() => setSearchPickerOpen((current) => !current)}
+                type="button"
+              >
+                保存搜索结果
+              </button>
+              {searchPickerOpen ? (
+                <SearchResultPicker
+                  onCreated={(batchId) => {
+                    onBatchCreated(batchId);
+                    setSearchPickerOpen(false);
+                  }}
+                  repositoryId={repositoryId}
+                  runId={activeCitation.searchRunId}
+                  sessionId={sessionId}
+                />
+              ) : null}
             </div>
           ) : null}
         </div>

@@ -52,6 +52,33 @@ body {
   font-size: 14px;
   line-height: 1.5;
 }
+
+.batch-candidate-table-wrap {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--line);
+}
+.batch-candidate-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.batch-candidate-table th,
+.batch-candidate-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+.batch-secondary-column {
+  color: var(--muted);
+}
+.batch-source-step {
+  gap: 14px;
+}
+@media (max-width: 1100px) {
+  .batch-secondary-column {
+    display: none;
+  }
+}
 button,
 input,
 select,
@@ -441,6 +468,9 @@ button:disabled {
   border: 1px solid var(--line-strong);
   border-radius: 6px;
 }
+.mode-segmented-control {
+  grid-template-columns: repeat(2, 1fr);
+}
 .segmented-control button {
   min-height: 34px;
   border: 0;
@@ -456,6 +486,29 @@ button:disabled {
   color: var(--blue);
   background: var(--blue-soft);
   font-weight: 600;
+}
+.segmented-control label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  border-right: 1px solid var(--line-strong);
+  background: var(--surface);
+  font-size: 12px;
+  cursor: pointer;
+}
+.segmented-control label:last-child {
+  border-right: 0;
+}
+.segmented-control label.is-active {
+  color: var(--blue);
+  background: var(--blue-soft);
+  font-weight: 600;
+}
+.segmented-control label input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
 }
 .source-choice {
   display: flex;
@@ -532,6 +585,8 @@ button:disabled {
 }
 .import-progress {
   display: grid;
+  min-width: 0;
+  overflow-wrap: anywhere;
   gap: 8px;
   padding: 12px;
   border-top: 1px solid var(--line);
@@ -550,6 +605,7 @@ button:disabled {
 }
 .import-progress-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 .status-cancelled {
@@ -560,15 +616,14 @@ button:disabled {
   font-size: 12px;
 }
 .workspace-import-progress {
-  position: fixed;
-  z-index: 10;
-  right: 332px;
-  bottom: 12px;
-  width: min(380px, calc(100vw - 680px));
-  overflow: hidden;
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  box-shadow: 0 8px 22px rgb(16 24 40 / 12%);
+  position: static;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  min-height: 0;
+  min-width: 0;
+  max-height: min(30vh, 240px);
+  overflow-y: auto;
+  background: var(--surface);
 }
 
 .workspace-sidebar.is-collapsed .brand-row,
@@ -598,8 +653,16 @@ button:disabled {
 
 .workspace-main {
   position: relative;
-  overflow: auto;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  overflow: hidden;
   background: var(--workspace);
+}
+.workspace-content {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
 }
 .empty-workspace {
   display: flex;
@@ -801,11 +864,13 @@ button:disabled {
 }
 .repository-scope {
   position: relative;
+  min-width: 0;
+  max-width: 100%;
 }
 .repository-scope summary {
   display: flex;
   min-width: 0;
-  max-width: min(500px, calc(100vw - 420px));
+  max-width: min(500px, 100%);
   min-height: 32px;
   align-items: center;
   gap: 7px;
@@ -835,7 +900,7 @@ button:disabled {
   top: 38px;
   left: 0;
   display: grid;
-  width: 250px;
+  width: min(250px, 100%);
   max-height: 260px;
   gap: 2px;
   overflow: auto;
@@ -1065,10 +1130,6 @@ button:disabled {
   .reference-is-closed .workspace-reference {
     visibility: hidden;
     transform: translateX(100%);
-  }
-  .workspace-import-progress {
-    right: 12px;
-    width: min(380px, calc(100vw - 90px));
   }
 }
 
@@ -1514,6 +1575,234 @@ progress::-webkit-progress-bar {
 .spin {
   animation: spin 800ms linear infinite;
 }
+
+.memory-view {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  background: var(--workspace);
+}
+.memory-view .view-header,
+.memory-controls,
+.memory-editor-toolbar,
+.memory-save-row,
+.session-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.memory-view .view-header {
+  justify-content: space-between;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--line);
+}
+.memory-view .view-header > div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.memory-view h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.memory-controls {
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--line);
+}
+.memory-controls label,
+.distillation-editor > label,
+.memory-editor-toolbar label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.memory-controls select {
+  min-width: 180px;
+}
+.memory-layout {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: minmax(240px, 34%) minmax(0, 1fr);
+}
+.memory-layout > aside {
+  overflow: auto;
+  border-right: 1px solid var(--line);
+}
+.memory-layout > main {
+  min-width: 0;
+  overflow: auto;
+  padding: 22px 24px;
+}
+.memory-list {
+  margin: 0;
+  padding: 8px;
+  list-style: none;
+}
+.memory-list button {
+  width: 100%;
+  padding: 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+}
+.memory-list button:hover,
+.memory-list button[aria-current="page"] {
+  background: var(--blue-soft);
+}
+.memory-list strong,
+.memory-list span {
+  display: block;
+}
+.memory-list span,
+.memory-list p,
+.memory-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+.memory-list p {
+  display: -webkit-box;
+  margin: 6px 0 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.distillation-editor {
+  display: grid;
+  gap: 16px;
+}
+.memory-editor-toolbar {
+  justify-content: space-between;
+}
+.memory-editor-toolbar label {
+  flex: 1;
+}
+.distillation-editor input,
+.distillation-editor textarea,
+.distillation-editor select,
+.memory-controls select {
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--ink);
+}
+.distillation-editor input,
+.distillation-editor select,
+.memory-controls select {
+  min-height: 36px;
+  padding: 6px 9px;
+}
+.distillation-editor textarea {
+  width: 100%;
+  min-height: 220px;
+  resize: vertical;
+  padding: 10px;
+}
+.distillation-editor > label:last-of-type textarea {
+  min-height: 100px;
+}
+.memory-target {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.memory-save-row {
+  justify-content: space-between;
+}
+.session-actions {
+  margin-left: auto;
+}
+.web-search-settings {
+  display: grid;
+  max-width: 680px;
+  gap: 14px;
+}
+.web-search-settings fieldset {
+  display: flex;
+  gap: 16px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.web-search-settings > label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.web-search-settings input[type="number"],
+.web-search-settings input[type="password"] {
+  min-height: 36px;
+  padding: 6px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+}
+.chat-search-suggestion {
+  display: flex;
+  justify-content: center;
+  padding: 8px 16px;
+  border-top: 1px solid var(--line);
+}
+.chat-stream-warning {
+  padding: 8px 16px;
+  color: var(--warning);
+}
+.reference-metadata {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 12px;
+}
+.reference-search-import {
+  display: grid;
+  gap: 12px;
+}
+.modal-backdrop {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(17 24 39 / 52%);
+}
+.confirmation-dialog {
+  width: min(440px, 100%);
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 18px 44px rgb(17 24 39 / 22%);
+}
+.confirmation-dialog h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+.confirmation-dialog p {
+  margin: 0;
+  color: var(--muted);
+}
+.confirmation-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+@media (max-width: 1000px) {
+  .memory-layout {
+    grid-template-columns: minmax(210px, 32%) minmax(0, 1fr);
+  }
+  .memory-controls {
+    flex-wrap: wrap;
+  }
+  .memory-editor-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -1527,7 +1816,7 @@ progress::-webkit-progress-bar {
   }
   .workspace-grid.sidebar-is-collapsed,
   .workspace-grid.sidebar-is-collapsed.reference-is-closed {
-    grid-template-columns: 64px minmax(480px, 1fr) 0;
+    grid-template-columns: 64px minmax(0, 1fr) 0;
   }
 }
 
