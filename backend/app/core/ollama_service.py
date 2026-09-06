@@ -67,6 +67,45 @@ class OllamaService:
         self._pulls.pop(pull_id, None)
         return self.create_pull(current.model_name)
 
+    async def execute_pull(self, pull_id: UUID, coordinator) -> OllamaPullView:
+        """Consume a coordinator stream and project only safe snapshots."""
+        view = self.get_pull(pull_id)
+        if view.state not in {"queued", "running"}:
+            return view
+        now = datetime.now(UTC)
+        view = view.model_copy(update={"state": "running", "status": "准备下载", "started_at": view.started_at or now, "updated_at": now})
+        view = self._record_pull_view(view)
+        try:
+            async for event in coordinator.pull(view.model_name):
+                if self.get_pull(pull_id).cancel_requested:
+                    return self.get_pull(pull_id)
+                updates = {key: event[key] for key in ("progress", "status", "total_bytes", "completed_bytes") if key in event}
+                if event.get("state") == "completed":
+                    updates.update(state="completed", completed_at=datetime.now(UTC), retryable=False)
+                updates["updated_at"] = datetime.now(UTC)
+                view = view.model_copy(update=updates)
+                view = self._record_pull_view(view)
+            if view.state == "running":
+                view = view.model_copy(update={"state": "completed", "status": "完成", "progress": 100, "retryable": False, "completed_at": datetime.now(UTC), "updated_at": datetime.now(UTC)})
+                view = self._record_pull_view(view)
+        except Exception as error:
+            view = view.model_copy(update={"state": "failed", "status": "拉取失败", "error_code": getattr(error, "code", "OLLAMA_PULL_FAILED"), "error_message": "模型拉取失败", "retryable": True, "updated_at": datetime.now(UTC)})
+            view = self._record_pull_view(view)
+        return view
+
+    def _record_pull_view(self, view: OllamaPullView) -> OllamaPullView:
+        sequence = view.last_event_sequence + 1
+        view = view.model_copy(update={"last_event_sequence": sequence})
+        self._pulls[view.id] = view
+        self._events.setdefault(view.id, []).append({"sequence": sequence, "type": "progress", "payload": view.model_dump(mode="json", by_alias=True)})
+        if self.store:
+            row = self.store.get(str(view.id))
+            if row:
+                for field in ("model_name", "base_url", "state", "progress", "status", "total_bytes", "completed_bytes", "error_code", "error_message", "retryable", "cancel_requested", "created_at", "started_at", "completed_at", "updated_at", "last_event_sequence"):
+                    setattr(row, field, getattr(view, field))
+                self.store.save(row)
+        return view
+
     def cancel_pull(self, pull_id: UUID) -> OllamaPullView:
         view = self.get_pull(pull_id)
         if view.state in {"queued", "running"}:
