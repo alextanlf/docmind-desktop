@@ -38,6 +38,10 @@ async def get_pull(pull_id: UUID, request: Request):
 async def cancel_pull(pull_id: UUID, request: Request):
     return _service(request).cancel_pull(pull_id)
 
+@router.post("/models/pull/{pull_id}/retry")
+async def retry_pull(pull_id: UUID, request: Request):
+    return _service(request).retry_pull(pull_id)
+
 @router.get("/models/pull/{pull_id}/events")
 async def pull_events(pull_id: UUID, request: Request):
     snapshot = _service(request).get_pull(pull_id)
