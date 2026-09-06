@@ -166,6 +166,15 @@ def create_app(
         ollama_pull_store = OllamaPullStore(database)
         ollama_pull_store.recover_interrupted()
         app.state.ollama_service = OllamaService("http://127.0.0.1:11434", store=ollama_pull_store)
+        async def ollama_pull_worker():
+            while True:
+                app.state.ollama_service.run_queued_once()
+                await asyncio.sleep(0.25)
+        ollama_worker_task = (
+            asyncio.create_task(ollama_pull_worker())
+            if runtime_settings.environment != "test"
+            else None
+        )
         ImportJobStore(database).recover_interrupted()
         app.state.database = database
         if fake_llm_provider is None:
@@ -317,6 +326,9 @@ def create_app(
         try:
             yield
         finally:
+            if ollama_worker_task is not None:
+                ollama_worker_task.cancel()
+                await asyncio.gather(ollama_worker_task, return_exceptions=True)
             tasks = list(app.state.import_tasks)
             for task in tasks:
                 task.cancel()
