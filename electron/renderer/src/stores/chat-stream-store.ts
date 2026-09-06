@@ -138,6 +138,7 @@ export const useChatStreamStore = create<ChatStreamState>((set, get) => ({
           ? { userMessageId: event.payload.userMessageId }
           : null;
       const rawWarning = event.payload.warning;
+      const fallbackReason = typeof event.payload.fallbackReason === "string" ? event.payload.fallbackReason : null;
       const warning =
         typeof rawWarning === "string"
           ? rawWarning
@@ -151,7 +152,7 @@ export const useChatStreamStore = create<ChatStreamState>((set, get) => ({
         sessionId: current.sessionId,
         userMessage: suggested ? current.userMessage : "",
         searchSuggestion: suggested,
-        warning,
+        warning: warning ?? (fallbackReason ? `已自动切换到云端（${fallbackReason}）` : null),
         lastSequence: event.sequence,
       });
       return true;
