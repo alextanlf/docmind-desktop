@@ -17,6 +17,7 @@ from app.schemas.settings import (
     SettingsView,
     WebSearchSettingsUpdate,
 )
+from app.schemas.ollama import RoutingSettings, RuntimeSettingsInput
 from app.schemas.web_search import SearchConnectionResult, WebSearchSettings
 from app.search.tavily import TavilyProvider
 from app.storage.repositories import SettingStore
@@ -26,6 +27,8 @@ MODEL_KEY_REFERENCE = "model.api_key_ref"
 MODEL_API_KEY_NAME = "model-api-key"
 WEB_SEARCH_CONFIG_KEY = "web-search.config"
 WEB_SEARCH_API_KEY_NAME = "web-search:tavily"
+OLLAMA_RUNTIME_CONFIG_KEY = "ollama.config"
+MODEL_ROUTING_KEY = "model.routing"
 ProviderFactory = Callable[[ModelConfig, str], LLMProvider]
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -101,7 +104,22 @@ class SettingsService:
             data_path=str(settings.data_dir.resolve()),
             screenshot_count=_screenshot_count(settings.screenshots_dir),
             web_search=self.web_search(),
+            runtime=self.runtime(),
         )
+
+    def runtime(self) -> RuntimeSettingsInput:
+        raw_ollama = self.setting_store.get(OLLAMA_RUNTIME_CONFIG_KEY)
+        raw_routing = self.setting_store.get(MODEL_ROUTING_KEY)
+        try:
+            ollama = RuntimeSettingsInput.model_validate_json(raw_ollama).ollama if raw_ollama else RuntimeSettingsInput().ollama
+            routing = RoutingSettings.model_validate_json(raw_routing) if raw_routing else RuntimeSettingsInput().routing
+        except ValueError as error:
+            raise DomainError("SETTINGS_INVALID", "运行时设置无效，请重新配置", 500) from error
+        return RuntimeSettingsInput(ollama=ollama, routing=routing)
+
+    def save_runtime(self, update: RuntimeSettingsInput) -> RuntimeSettingsInput:
+        self.setting_store.set_many({OLLAMA_RUNTIME_CONFIG_KEY: update.ollama.model_dump_json(), MODEL_ROUTING_KEY: update.routing.model_dump_json()})
+        return update
 
     def web_search(self) -> WebSearchSettings:
         raw = self.setting_store.get(WEB_SEARCH_CONFIG_KEY)
@@ -178,6 +196,11 @@ async def save_model(update: ModelSettingsUpdate, request: Request) -> SettingsV
 @router.post("/model/test", response_model=ModelConnectionResult)
 async def test_model(request: Request) -> ModelConnectionResult:
     return await _service(request).test_model()
+
+@router.post("/runtime", response_model=SettingsView)
+async def save_runtime(update: RuntimeSettingsInput, request: Request) -> SettingsView:
+    _service(request).save_runtime(update)
+    return _service(request).view(_settings(request))
 
 
 @router.post("/diagnostics/clear", status_code=204)
