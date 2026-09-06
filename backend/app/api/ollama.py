@@ -28,7 +28,9 @@ async def models(request: Request):
 
 @router.post("/models/pull")
 async def create_pull(input: PullInput, request: Request):
-    return _service(request).create_pull(input.model_name)
+    service = _service(request)
+    snapshot = service.create_pull(input.model_name)
+    return snapshot
 
 @router.get("/models/pull/{pull_id}")
 async def get_pull(pull_id: UUID, request: Request):
@@ -40,7 +42,9 @@ async def cancel_pull(pull_id: UUID, request: Request):
 
 @router.post("/models/pull/{pull_id}/retry")
 async def retry_pull(pull_id: UUID, request: Request):
-    return _service(request).retry_pull(pull_id)
+    service = _service(request)
+    snapshot = service.retry_pull(pull_id)
+    return snapshot
 
 @router.get("/models/pull/{pull_id}/events")
 async def pull_events(pull_id: UUID, request: Request):
