@@ -65,3 +65,6 @@ Record each item as `PASS`, `FAIL`, or `NOT RUN`. Do not treat fake-service resu
 ## Phase 1 Boundaries
 
 Phase 1 excludes collaborative sharing, cloud synchronization, automatic background Yuque synchronization, multi-user accounts, arbitrary local filesystem access from the renderer, and uncited answers outside retrieved evidence. These exclusions are binding for Phase 1; they are not silently enabled by configuration or treated as supported workflows.
+# 本地开发启动
+
+首次运行：`npm install`、`./scripts/setup-backend.sh`，之后使用 `npm run dev`。开发服务仅监听本机 `127.0.0.1:18900`，每次启动生成新的会话令牌；Ollama 需由用户自行安装并运行，不会由启动脚本下载或托管。可选本地归档默认不构建，显式设置 `DOCMIND_BUILD_LOCAL_ARCHIVE=1` 才会执行，并且不包含签名或公证。
