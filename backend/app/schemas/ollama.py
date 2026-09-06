@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
+from urllib.parse import urlsplit
+import ipaddress
 
 from pydantic import Field, field_validator
 
@@ -13,6 +15,20 @@ class OllamaConfig(WireModel):
     base_url: str = "http://127.0.0.1:11434"
     model: str = Field(default="", max_length=200)
     timeout_seconds: float = Field(default=120, gt=0, le=600)
+
+    @field_validator("base_url")
+    @classmethod
+    def safe_base_url(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if parsed.scheme != "http" or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path.rstrip("/"):
+            raise ValueError("invalid Ollama URL")
+        if parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+            try:
+                if not ipaddress.ip_address(parsed.hostname or "").is_loopback: raise ValueError("invalid Ollama URL")
+            except ValueError as error:
+                raise ValueError("invalid Ollama URL") from error
+        if parsed.port not in (None, 11434): raise ValueError("invalid Ollama URL")
+        return value.rstrip("/")
 
     @field_validator("model")
     @classmethod
