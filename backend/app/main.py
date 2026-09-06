@@ -112,10 +112,11 @@ class _RuntimeLLMProvider:
         )
 
 class _RoutedLLMProvider:
-    def __init__(self, router: ModelRouter) -> None: self.router = router
+    def __init__(self, router: ModelRouter) -> None: self.router, self.last_route = router, None
     async def test_connection(self): return await self.router.cloud.test_connection()
     async def stream_chat(self, request):
         routed = await self.router.open_stream(request)
+        self.last_route = routed.route
         async for delta in routed.deltas: yield delta
 
 
