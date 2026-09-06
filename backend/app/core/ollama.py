@@ -52,3 +52,27 @@ class OllamaProvider:
         if not emitted:
             raise DomainError("OLLAMA_PROTOCOL_ERROR", "Ollama 返回了无法识别的数据", 502)
         raise DomainError("OLLAMA_PROTOCOL_ERROR", "Ollama 返回了无法识别的数据", 502)
+
+
+class PullCoordinator:
+    def __init__(self, base_url: str, transport: httpx.AsyncBaseTransport | None = None, timeout: float = 600) -> None:
+        self.base_url, self.transport, self.timeout = base_url.rstrip("/"), transport, timeout
+
+    async def pull(self, model_name: str) -> AsyncIterator[dict[str, object]]:
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
+                async with client.stream("POST", f"{self.base_url}/api/pull", json={"name": model_name, "stream": True}) as response:
+                    if response.status_code >= 400:
+                        raise DomainError("OLLAMA_PULL_FAILED", "模型拉取失败", 502, True)
+                    async for line in response.aiter_lines():
+                        try: item = json.loads(line)
+                        except json.JSONDecodeError as error: raise DomainError("OLLAMA_PROTOCOL_ERROR", "Ollama 返回了无法识别的数据", 502) from error
+                        if item.get("error"): raise DomainError("OLLAMA_PULL_FAILED", "模型拉取失败", 502, True)
+                        total, completed = item.get("total"), item.get("completed")
+                        event: dict[str, object] = {"status": str(item.get("status", "正在下载"))}
+                        if isinstance(total, (int, float)) and isinstance(completed, (int, float)) and total > 0:
+                            event["progress"] = max(0, min(100, round(completed * 100 / total)))
+                        if item.get("done"): event["state"] = "completed"
+                        yield event
+        except httpx.HTTPError as error:
+            raise DomainError("OLLAMA_PULL_FAILED", "模型拉取失败", 502, True) from error
