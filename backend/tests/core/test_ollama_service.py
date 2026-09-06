@@ -41,3 +41,22 @@ def test_retry_pull_creates_new_task_for_retryable_failure(tmp_path):
     row = store.get(str(first.id)); row.state, row.error_code, row.retryable = "failed", "OLLAMA_PULL_FAILED", True; store.save(row)
     retried = service.retry_pull(first.id)
     assert retried.id != first.id and retried.model_name == "m" and retried.state == "queued"
+
+@pytest.mark.asyncio
+async def test_execute_pull_projects_coordinator_events_and_persists(tmp_path):
+    db = Database(f"sqlite+pysqlite:///{tmp_path/'db.sqlite'}"); db.upgrade(); store = OllamaPullStore(db)
+    service = OllamaService("http://127.0.0.1:11434", store=store)
+    pull = service.create_pull("m")
+
+    async def events(_model):
+        yield {"status": "下载中", "progress": 40}
+        yield {"status": "完成", "progress": 100, "state": "completed"}
+
+    class FakeCoordinator:
+        pull = staticmethod(events)
+
+    result = await service.execute_pull(pull.id, FakeCoordinator())
+    assert result.state == "completed" and result.progress == 100
+    persisted = store.get(str(pull.id))
+    assert persisted.state == "completed" and persisted.progress == 100
+    assert len(service._events[pull.id]) == 4
