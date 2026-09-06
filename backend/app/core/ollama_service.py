@@ -8,6 +8,14 @@ from app.storage.repositories import OllamaPullStore
 from app.storage.models import OllamaPullRecord
 from app.core.ollama import PullCoordinator
 
+async def run_pull_worker(service: "OllamaService", stop_event: asyncio.Event, *, interval: float = 0.25) -> None:
+    while not stop_event.is_set():
+        service.run_queued_once()
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval)
+        except asyncio.TimeoutError:
+            continue
+
 class OllamaService:
     def __init__(self, base_url: str, model: str = "", transport: httpx.AsyncBaseTransport | None = None, timeout: float = 5, store: OllamaPullStore | None = None, coordinator: PullCoordinator | None = None) -> None:
         self.base_url, self.model, self.transport, self.timeout = base_url.rstrip("/"), model, transport, timeout
