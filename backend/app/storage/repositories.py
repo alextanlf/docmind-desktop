@@ -76,6 +76,9 @@ class OllamaPullStore:
                 )
                 .order_by(OllamaPullRecord.created_at.asc())
             )
+    def list_queued(self, *, base_url: str) -> list[OllamaPullRecord]:
+        with self.database.session() as session:
+            return list(session.scalars(select(OllamaPullRecord).where(OllamaPullRecord.base_url == base_url, OllamaPullRecord.state == "queued").order_by(OllamaPullRecord.created_at.asc())))
     def save(self, record: OllamaPullRecord) -> OllamaPullRecord:
         with self.database.session() as session:
             session.merge(record)
