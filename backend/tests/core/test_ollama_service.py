@@ -60,3 +60,18 @@ async def test_execute_pull_projects_coordinator_events_and_persists(tmp_path):
     persisted = store.get(str(pull.id))
     assert persisted.state == "completed" and persisted.progress == 100
     assert len(service._events[pull.id]) == 4
+
+@pytest.mark.asyncio
+async def test_start_pull_tracks_task_until_idle(tmp_path):
+    db = Database(f"sqlite+pysqlite:///{tmp_path/'db.sqlite'}"); db.upgrade(); store = OllamaPullStore(db)
+    service = OllamaService("http://127.0.0.1:11434", store=store)
+    async def events(_model):
+        yield {"status": "完成", "progress": 100, "state": "completed"}
+    class FakeCoordinator:
+        pull = staticmethod(events)
+    service.coordinator = FakeCoordinator()
+    pull = service.create_pull("m")
+    task = service.start_pull(pull.id)
+    assert task is not None
+    await service.wait_for_pull(pull.id)
+    assert service.get_pull(pull.id).state == "completed"

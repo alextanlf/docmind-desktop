@@ -1,6 +1,7 @@
 from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
+import asyncio
 import httpx
 from app.schemas.ollama import OllamaModelView, OllamaModelsView, OllamaPullView
 from app.storage.repositories import OllamaPullStore
@@ -12,6 +13,7 @@ class OllamaService:
         self.base_url, self.model, self.transport, self.timeout = base_url.rstrip("/"), model, transport, timeout
         self._pulls: dict[UUID, OllamaPullView] = {}
         self._events: dict[UUID, list[dict[str, object]]] = {}
+        self._tasks: dict[UUID, asyncio.Task] = {}
         self.store = store
         self.coordinator = coordinator or PullCoordinator(self.base_url, transport=transport, timeout=max(timeout, 600))
 
@@ -69,6 +71,24 @@ class OllamaService:
         self._pulls.pop(pull_id, None)
         return self.create_pull(current.model_name)
 
+    def start_pull(self, pull_id: UUID) -> asyncio.Task:
+        existing = self._tasks.get(pull_id)
+        if existing and not existing.done():
+            return existing
+        self.get_pull(pull_id)
+        task = asyncio.create_task(self.execute_pull(pull_id, self.coordinator))
+        self._tasks[pull_id] = task
+        return task
+
+    async def wait_for_pull(self, pull_id: UUID) -> OllamaPullView:
+        task = self._tasks.get(pull_id)
+        if task is not None:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        return self.get_pull(pull_id)
+
     async def execute_pull(self, pull_id: UUID, coordinator) -> OllamaPullView:
         """Consume a coordinator stream and project only safe snapshots."""
         view = self.get_pull(pull_id)
@@ -109,6 +129,9 @@ class OllamaService:
         return view
 
     def cancel_pull(self, pull_id: UUID) -> OllamaPullView:
+        task = self._tasks.get(pull_id)
+        if task and not task.done():
+            task.cancel()
         view = self.get_pull(pull_id)
         if view.state in {"queued", "running"}:
             view = view.model_copy(update={"state":"cancelled", "status":"已取消", "cancel_requested":True, "error_code":"OLLAMA_PULL_CANCELLED", "last_event_sequence": view.last_event_sequence + 1, "updated_at":datetime.now(UTC)})
