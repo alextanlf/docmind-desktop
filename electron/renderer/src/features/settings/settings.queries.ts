@@ -1,10 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { WebSearchSettingsInput } from "../../../../shared/contracts";
+import type { RuntimeSettingsInput, WebSearchSettingsInput } from "../../../../shared/contracts";
 
 export const settingsKeys = {
   root: ["settings"] as const,
   embedding: ["embedding", "status"] as const,
   yuque: ["yuque", "status"] as const,
+  runtime: ["settings", "runtime"] as const,
+};
+export const ollamaKeys = {
+  status: ["ollama", "status"] as const,
+  models: ["ollama", "models"] as const,
+  pull: (pullId: string) => ["ollama", "pull", pullId] as const,
 };
 
 export function useSettingsQuery() {
@@ -21,6 +27,23 @@ export function useEmbeddingStatusQuery() {
 
 export function useYuqueStatusQuery() {
   return useQuery({ queryKey: settingsKeys.yuque, queryFn: () => window.docmind.yuque.status() });
+}
+
+export function useRuntimeSettingsQuery(enabled = true) {
+  return useQuery({ queryKey: settingsKeys.runtime, queryFn: () => window.docmind.settings.get(), enabled, select: (settings) => settings.runtime });
+}
+
+export function useOllamaStatusQuery(enabled = true) {
+  return useQuery({ queryKey: ollamaKeys.status, queryFn: () => window.docmind.ollama.status(), enabled, refetchInterval: (query) => query.state.data?.available ? 10_000 : false });
+}
+
+export function useOllamaModelsQuery(enabled = true) {
+  return useQuery({ queryKey: ollamaKeys.models, queryFn: () => window.docmind.ollama.models(), enabled });
+}
+
+export function useSaveRuntimeMutation() {
+  const client = useQueryClient();
+  return useMutation({ mutationFn: (input: RuntimeSettingsInput) => window.docmind.settings.saveRuntime(input), onSuccess: (settings) => { client.setQueryData(settingsKeys.root, settings); client.setQueryData(settingsKeys.runtime, settings.runtime); void client.invalidateQueries({ queryKey: ollamaKeys.status }); void client.invalidateQueries({ queryKey: ollamaKeys.models }); } });
 }
 
 export function useSaveWebSearchMutation() {
@@ -50,6 +73,14 @@ export function clientErrorMessage(error: unknown): string {
     BATCH_STALE_CONFIRMATION: "目录内容已变化，请重新选择目录后再试",
     BATCH_SOURCE_CHANGED: "目录内容已变化，请重新选择目录",
     BATCH_STATE_CONFLICT: "批量导入状态已变化，请刷新后重试",
+    OLLAMA_UNAVAILABLE: "Ollama 未运行或暂时无法连接",
+    OLLAMA_MODEL_NOT_INSTALLED: "选定模型尚未安装",
+    OLLAMA_PULL_FAILED: "模型拉取失败",
+    OLLAMA_PULL_CANCELLED: "模型拉取已取消",
+    OLLAMA_PULL_INTERRUPTED: "应用退出时中断了模型拉取",
+    OLLAMA_PROTOCOL_ERROR: "本地模型服务返回了无法识别的数据",
+    LOCAL_MODEL_UNAVAILABLE: "本地模型暂时不可用",
+    ROUTING_CLOUD_UNAVAILABLE: "本地和云端都不可用",
   };
   if (value?.code && messages[value.code]) return messages[value.code];
   if (

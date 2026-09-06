@@ -45,6 +45,14 @@ export const SettingsViewSchema = z.object({
       hasApiKey: z.boolean(),
     })
     .default({ provider: "tavily", mode: "ask", maxResults: 5, hasApiKey: false }),
+  runtime: z.object({
+    ollama: z.object({ baseUrl: z.string(), model: z.string().max(200), timeoutSeconds: z.number().positive().max(600) }),
+    routing: z.object({ mode: z.enum(["local_only", "cloud_only", "automatic"]) }),
+  }).optional(),
+});
+export const RuntimeSettingsInputSchema = z.object({
+  ollama: z.object({ baseUrl: z.string(), model: z.string().max(200), timeoutSeconds: z.number().positive().max(600) }),
+  routing: z.object({ mode: z.enum(["local_only", "cloud_only", "automatic"]) }),
 });
 export const OllamaStatusSchema = z.object({available:z.boolean(),baseUrl:z.string(),version:z.string().nullable().optional(),selectedModel:z.string(),selectedModelInstalled:z.boolean(),checkedAt:timestamp,message:z.string()});
 export const OllamaModelSchema = z.object({name:z.string(),digest:z.string().nullable().optional(),sizeBytes:z.number().nullable().optional(),modifiedAt:timestamp.nullable().optional(),family:z.string().nullable().optional()});
@@ -458,6 +466,7 @@ export const MemoryItemPageSchema = z.object({
 export type ErrorBody = z.infer<typeof ErrorBodySchema>;
 export type ErrorEnvelope = z.infer<typeof ErrorEnvelopeSchema>;
 export type ModelSettingsInput = z.infer<typeof ModelSettingsInputSchema>;
+export type RuntimeSettingsInput = z.infer<typeof RuntimeSettingsInputSchema>;
 export type SettingsView = z.infer<typeof SettingsViewSchema>;
 export type ModelConnectionResult = z.infer<typeof ModelConnectionResultSchema>;
 export type ModelStatus = z.infer<typeof ModelStatusSchema>;
@@ -536,6 +545,7 @@ export interface DocMindApi {
     testModel(): Promise<ModelConnectionResult>;
     clearDiagnostics(): Promise<void>;
     saveWebSearch(input: WebSearchSettingsInput): Promise<SettingsView>;
+    saveRuntime(input: z.infer<typeof RuntimeSettingsInputSchema>): Promise<SettingsView>;
   };
   embedding: {
     status(): Promise<ModelStatus>;

@@ -11,6 +11,7 @@ export const IPC_CHANNELS = {
   settingsTestModel: "settings:testModel",
   settingsClearDiagnostics: "settings:clearDiagnostics",
   settingsSaveWebSearch: "settings:saveWebSearch",
+  settingsSaveRuntime: "settings:saveRuntime",
   embeddingStatus: "embedding:status",
   embeddingPrepare: "embedding:prepare",
   yuqueStatus: "yuque:status",
