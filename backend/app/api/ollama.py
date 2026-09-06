@@ -1,15 +1,19 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 import json
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from uuid import UUID
 from app.core.ollama_service import OllamaService
-from app.schemas.ollama import OllamaModelsView, OllamaStatusView
+from app.schemas.ollama import OllamaModelsView, OllamaStatusView, validate_model_tag
 from app.schemas.common import WireModel
 
 router = APIRouter(prefix="/api/ollama", tags=["ollama"])
 class PullInput(WireModel):
     model_name: str
+    @field_validator("model_name")
+    @classmethod
+    def valid_model_name(cls, value: str) -> str:
+        return validate_model_tag(value)
 
 def _service(request: Request) -> OllamaService:
     service = getattr(request.app.state, "ollama_service", None)

@@ -10,3 +10,7 @@ def test_pull_create_get_and_cancel(client, auth_headers):
     assert events.status_code == 200
     assert "event:" in events.text and pull_id in events.text
     assert "OLLAMA_PULL_CANCELLED" in events.text
+
+def test_pull_rejects_invalid_model_tag(client, auth_headers):
+    response = client.post("/api/ollama/models/pull", headers=auth_headers, json={"modelName": "bad\nname"})
+    assert response.status_code == 422
