@@ -4,6 +4,7 @@ import type { EventEnvelope, ImportJob } from "../../../../shared/contracts";
 import { appQueryClient } from "../../app/query-client";
 import { clientErrorMessage } from "../settings/settings.queries";
 import { repositoryKeys } from "../repositories/repository.queries";
+import { TaskProgress } from "../../components/TaskProgress";
 
 const lastSequences = new Map<string, number>();
 const terminalStates = new Set<ImportJob["state"]>(["completed", "failed", "cancelled"]);
@@ -105,16 +106,7 @@ export function ImportProgress({ job, onOpenDocument }: ImportProgressProps) {
   const isTerminal = terminalStates.has(activeJob.state);
   return (
     <section aria-label="导入进度" className="import-progress">
-      <div className="import-progress-title">
-        <strong>{activeJob.currentStage ?? "导入任务"}</strong>
-        <span>{activeJob.progress}%</span>
-      </div>
-      <progress
-        aria-label="导入进度"
-        aria-valuenow={activeJob.progress}
-        max={100}
-        value={activeJob.progress}
-      />
+      <TaskProgress label="导入进度" progress={activeJob.progress} status={activeJob.currentStage ?? "导入任务"} />
       <p>{activeJob.message}</p>
       {activeJob.errorMessage ? (
         <p className="editor-error" role="alert">

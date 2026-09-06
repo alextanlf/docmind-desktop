@@ -15,6 +15,7 @@ import {
   useRetryBatchMutation,
   useBatchItemsQuery,
 } from "./batch-import.queries";
+import { TaskProgress } from "../../components/TaskProgress";
 
 const lastSequences = new Map<string, number>();
 const terminal = new Set<BatchImport["state"]>([
@@ -122,16 +123,7 @@ export function BatchProgress({ batchId }: { batchId: string }) {
   const isTerminal = terminal.has(batch.state);
   return (
     <section aria-label="批量导入进度" className="import-progress">
-      <div className="import-progress-title">
-        <strong>{batch.message}</strong>
-        <span>{batch.progress}%</span>
-      </div>
-      <progress
-        aria-label="批量导入进度"
-        aria-valuenow={batch.progress}
-        max={100}
-        value={batch.progress}
-      />{" "}
+      <TaskProgress label="批量导入进度" progress={batch.progress} status={batch.message} />
       <p>
         {batch.completedCount}/{batch.selectedCount} 已完成，{batch.failedCount} 失败，
         {batch.skippedCount} 跳过
