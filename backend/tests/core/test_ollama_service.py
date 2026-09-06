@@ -27,3 +27,9 @@ def test_pull_survives_service_recreation(tmp_path):
     first = OllamaService("http://127.0.0.1:11434", store=store).create_pull("m")
     second = OllamaService("http://127.0.0.1:11434", store=store)
     assert second.get_pull(first.id).model_name == "m"
+
+def test_duplicate_active_pull_is_reused(tmp_path):
+    db = Database(f"sqlite+pysqlite:///{tmp_path/'db.sqlite'}"); db.upgrade(); store = OllamaPullStore(db)
+    service = OllamaService("http://127.0.0.1:11434", store=store)
+    first = service.create_pull("m"); second = service.create_pull("m")
+    assert first.id == second.id

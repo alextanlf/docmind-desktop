@@ -65,6 +65,17 @@ class OllamaPullStore:
         self.database = database
     def get(self, pull_id: str) -> OllamaPullRecord | None:
         with self.database.session() as session: return session.get(OllamaPullRecord, pull_id)
+    def find_active(self, *, model_name: str, base_url: str) -> OllamaPullRecord | None:
+        with self.database.session() as session:
+            return session.scalar(
+                select(OllamaPullRecord)
+                .where(
+                    OllamaPullRecord.model_name == model_name,
+                    OllamaPullRecord.base_url == base_url,
+                    OllamaPullRecord.state.in_(["queued", "running"]),
+                )
+                .order_by(OllamaPullRecord.created_at.asc())
+            )
     def save(self, record: OllamaPullRecord) -> OllamaPullRecord:
         with self.database.session() as session:
             session.merge(record)
