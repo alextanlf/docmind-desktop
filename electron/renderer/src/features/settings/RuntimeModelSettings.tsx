@@ -1,6 +1,8 @@
 import { useState } from "react";
 import type { RuntimeSettingsInput, SettingsView } from "../../../../shared/contracts";
 import { clientErrorMessage, useSaveRuntimeMutation } from "./settings.queries";
+import { OllamaStatusCard } from "./OllamaStatusCard";
+import { OllamaPullForm } from "./OllamaPullForm";
 
 const fallback: RuntimeSettingsInput = { ollama: { baseUrl: "http://127.0.0.1:11434", model: "llama3.2", timeoutSeconds: 60 }, routing: { mode: "automatic" } };
 
@@ -24,5 +26,7 @@ export function RuntimeModelSettings({ settings }: { settings: SettingsView }) {
     <button type="button" onClick={save} disabled={mutation.isPending}>{mutation.isPending ? "保存中…" : "保存运行设置"}</button>
     {mutation.isError && <p role="alert">{clientErrorMessage(mutation.error)}</p>}
     {mutation.isSuccess && <p role="status">运行设置已保存</p>}
+    <OllamaStatusCard />
+    <OllamaPullForm />
   </div>;
 }
