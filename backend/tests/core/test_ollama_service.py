@@ -34,6 +34,15 @@ def test_duplicate_active_pull_is_reused(tmp_path):
     first = service.create_pull("m"); second = service.create_pull("m")
     assert first.id == second.id
 
+def test_cancel_event_sequence_matches_snapshot(tmp_path):
+    db = Database(f"sqlite+pysqlite:///{tmp_path/'db.sqlite'}"); db.upgrade(); store = OllamaPullStore(db)
+    service = OllamaService("http://127.0.0.1:11434", store=store)
+    pull = service.create_pull("m")
+    cancelled = service.cancel_pull(pull.id)
+    event = service._events[pull.id][-1]
+    assert event["sequence"] == cancelled.last_event_sequence
+    assert event["payload"]["lastEventSequence"] == event["sequence"]
+
 def test_retry_pull_creates_new_task_for_retryable_failure(tmp_path):
     db = Database(f"sqlite+pysqlite:///{tmp_path/'db.sqlite'}"); db.upgrade(); store = OllamaPullStore(db)
     service = OllamaService("http://127.0.0.1:11434", store=store)
