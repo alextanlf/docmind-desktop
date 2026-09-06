@@ -7,6 +7,7 @@ from pydantic import Field
 from app.core.llm import ModelConfig, ModelConnectionResult
 from app.schemas.common import WireModel
 from app.schemas.web_search import WebSearchSettings
+from app.schemas.ollama import RuntimeSettingsInput
 
 MODEL_PRESETS = {
     "deepseek": ("https://api.deepseek.com/v1", "deepseek-chat"),
@@ -30,6 +31,7 @@ class SettingsView(WireModel):
     data_path: str
     screenshot_count: int
     web_search: WebSearchSettings
+    runtime: RuntimeSettingsInput | None = None
 
 
 class WebSearchSettingsUpdate(WireModel):
