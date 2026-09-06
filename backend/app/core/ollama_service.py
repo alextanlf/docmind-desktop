@@ -5,13 +5,15 @@ import httpx
 from app.schemas.ollama import OllamaModelView, OllamaModelsView, OllamaPullView
 from app.storage.repositories import OllamaPullStore
 from app.storage.models import OllamaPullRecord
+from app.core.ollama import PullCoordinator
 
 class OllamaService:
-    def __init__(self, base_url: str, model: str = "", transport: httpx.AsyncBaseTransport | None = None, timeout: float = 5, store: OllamaPullStore | None = None) -> None:
+    def __init__(self, base_url: str, model: str = "", transport: httpx.AsyncBaseTransport | None = None, timeout: float = 5, store: OllamaPullStore | None = None, coordinator: PullCoordinator | None = None) -> None:
         self.base_url, self.model, self.transport, self.timeout = base_url.rstrip("/"), model, transport, timeout
         self._pulls: dict[UUID, OllamaPullView] = {}
         self._events: dict[UUID, list[dict[str, object]]] = {}
         self.store = store
+        self.coordinator = coordinator or PullCoordinator(self.base_url, transport=transport, timeout=max(timeout, 600))
 
     async def models(self) -> OllamaModelsView:
         checked = datetime.now(UTC)
