@@ -43,6 +43,8 @@ from app.core.llm import (
     OpenAICompatibleProvider,
 )
 from app.core.ollama_service import OllamaService
+from app.core.ollama import OllamaProvider
+from app.core.model_router import ModelRouter
 from app.core.retrieval import HybridRetriever
 from app.core.secrets import KeyringSecretStore, MemorySecretStore, SecretStore
 from app.document.chunker import SemanticChunker
@@ -108,6 +110,13 @@ class _RuntimeLLMProvider:
         return OpenAICompatibleProvider(
             ModelConfig(**self.settings_service.model().model_dump()), api_key
         )
+
+class _RoutedLLMProvider:
+    def __init__(self, router: ModelRouter) -> None: self.router = router
+    async def test_connection(self): return await self.router.cloud.test_connection()
+    async def stream_chat(self, request):
+        routed = await self.router.open_stream(request)
+        async for delta in routed.deltas: yield delta
 
 
 def create_app(
@@ -220,10 +229,21 @@ def create_app(
                     raise RuntimeError("search key unavailable")
                 return await TavilyProvider(key).search(req)
         app.state.search_service = SearchService(_LazyTavily(), WebSearchRunStore(database), runtime_secret_store)
-        runtime_llm_provider = fake_llm_provider or _RuntimeLLMProvider(
+        cloud_llm_provider = fake_llm_provider or _RuntimeLLMProvider(
             app.state.settings_service,
             runtime_secret_store,
         )
+        runtime_config = app.state.settings_service.runtime()
+        if runtime_config.routing.mode == "cloud_only":
+            runtime_llm_provider = cloud_llm_provider
+        else:
+            runtime_llm_provider = _RoutedLLMProvider(ModelRouter(
+                runtime_config.routing.mode,
+                OllamaProvider(runtime_config.ollama.base_url, runtime_config.ollama.model, runtime_config.ollama.timeout_seconds),
+                cloud_llm_provider,
+                runtime_config.ollama.model,
+                app.state.settings_service.model().model,
+            ))
         app.state.repository_store = repository_store
         app.state.document_store = document_store
         app.state.import_job_store = ImportJobStore(database)
