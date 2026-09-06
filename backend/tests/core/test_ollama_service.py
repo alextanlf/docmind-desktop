@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import pytest
 from app.storage.database import Database
@@ -84,3 +85,25 @@ async def test_start_pull_tracks_task_until_idle(tmp_path):
     assert task is not None
     await service.wait_for_pull(pull.id)
     assert service.get_pull(pull.id).state == "completed"
+
+@pytest.mark.asyncio
+async def test_cancel_running_pull_cancels_coordinator_task(tmp_path):
+    db = Database(f"sqlite+pysqlite:///{tmp_path/'db.sqlite'}"); db.upgrade(); store = OllamaPullStore(db)
+    service = OllamaService("http://127.0.0.1:11434", store=store)
+    closed = False
+    async def events(_model):
+        nonlocal closed
+        try:
+            await asyncio.sleep(60)
+            yield {"status": "never"}
+        finally:
+            closed = True
+    class FakeCoordinator:
+        pull = staticmethod(events)
+    service.coordinator = FakeCoordinator()
+    pull = service.create_pull("m")
+    service.start_pull(pull.id)
+    await asyncio.sleep(0)
+    cancelled = service.cancel_pull(pull.id)
+    await service.wait_for_pull(pull.id)
+    assert cancelled.state == "cancelled" and closed is True
