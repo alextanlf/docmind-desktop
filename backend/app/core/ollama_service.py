@@ -3,11 +3,14 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 import httpx
 from app.schemas.ollama import OllamaModelView, OllamaModelsView, OllamaPullView
+from app.storage.repositories import OllamaPullStore
+from app.storage.models import OllamaPullRecord
 
 class OllamaService:
-    def __init__(self, base_url: str, model: str = "", transport: httpx.AsyncBaseTransport | None = None, timeout: float = 5) -> None:
+    def __init__(self, base_url: str, model: str = "", transport: httpx.AsyncBaseTransport | None = None, timeout: float = 5, store: OllamaPullStore | None = None) -> None:
         self.base_url, self.model, self.transport, self.timeout = base_url.rstrip("/"), model, transport, timeout
         self._pulls: dict[UUID, OllamaPullView] = {}
+        self.store = store
 
     async def models(self) -> OllamaModelsView:
         checked = datetime.now(UTC)
@@ -31,9 +34,15 @@ class OllamaService:
         now = datetime.now(UTC); pull_id = uuid4()
         view = OllamaPullView(id=pull_id, model_name=model_name, base_url=self.base_url, state="queued", progress=0, status="排队中", retryable=True, created_at=now, updated_at=now)
         self._pulls[pull_id] = view
+        if self.store:
+            self.store.save(OllamaPullRecord(id=str(pull_id), model_name=model_name, base_url=self.base_url, state="queued", progress=0, status="排队中", created_at=now, updated_at=now))
         return view
 
     def get_pull(self, pull_id: UUID) -> OllamaPullView:
+        if self.store:
+            row = self.store.get(str(pull_id))
+            if row:
+                return OllamaPullView(id=pull_id, model_name=row.model_name, base_url=row.base_url, state=row.state, progress=row.progress, status=row.status, total_bytes=row.total_bytes, completed_bytes=row.completed_bytes, error_code=row.error_code, error_message=row.error_message, retryable=row.retryable, cancel_requested=row.cancel_requested, last_event_sequence=row.last_event_sequence, created_at=row.created_at, started_at=row.started_at, completed_at=row.completed_at, updated_at=row.updated_at)
         from app.api.errors import DomainError
         try: return self._pulls[pull_id]
         except KeyError as error: raise DomainError("OLLAMA_PULL_NOT_FOUND", "拉取任务不存在", 404) from error
@@ -43,4 +52,9 @@ class OllamaService:
         if view.state in {"queued", "running"}:
             view = view.model_copy(update={"state":"cancelled", "status":"已取消", "cancel_requested":True, "error_code":"OLLAMA_PULL_CANCELLED", "updated_at":datetime.now(UTC)})
             self._pulls[pull_id] = view
+            if self.store:
+                row = self.store.get(str(pull_id))
+                if row:
+                    row.state, row.status, row.cancel_requested, row.error_code, row.updated_at = view.state, view.status, view.cancel_requested, view.error_code, view.updated_at
+                    self.store.save(row)
         return view

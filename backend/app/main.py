@@ -42,6 +42,7 @@ from app.core.llm import (
     ModelConnectionResult,
     OpenAICompatibleProvider,
 )
+from app.core.ollama_service import OllamaService
 from app.core.retrieval import HybridRetriever
 from app.core.secrets import KeyringSecretStore, MemorySecretStore, SecretStore
 from app.document.chunker import SemanticChunker
@@ -72,6 +73,7 @@ from app.storage.repositories import (
     RepositoryStore,
     SettingStore,
     VectorCleanupStore,
+    OllamaPullStore,
     WebSearchRunStore,
 )
 from app.storage.vectorstore import PersistentVectorStore
@@ -151,6 +153,9 @@ def create_app(
         database_path = Path(runtime_settings.data_dir) / "database" / "docmind.sqlite3"
         database = Database(f"sqlite+pysqlite:///{database_path}")
         database.upgrade()
+        ollama_pull_store = OllamaPullStore(database)
+        ollama_pull_store.recover_interrupted()
+        app.state.ollama_service = OllamaService("http://127.0.0.1:11434", store=ollama_pull_store)
         ImportJobStore(database).recover_interrupted()
         app.state.database = database
         if fake_llm_provider is None:
