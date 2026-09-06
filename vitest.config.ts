@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 export default defineConfig({
   test: {
     environment: "jsdom",
-    exclude: ["e2e/**", "node_modules/**"],
+    exclude: ["e2e/**", "node_modules/**", ".worktrees/**"],
     setupFiles: [resolve(__dirname, "electron/tests/setup.ts")],
   },
 });
