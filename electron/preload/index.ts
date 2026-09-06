@@ -39,7 +39,7 @@ import {
   WebSearchRunSchema,
   SearchImportInputSchema,
   ChatSearchInputSchema,
-  OllamaStatusSchema, OllamaModelsSchema,
+  OllamaStatusSchema, OllamaModelsSchema, OllamaPullInputSchema, OllamaPullSchema,
 } from "../shared/contracts";
 import type { DocMindApi, EventEnvelope } from "../shared/contracts";
 
@@ -115,7 +115,7 @@ function subscription(
 const activeSubscriptions = new Map<string, { cancel(): void }>();
 
 const api: DocMindApi = {
-  ollama: { status: () => invoke(IPC_CHANNELS.ollamaStatus, OllamaStatusSchema), models: () => invoke(IPC_CHANNELS.ollamaModels, OllamaModelsSchema) },
+  ollama: { status: () => invoke(IPC_CHANNELS.ollamaStatus, OllamaStatusSchema), models: () => invoke(IPC_CHANNELS.ollamaModels, OllamaModelsSchema), pull: (input) => invoke(IPC_CHANNELS.ollamaPull, OllamaPullSchema, OllamaPullInputSchema.parse(input)), getPull: (id) => invoke(IPC_CHANNELS.ollamaGetPull, OllamaPullSchema, uuid(id)), cancelPull: (id) => invoke(IPC_CHANNELS.ollamaCancelPull, OllamaPullSchema, uuid(id)) },
   settings: {
     get: () => invoke(IPC_CHANNELS.settingsGet, SettingsViewSchema),
     saveModel: (input) =>
