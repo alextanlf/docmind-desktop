@@ -22,6 +22,7 @@ from app.api.errors import DomainError, domain_error_handler, request_validation
 from app.api.import_batches import router as import_batches_router
 from app.api.imports import router as imports_router
 from app.api.memory import router as memory_router
+from app.api.ollama import router as ollama_router
 from app.api.repositories import router as repositories_router
 from app.api.request_limits import RequestBodyLimitMiddleware
 from app.api.search import router as search_router
@@ -330,6 +331,7 @@ def create_app(
     app.include_router(search_router)
     app.include_router(web_search_router)
     app.include_router(memory_router)
+    app.include_router(ollama_router)
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
