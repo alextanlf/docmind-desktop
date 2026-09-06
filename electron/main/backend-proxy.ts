@@ -59,7 +59,7 @@ type ActiveStream = {
 };
 
 const STREAM_ROUTE =
-  /^\/api\/(?:imports\/[0-9a-f-]{36}\/events|import-batches\/[0-9a-f-]{36}\/events|distillations\/[0-9a-f-]{36}\/events|sessions\/[0-9a-f-]{36}\/messages\/(?:stream|[0-9a-f-]{36}\/web-search\/stream))$/;
+  /^\/api\/(?:ollama\/models\/pull\/[0-9a-f-]{36}\/events|imports\/[0-9a-f-]{36}\/events|import-batches\/[0-9a-f-]{36}\/events|distillations\/[0-9a-f-]{36}\/events|sessions\/[0-9a-f-]{36}\/messages\/(?:stream|[0-9a-f-]{36}\/web-search\/stream))$/;
 
 export class BackendProxy {
   private readonly requestFn: RequestFn;
