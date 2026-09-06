@@ -177,4 +177,5 @@ async def test_fake_service_controls_are_one_shot_and_targeted(tmp_path) -> None
 
     control.path.write_text("delay-next-import", encoding="utf-8")
     await embedding.ensure_ready()
+    await embedding.embed_documents(["example"])
     assert not control.path.exists()

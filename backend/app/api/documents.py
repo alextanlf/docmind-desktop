@@ -631,6 +631,22 @@ async def recover_document_mutations(app) -> int:  # type: ignore[no-untyped-def
     request = Request({"type": "http", "app": app})
     recovered = 0
     for record in _mutation_store(request).list():
+        if record.operation == "distillation_create":
+            payload = _intent_payload(record)
+            try:
+                await save_distillation_document(
+                    app,
+                    repository_id=record.repository_id,
+                    distillation_id=record.id,
+                    title=str(payload.get("requested_title", "")),
+                    content=str(payload.get("requested_content", "")),
+                )
+                recovered += 1
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001, S112 - retry on next recovery pass
+                continue
+            continue
         if not _claim_mutation(app, record.id):
             continue
         try:
@@ -755,6 +771,88 @@ async def create_document(request: Request, repository_id: str, body: DocumentIn
     if persisted is None:
         raise _not_found()
     return _detail(persisted)
+
+
+async def save_distillation_document(
+    app,
+    *,
+    repository_id: str,
+    distillation_id: str,
+    title: str,
+    content: str,
+) -> DocumentDetail:
+    """Persist a Yuque distillation through the normal document/index workflow."""
+    request = Request({"type": "http", "app": app})
+    repository = _repository_store(request).get(repository_id)
+    if repository is None or not repository.yuque_id:
+        raise _not_found()
+    marker = f"docmind-distillation:{distillation_id}"
+    remote = await _gateway(request).find_document_by_marker(repository.yuque_id, marker)
+    existing = next(
+        (
+            document
+            for document in _document_store(request).list_for_repository(repository_id)
+            if document.source_identity == f"distillation:{distillation_id}"
+            or (remote is not None and document.yuque_id == remote.yuque_id)
+        ),
+        None,
+    )
+    if existing is not None and existing.status == "indexed":
+        return _detail(existing)
+    mutation_id = distillation_id
+    intent = _mutation_store(request).get(mutation_id)
+    if intent is None:
+        intent = _mutation_store(request).create(
+            mutation_id=mutation_id,
+            operation="distillation_create",
+            repository_id=repository_id,
+            document_id=existing.id if existing else None,
+            payload={
+                "phase": "remote_pending",
+                "remote_applied": remote is not None,
+                "remote_repository_id": repository.yuque_id,
+                "requested_title": title,
+                "requested_content": content,
+                "marker": marker,
+                "remote_id": remote.yuque_id if remote else None,
+                "remote_url": remote.url if remote else None,
+            },
+        )
+    if not _claim_mutation(app, mutation_id):
+        raise DomainError("MUTATION_CONFLICT", "文档变更正在进行", 409)
+    try:
+        if remote is None:
+            remote = await _gateway(request).create_document(
+                CreateYuqueDocumentRequest(
+                    repository_id=repository.yuque_id,
+                    title=title,
+                    content=_marked_create_content(content, marker),
+                )
+            )
+        _update_intent(request, mutation_id, phase="remote_applied", remote_applied=True, remote_id=remote.yuque_id, remote_url=remote.url)
+        document = existing or _document_store(request).create(
+            DocumentRecord(
+                id=str(uuid4()), repository_id=repository_id, yuque_id=remote.yuque_id,
+                title=remote.title, source_url=remote.url, source_type="yuque",
+                status="uploaded", yuque_url=remote.url,
+                source_identity=f"distillation:{distillation_id}",
+            )
+        )
+        _mutation_store(request).update(mutation_id, document_id=document.id)
+        _update_intent(request, mutation_id, document_id=document.id)
+        indexed = await _index(request, document, content, old_snapshot=None, mutation_id=mutation_id)
+        _update_intent(request, mutation_id, phase="file_pending")
+        _persist_content(request, indexed, content, mutation_id=mutation_id)
+        _mutation_store(request).delete(mutation_id)
+        persisted = _document_store(request).get(document.id)
+        if persisted is None:
+            raise _not_found()
+        return _detail(persisted)
+    except BaseException:
+        await _compensate_mutation(request, mutation_id)
+        raise
+    finally:
+        _release_mutation(app, mutation_id)
 
 
 @router.get("/api/documents/{document_id}", response_model=DocumentDetail)

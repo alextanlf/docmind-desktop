@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -12,6 +14,7 @@ from app.api.errors import DomainError
 from app.config import AppSettings
 from app.document.downloader import DocumentDownloader
 from app.document.sources import SourceInspector, SourceValidator, StagedFileStore
+from app.schemas.batches import CachedSourceRef
 from app.schemas.imports import SourceRef
 
 
@@ -333,3 +336,59 @@ async def test_source_inspector_previews_staged_markdown(staged_store: StagedFil
         len(b"# Local guide"),
     )
     assert preview.source_url == f"staged://{staged_id}"
+
+
+@pytest.mark.parametrize(
+    ("media_type", "raw_bytes"),
+    [
+        ("text/markdown", b"# Nested guide\n"),
+        ("text/html", b"<html><h1>Nested guide</h1></html>"),
+        ("application/pdf", b"%PDF-1.4\n%%EOF\n"),
+    ],
+)
+def test_source_inspector_loads_manifest_backed_collection_cache(
+    document_settings: AppSettings, media_type: str, raw_bytes: bytes
+) -> None:
+    collection_id = str(uuid4())
+    cache_id = str(uuid4())
+    collection_root = document_settings.staging_dir / "collections" / collection_id
+    item_path = collection_root / "items" / cache_id
+    item_path.parent.mkdir(parents=True)
+    item_path.write_bytes(raw_bytes)
+    digest = hashlib.sha256(raw_bytes).hexdigest()
+    (collection_root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "rootId": "root-1",
+                "files": [
+                    {
+                        "relativePath": "nested/source",
+                        "stagedId": cache_id,
+                        "mediaType": media_type,
+                        "sizeBytes": len(raw_bytes),
+                        "sha256": digest,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    document = SourceInspector(document_settings).load_collection_cache(
+        collection_id=collection_id,
+        cache_ref=CachedSourceRef(
+            cache_id=cache_id,
+            media_type=media_type,
+            byte_size=len(raw_bytes),
+            sha256=digest,
+        ),
+        source_identity="folder:root-1:nested/source",
+        source_revision=digest,
+        display_path="nested/source",
+        title="Nested source",
+    )
+
+    assert document.raw_bytes == raw_bytes
+    assert document.media_type == media_type
+    assert document.source_url == f"staged-collection://{collection_id}/{cache_id}"
+    assert str(document.local_path).startswith(str(document_settings.staging_dir))

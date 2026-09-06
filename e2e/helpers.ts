@@ -40,11 +40,20 @@ export async function importFixture(
     await page.getByLabel("新建知识库名称").fill("SwiftUI");
     await page.getByRole("button", { name: "新建知识库" }).click();
   }
-  await page.getByRole("button", { name: "继续" }).click();
-  await page.getByRole("button", { name: "准备模型" }).click();
-  await page.getByRole("button", { name: "确认导入" }).click();
-  await expect(page.getByLabel("导入进度")).toBeVisible();
   if (options.stopAtDuplicateDecision) return;
+  await page.getByRole("button", { name: "继续" }).click();
+  await expect(page.getByText("准备 Embedding 模型"))
+    .toBeVisible({ timeout: 15000 })
+    .catch(() => undefined);
+  const prepareModel = page.getByRole("button", { name: "准备模型" });
+  if (await prepareModel.isVisible().catch(() => false)) {
+    await prepareModel.click();
+  }
+  await expect(prepareModel).toHaveCount(0, { timeout: 15000 });
+  const confirm = page.getByRole("button", { name: "确认导入" });
+  await expect(confirm).toBeEnabled({ timeout: 15000 });
+  await confirm.click();
+  await expect(page.getByRole("region", { name: "导入进度", exact: true })).toBeVisible();
   if (options.waitForCompletion !== false) await expect(page.getByText("导入完成")).toBeVisible();
 }
 
@@ -56,7 +65,16 @@ export async function createChatSession(page: Page, repositoryName = "SwiftUI"):
 }
 
 export async function expandRepository(page: Page, repositoryName = "SwiftUI"): Promise<void> {
-  const expand = page.getByRole("button", { name: `展开 ${repositoryName}` });
-  if (await expand.isVisible()) await expand.click();
-  await expect(page.getByRole("button", { name: `收起 ${repositoryName}` })).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0, { timeout: 15000 });
+  await page.keyboard.press("Escape").catch(() => undefined);
+  const expand = page
+    .locator('button.repository-tree-button[aria-expanded="false"]')
+    .filter({ hasText: repositoryName });
+  const collapse = page
+    .locator('button.repository-tree-button[aria-expanded="true"]')
+    .filter({ hasText: repositoryName });
+  if (await collapse.isVisible().catch(() => false)) return;
+  await expect(expand).toBeVisible({ timeout: 15000 });
+  await expand.click();
+  await expect(collapse).toBeVisible({ timeout: 15000 });
 }

@@ -2,6 +2,22 @@ import { describe, expect, it, vi } from "vitest";
 import { BackendProxy, collectSse } from "../../main/backend-proxy";
 
 describe("BackendProxy", () => {
+  it("allows batch import event streams", () => {
+    const proxy = new BackendProxy({
+      request: vi.fn(() => new Promise<Response>(() => {})),
+      send: vi.fn(),
+    });
+    expect(() =>
+      proxy.openStream({
+        requestId: "00000000-0000-0000-0000-000000000101",
+        route: "/api/import-batches/00000000-0000-0000-0000-000000000101/events",
+        body: undefined,
+        sender: { send: vi.fn() },
+        controller: { abort: vi.fn() } as unknown as AbortController,
+      }),
+    ).not.toThrow();
+  });
+
   it("parses split SSE frames, preserves order, and ignores duplicates", async () => {
     const events = await collectSse([
       'id: 1\ndata: {"requestId":"00000000-0000-0000-0000-000000000001","type":"pro',
@@ -114,6 +130,35 @@ describe("BackendProxy", () => {
         sender: { send: vi.fn() },
       }),
     ).toThrow(/活动聊天流/);
+    proxy.cleanup();
+  });
+
+  it("allows phase2 streams and applies chat concurrency to search continuation", () => {
+    const proxy = new BackendProxy({
+      request: vi.fn(() => new Promise<Response>(() => {})),
+    });
+    const sessionId = "00000000-0000-0000-0000-000000000003";
+    proxy.openStream({
+      requestId: "00000000-0000-0000-0000-000000000104",
+      sessionId,
+      route: `/api/sessions/${sessionId}/messages/00000000-0000-0000-0000-000000000105/web-search/stream`,
+      sender: { send: vi.fn() },
+    });
+    expect(() =>
+      proxy.openStream({
+        requestId: "00000000-0000-0000-0000-000000000106",
+        sessionId,
+        route: `/api/sessions/${sessionId}/messages/stream`,
+        sender: { send: vi.fn() },
+      }),
+    ).toThrow(/active chat stream|活动聊天流/);
+    expect(() =>
+      proxy.openStream({
+        requestId: "00000000-0000-0000-0000-000000000107",
+        route: "/api/distillations/00000000-0000-0000-0000-000000000108/events",
+        sender: { send: vi.fn() },
+      }),
+    ).not.toThrow();
     proxy.cleanup();
   });
 

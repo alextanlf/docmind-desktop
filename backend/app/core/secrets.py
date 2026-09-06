@@ -46,14 +46,36 @@ def _secret_store_error():
 class MemorySecretStore:
     """In-process secret store for tests and explicitly injected fake services."""
 
-    def __init__(self) -> None:
+    def __init__(self, data_dir: str | None = None) -> None:
         self._values: dict[str, str] = {}
+        self._data_dir = data_dir
+        if data_dir:
+            import json
+            from pathlib import Path
+
+            path = Path(data_dir) / "e2e" / "secrets.json"
+            try:
+                self._values.update(json.loads(path.read_text(encoding="utf-8")))
+            except (FileNotFoundError, json.JSONDecodeError):
+                pass
 
     def get(self, name: str) -> str | None:
         return self._values.get(name)
 
     def set(self, name: str, value: str) -> None:
         self._values[name] = value
+        self._persist()
 
     def delete(self, name: str) -> None:
         self._values.pop(name, None)
+        self._persist()
+
+    def _persist(self) -> None:
+        if not self._data_dir:
+            return
+        import json
+        from pathlib import Path
+
+        path = Path(self._data_dir) / "e2e" / "secrets.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self._values), encoding="utf-8")

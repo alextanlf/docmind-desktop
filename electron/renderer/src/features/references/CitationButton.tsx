@@ -1,4 +1,4 @@
-import { FileText } from "lucide-react";
+import { Brain, FileText, Globe } from "lucide-react";
 import { useUiStore } from "../../stores/ui-store";
 import type { ScopedCitation } from "./citation-types";
 
@@ -13,6 +13,8 @@ export function CitationButton({
   const setActiveCitationId = useUiStore((state) => state.setActiveCitationId);
   const setActiveCitationTrigger = useUiStore((state) => state.setActiveCitationTrigger);
   const setReferencePanelOpen = useUiStore((state) => state.setReferencePanelOpen);
+  const SourceIcon =
+    citation.kind === "memory" ? Brain : citation.kind === "web" ? Globe : FileText;
 
   return (
     <button
@@ -28,7 +30,7 @@ export function CitationButton({
       title={`查看引用 ${citation.sourceId}`}
       type="button"
     >
-      <FileText aria-hidden="true" size={13} />
+      <SourceIcon aria-hidden="true" size={13} />
       {citation.sourceId}
     </button>
   );

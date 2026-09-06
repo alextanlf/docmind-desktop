@@ -25,8 +25,13 @@ function patchJob(current: ImportJob, event: EventEnvelope): ImportJob {
         : current.state,
     documentId: typeof payload.documentId === "string" ? payload.documentId : current.documentId,
     retryable: typeof payload.retryable === "boolean" ? payload.retryable : current.retryable,
+    errorCode: typeof payload.code === "string" ? payload.code : current.errorCode,
     errorMessage:
-      typeof payload.errorMessage === "string" ? payload.errorMessage : current.errorMessage,
+      typeof payload.errorMessage === "string"
+        ? payload.errorMessage
+        : typeof payload.message === "string" && payload.state === "failed"
+          ? payload.message
+          : current.errorMessage,
   };
 }
 export function ImportProgress({ job, onOpenDocument }: ImportProgressProps) {
@@ -61,11 +66,12 @@ export function ImportProgress({ job, onOpenDocument }: ImportProgressProps) {
     };
   }, [job.id]);
   useEffect(() => {
-    if (activeJob.state !== "completed") return;
-    void appQueryClient.invalidateQueries({ queryKey: repositoryKeys.root });
+    if (!terminalStates.has(activeJob.state)) return;
+    void appQueryClient.refetchQueries({ queryKey: repositoryKeys.root, type: "all" });
     if (activeJob.repositoryId) {
-      void appQueryClient.invalidateQueries({
+      void appQueryClient.refetchQueries({
         queryKey: repositoryKeys.documents(activeJob.repositoryId),
+        type: "all",
       });
     }
   }, [activeJob.repositoryId, activeJob.state]);
@@ -78,7 +84,20 @@ export function ImportProgress({ job, onOpenDocument }: ImportProgressProps) {
   }
   async function retry() {
     try {
-      setActiveJob(await window.docmind.imports.retry(activeJob.id));
+      const retried = await window.docmind.imports.retry(activeJob.id);
+      lastSequences.delete(activeJob.id);
+      subscriptionRef.current?.cancel();
+      subscriptionRef.current = null;
+      setActiveJob(retried);
+      const current = await window.docmind.imports.get(activeJob.id);
+      setActiveJob(current);
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        if (terminalStates.has(current.state)) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const next = await window.docmind.imports.get(activeJob.id);
+        setActiveJob(next);
+        if (terminalStates.has(next.state)) break;
+      }
     } catch (cause) {
       setError(clientErrorMessage(cause));
     }

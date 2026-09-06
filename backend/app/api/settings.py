@@ -15,12 +15,17 @@ from app.schemas.settings import (
     ModelSettingsUpdate,
     ModelSettingsView,
     SettingsView,
+    WebSearchSettingsUpdate,
 )
+from app.schemas.web_search import SearchConnectionResult, WebSearchSettings
+from app.search.tavily import TavilyProvider
 from app.storage.repositories import SettingStore
 
 MODEL_CONFIG_KEY = "model.config"
 MODEL_KEY_REFERENCE = "model.api_key_ref"
 MODEL_API_KEY_NAME = "model-api-key"
+WEB_SEARCH_CONFIG_KEY = "web-search.config"
+WEB_SEARCH_API_KEY_NAME = "web-search:tavily"
 ProviderFactory = Callable[[ModelConfig, str], LLMProvider]
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -95,7 +100,39 @@ class SettingsService:
             has_api_key=self.has_api_key(),
             data_path=str(settings.data_dir.resolve()),
             screenshot_count=_screenshot_count(settings.screenshots_dir),
+            web_search=self.web_search(),
         )
+
+    def web_search(self) -> WebSearchSettings:
+        raw = self.setting_store.get(WEB_SEARCH_CONFIG_KEY)
+        if raw:
+            config = WebSearchSettings.model_validate_json(raw)
+        else:
+            config = WebSearchSettings()
+        return config.model_copy(update={"has_api_key": bool(self.secret_store.get(WEB_SEARCH_API_KEY_NAME))})
+
+    def save_web_search(self, update: WebSearchSettingsUpdate) -> WebSearchSettings:
+        if update.mode not in {"off", "ask", "auto"} or not 1 <= update.max_results <= 10:
+            raise DomainError("SEARCH_SETTINGS_INVALID", "联网搜索设置无效", 422)
+        previous = self.secret_store.get(WEB_SEARCH_API_KEY_NAME)
+        if update.api_key is not None:
+            if update.api_key:
+                self.secret_store.set(WEB_SEARCH_API_KEY_NAME, update.api_key)
+            else:
+                self.secret_store.delete(WEB_SEARCH_API_KEY_NAME)
+        try:
+            self.setting_store.set_many({WEB_SEARCH_CONFIG_KEY: WebSearchSettings(mode=update.mode, max_results=update.max_results, has_api_key=False).model_dump_json()})
+        except Exception:
+            if previous is None: self.secret_store.delete(WEB_SEARCH_API_KEY_NAME)
+            else: self.secret_store.set(WEB_SEARCH_API_KEY_NAME, previous)
+            raise
+        return self.web_search()
+
+    async def test_web_search(self) -> SearchConnectionResult:
+        key = self.secret_store.get(WEB_SEARCH_API_KEY_NAME)
+        if not key:
+            raise DomainError("SEARCH_AUTH_FAILED", "请先配置搜索 API Key", 400)
+        return await TavilyProvider(key).test_connection()
 
     def clear_diagnostics(self, settings: AppSettings) -> None:
         directory = settings.screenshots_dir
@@ -147,3 +184,14 @@ async def test_model(request: Request) -> ModelConnectionResult:
 async def clear_diagnostics(request: Request) -> Response:
     _service(request).clear_diagnostics(_settings(request))
     return Response(status_code=204)
+
+
+@router.put("/web-search", response_model=SettingsView)
+async def save_web_search(update: WebSearchSettingsUpdate, request: Request) -> SettingsView:
+    _service(request).save_web_search(update)
+    return _service(request).view(_settings(request))
+
+
+@router.post("/web-search/test", response_model=SearchConnectionResult)
+async def test_web_search(request: Request) -> SearchConnectionResult:
+    return await _service(request).test_web_search()

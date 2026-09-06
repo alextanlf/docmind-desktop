@@ -1,11 +1,11 @@
 import pytest
 
 from app.chat.citations import URLStreamSanitizer, parse_citations, strip_model_urls
-from app.schemas.chat import CitationRef
+from app.schemas.chat import DocumentCitation
 
 
-def _source(source_id: str) -> CitationRef:
-    return CitationRef(
+def _source(source_id: str) -> DocumentCitation:
+    return DocumentCitation(
         source_id=source_id,
         chunk_id=f"chunk-{source_id}",
         document_id=f"doc-{source_id}",

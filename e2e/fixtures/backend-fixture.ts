@@ -1,5 +1,5 @@
 import { expect as baseExpect, test as base, type Page } from "@playwright/test";
-import { _electron as electron, type ElectronApplication } from "playwright";
+import type { Electron, ElectronApplication } from "playwright";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -24,11 +24,11 @@ type ElectronHarness = FixtureDialog & {
 type Fixtures = { electronApp: ElectronHarness; page: Page };
 
 export const test = base.extend<Fixtures>({
-  electronApp: async (_fixtures, use, testInfo) => {
+  electronApp: async ({ playwright }, use, testInfo) => {
     const dataDir = await mkdtemp(join(tmpdir(), "docmind-e2e-"));
     const artifacts = testInfo.outputPath("backend");
     await mkdir(artifacts, { recursive: true });
-    let app = await launch(dataDir, artifacts);
+    let app = await launch(playwright._electron, dataDir, artifacts);
     let page = await app.firstWindow();
     const consoleErrors: string[] = [];
     const attachPageGuards = (window: Page) => {
@@ -49,8 +49,21 @@ export const test = base.extend<Fixtures>({
         await app.close();
       },
       async restart() {
+        const before =
+          (await readFile(join(artifacts, "backend.log"), "utf8").catch(() => "")).match(
+            /backend exited/g,
+          )?.length ?? 0;
         await app.close();
-        app = await launch(dataDir, artifacts);
+        await expect
+          .poll(
+            async () =>
+              (await readFile(join(artifacts, "backend.log"), "utf8").catch(() => "")).match(
+                /backend exited/g,
+              )?.length ?? 0,
+            { timeout: 5000 },
+          )
+          .toBeGreaterThan(before);
+        app = await launch(playwright._electron, dataDir, artifacts);
         page = await app.firstWindow();
         attachPageGuards(page);
         return page;
@@ -102,7 +115,11 @@ export const test = base.extend<Fixtures>({
 
 export const expect = baseExpect;
 
-async function launch(dataDir: string, artifacts: string): Promise<ElectronApplication> {
+async function launch(
+  electron: Electron,
+  dataDir: string,
+  artifacts: string,
+): Promise<ElectronApplication> {
   const app = await electron.launch({
     args: [resolve(root, "out/main/index.js")],
     env: {
