@@ -41,7 +41,13 @@ async def cancel_pull(pull_id: UUID, request: Request):
 @router.get("/models/pull/{pull_id}/events")
 async def pull_events(pull_id: UUID, request: Request):
     snapshot = _service(request).get_pull(pull_id)
+    try: after = max(0, int(request.headers.get("last-event-id", "0")))
+    except ValueError: after = 0
     async def stream():
-        payload = snapshot.model_dump_json(by_alias=True)
-        yield f"id: {snapshot.last_event_sequence}\nevent: snapshot\ndata: {payload}\n\n"
+        events = _service(request)._events.get(pull_id, [])
+        for event in events:
+            if int(event["sequence"]) <= after: continue
+            yield f"id: {event['sequence']}\nevent: {event['type']}\ndata: {json.dumps(event['payload'], ensure_ascii=False)}\n\n"
+        if not events:
+            yield f"id: {snapshot.last_event_sequence}\nevent: snapshot\ndata: {snapshot.model_dump_json(by_alias=True)}\n\n"
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control":"no-cache"})
