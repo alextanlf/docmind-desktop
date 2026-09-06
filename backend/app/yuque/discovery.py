@@ -38,6 +38,10 @@ class YuqueDiscovery:
         if not remote_repo:
             raise DomainError("YUQUE_DISCOVERY_FAILED", "缺少语雀知识库标识", 422, False)
         local = self.repository_store.get(str(request.repository_id)) if request.repository_id else None
+        if local is not None and remote_repo == str(request.repository_id):
+            if not local.yuque_id:
+                raise DomainError("YUQUE_DISCOVERY_FAILED", "知识库尚未绑定语雀", 409, False)
+            remote_repo = local.yuque_id
         if local is not None and local.yuque_id and local.yuque_id != remote_repo:
             raise DomainError("YUQUE_DISCOVERY_FAILED", "语雀知识库不匹配", 409, False)
         try:

@@ -26,6 +26,7 @@ async def prepare_embedding(request: Request) -> ModelStatus:
         task = asyncio.create_task(request.app.state.embedding_provider.ensure_ready())
         task.add_done_callback(_consume_terminal_exception)
         request.app.state.embedding_prepare_task = task
-        # Start the task before responding so status and test providers are deterministic.
         await asyncio.sleep(0)
+    if not task.done():
+        await task
     return request.app.state.embedding_provider.status

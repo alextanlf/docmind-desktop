@@ -22,7 +22,7 @@ class Vectors:
 class SummaryVectors:
     def __init__(self, source_id): self.source_id = source_id
     def query_memory(self, collection, embedding, top_k, **kwargs):
-        if collection != "_session_summaries": return []
+        if collection not in {"_session_summaries", "session_summaries"}: return []
         return [VectorHit("summary-vector", "secret", {"repository_id": "repo-a", "source_id": self.source_id, "kind": "session_summary"}, .9)]
 
 
@@ -59,7 +59,7 @@ async def test_retriever_filters_low_similarity_and_deduplicates_authoritative_s
 
     class DuplicateVectors:
         def query_memory(self, collection, embedding, top_k, **kwargs):
-            if collection != "_distilled_knowledge": return []
+            if collection not in {"_distilled_knowledge", "distilled_knowledge"}: return []
             repository_id = kwargs["repository_id"]
             score = .9 if repository_id == "repo-a" else .2
             return [VectorHit(f"v-{repository_id[-1]}", "stale metadata", {"repository_id": repository_id, "source_id": source_id, "kind": "distillation", "session_id": "deleted"}, score)]
@@ -80,5 +80,5 @@ async def test_retriever_drops_saved_unindexed_distillation(database):
         source_id = record.id
     class PendingVectors:
         def query_memory(self, collection, embedding, top_k, **kwargs):
-            return [VectorHit("pending-vector", "pending", {"repository_id": "repo-a", "source_id": source_id, "kind": "distillation"}, .9)] if collection == "_distilled_knowledge" else []
+            return [VectorHit("pending-vector", "pending", {"repository_id": "repo-a", "source_id": source_id, "kind": "distillation"}, .9)] if collection in {"_distilled_knowledge", "distilled_knowledge"} else []
     assert await MemoryRetriever(database, Embeddings(), PendingVectors()).search("q", ["repo-a"]) == []

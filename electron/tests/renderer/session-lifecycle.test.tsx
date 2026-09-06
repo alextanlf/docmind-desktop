@@ -7,12 +7,26 @@ import { Workspace } from "../../renderer/src/app/Workspace";
 import { ChatPanel } from "../../renderer/src/features/chat/ChatPanel";
 import { installDocMindApi, repository, session } from "./test-docmind-api";
 
-describe("session lifecycle", () => { it("disables the composer for ended sessions", () => { installDocMindApi(); render(<QueryClientProvider client={new QueryClient()}><ChatPanel ended repositoryIds={[repository.id]} sessionId={session.id} /></QueryClientProvider>); expect(screen.getByRole("textbox", { name: "输入问题" })).toBeDisabled(); }); });
+describe("session lifecycle", () => {
+  it("disables the composer for ended sessions", () => {
+    installDocMindApi();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ChatPanel ended repositoryIds={[repository.id]} sessionId={session.id} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByRole("textbox", { name: "输入问题" })).toBeDisabled();
+  });
+});
 
 it("requires an in-app confirmation and restores focus after ending a session", async () => {
   const endSession = vi.fn().mockResolvedValue({ ...session, endedAt: "2026-09-04T00:00:00Z" });
   installDocMindApi({ memory: { endSession } });
-  render(<AppProviders><Workspace /></AppProviders>);
+  render(
+    <AppProviders>
+      <Workspace />
+    </AppProviders>,
+  );
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: session.title }));
   await user.click(screen.getByRole("button", { name: "结束会话" }));

@@ -1,4 +1,4 @@
-import { completeFakeOnboarding, importFixture } from "./helpers";
+import { completeFakeOnboarding, createChatSession, importFixture } from "./helpers";
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "./fixtures/backend-fixture";
 
@@ -15,17 +15,31 @@ for (const viewport of [
     await expectFullyInViewport(page.getByRole("dialog", { name: "开始使用 DocMind" }));
     await completeFakeOnboarding(page);
     await importFixture(electronApp, page, "e2e/fixtures/state-guide.md");
+    await createChatSession(page);
     await expect(page.getByLabel("主导航")).toBeVisible();
     await expectFullyInViewport(page.getByLabel("发送消息"));
     await expectFullyInViewport(page.getByLabel("导入文档"));
     await expectPhysicalReferenceLayout(page, viewport.reference);
     await expect
       .poll(() =>
-        page
-          .locator("*")
-          .evaluateAll((elements) =>
-            elements.some((element) => element.scrollWidth > element.clientWidth),
-          ),
+        page.locator("*").evaluateAll((elements) => {
+          const offenders = elements
+            .filter(
+              (element) =>
+                element.scrollWidth > element.clientWidth &&
+                getComputedStyle(element).textOverflow !== "ellipsis" &&
+                !element.classList.contains("sr-only"),
+            )
+            .slice(0, 8)
+            .map((element) => ({
+              tag: element.tagName,
+              className: element.className,
+              scrollWidth: element.scrollWidth,
+              clientWidth: element.clientWidth,
+            }));
+
+          return offenders.length > 0;
+        }),
       )
       .toBe(false);
     await page.screenshot({

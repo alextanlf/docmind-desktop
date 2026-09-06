@@ -25,7 +25,10 @@ export function useYuqueStatusQuery() {
 
 export function useSaveWebSearchMutation() {
   const client = useQueryClient();
-  return useMutation({ mutationFn: (input: WebSearchSettingsInput) => window.docmind.settings.saveWebSearch(input), onSuccess: (settings) => client.setQueryData(settingsKeys.root, settings) });
+  return useMutation({
+    mutationFn: (input: WebSearchSettingsInput) => window.docmind.settings.saveWebSearch(input),
+    onSuccess: (settings) => client.setQueryData(settingsKeys.root, settings),
+  });
 }
 
 export function clientErrorMessage(error: unknown): string {

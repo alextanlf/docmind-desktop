@@ -333,8 +333,27 @@ class SourceInspector:
         title: str,
     ) -> DownloadedDocument:
         if collection_id.startswith("remote/"):
-            path = self.collection_store.staging_dir / collection_id / str(cache_ref.cache_id)
-            snapshot = read_file_snapshot(path, expected_size=cache_ref.byte_size, expected_hash=cache_ref.sha256, max_bytes=self.html_markdown_max_bytes, collect_bytes=True)
+            try:
+                batch_id = UUID(collection_id.removeprefix("remote/"))
+                cache_id = UUID(str(cache_ref.cache_id))
+            except ValueError as error:
+                raise DomainError("SOURCE_NOT_FOUND", "远程缓存标识无效", 404, False) from error
+            staging_root = self.collection_store.staging_dir.resolve()
+            path = (staging_root / "remote" / str(batch_id) / str(cache_id)).resolve()
+            if staging_root not in path.parents:
+                raise DomainError("SOURCE_NOT_FOUND", "远程缓存路径无效", 404, False)
+            size_limit = (
+                self.collection_store.pdf_max_bytes
+                if cache_ref.media_type == "application/pdf"
+                else self.collection_store.html_markdown_max_bytes
+            )
+            snapshot = read_file_snapshot(
+                path,
+                expected_size=cache_ref.byte_size,
+                expected_hash=cache_ref.sha256,
+                max_bytes=size_limit,
+                collect_bytes=True,
+            )
             verify_file_snapshot(path, snapshot)
             return DownloadedDocument(title=title, source_url=display_path, media_type=cache_ref.media_type, raw_bytes=snapshot.raw_bytes or b"", local_path=path)
         return self.collection_store.load(
@@ -354,4 +373,16 @@ class SourceInspector:
         collection_id: str,
         requests: Iterable[CollectionCacheRequest],
     ) -> dict[str, DownloadedDocument]:
+        if collection_id.startswith("remote/"):
+            return {
+                request.key: self.load_collection_cache(
+                    collection_id=collection_id,
+                    cache_ref=request.cache_ref,
+                    source_identity=request.source_identity,
+                    source_revision=request.source_revision,
+                    display_path=request.display_path,
+                    title=request.title,
+                )
+                for request in requests
+            }
         return self.collection_store.load_many(collection_id, requests)

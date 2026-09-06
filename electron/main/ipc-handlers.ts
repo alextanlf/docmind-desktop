@@ -119,7 +119,12 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
       proxy.requestJson("/api/settings/model/test", jsonInit("POST"), ModelConnectionResultSchema),
     [IPC_CHANNELS.settingsClearDiagnostics]: () =>
       proxy.requestVoid("/api/settings/diagnostics/clear", jsonInit("POST")),
-    [IPC_CHANNELS.settingsSaveWebSearch]: (_event, input) => proxy.requestJson("/api/settings/web-search", jsonInit("PUT", parse(WebSearchSettingsInputSchema, input)), SettingsViewSchema),
+    [IPC_CHANNELS.settingsSaveWebSearch]: (_event, input) =>
+      proxy.requestJson(
+        "/api/settings/web-search",
+        jsonInit("PUT", parse(WebSearchSettingsInputSchema, input)),
+        SettingsViewSchema,
+      ),
     [IPC_CHANNELS.embeddingStatus]: () =>
       proxy.requestJson("/api/embedding/status", {}, ModelStatusSchema),
     [IPC_CHANNELS.embeddingPrepare]: () =>
@@ -207,32 +212,56 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
       });
     },
     [IPC_CHANNELS.batchesCreate]: (_event, input) =>
-      proxy.requestJson("/api/import-batches", jsonInit("POST", parse(CreateBatchInputSchema, input)), BatchImportSchema),
+      proxy.requestJson(
+        "/api/import-batches",
+        jsonInit("POST", parse(CreateBatchInputSchema, input)),
+        BatchImportSchema,
+      ),
     [IPC_CHANNELS.batchesGet]: (_event, batchId) => {
       const id = parse(UUID, batchId);
       return proxy.requestJson(`/api/import-batches/${id}`, {}, BatchImportSchema);
     },
-    [IPC_CHANNELS.batchesList]: () => proxy.requestJson("/api/import-batches", {}, z.array(BatchImportSchema)),
+    [IPC_CHANNELS.batchesList]: () =>
+      proxy.requestJson("/api/import-batches", {}, z.array(BatchImportSchema)),
     [IPC_CHANNELS.batchesListItems]: (_event, batchId, cursor) => {
       const id = parse(UUID, batchId);
-      const query = typeof cursor === "string" && cursor.length > 0 ? `?cursor=${encodeURIComponent(cursor)}` : "";
+      const query =
+        typeof cursor === "string" && cursor.length > 0
+          ? `?cursor=${encodeURIComponent(cursor)}`
+          : "";
       return proxy.requestJson(`/api/import-batches/${id}/items${query}`, {}, BatchItemPageSchema);
     },
     [IPC_CHANNELS.batchesConfirm]: (_event, batchId, input) => {
       const id = parse(UUID, batchId);
-      return proxy.requestJson(`/api/import-batches/${id}/confirm`, jsonInit("POST", parse(ConfirmBatchInputSchema, input)), BatchImportSchema);
+      return proxy.requestJson(
+        `/api/import-batches/${id}/confirm`,
+        jsonInit("POST", parse(ConfirmBatchInputSchema, input)),
+        BatchImportSchema,
+      );
     },
     [IPC_CHANNELS.batchesCancel]: (_event, batchId) => {
       const id = parse(UUID, batchId);
-      return proxy.requestJson(`/api/import-batches/${id}/cancel`, jsonInit("POST"), BatchImportSchema);
+      return proxy.requestJson(
+        `/api/import-batches/${id}/cancel`,
+        jsonInit("POST"),
+        BatchImportSchema,
+      );
     },
     [IPC_CHANNELS.batchesContinue]: (_event, batchId) => {
       const id = parse(UUID, batchId);
-      return proxy.requestJson(`/api/import-batches/${id}/continue`, jsonInit("POST"), BatchImportSchema);
+      return proxy.requestJson(
+        `/api/import-batches/${id}/continue`,
+        jsonInit("POST"),
+        BatchImportSchema,
+      );
     },
     [IPC_CHANNELS.batchesRetry]: (_event, batchId, input) => {
       const id = parse(UUID, batchId);
-      return proxy.requestJson(`/api/import-batches/${id}/retry`, jsonInit("POST", input === undefined ? undefined : parse(RetryBatchInputSchema, input)), BatchImportSchema);
+      return proxy.requestJson(
+        `/api/import-batches/${id}/retry`,
+        jsonInit("POST", input === undefined ? undefined : parse(RetryBatchInputSchema, input)),
+        BatchImportSchema,
+      );
     },
     [IPC_CHANNELS.batchesSubscribe]: (event, batchId, afterSequence) => {
       const id = parse(UUID, batchId);
@@ -284,12 +313,32 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
     },
     [IPC_CHANNELS.chatSearchStream]: (event, input, afterSequence) => {
       const data = parse(ChatSearchInputSchema, input);
-      if (afterSequence !== undefined && (!Number.isInteger(afterSequence) || afterSequence < 0)) throw new DocMindClientError("INVALID_REQUEST", "事件序号无效");
-      const options = { requestId: data.requestId, sessionId: data.sessionId, route: `/api/sessions/${data.sessionId}/messages/${data.userMessageId}/web-search/stream`, body: { requestId: data.requestId, repositoryIds: data.repositoryIds }, sender: event.sender ?? { send: () => {} }, ...(afterSequence === undefined ? {} : { afterSequence, headers: { "Last-Event-ID": String(afterSequence) } }) };
+      if (afterSequence !== undefined && (!Number.isInteger(afterSequence) || afterSequence < 0))
+        throw new DocMindClientError("INVALID_REQUEST", "事件序号无效");
+      const options = {
+        requestId: data.requestId,
+        sessionId: data.sessionId,
+        route: `/api/sessions/${data.sessionId}/messages/${data.userMessageId}/web-search/stream`,
+        body: { requestId: data.requestId, repositoryIds: data.repositoryIds },
+        sender: event.sender ?? { send: () => {} },
+        ...(afterSequence === undefined
+          ? {}
+          : { afterSequence, headers: { "Last-Event-ID": String(afterSequence) } }),
+      };
       return afterSequence === undefined ? proxy.openStream(options) : proxy.resumeStream(options);
     },
-    [IPC_CHANNELS.webSearchGetRun]: (_event, runId, sessionId) => proxy.requestJson(`/api/search/runs/${parse(UUID, runId)}?session_id=${parse(UUID, sessionId)}`, {}, WebSearchRunSchema),
-    [IPC_CHANNELS.webSearchCreateImportBatch]: (_event, runId, input) => proxy.requestJson(`/api/web-search/runs/${parse(UUID, runId)}/import-batch`, jsonInit("POST", parse(SearchImportInputSchema, input)), BatchImportSchema),
+    [IPC_CHANNELS.webSearchGetRun]: (_event, runId, sessionId) =>
+      proxy.requestJson(
+        `/api/search/runs/${parse(UUID, runId)}?session_id=${parse(UUID, sessionId)}`,
+        {},
+        WebSearchRunSchema,
+      ),
+    [IPC_CHANNELS.webSearchCreateImportBatch]: (_event, runId, input) =>
+      proxy.requestJson(
+        `/api/web-search/runs/${parse(UUID, runId)}/import-batch`,
+        jsonInit("POST", parse(SearchImportInputSchema, input)),
+        BatchImportSchema,
+      ),
     [IPC_CHANNELS.memoryEndSession]: (_event, sessionId) => {
       const id = parse(UUID, sessionId);
       return proxy.requestJson(`/api/sessions/${id}/end`, jsonInit("POST"), SessionSummarySchema);
@@ -301,11 +350,19 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
     },
     [IPC_CHANNELS.memoryGetSummary]: (_event, sessionId) => {
       const id = parse(UUID, sessionId);
-      return proxy.requestJson(`/api/sessions/${id}/summary`, {}, SessionMemorySummarySchema.nullable());
+      return proxy.requestJson(
+        `/api/sessions/${id}/summary`,
+        {},
+        SessionMemorySummarySchema.nullable(),
+      );
     },
     [IPC_CHANNELS.memoryRegenerateSummary]: (_event, sessionId) => {
       const id = parse(UUID, sessionId);
-      return proxy.requestJson(`/api/sessions/${id}/summary/regenerate`, jsonInit("POST"), SessionMemorySummarySchema);
+      return proxy.requestJson(
+        `/api/sessions/${id}/summary/regenerate`,
+        jsonInit("POST"),
+        SessionMemorySummarySchema,
+      );
     },
     [IPC_CHANNELS.memoryDeleteSummary]: (_event, sessionId) => {
       const id = parse(UUID, sessionId);
@@ -313,7 +370,11 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
     },
     [IPC_CHANNELS.memoryCreateDistillation]: (_event, sessionId) => {
       const id = parse(UUID, sessionId);
-      return proxy.requestJson(`/api/sessions/${id}/distillations`, jsonInit("POST"), DistillationViewSchema);
+      return proxy.requestJson(
+        `/api/sessions/${id}/distillations`,
+        jsonInit("POST"),
+        DistillationViewSchema,
+      );
     },
     [IPC_CHANNELS.memoryGetDistillation]: (_event, distillationId) => {
       const id = parse(UUID, distillationId);
@@ -321,15 +382,27 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
     },
     [IPC_CHANNELS.memoryUpdateDistillation]: (_event, distillationId, input) => {
       const id = parse(UUID, distillationId);
-      return proxy.requestJson(`/api/distillations/${id}`, jsonInit("PUT", parse(DistillationEditSchema, input)), DistillationViewSchema);
+      return proxy.requestJson(
+        `/api/distillations/${id}`,
+        jsonInit("PUT", parse(DistillationEditSchema, input)),
+        DistillationViewSchema,
+      );
     },
     [IPC_CHANNELS.memoryRegenerateDistillation]: (_event, distillationId) => {
       const id = parse(UUID, distillationId);
-      return proxy.requestJson(`/api/distillations/${id}/regenerate`, jsonInit("POST"), DistillationViewSchema);
+      return proxy.requestJson(
+        `/api/distillations/${id}/regenerate`,
+        jsonInit("POST"),
+        DistillationViewSchema,
+      );
     },
     [IPC_CHANNELS.memorySaveDistillation]: (_event, distillationId, input) => {
       const id = parse(UUID, distillationId);
-      return proxy.requestJson(`/api/distillations/${id}/save`, jsonInit("POST", parse(DistillationTargetSchema, input)), DistillationViewSchema);
+      return proxy.requestJson(
+        `/api/distillations/${id}/save`,
+        jsonInit("POST", parse(DistillationTargetSchema, input)),
+        DistillationViewSchema,
+      );
     },
     [IPC_CHANNELS.memoryDeleteDistillation]: (_event, distillationId) => {
       const id = parse(UUID, distillationId);
@@ -346,7 +419,13 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
       const id = parse(UUID, distillationId);
       if (!Number.isInteger(afterSequence) || afterSequence < 0)
         throw new DocMindClientError("INVALID_REQUEST", "事件序号无效");
-      return proxy.openStream({ requestId: id, afterSequence, route: `/api/distillations/${id}/events`, headers: { "Last-Event-ID": String(afterSequence) }, sender: event.sender ?? { send: () => {} } });
+      return proxy.openStream({
+        requestId: id,
+        afterSequence,
+        route: `/api/distillations/${id}/events`,
+        headers: { "Last-Event-ID": String(afterSequence) },
+        sender: event.sender ?? { send: () => {} },
+      });
     },
     [IPC_CHANNELS.dialogsChooseSource]: (_event, kind) => {
       if (kind !== "pdf" && kind !== "markdown")
@@ -510,7 +589,10 @@ function sanitizeSerialized(value: {
 }
 
 function emitStreamError(channel: string, event: IpcEvent, args: any[], error: unknown): void {
-  const requestId = channel === IPC_CHANNELS.chatStream || channel === IPC_CHANNELS.chatSearchStream ? args[0]?.requestId : args[0];
+  const requestId =
+    channel === IPC_CHANNELS.chatStream || channel === IPC_CHANNELS.chatSearchStream
+      ? args[0]?.requestId
+      : args[0];
   if (typeof requestId !== "string" || !z.string().uuid().safeParse(requestId).success) return;
   const serialized = serializeIpcError(error);
   try {

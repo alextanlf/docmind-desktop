@@ -77,6 +77,7 @@ def test_markdown_parser_decodes_utf8_bom_and_preserves_heading_paths(parser: Do
         raw_bytes="\ufeff# Guide\n\n## Install\n\nRun it.".encode("utf-8"),
     )
     parsed = parser.parse(document)
+    assert parsed.title == "Guide"
     assert parsed.markdown.startswith("# Guide")
     assert [section.heading_path for section in parsed.sections] == [["Guide"], ["Guide", "Install"]]
 

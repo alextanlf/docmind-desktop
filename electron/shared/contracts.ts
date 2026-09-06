@@ -37,9 +37,20 @@ export const SettingsViewSchema = z.object({
   hasApiKey: z.boolean(),
   dataPath: z.string(),
   screenshotCount: z.number().int().nonnegative(),
-  webSearch: z.object({ provider: z.literal("tavily"), mode: z.enum(["off", "ask", "auto"]), maxResults: z.number().int().min(1).max(10), hasApiKey: z.boolean() }).default({ provider: "tavily", mode: "ask", maxResults: 5, hasApiKey: false }),
+  webSearch: z
+    .object({
+      provider: z.literal("tavily"),
+      mode: z.enum(["off", "ask", "auto"]),
+      maxResults: z.number().int().min(1).max(10),
+      hasApiKey: z.boolean(),
+    })
+    .default({ provider: "tavily", mode: "ask", maxResults: 5, hasApiKey: false }),
 });
-export const WebSearchSettingsInputSchema = z.object({ mode: z.enum(["off", "ask", "auto"]), maxResults: z.number().int().min(1).max(10), apiKey: z.string().max(2_000).nullable().optional() });
+export const WebSearchSettingsInputSchema = z.object({
+  mode: z.enum(["off", "ask", "auto"]),
+  maxResults: z.number().int().min(1).max(10),
+  apiKey: z.string().max(2_000).nullable().optional(),
+});
 export const ModelConnectionResultSchema = z.object({
   connected: z.boolean(),
   latencyMs: z.number().int().nonnegative(),
@@ -240,13 +251,26 @@ export const StagedCollectionSchema = z.object({
   collectionId: id,
   displayName: text(255),
   itemCount: z.number().int().min(0).max(1000),
-  totalBytes: z.number().int().nonnegative().max(2 * 1024 ** 3),
+  totalBytes: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(2 * 1024 ** 3),
 });
 export const BatchImportSchema = z.object({
   id,
   sourceKind: z.enum(["staged_directory", "web", "yuque_repository", "search_results"]),
   repositoryId: id,
-  state: z.enum(["discovering", "awaiting_confirmation", "running", "paused", "completed", "completed_with_errors", "failed", "cancelled"]),
+  state: z.enum([
+    "discovering",
+    "awaiting_confirmation",
+    "running",
+    "paused",
+    "completed",
+    "completed_with_errors",
+    "failed",
+    "cancelled",
+  ]),
   discoveryVersion: z.number().int().positive(),
   totalCount: z.number().int().nonnegative(),
   selectedCount: z.number().int().nonnegative(),
@@ -285,14 +309,34 @@ export const BatchItemSchema = z.object({
 });
 export const BatchProgressPayloadSchema = z.object({
   progress: z.number().int().min(0).max(100),
-  state: z.enum(["discovering", "awaiting_confirmation", "running", "paused", "completed", "completed_with_errors", "failed", "cancelled"]),
+  state: z.enum([
+    "discovering",
+    "awaiting_confirmation",
+    "running",
+    "paused",
+    "completed",
+    "completed_with_errors",
+    "failed",
+    "cancelled",
+  ]),
   message: z.string(),
   stage: z.enum(["discovering", "awaiting_confirmation", "running", "paused"]),
-  counts: z.object({ total: z.number().int().nonnegative(), selected: z.number().int().nonnegative(), completed: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), skipped: z.number().int().nonnegative() }),
+  counts: z.object({
+    total: z.number().int().nonnegative(),
+    selected: z.number().int().nonnegative(),
+    completed: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+    skipped: z.number().int().nonnegative(),
+  }),
   itemId: id.nullable(),
-  itemState: z.enum(["discovered", "queued", "running", "completed", "skipped", "failed", "cancelled"]).nullable(),
+  itemState: z
+    .enum(["discovered", "queued", "running", "completed", "skipped", "failed", "cancelled"])
+    .nullable(),
 });
-export const BatchItemPageSchema = z.object({ items: z.array(BatchItemSchema), nextCursor: z.string().nullable() });
+export const BatchItemPageSchema = z.object({
+  items: z.array(BatchItemSchema),
+  nextCursor: z.string().nullable(),
+});
 export const CreateBatchInputSchema = z.object({
   kind: z.literal("staged_directory"),
   sourceId: id,
@@ -300,7 +344,11 @@ export const CreateBatchInputSchema = z.object({
 });
 export const ConfirmBatchInputSchema = z.object({
   discoveryVersion: z.number().int().positive(),
-  items: z.array(z.object({ itemId: id, decision: z.enum(["create", "update", "attach_remote", "skip"]) })).max(1000),
+  items: z
+    .array(
+      z.object({ itemId: id, decision: z.enum(["create", "update", "attach_remote", "skip"]) }),
+    )
+    .max(1000),
 });
 export const RetryBatchInputSchema = z.object({ itemIds: z.array(id).max(1000).optional() });
 export const ChatStreamInputSchema = z.object({
@@ -310,15 +358,42 @@ export const ChatStreamInputSchema = z.object({
   repositoryIds: z.array(id).min(1).max(100),
   webSearchPermission: z.enum(["inherit", "off", "explicit"]).default("inherit"),
 });
-export const ChatSearchInputSchema = z.object({ sessionId: id, userMessageId: id, requestId: id, repositoryIds: z.array(id).min(1).max(100) });
-export const SearchResultSchema = z.object({ id, rank: z.number().int().positive(), canonicalUrl: z.string().url(), title: text(512), snippet: z.string().max(10_000), content: z.string().max(50 * 1024) });
-export const WebSearchRunSchema = z.object({ id, status: z.string().max(32), errorCode: z.string().max(128).nullable().optional(), results: z.array(SearchResultSchema).max(10) });
-export const SearchImportInputSchema = z.object({ repositoryId: id, resultIds: z.array(id).min(1).max(10) });
+export const ChatSearchInputSchema = z.object({
+  sessionId: id,
+  userMessageId: id,
+  requestId: id,
+  repositoryIds: z.array(id).min(1).max(100),
+});
+export const SearchResultSchema = z.object({
+  id,
+  rank: z.number().int().positive(),
+  canonicalUrl: z.string().url(),
+  title: text(512),
+  snippet: z.string().max(10_000),
+  content: z.string().max(50 * 1024),
+});
+export const WebSearchRunSchema = z.object({
+  id,
+  status: z.string().max(32),
+  errorCode: z.string().max(128).nullable().optional(),
+  results: z.array(SearchResultSchema).max(10),
+});
+export const SearchImportInputSchema = z.object({
+  repositoryId: id,
+  resultIds: z.array(id).min(1).max(10),
+});
 
-const relativePath = z.string().max(4_000).refine(
-  (value) => !value.startsWith("/") && !value.startsWith("~") && !/^[A-Za-z]:[\\/]/.test(value) && !value.split(/[\\/]/).includes(".."),
-  "localPath must be a logical relative path",
-);
+const relativePath = z
+  .string()
+  .max(4_000)
+  .refine(
+    (value) =>
+      !value.startsWith("/") &&
+      !value.startsWith("~") &&
+      !/^[A-Za-z]:[\\/]/.test(value) &&
+      !value.split(/[\\/]/).includes(".."),
+    "localPath must be a logical relative path",
+  );
 export const SessionMemorySummarySchema = z.object({
   id,
   sessionId: id,
@@ -370,7 +445,10 @@ export const MemoryItemSchema = z.object({
   sessionId: id.nullable(),
   sourceId: id,
 });
-export const MemoryItemPageSchema = z.object({ items: z.array(MemoryItemSchema), nextCursor: z.string().nullable() });
+export const MemoryItemPageSchema = z.object({
+  items: z.array(MemoryItemSchema),
+  nextCursor: z.string().nullable(),
+});
 
 export type ErrorBody = z.infer<typeof ErrorBodySchema>;
 export type ErrorEnvelope = z.infer<typeof ErrorEnvelopeSchema>;
@@ -415,7 +493,10 @@ export type DistillationTarget = z.infer<typeof DistillationTargetSchema>;
 export type MemoryListInput = z.infer<typeof MemoryListInputSchema>;
 export type MemoryItemPage = z.infer<typeof MemoryItemPageSchema>;
 
-export type BatchProgressCounts = Pick<BatchImport, "totalCount" | "selectedCount" | "completedCount" | "failedCount" | "skippedCount">;
+export type BatchProgressCounts = Pick<
+  BatchImport,
+  "totalCount" | "selectedCount" | "completedCount" | "failedCount" | "skippedCount"
+>;
 
 export interface StreamSubscription {
   requestId: string;
@@ -435,7 +516,11 @@ export interface BatchesApi {
   cancel(batchId: string): Promise<BatchImport>;
   continue(batchId: string): Promise<BatchImport>;
   retry(batchId: string, input?: RetryBatchInput): Promise<BatchImport>;
-  subscribe(batchId: string, afterSequence: number, onEvent: (event: EventEnvelope) => void): StreamSubscription;
+  subscribe(
+    batchId: string,
+    afterSequence: number,
+    onEvent: (event: EventEnvelope) => void,
+  ): StreamSubscription;
 }
 
 export interface DocMindApi {
@@ -483,7 +568,11 @@ export interface DocMindApi {
       onEvent: (event: EventEnvelope) => void,
       afterSequence?: number,
     ): StreamSubscription;
-    searchStream(input: ChatSearchInput, onEvent: (event: EventEnvelope) => void, afterSequence?: number): StreamSubscription;
+    searchStream(
+      input: ChatSearchInput,
+      onEvent: (event: EventEnvelope) => void,
+      afterSequence?: number,
+    ): StreamSubscription;
   };
   webSearch: {
     getRun(runId: string, sessionId: string): Promise<WebSearchRun>;
@@ -502,7 +591,11 @@ export interface DocMindApi {
     saveDistillation(id: string, input: DistillationTarget): Promise<Distillation>;
     deleteDistillation(id: string): Promise<void>;
     list(input: MemoryListInput): Promise<MemoryItemPage>;
-    subscribeDistillation(id: string, afterSequence: number, onEvent: (event: EventEnvelope) => void): StreamSubscription;
+    subscribeDistillation(
+      id: string,
+      afterSequence: number,
+      onEvent: (event: EventEnvelope) => void,
+    ): StreamSubscription;
   };
   dialogs: {
     chooseSource(kind: "pdf" | "markdown"): Promise<StagedSource | null>;

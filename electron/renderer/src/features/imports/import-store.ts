@@ -45,7 +45,14 @@ export const useImportStore = create<ImportState>((set) => ({
   setDuplicateDecision: (duplicateDecision) => set({ duplicateDecision }),
   setJobId: (jobId) => set({ jobId }),
   setBatchId: (batchId) => set({ batchId }),
-  setBatchDecision: (batchId, itemId, decision) => set((state) => ({ batchDecisions: { ...state.batchDecisions, [batchId]: { ...(state.batchDecisions[batchId] ?? {}), [itemId]: decision } } })),
-  setBatchItems: (batchId, items) => set((state) => ({ batchItems: { ...state.batchItems, [batchId]: items } })),
+  setBatchDecision: (batchId, itemId, decision) =>
+    set((state) => ({
+      batchDecisions: {
+        ...state.batchDecisions,
+        [batchId]: { ...(state.batchDecisions[batchId] ?? {}), [itemId]: decision },
+      },
+    })),
+  setBatchItems: (batchId, items) =>
+    set((state) => ({ batchItems: { ...state.batchItems, [batchId]: items } })),
   reset: () => set(initialState),
 }));

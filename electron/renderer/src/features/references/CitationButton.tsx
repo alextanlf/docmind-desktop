@@ -13,7 +13,8 @@ export function CitationButton({
   const setActiveCitationId = useUiStore((state) => state.setActiveCitationId);
   const setActiveCitationTrigger = useUiStore((state) => state.setActiveCitationTrigger);
   const setReferencePanelOpen = useUiStore((state) => state.setReferencePanelOpen);
-  const SourceIcon = citation.kind === "memory" ? Brain : citation.kind === "web" ? Globe : FileText;
+  const SourceIcon =
+    citation.kind === "memory" ? Brain : citation.kind === "web" ? Globe : FileText;
 
   return (
     <button

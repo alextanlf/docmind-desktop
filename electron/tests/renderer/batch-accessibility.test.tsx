@@ -50,4 +50,3 @@ describe("批量导入可访问性", () => {
     expect(screen.getByRole("button", { name: "取消批量导入" })).toBeEnabled();
   });
 });
-

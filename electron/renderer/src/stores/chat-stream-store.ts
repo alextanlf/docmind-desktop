@@ -22,7 +22,12 @@ type ChatStreamState = {
   continuationUserMessageId: string | null;
   streamMode: "chat" | "search";
   warning: string | null;
-  start: (input: { requestId: string; sessionId: string; userMessage: string; continuationUserMessageId?: string }) => void;
+  start: (input: {
+    requestId: string;
+    sessionId: string;
+    userMessage: string;
+    continuationUserMessageId?: string;
+  }) => void;
   attachSubscription: (subscription: StreamSubscription) => void;
   detachForSession: (sessionId: string) => void;
   applyEvent: (event: EventEnvelope) => boolean;
@@ -48,7 +53,8 @@ const initialState = {
 };
 
 function mergeCitations(current: Citation[], incoming: Citation[]) {
-  const identity = (citation: Citation) => `${citation.sourceId}:${citation.kind === "memory" ? citation.memoryId : citation.kind === "web" ? citation.resultId : citation.chunkId}`;
+  const identity = (citation: Citation) =>
+    `${citation.sourceId}:${citation.kind === "memory" ? citation.memoryId : citation.kind === "web" ? citation.resultId : citation.chunkId}`;
   const known = new Set(current.map(identity));
   return incoming.reduce<Citation[]>(
     (result, citation) => {
@@ -127,14 +133,27 @@ export const useChatStreamStore = create<ChatStreamState>((set, get) => ({
       return true;
     }
     if (event.type === "done") {
-      const suggested = event.payload.searchSuggested === true && typeof event.payload.userMessageId === "string" ? { userMessageId: event.payload.userMessageId } : null;
-      const rawWarning = event.payload.warning;
-      const warning = typeof rawWarning === "string"
-        ? rawWarning
-        : rawWarning && typeof rawWarning === "object" && typeof (rawWarning as Record<string, unknown>).message === "string"
-          ? (rawWarning as Record<string, string>).message
+      const suggested =
+        event.payload.searchSuggested === true && typeof event.payload.userMessageId === "string"
+          ? { userMessageId: event.payload.userMessageId }
           : null;
-      set({ ...initialState, sessionId: current.sessionId, userMessage: suggested ? current.userMessage : "", searchSuggestion: suggested, warning, lastSequence: event.sequence });
+      const rawWarning = event.payload.warning;
+      const warning =
+        typeof rawWarning === "string"
+          ? rawWarning
+          : rawWarning &&
+              typeof rawWarning === "object" &&
+              typeof (rawWarning as Record<string, unknown>).message === "string"
+            ? (rawWarning as Record<string, string>).message
+            : null;
+      set({
+        ...initialState,
+        sessionId: current.sessionId,
+        userMessage: suggested ? current.userMessage : "",
+        searchSuggestion: suggested,
+        warning,
+        lastSequence: event.sequence,
+      });
       return true;
     }
     if (event.type === "error") {

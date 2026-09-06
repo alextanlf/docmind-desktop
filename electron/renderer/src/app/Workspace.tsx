@@ -16,7 +16,11 @@ import { IconButton } from "../components/IconButton";
 import { ChatPanel } from "../features/chat/ChatPanel";
 import { RepositoryScope } from "../features/chat/RepositoryScope";
 import { SessionList } from "../features/chat/SessionList";
-import { useDeleteSessionMutation, useEndSessionMutation, useMessagesQuery } from "../features/chat/chat.queries";
+import {
+  useDeleteSessionMutation,
+  useEndSessionMutation,
+  useMessagesQuery,
+} from "../features/chat/chat.queries";
 import { ImportDialog } from "../features/imports/ImportDialog";
 import { ImportProgress } from "../features/imports/ImportProgress";
 import { BatchProgress } from "../features/imports/BatchProgress";
@@ -92,7 +96,8 @@ export function Workspace() {
   const stream = useChatStreamStore();
   const endSession = useEndSessionMutation();
   const deleteSession = useDeleteSessionMutation();
-  const selectedSessionStreaming = stream.sessionId === selectedSession?.id && stream.status === "streaming";
+  const selectedSessionStreaming =
+    stream.sessionId === selectedSession?.id && stream.status === "streaming";
 
   const closeSessionConfirmation = () => {
     setSessionConfirmation(null);
@@ -213,7 +218,8 @@ export function Workspace() {
             <span>导入文档</span>
           </button>
           <button aria-label="记忆" onClick={() => setActiveView("memory")} type="button">
-            <BookOpen aria-hidden="true" size={17} /><span>记忆</span>
+            <BookOpen aria-hidden="true" size={17} />
+            <span>记忆</span>
           </button>
         </nav>
         <div className="sidebar-library">
@@ -238,98 +244,169 @@ export function Workspace() {
         className="workspace-main"
         aria-label={activeView === "settings" ? "设置内容" : "对话工作区"}
       >
-        {!referencePanelOpen ? (
-          <IconButton
-            className="reference-reopen"
-            icon={<PanelRightOpen aria-hidden="true" size={17} />}
-            label="打开引用资料"
-            onClick={() => setReferencePanelOpen(true)}
-            size="small"
-          />
-        ) : null}
-        {activeView === "settings" ? (
-          <SettingsView />
-        ) : activeView === "memory" ? (
-          <MemoryView />
-        ) : selectedDocument.data ? (
-          <DocumentEditor
-            document={selectedDocument.data}
-            key={selectedDocument.data.id}
-            onClose={() => setSelectedDocumentId(null)}
-            repositoryName={selectedRepository?.name}
-          />
-        ) : selectedSession ? (
-          <div className="chat-workspace">
-            <header className="chat-toolbar">
-              <RepositoryScope
-                onChange={setSelectedRepositoryIds}
-                repositories={repositories.data ?? []}
-                selectedRepositoryIds={selectedRepositoryIds}
+        <div className="workspace-content">
+          {!referencePanelOpen ? (
+            <IconButton
+              className="reference-reopen"
+              icon={<PanelRightOpen aria-hidden="true" size={17} />}
+              label="打开引用资料"
+              onClick={() => setReferencePanelOpen(true)}
+              size="small"
+            />
+          ) : null}
+          {activeView === "settings" ? (
+            <SettingsView />
+          ) : activeView === "memory" ? (
+            <MemoryView />
+          ) : selectedDocument.data ? (
+            <DocumentEditor
+              document={selectedDocument.data}
+              key={selectedDocument.data.id}
+              onClose={() => setSelectedDocumentId(null)}
+              repositoryName={selectedRepository?.name}
+            />
+          ) : selectedSession ? (
+            <div className="chat-workspace">
+              <header className="chat-toolbar">
+                <RepositoryScope
+                  onChange={setSelectedRepositoryIds}
+                  repositories={repositories.data ?? []}
+                  selectedRepositoryIds={selectedRepositoryIds}
+                />
+                <div className="session-actions" ref={sessionActionsRef}>
+                  <button
+                    aria-label="知识蒸馏"
+                    className="button button-secondary"
+                    disabled={selectedSessionStreaming}
+                    onClick={() =>
+                      void window.docmind.memory
+                        .createDistillation(selectedSession.id)
+                        .then((draft) => openDistillation(draft.id))
+                    }
+                    type="button"
+                  >
+                    知识蒸馏
+                  </button>
+                  {selectedSession.endedAt ? null : (
+                    <button
+                      className="button button-secondary"
+                      disabled={selectedSessionStreaming || endSession.isPending}
+                      onClick={() => setSessionConfirmation("end")}
+                      type="button"
+                    >
+                      <Square aria-hidden="true" size={15} />
+                      结束会话
+                    </button>
+                  )}
+                  <button
+                    className="icon-button"
+                    aria-label="删除会话"
+                    disabled={selectedSessionStreaming || deleteSession.isPending}
+                    onClick={() => setSessionConfirmation("delete")}
+                    type="button"
+                  >
+                    <Trash2 aria-hidden="true" size={16} />
+                  </button>
+                </div>
+              </header>
+              <ChatPanel
+                ended={Boolean(selectedSession.endedAt)}
+                repositoryIds={selectedRepositoryIds}
+                sessionId={selectedSession.id}
               />
-              <div className="session-actions" ref={sessionActionsRef}>
-                <button aria-label="知识蒸馏" className="button button-secondary" disabled={selectedSessionStreaming} onClick={() => void window.docmind.memory.createDistillation(selectedSession.id).then((draft) => openDistillation(draft.id))} type="button">知识蒸馏</button>
-                {selectedSession.endedAt ? null : <button className="button button-secondary" disabled={selectedSessionStreaming || endSession.isPending} onClick={() => setSessionConfirmation("end")} type="button"><Square aria-hidden="true" size={15} />结束会话</button>}
-                <button className="icon-button" aria-label="删除会话" disabled={selectedSessionStreaming || deleteSession.isPending} onClick={() => setSessionConfirmation("delete")} type="button"><Trash2 aria-hidden="true" size={16} /></button>
-              </div>
-            </header>
-            <ChatPanel ended={Boolean(selectedSession.endedAt)} repositoryIds={selectedRepositoryIds} sessionId={selectedSession.id} />
-          </div>
-        ) : (
-          <div className="chat-workspace">
-            <header className="chat-toolbar">
-              <RepositoryScope
-                onChange={setSelectedRepositoryIds}
-                repositories={repositories.data ?? []}
-                selectedRepositoryIds={selectedRepositoryIds}
-              />
-            </header>
-            <div className="empty-workspace">
-              <BookOpen aria-hidden="true" size={24} />
-              <h1>选择知识库开始对话</h1>
-              <p>导入文档后，可在这里检索内容并查看引用来源。</p>
-              <button
-                className="button button-primary"
-                onClick={() => setImportOpen(true)}
-                type="button"
-              >
-                <FilePlus2 aria-hidden="true" size={16} />
-                导入第一篇文档
-              </button>
             </div>
-          </div>
-        )}
+          ) : (
+            <div className="chat-workspace">
+              <header className="chat-toolbar">
+                <RepositoryScope
+                  onChange={setSelectedRepositoryIds}
+                  repositories={repositories.data ?? []}
+                  selectedRepositoryIds={selectedRepositoryIds}
+                />
+              </header>
+              <div className="empty-workspace">
+                <BookOpen aria-hidden="true" size={24} />
+                <h1>选择知识库开始对话</h1>
+                <p>导入文档后，可在这里检索内容并查看引用来源。</p>
+                <button
+                  className="button button-primary"
+                  onClick={() => setImportOpen(true)}
+                  type="button"
+                >
+                  <FilePlus2 aria-hidden="true" size={16} />
+                  导入第一篇文档
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+        {importJob.data || batchId ? (
+          <section aria-label="导入任务" className="workspace-import-progress">
+            {importJob.data ? (
+              <ImportProgress
+                job={importJob.data}
+                onOpenDocument={(documentId) => setSelectedDocumentId(documentId)}
+              />
+            ) : null}
+            {batchId ? <BatchProgress batchId={batchId} /> : null}
+          </section>
+        ) : null}
       </section>
       <aside aria-label="引用资料" className="workspace-reference w-[320px]">
         <ReferencePanel
           citations={citations}
-          onBatchCreated={(id) => { setBatchId(id); setOpenBatchConfirmation(true); setImportOpen(true); }}
+          onBatchCreated={(id) => {
+            setBatchId(id);
+            setOpenBatchConfirmation(true);
+            setImportOpen(true);
+          }}
           repositoryId={selectedRepositoryIds[0] ?? null}
           sessionId={selectedSession?.id ?? null}
         />
       </aside>
       <ImportDialog
-        onClose={() => { setImportOpen(false); setOpenBatchConfirmation(false); }}
-        onImported={() => { setImportOpen(false); setOpenBatchConfirmation(false); }}
+        onClose={() => {
+          setImportOpen(false);
+          setOpenBatchConfirmation(false);
+        }}
+        onImported={() => {
+          setImportOpen(false);
+          setOpenBatchConfirmation(false);
+        }}
         openBatchConfirmation={openBatchConfirmation}
         open={importOpen}
       />
-      {importJob.data ? (
-        <div className="workspace-import-progress">
-          <ImportProgress
-            job={importJob.data}
-            onOpenDocument={(documentId) => setSelectedDocumentId(documentId)}
-          />
-        </div>
-      ) : null}
-      {batchId ? <div className="workspace-import-progress"><BatchProgress batchId={batchId} /></div> : null}
       {sessionConfirmation ? (
         <div className="modal-backdrop">
-          <section aria-labelledby="session-confirmation-title" aria-modal="true" className="confirmation-dialog" role="dialog">
-            <h2 id="session-confirmation-title">{sessionConfirmation === "end" ? "结束会话" : "删除会话"}</h2>
-            <p>{sessionConfirmation === "end" ? "结束后会话将变为只读。" : "将删除会话、消息和摘要，此操作不可撤销。"}</p>
+          <section
+            aria-labelledby="session-confirmation-title"
+            aria-modal="true"
+            className="confirmation-dialog"
+            role="dialog"
+          >
+            <h2 id="session-confirmation-title">
+              {sessionConfirmation === "end" ? "结束会话" : "删除会话"}
+            </h2>
+            <p>
+              {sessionConfirmation === "end"
+                ? "结束后会话将变为只读。"
+                : "将删除会话、消息和摘要，此操作不可撤销。"}
+            </p>
             <div className="confirmation-actions">
-              <button className="button button-secondary" onClick={closeSessionConfirmation} type="button">取消</button>
-              <button autoFocus className="button button-primary" disabled={endSession.isPending || deleteSession.isPending} onClick={() => void confirmSessionAction()} type="button">
+              <button
+                className="button button-secondary"
+                onClick={closeSessionConfirmation}
+                type="button"
+              >
+                取消
+              </button>
+              <button
+                autoFocus
+                className="button button-primary"
+                disabled={endSession.isPending || deleteSession.isPending}
+                onClick={() => void confirmSessionAction()}
+                type="button"
+              >
                 {sessionConfirmation === "end" ? "确认结束会话" : "确认删除会话"}
               </button>
             </div>

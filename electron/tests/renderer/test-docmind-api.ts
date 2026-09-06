@@ -216,7 +216,11 @@ export function installDocMindApi(overrides?: {
       saveDistillation: vi.fn(),
       deleteDistillation: vi.fn().mockResolvedValue(undefined),
       list: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
-      subscribeDistillation: vi.fn().mockReturnValue({ requestId: "00000000-0000-0000-0000-000000000026", cancel: vi.fn(), detach: vi.fn() }),
+      subscribeDistillation: vi.fn().mockReturnValue({
+        requestId: "00000000-0000-0000-0000-000000000026",
+        cancel: vi.fn(),
+        detach: vi.fn(),
+      }),
       ...overrides?.memory,
     },
     dialogs: {

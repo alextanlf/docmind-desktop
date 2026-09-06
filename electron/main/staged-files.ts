@@ -1,14 +1,5 @@
 import { constants } from "node:fs";
-import {
-  lstat,
-  mkdir,
-  open,
-  readdir,
-  realpath,
-  rename,
-  rm,
-  unlink,
-} from "node:fs/promises";
+import { lstat, mkdir, open, readdir, realpath, rename, rm, unlink } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { basename, extname, isAbsolute, join, relative, sep } from "node:path";
 
@@ -16,8 +7,7 @@ const MAX_DIRECTORY_FILES = 1_000;
 const MAX_DIRECTORY_BYTES = 2 * 1024 ** 3;
 const MAX_MARKDOWN_HTML_BYTES = 20 * 1024 * 1024;
 const MAX_PDF_BYTES = 100 * 1024 * 1024;
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
 type DirectoryDialogOptions = { properties: ["openDirectory"] };
@@ -26,7 +16,9 @@ type FileDialogOptions = {
   filters: { name: string; extensions: string[] }[];
 };
 type DialogResult = { canceled: boolean; filePaths: string[] };
-type ShowOpenDialog = (options: DirectoryDialogOptions | FileDialogOptions) => Promise<DialogResult>;
+type ShowOpenDialog = (
+  options: DirectoryDialogOptions | FileDialogOptions,
+) => Promise<DialogResult>;
 
 export type StagedCollection = {
   collectionId: string;

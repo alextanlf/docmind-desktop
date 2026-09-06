@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy import select
 
+from app.memory.collections import DISTILLATION_COLLECTION, SUMMARY_COLLECTION
 from app.storage.models import DistillationRecord, MemoryChunkRecord, SessionSummaryRecord
 
 
@@ -34,7 +35,7 @@ class MemoryRetriever:
         embedding = await self.embedding_provider.embed_query(query)
         hits = []
         for repository_id in repository_ids:
-            for collection in ("_session_summaries", "_distilled_knowledge"):
+            for collection in (SUMMARY_COLLECTION, DISTILLATION_COLLECTION):
                 hits.extend(self.vector_store.query_memory(collection, embedding, max(top_k * 3, top_k), repository_id=repository_id))
         hits.sort(key=lambda h: (-h.similarity, h.id))
         vector_ids = {h.id for h in hits}

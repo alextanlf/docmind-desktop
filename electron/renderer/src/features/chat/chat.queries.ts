@@ -30,10 +30,16 @@ export function useCreateSessionMutation() {
 
 export function useEndSessionMutation() {
   const queryClient = useQueryClient();
-  return useMutation({ mutationFn: (sessionId: string) => window.docmind.memory.endSession(sessionId), onSuccess: async () => queryClient.invalidateQueries({ queryKey: chatKeys.sessions }) });
+  return useMutation({
+    mutationFn: (sessionId: string) => window.docmind.memory.endSession(sessionId),
+    onSuccess: async () => queryClient.invalidateQueries({ queryKey: chatKeys.sessions }),
+  });
 }
 
 export function useDeleteSessionMutation() {
   const queryClient = useQueryClient();
-  return useMutation({ mutationFn: (sessionId: string) => window.docmind.memory.deleteSession(sessionId, true), onSuccess: async () => queryClient.invalidateQueries({ queryKey: chatKeys.sessions }) });
+  return useMutation({
+    mutationFn: (sessionId: string) => window.docmind.memory.deleteSession(sessionId, true),
+    onSuccess: async () => queryClient.invalidateQueries({ queryKey: chatKeys.sessions }),
+  });
 }

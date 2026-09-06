@@ -66,9 +66,11 @@ export function BatchProgress({ batchId }: { batchId: string }) {
   useEffect(() => {
     if (hasNextPage && !isFetchingNextPage && !isFetchNextPageError) void fetchNextPage();
   }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
-  const retryItemIds = items.data?.pages.flatMap((page) => page.items)
-    .filter((item) => item.state === "failed" && item.retryable && item.importJobId)
-    .map((item) => item.id) ?? [];
+  const retryItemIds =
+    items.data?.pages
+      .flatMap((page) => page.items)
+      .filter((item) => item.state === "failed" && item.retryable && item.importJobId)
+      .map((item) => item.id) ?? [];
   const cancelMutation = useCancelBatchMutation();
   const continueMutation = useContinueBatchMutation();
   const retryMutation = useRetryBatchMutation();
@@ -124,7 +126,12 @@ export function BatchProgress({ batchId }: { batchId: string }) {
         <strong>{batch.message}</strong>
         <span>{batch.progress}%</span>
       </div>
-      <progress aria-label="批量导入进度" aria-valuenow={batch.progress} max={100} value={batch.progress} />{" "}
+      <progress
+        aria-label="批量导入进度"
+        aria-valuenow={batch.progress}
+        max={100}
+        value={batch.progress}
+      />{" "}
       <p>
         {batch.completedCount}/{batch.selectedCount} 已完成，{batch.failedCount} 失败，
         {batch.skippedCount} 跳过
@@ -142,12 +149,16 @@ export function BatchProgress({ batchId }: { batchId: string }) {
       <div className="import-progress-actions">
         {batch.state === "completed_with_errors" && items.isError ? (
           <div>
-            <p className="editor-error" role="alert">批次项加载失败，请重试加载后再重试导入</p>
+            <p className="editor-error" role="alert">
+              批次项加载失败，请重试加载后再重试导入
+            </p>
             <button
               aria-label="重试加载批次项"
               className="button button-secondary"
               disabled={items.isFetching}
-              onClick={() => { void (isFetchNextPageError ? fetchNextPage() : items.refetch()); }}
+              onClick={() => {
+                void (isFetchNextPageError ? fetchNextPage() : items.refetch());
+              }}
               type="button"
             >
               重试加载
@@ -183,7 +194,12 @@ export function BatchProgress({ batchId }: { batchId: string }) {
             aria-label="重试批量导入"
             disabled={retryMutation.isPending || items.isFetching || items.isError || hasNextPage}
             className="button button-secondary"
-            onClick={() => retryMutation.mutate({ batchId, input: { itemIds: retryItemIds } }, { onSuccess: resumeProgress })}
+            onClick={() =>
+              retryMutation.mutate(
+                { batchId, input: { itemIds: retryItemIds } },
+                { onSuccess: resumeProgress },
+              )
+            }
             type="button"
           >
             <RotateCcw aria-hidden="true" size={15} />

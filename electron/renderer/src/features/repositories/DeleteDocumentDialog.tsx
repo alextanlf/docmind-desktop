@@ -30,6 +30,10 @@ export function DeleteDocumentDialog({
     setError("");
     try {
       await window.docmind.documents.delete(document.id, true);
+      appQueryClient.setQueryData<DocumentDetail[]>(
+        repositoryKeys.documents(document.repositoryId),
+        (documents) => documents?.filter((item) => item.id !== document.id),
+      );
       await Promise.all([
         appQueryClient.invalidateQueries({
           queryKey: repositoryKeys.documents(document.repositoryId),

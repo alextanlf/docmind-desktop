@@ -1042,6 +1042,9 @@ class BatchImportStore:
             decision = decisions.get(item.id)
             item.decision = decision
             item.selected = decision not in {None, BatchItemDecision.SKIP}
+            if decision is None or decision == BatchItemDecision.SKIP:
+                item.decision = BatchItemDecision.SKIP
+                item.state = BatchItemState.SKIPPED
             if decision is not None:
                 target = targets[item.id]
                 item.existing_document_id = target.id if target is not None else None

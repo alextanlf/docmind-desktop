@@ -7,13 +7,11 @@ import { useChatStreamStore } from "../../renderer/src/stores/chat-stream-store"
 import { installDocMindApi, repository, session } from "./test-docmind-api";
 describe("search permission", () => {
   it("continues an ask-mode gap without creating a second user message", async () => {
-    const searchStream = vi
-      .fn()
-      .mockReturnValue({
-        requestId: "00000000-0000-0000-0000-000000000054",
-        cancel: vi.fn(),
-        detach: vi.fn(),
-      });
+    const searchStream = vi.fn().mockReturnValue({
+      requestId: "00000000-0000-0000-0000-000000000054",
+      cancel: vi.fn(),
+      detach: vi.fn(),
+    });
     installDocMindApi({ chat: { searchStream } });
     useChatStreamStore.setState({
       requestId: null,
