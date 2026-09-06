@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { RuntimeSettingsInput, WebSearchSettingsInput } from "../../../../shared/contracts";
 
@@ -39,6 +40,38 @@ export function useOllamaStatusQuery(enabled = true) {
 
 export function useOllamaModelsQuery(enabled = true) {
   return useQuery({ queryKey: ollamaKeys.models, queryFn: () => window.docmind.ollama.models(), enabled });
+}
+
+const terminalPullStates = new Set(["completed", "failed", "cancelled"]);
+
+export function useOllamaPullQuery(pullId: string | null, enabled = true) {
+  const client = useQueryClient();
+  const query = useQuery({
+    queryKey: ollamaKeys.pull(pullId ?? ""),
+    queryFn: () => window.docmind.ollama.getPull(pullId as string),
+    enabled: enabled && Boolean(pullId),
+    refetchInterval: (q) => {
+      const state = q.state.data?.state;
+      return state && !terminalPullStates.has(state) ? 1_000 : false;
+    },
+  });
+  const pullData = query.data;
+  const lastSequence = useRef(0);
+  useEffect(() => {
+    if (!pullId || !enabled || !pullData) return;
+    lastSequence.current = pullData.lastEventSequence;
+    const sub = window.docmind.ollama.subscribePull(pullId, lastSequence.current, (event) => {
+      const payload = event.payload as { pull?: typeof pullData; sequence?: number };
+      const next = payload.pull;
+      const sequence = payload.sequence ?? event.sequence ?? 0;
+      if (!next || sequence <= lastSequence.current) return;
+      lastSequence.current = sequence;
+      client.setQueryData(ollamaKeys.pull(pullId), next);
+      if (terminalPullStates.has(next.state)) void client.invalidateQueries({ queryKey: ollamaKeys.models });
+    });
+    return () => sub.detach();
+  }, [client, enabled, pullId, pullData]);
+  return query;
 }
 
 export function useSaveRuntimeMutation() {
