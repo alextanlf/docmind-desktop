@@ -4,6 +4,7 @@ import { EmbeddingStatus } from "./EmbeddingStatus";
 import { ModelSettingsForm } from "./ModelSettingsForm";
 import { YuqueStatus } from "./YuqueStatus";
 import { WebSearchSettings } from "./WebSearchSettings";
+import { RuntimeModelSettings } from "./RuntimeModelSettings";
 import { clientErrorMessage, useSettingsQuery } from "./settings.queries";
 
 export function SettingsView() {
@@ -49,6 +50,10 @@ export function SettingsView() {
           </div>
         </div>
         <EmbeddingStatus />
+      </section>
+      <section className="settings-section" aria-labelledby="runtime-settings-title">
+        <div className="section-heading"><KeyRound aria-hidden="true" size={18} /><div><h2 id="runtime-settings-title">本地运行与路由</h2><p>配置 Ollama 与云端回退策略</p></div></div>
+        <RuntimeModelSettings settings={settings.data} />
       </section>
       <section className="settings-section" aria-labelledby="yuque-settings-title">
         <div className="section-heading">
