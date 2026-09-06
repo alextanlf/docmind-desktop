@@ -47,17 +47,28 @@ export function ChatPanel({
       activeStream.subscription
     )
       return;
-    const subscription = activeStream.streamMode === "search" && activeStream.continuationUserMessageId
-      ? window.docmind.chat.searchStream(
-          { requestId: activeStream.requestId, sessionId, userMessageId: activeStream.continuationUserMessageId, repositoryIds },
-          handleEvent,
-          activeStream.lastSequence,
-        )
-      : window.docmind.chat.stream(
-          { requestId: activeStream.requestId, sessionId, message: activeStream.userMessage, repositoryIds },
-          handleEvent,
-          activeStream.lastSequence,
-        );
+    const subscription =
+      activeStream.streamMode === "search" && activeStream.continuationUserMessageId
+        ? window.docmind.chat.searchStream(
+            {
+              requestId: activeStream.requestId,
+              sessionId,
+              userMessageId: activeStream.continuationUserMessageId,
+              repositoryIds,
+            },
+            handleEvent,
+            activeStream.lastSequence,
+          )
+        : window.docmind.chat.stream(
+            {
+              requestId: activeStream.requestId,
+              sessionId,
+              message: activeStream.userMessage,
+              repositoryIds,
+            },
+            handleEvent,
+            activeStream.lastSequence,
+          );
     useChatStreamStore.getState().attachSubscription(subscription);
   }, [activeStream, handleEvent, repositoryIds, sessionId]);
   useEffect(
@@ -90,8 +101,16 @@ export function ChatPanel({
     if (activeStream.streamMode === "search" && activeStream.continuationUserMessageId) {
       const requestId = createRequestId();
       const userMessageId = activeStream.continuationUserMessageId;
-      useChatStreamStore.getState().start({ requestId, sessionId, userMessage: activeStream.userMessage, continuationUserMessageId: userMessageId });
-      const subscription = window.docmind.chat.searchStream({ requestId, sessionId, userMessageId, repositoryIds }, handleEvent);
+      useChatStreamStore.getState().start({
+        requestId,
+        sessionId,
+        userMessage: activeStream.userMessage,
+        continuationUserMessageId: userMessageId,
+      });
+      const subscription = window.docmind.chat.searchStream(
+        { requestId, sessionId, userMessageId, repositoryIds },
+        handleEvent,
+      );
       useChatStreamStore.getState().attachSubscription(subscription);
       return;
     }
@@ -102,8 +121,16 @@ export function ChatPanel({
     if (!activeStream?.searchSuggestion) return;
     const requestId = createRequestId();
     const userMessageId = activeStream.searchSuggestion.userMessageId;
-    useChatStreamStore.getState().start({ requestId, sessionId, userMessage: activeStream.userMessage, continuationUserMessageId: userMessageId });
-    const subscription = window.docmind.chat.searchStream({ requestId, sessionId, userMessageId, repositoryIds }, handleEvent);
+    useChatStreamStore.getState().start({
+      requestId,
+      sessionId,
+      userMessage: activeStream.userMessage,
+      continuationUserMessageId: userMessageId,
+    });
+    const subscription = window.docmind.chat.searchStream(
+      { requestId, sessionId, userMessageId, repositoryIds },
+      handleEvent,
+    );
     useChatStreamStore.getState().attachSubscription(subscription);
   };
 
@@ -142,8 +169,19 @@ export function ChatPanel({
           ) : null}
         </div>
       ) : null}
-      {activeStream?.warning ? <p className="chat-stream-warning" role="status">{activeStream.warning}</p> : null}
-      {activeStream?.searchSuggestion ? <div className="chat-search-suggestion"><button className="button button-secondary" onClick={searchWeb} type="button"><Globe aria-hidden="true" size={16} />联网搜索</button></div> : null}
+      {activeStream?.warning ? (
+        <p className="chat-stream-warning" role="status">
+          {activeStream.warning}
+        </p>
+      ) : null}
+      {activeStream?.searchSuggestion ? (
+        <div className="chat-search-suggestion">
+          <button className="button button-secondary" onClick={searchWeb} type="button">
+            <Globe aria-hidden="true" size={16} />
+            联网搜索
+          </button>
+        </div>
+      ) : null}
       {repositoryIds.length === 0 ? (
         <p className="chat-scope-guide">请先选择已建立索引的知识库，或导入文档。</p>
       ) : null}

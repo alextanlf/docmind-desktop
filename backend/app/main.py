@@ -127,7 +127,7 @@ def create_app(
         )
 
         e2e_control = E2EControl(runtime_settings.data_dir) if os.getenv("DOCMIND_E2E") == "1" else None
-        runtime_secret_store = secret_store or MemorySecretStore()
+        runtime_secret_store = secret_store or MemorySecretStore(str(runtime_settings.data_dir))
         runtime_embedding_provider = embedding_provider or (
             E2EControlledFakeEmbeddingProvider(
                 runtime_settings.embedding_settings, control=e2e_control
@@ -135,7 +135,7 @@ def create_app(
             if e2e_control is not None
             else FakeEmbeddingProvider(runtime_settings.embedding_settings)
         )
-        runtime_yuque_gateway = yuque_gateway or FakeYuqueGateway()
+        runtime_yuque_gateway = yuque_gateway or FakeYuqueGateway(runtime_settings.data_dir)
         fake_llm_provider: LLMProvider | None = llm_provider or FakeLLMProvider(control=e2e_control)
     else:
         runtime_secret_store = secret_store or KeyringSecretStore()

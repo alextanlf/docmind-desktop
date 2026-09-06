@@ -5,6 +5,7 @@ import os
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import quote, urlparse
 from uuid import uuid4
@@ -62,11 +63,31 @@ class YuqueGateway(Protocol):
 class FakeYuqueGateway:
     """Deterministic in-memory gateway for API and end-to-end tests."""
 
-    def __init__(self) -> None:
+    def __init__(self, data_dir: str | os.PathLike[str] | None = None) -> None:
         self._lock = asyncio.Lock()
         self._repositories: dict[str, YuqueRepository] = {}
         self._documents: dict[str, YuqueDocumentContent] = {}
-        self._logged_in = False
+        self._login_marker = (
+            os.path.join(data_dir, "e2e", "yuque-logged-in") if data_dir else None
+        )
+        self._state_path = (
+            os.path.join(data_dir, "e2e", "yuque-state.json") if data_dir else None
+        )
+        self._logged_in = bool(self._login_marker and os.path.exists(self._login_marker))
+        if self._state_path:
+            import json
+            try:
+                state = json.loads(Path(self._state_path).read_text(encoding="utf-8"))
+                self._repositories = {
+                    item["yuqueId"]: YuqueRepository.model_validate(item)
+                    for item in state.get("repositories", [])
+                }
+                self._documents = {
+                    item["yuqueId"]: YuqueDocumentContent.model_validate(item)
+                    for item in state.get("documents", [])
+                }
+            except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+                pass
         self._active_contexts = 0
         self.max_concurrent_contexts = 0
         self.read_calls: list[str] = []
@@ -83,6 +104,9 @@ class FakeYuqueGateway:
     async def begin_login(self) -> LoginResult:
         async with self._serialized():
             self._logged_in = True
+            if self._login_marker:
+                os.makedirs(os.path.dirname(self._login_marker), exist_ok=True)
+                Path(self._login_marker).touch()
             return LoginResult(logged_in=True, account_label="f***e", requires_login=False)
 
     async def list_repositories(self) -> list[YuqueRepository]:
@@ -99,6 +123,7 @@ class FakeYuqueGateway:
                 yuque_id=repository_id, name=request.name, url=f"https://yuque.local/{repository_id}"
             )
             self._repositories[repository_id] = repository
+            self._persist_state()
             return repository
 
     async def list_documents(self, repository_id: str) -> list[YuqueDocument]:
@@ -126,6 +151,7 @@ class FakeYuqueGateway:
                 url=f"https://yuque.local/{document_id}",
             )
             self._documents[document_id] = document
+            self._persist_state()
             return _document_summary(document)
 
     async def find_document_by_marker(
@@ -165,6 +191,7 @@ class FakeYuqueGateway:
                 update={"title": request.title, "content": request.content}
             )
             self._documents[request.document_id] = document
+            self._persist_state()
             return _document_summary(document)
 
     async def delete_document(self, document_id: str) -> None:
@@ -173,9 +200,23 @@ class FakeYuqueGateway:
             self._require_login(allow_first_use=True)
             self._document(document_id)
             del self._documents[document_id]
+            self._persist_state()
 
     async def close(self) -> None:
-        return None
+            return None
+
+    def _persist_state(self) -> None:
+        if not self._state_path:
+            return
+        import json
+        os.makedirs(os.path.dirname(self._state_path), exist_ok=True)
+        Path(self._state_path).write_text(
+            json.dumps({
+                "repositories": [item.model_dump() for item in self._repositories.values()],
+                "documents": [item.model_dump() for item in self._documents.values()],
+            }),
+            encoding="utf-8",
+        )
 
     def seed_repository(self, yuque_id: str, name: str) -> YuqueRepository:
         repository = YuqueRepository(yuque_id=yuque_id, name=name, url=f"https://yuque.local/{yuque_id}")

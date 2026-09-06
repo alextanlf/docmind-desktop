@@ -110,14 +110,15 @@ function DistillationEditorDraft({ distillationId }: { distillationId: string })
             value={title}
             disabled={busy || query.data.state !== "draft"}
             onBlur={blur}
-            onChange={(event) => { revision.current += 1; setTitle(event.target.value); }}
+            onChange={(event) => {
+              revision.current += 1;
+              setTitle(event.target.value);
+            }}
           />
         </label>
         <button
           className="button button-secondary"
-          disabled={
-            busy || !["draft", "failed"].includes(query.data.state)
-          }
+          disabled={busy || !["draft", "failed"].includes(query.data.state)}
           onClick={() => void regenerate()}
           type="button"
         >
@@ -132,7 +133,10 @@ function DistillationEditorDraft({ distillationId }: { distillationId: string })
           value={content}
           disabled={busy || query.data.state !== "draft"}
           onBlur={blur}
-          onChange={(event) => { revision.current += 1; setContent(event.target.value); }}
+          onChange={(event) => {
+            revision.current += 1;
+            setContent(event.target.value);
+          }}
         />
       </label>
       <label>
@@ -142,7 +146,10 @@ function DistillationEditorDraft({ distillationId }: { distillationId: string })
           value={keyPoints.join("\n")}
           disabled={busy || query.data.state !== "draft"}
           onBlur={blur}
-          onChange={(event) => { revision.current += 1; setKeyPoints(event.target.value.split("\n").filter(Boolean)); }}
+          onChange={(event) => {
+            revision.current += 1;
+            setKeyPoints(event.target.value.split("\n").filter(Boolean));
+          }}
         />
       </label>
       <section aria-label="保存目标" className="memory-target">
@@ -197,7 +204,8 @@ function DistillationEditorDraft({ distillationId }: { distillationId: string })
           disabled={
             !target ||
             (target === "yuque" && !repositoryId) ||
-            busy || ["generating", "saving"].includes(query.data.state)
+            busy ||
+            ["generating", "saving"].includes(query.data.state)
           }
           onClick={() => void save()}
           type="button"

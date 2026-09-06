@@ -29,5 +29,6 @@ export const useUiStore = create<UiState>((set) => ({
   setReferencePanelOpen: (referencePanelOpen) => set({ referencePanelOpen }),
   setActiveCitationId: (activeCitationId) => set({ activeCitationId }),
   setActiveCitationTrigger: (activeCitationTrigger) => set({ activeCitationTrigger }),
-  openDistillation: (selectedDistillationId) => set({ selectedDistillationId, activeView: "memory" }),
+  openDistillation: (selectedDistillationId) =>
+    set({ selectedDistillationId, activeView: "memory" }),
 }));

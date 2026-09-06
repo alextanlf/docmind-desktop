@@ -3,6 +3,11 @@ from __future__ import annotations
 import json
 
 from app.api.errors import DomainError
+from app.memory.collections import (
+    DISTILLATION_COLLECTION,
+    SUMMARY_COLLECTION,
+    canonical_collection,
+)
 from app.storage.models import DistillationRecord, SessionSummaryRecord
 from app.storage.repositories import MemoryStore
 
@@ -35,7 +40,7 @@ class MemoryIndexer:
     async def _index(self, kind: str, source_id: str, content: str, repositories: list[str], *, session_id: str | None) -> int:
         if not repositories:
             raise DomainError("MEMORY_SCOPE_INVALID", "知识库范围不能为空", 400)
-        collection = "_session_summaries" if kind == "session_summary" else "_distilled_knowledge"
+        collection = SUMMARY_COLLECTION if kind == "session_summary" else DISTILLATION_COLLECTION
         chunks = [
             (repository_id, 0, content, f"memory:{kind}:{source_id}:{repository_id}:0")
             for repository_id in repositories
@@ -84,7 +89,7 @@ class MemoryIndexer:
             ids = json.loads(cleanup.vector_ids_json or "[]")
             deletable = [identifier for identifier in ids if identifier not in self.store.owned_vector_ids(ids)]
             if deletable:
-                self.vector_store.delete_memory(cleanup.collection, deletable)
+                self.vector_store.delete_memory(canonical_collection(cleanup.collection), deletable)
             if not self.store.owned_vector_ids(ids):
                 self.store.delete_vector_cleanup(cleanup.id)
                 count += 1

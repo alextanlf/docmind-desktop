@@ -360,7 +360,7 @@ class ChatService:
                 role="assistant",
                 content=content,
                 citations_json=json.dumps(
-                    [citation.model_dump(by_alias=True) for citation in citations],
+                    [citation.model_dump(mode="json", by_alias=True) for citation in citations],
                     ensure_ascii=False,
                     separators=(",", ":"),
                 ),

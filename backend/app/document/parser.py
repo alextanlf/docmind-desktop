@@ -21,7 +21,15 @@ class DocumentParser:
                 markdown = document.raw_bytes.decode("utf-8-sig")
             except UnicodeDecodeError:
                 raise DomainError("SOURCE_UNSUPPORTED", "Markdown 必须使用 UTF-8 编码", 400, False) from None
-            return self._from_markdown(document, markdown, document.title)
+            title = next(
+                (
+                    match.group(2).strip().rstrip("#").strip()
+                    for match in (_HEADING.match(line) for line in markdown.splitlines())
+                    if match and len(match.group(1)) == 1
+                ),
+                document.title,
+            )
+            return self._from_markdown(document, markdown, title)
         if document.media_type == "text/html":
             return self._parse_html(document)
         raise DomainError("SOURCE_UNSUPPORTED", "不支持的文档类型", 400, False)
