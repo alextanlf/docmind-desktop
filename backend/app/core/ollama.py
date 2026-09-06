@@ -4,17 +4,26 @@ import json
 from collections.abc import AsyncIterator
 
 import httpx
+import asyncio
+import socket
 
 from app.api.errors import DomainError
 from app.core.llm import ChatDelta, ChatRequest, ModelConnectionResult
+from app.core.ollama_validation import normalize_loopback_base_url
+
+class _SystemResolver:
+    async def resolve(self, host: str):
+        rows = await asyncio.to_thread(socket.getaddrinfo, host, 11434, type=socket.SOCK_STREAM)
+        return sorted({row[4][0] for row in rows})
 
 
 class OllamaProvider:
-    def __init__(self, base_url: str, model: str, timeout: float = 120, transport: httpx.AsyncBaseTransport | None = None) -> None:
-        self.base_url, self.model, self.timeout, self.transport = base_url.rstrip("/"), model, timeout, transport
+    def __init__(self, base_url: str, model: str, timeout: float = 120, transport: httpx.AsyncBaseTransport | None = None, resolver=None) -> None:
+        self.base_url, self.model, self.timeout, self.transport, self.resolver = base_url.rstrip("/"), model, timeout, transport, resolver or _SystemResolver()
 
     async def test_connection(self) -> ModelConnectionResult:
         try:
+            self.base_url = await normalize_loopback_base_url(self.base_url, self.resolver)
             async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
                 response = await client.get(f"{self.base_url}/api/tags")
                 response.raise_for_status()
@@ -26,6 +35,7 @@ class OllamaProvider:
         payload = {"model": self.model, "messages": [m.model_dump() for m in request.messages], "stream": True, "options": {"temperature": request.temperature}}
         emitted = False
         try:
+            self.base_url = await normalize_loopback_base_url(self.base_url, self.resolver)
             async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
                 async with client.stream("POST", f"{self.base_url}/api/chat", json=payload) as response:
                     if response.status_code >= 400:
@@ -55,11 +65,12 @@ class OllamaProvider:
 
 
 class PullCoordinator:
-    def __init__(self, base_url: str, transport: httpx.AsyncBaseTransport | None = None, timeout: float = 600) -> None:
-        self.base_url, self.transport, self.timeout = base_url.rstrip("/"), transport, timeout
+    def __init__(self, base_url: str, transport: httpx.AsyncBaseTransport | None = None, timeout: float = 600, resolver=None) -> None:
+        self.base_url, self.transport, self.timeout, self.resolver = base_url.rstrip("/"), transport, timeout, resolver or _SystemResolver()
 
     async def pull(self, model_name: str) -> AsyncIterator[dict[str, object]]:
         try:
+            self.base_url = await normalize_loopback_base_url(self.base_url, self.resolver)
             async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
                 async with client.stream("POST", f"{self.base_url}/api/pull", json={"name": model_name, "stream": True}) as response:
                     if response.status_code >= 400:
