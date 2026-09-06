@@ -1,4 +1,6 @@
 export const IPC_CHANNELS = {
+  ollamaStatus: "ollama:status",
+  ollamaModels: "ollama:models",
   settingsGet: "settings:get",
   settingsSaveModel: "settings:saveModel",
   settingsTestModel: "settings:testModel",
