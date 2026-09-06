@@ -33,3 +33,11 @@ def test_duplicate_active_pull_is_reused(tmp_path):
     service = OllamaService("http://127.0.0.1:11434", store=store)
     first = service.create_pull("m"); second = service.create_pull("m")
     assert first.id == second.id
+
+def test_retry_pull_creates_new_task_for_retryable_failure(tmp_path):
+    db = Database(f"sqlite+pysqlite:///{tmp_path/'db.sqlite'}"); db.upgrade(); store = OllamaPullStore(db)
+    service = OllamaService("http://127.0.0.1:11434", store=store)
+    first = service.create_pull("m")
+    row = store.get(str(first.id)); row.state, row.error_code, row.retryable = "failed", "OLLAMA_PULL_FAILED", True; store.save(row)
+    retried = service.retry_pull(first.id)
+    assert retried.id != first.id and retried.model_name == "m" and retried.state == "queued"

@@ -59,6 +59,14 @@ class OllamaService:
         try: return self._pulls[pull_id]
         except KeyError as error: raise DomainError("OLLAMA_PULL_NOT_FOUND", "拉取任务不存在", 404) from error
 
+    def retry_pull(self, pull_id: UUID) -> OllamaPullView:
+        from app.api.errors import DomainError
+        current = self.get_pull(pull_id)
+        if current.state not in {"failed", "cancelled"} or not current.retryable:
+            raise DomainError("OLLAMA_PULL_NOT_RETRYABLE", "该拉取任务不可重试", 409, False)
+        self._pulls.pop(pull_id, None)
+        return self.create_pull(current.model_name)
+
     def cancel_pull(self, pull_id: UUID) -> OllamaPullView:
         view = self.get_pull(pull_id)
         if view.state in {"queued", "running"}:
