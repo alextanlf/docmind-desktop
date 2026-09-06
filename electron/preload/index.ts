@@ -40,6 +40,7 @@ import {
   SearchImportInputSchema,
   ChatSearchInputSchema,
   OllamaStatusSchema, OllamaModelsSchema, OllamaPullInputSchema, OllamaPullSchema,
+  RuntimeSettingsInputSchema,
 } from "../shared/contracts";
 import type { DocMindApi, EventEnvelope } from "../shared/contracts";
 
@@ -132,6 +133,7 @@ const api: DocMindApi = {
         SettingsViewSchema,
         WebSearchSettingsInputSchema.parse(input),
       ),
+    saveRuntime: (input) => invoke(IPC_CHANNELS.settingsSaveRuntime, SettingsViewSchema, RuntimeSettingsInputSchema.parse(input)),
   },
   embedding: {
     status: () => invoke(IPC_CHANNELS.embeddingStatus, ModelStatusSchema),

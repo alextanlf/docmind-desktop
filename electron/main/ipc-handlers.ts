@@ -41,6 +41,7 @@ import {
   SearchImportInputSchema,
   ChatSearchInputSchema,
   OllamaStatusSchema, OllamaModelsSchema, OllamaPullInputSchema, OllamaPullSchema,
+  RuntimeSettingsInputSchema,
 } from "../shared/contracts";
 
 const require = createRequire(import.meta.url);
@@ -137,6 +138,8 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         jsonInit("PUT", parse(WebSearchSettingsInputSchema, input)),
         SettingsViewSchema,
       ),
+    [IPC_CHANNELS.settingsSaveRuntime]: (_event, input) =>
+      proxy.requestJson("/api/settings/runtime", jsonInit("POST", parse(RuntimeSettingsInputSchema, input)), SettingsViewSchema),
     [IPC_CHANNELS.embeddingStatus]: () =>
       proxy.requestJson("/api/embedding/status", {}, ModelStatusSchema),
     [IPC_CHANNELS.embeddingPrepare]: () =>
