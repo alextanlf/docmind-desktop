@@ -495,6 +495,26 @@ class SettingRecord(Base):
         UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
     )
 
+class OllamaPullRecord(Base):
+    __tablename__ = "ollama_pulls"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    model_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    base_url: Mapped[str] = mapped_column(String(512), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
+    progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str | None] = mapped_column(String(256))
+    total_bytes: Mapped[int | None] = mapped_column(Integer)
+    completed_bytes: Mapped[int | None] = mapped_column(Integer)
+    error_code: Mapped[str | None] = mapped_column(String(128))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    retryable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    last_event_sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
 class WebSearchRunRecord(Base):
     __tablename__ = "web_search_runs"
     __table_args__ = (UniqueConstraint("request_id", name="uq_web_search_runs_request_id"),)

@@ -44,6 +44,7 @@ from app.storage.models import (
     VectorCleanupRecord,
     WebSearchResultRecord,
     WebSearchRunRecord,
+    OllamaPullRecord,
 )
 
 
@@ -58,6 +59,21 @@ def _stale_confirmation(message: str = "批次来源或目标已变化，请重�
 _batch_confirmation_session: ContextVar[Session | None] = ContextVar(
     "batch_confirmation_session", default=None
 )
+
+class OllamaPullStore:
+    def __init__(self, database: Database) -> None:
+        self.database = database
+    def get(self, pull_id: str) -> OllamaPullRecord | None:
+        with self.database.session() as session: return session.get(OllamaPullRecord, pull_id)
+    def save(self, record: OllamaPullRecord) -> OllamaPullRecord:
+        with self.database.session() as session:
+            session.merge(record)
+        return record
+    def recover_interrupted(self) -> None:
+        with self.database.session() as session:
+            rows = session.scalars(select(OllamaPullRecord).where(OllamaPullRecord.state.in_(["queued", "running"]))).all()
+            for row in rows:
+                row.state, row.error_code, row.retryable, row.updated_at = "failed", "OLLAMA_PULL_INTERRUPTED", True, utc_now()
 
 
 class RepositoryStore:
