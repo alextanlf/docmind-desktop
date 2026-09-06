@@ -17,7 +17,7 @@ from app.schemas.settings import (
     SettingsView,
     WebSearchSettingsUpdate,
 )
-from app.schemas.ollama import RoutingSettings, RuntimeSettingsInput
+from app.schemas.ollama import OllamaConfig, RoutingSettings, RuntimeSettingsInput
 from app.schemas.web_search import SearchConnectionResult, WebSearchSettings
 from app.search.tavily import TavilyProvider
 from app.storage.repositories import SettingStore
@@ -111,7 +111,7 @@ class SettingsService:
         raw_ollama = self.setting_store.get(OLLAMA_RUNTIME_CONFIG_KEY)
         raw_routing = self.setting_store.get(MODEL_ROUTING_KEY)
         try:
-            ollama = RuntimeSettingsInput.model_validate_json(raw_ollama).ollama if raw_ollama else RuntimeSettingsInput().ollama
+            ollama = OllamaConfig.model_validate_json(raw_ollama) if raw_ollama else RuntimeSettingsInput().ollama
             routing = RoutingSettings.model_validate_json(raw_routing) if raw_routing else RuntimeSettingsInput().routing
         except ValueError as error:
             raise DomainError("SETTINGS_INVALID", "运行时设置无效，请重新配置", 500) from error
