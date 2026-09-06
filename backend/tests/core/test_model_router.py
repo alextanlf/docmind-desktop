@@ -25,6 +25,13 @@ async def test_cloud_only_never_calls_local():
     assert result.route.source == "cloud" and local.calls == 0
 
 @pytest.mark.asyncio
+async def test_local_only_rejects_missing_local_model_before_provider_call():
+    local, cloud = Fake(["l"]), Fake(["c"])
+    with pytest.raises(DomainError) as exc:
+        await ModelRouter("local_only", local, cloud, "", "c").open_stream(ChatRequest(messages=[]))
+    assert exc.value.code == "LOCAL_MODEL_UNAVAILABLE" and local.calls == 0
+
+@pytest.mark.asyncio
 async def test_automatic_falls_back_before_output():
     local = Fake(error=DomainError("OLLAMA_UNAVAILABLE", "x", 503, True)); cloud = Fake(["c"])
     result = await ModelRouter("automatic", local, cloud, "m", "c").open_stream(ChatRequest(messages=[]))

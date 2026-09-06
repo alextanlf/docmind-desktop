@@ -18,6 +18,10 @@ class ModelRouter:
     async def open_stream(self, request: ChatRequest) -> RoutedStream:
         if self.mode == "cloud_only":
             return RoutedStream(GenerationRoute(source="cloud", model=self.cloud_model, mode=self.mode), self.cloud.stream_chat(request))
+        if not self.local_model.strip():
+            if self.mode == "automatic":
+                return RoutedStream(GenerationRoute(source="cloud", model=self.cloud_model, mode=self.mode, fallback_reason="LOCAL_MODEL_UNAVAILABLE"), self.cloud.stream_chat(request))
+            raise DomainError("LOCAL_MODEL_UNAVAILABLE", "未配置本地模型", 503, False)
         try:
             stream = self.local.stream_chat(request)
             first = None
