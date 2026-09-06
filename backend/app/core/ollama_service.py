@@ -80,6 +80,18 @@ class OllamaService:
         self._tasks[pull_id] = task
         return task
 
+    def run_queued_once(self) -> list[UUID]:
+        queued = []
+        if self.store:
+            queued = [UUID(row.id) for row in self.store.list_queued(base_url=self.base_url)]
+        else:
+            queued = [pull_id for pull_id, view in self._pulls.items() if view.state == "queued"]
+        started = []
+        for pull_id in queued:
+            self.start_pull(pull_id)
+            started.append(pull_id)
+        return started
+
     async def wait_for_pull(self, pull_id: UUID) -> OllamaPullView:
         task = self._tasks.get(pull_id)
         if task is not None:

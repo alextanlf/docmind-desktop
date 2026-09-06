@@ -107,3 +107,18 @@ async def test_cancel_running_pull_cancels_coordinator_task(tmp_path):
     cancelled = service.cancel_pull(pull.id)
     await service.wait_for_pull(pull.id)
     assert cancelled.state == "cancelled" and closed is True
+
+@pytest.mark.asyncio
+async def test_run_queued_once_starts_pending_pull(tmp_path):
+    db = Database(f"sqlite+pysqlite:///{tmp_path/'db.sqlite'}"); db.upgrade(); store = OllamaPullStore(db)
+    service = OllamaService("http://127.0.0.1:11434", store=store)
+    async def events(_model):
+        yield {"status": "完成", "progress": 100, "state": "completed"}
+    class FakeCoordinator:
+        pull = staticmethod(events)
+    service.coordinator = FakeCoordinator()
+    pull = service.create_pull("m")
+    started = service.run_queued_once()
+    assert started == [pull.id]
+    await service.wait_for_pull(pull.id)
+    assert service.get_pull(pull.id).state == "completed"
