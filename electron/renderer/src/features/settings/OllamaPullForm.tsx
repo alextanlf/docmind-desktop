@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ollamaKeys, clientErrorMessage, useOllamaPullQuery } from "./settings.queries";
+import { TaskProgress } from "../../components/TaskProgress";
 
 export function OllamaPullForm() {
   const [modelName, setModelName] = useState("");
@@ -14,6 +15,6 @@ export function OllamaPullForm() {
     <label>拉取模型<input value={modelName} onChange={(e) => setModelName(e.target.value)} placeholder="例如 llama3.2" /></label>
     <button type="submit" disabled={pull.isPending || !modelName.trim()}>拉取</button>
     {pull.isError && <p role="alert">{clientErrorMessage(pull.error)}</p>}
-    {snapshot.data && <div aria-live="polite"><p>{snapshot.data.status ?? snapshot.data.state}</p><progress aria-label="模型拉取进度" value={snapshot.data.progress} max={100}>{snapshot.data.progress}%</progress>{["queued","running"].includes(snapshot.data.state) && <button type="button" onClick={() => cancel.mutate()} disabled={cancel.isPending}>{cancel.isPending ? "正在取消…" : "取消"}</button>}{snapshot.data.state === "failed" && snapshot.data.retryable && <button type="button" onClick={() => retry.mutate()}>重试</button>}</div>}
+    {snapshot.data && <div><TaskProgress label="模型拉取进度" progress={snapshot.data.progress} status={snapshot.data.status ?? snapshot.data.state} />{["queued","running"].includes(snapshot.data.state) && <button type="button" onClick={() => cancel.mutate()} disabled={cancel.isPending}>{cancel.isPending ? "正在取消…" : "取消"}</button>}{snapshot.data.state === "failed" && snapshot.data.retryable && <button type="button" onClick={() => retry.mutate()}>重试</button>}</div>}
   </form>;
 }
