@@ -32,6 +32,16 @@ class OllamaService:
         return OllamaStatusView(available=models.available, base_url=self.base_url, selected_model=self.model, selected_model_installed=self.model in names, checked_at=models.checked_at, message=models.message)
 
     def create_pull(self, model_name: str) -> OllamaPullView:
+        for existing in self._pulls.values():
+            if existing.model_name == model_name and existing.base_url == self.base_url and existing.state in {"queued", "running"}:
+                return existing
+        if self.store:
+            existing = self.store.find_active(model_name=model_name, base_url=self.base_url)
+            if existing:
+                view = OllamaPullView(id=UUID(existing.id), model_name=existing.model_name, base_url=existing.base_url, state=existing.state, progress=existing.progress, status=existing.status, total_bytes=existing.total_bytes, completed_bytes=existing.completed_bytes, error_code=existing.error_code, error_message=existing.error_message, retryable=existing.retryable, cancel_requested=existing.cancel_requested, last_event_sequence=existing.last_event_sequence, created_at=existing.created_at, started_at=existing.started_at, completed_at=existing.completed_at, updated_at=existing.updated_at)
+                self._pulls[view.id] = view
+                self._events.setdefault(view.id, [{"sequence": 0, "type": "progress", "payload": view.model_dump(mode="json", by_alias=True)}])
+                return view
         now = datetime.now(UTC); pull_id = uuid4()
         view = OllamaPullView(id=pull_id, model_name=model_name, base_url=self.base_url, state="queued", progress=0, status="排队中", retryable=True, created_at=now, updated_at=now)
         self._pulls[pull_id] = view
