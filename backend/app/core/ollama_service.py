@@ -7,6 +7,7 @@ from app.schemas.ollama import OllamaModelView, OllamaModelsView, OllamaPullView
 from app.storage.repositories import OllamaPullStore
 from app.storage.models import OllamaPullRecord
 from app.core.ollama import PullCoordinator
+from app.core.ollama_validation import normalize_loopback_base_url
 
 async def run_pull_worker(service: "OllamaService", stop_event: asyncio.Event, *, interval: float = 0.25) -> None:
     while not stop_event.is_set():
@@ -17,17 +18,19 @@ async def run_pull_worker(service: "OllamaService", stop_event: asyncio.Event, *
             continue
 
 class OllamaService:
-    def __init__(self, base_url: str, model: str = "", transport: httpx.AsyncBaseTransport | None = None, timeout: float = 5, store: OllamaPullStore | None = None, coordinator: PullCoordinator | None = None) -> None:
+    def __init__(self, base_url: str, model: str = "", transport: httpx.AsyncBaseTransport | None = None, timeout: float = 5, store: OllamaPullStore | None = None, coordinator: PullCoordinator | None = None, resolver=None) -> None:
         self.base_url, self.model, self.transport, self.timeout = base_url.rstrip("/"), model, transport, timeout
         self._pulls: dict[UUID, OllamaPullView] = {}
         self._events: dict[UUID, list[dict[str, object]]] = {}
         self._tasks: dict[UUID, asyncio.Task] = {}
         self.store = store
-        self.coordinator = coordinator or PullCoordinator(self.base_url, transport=transport, timeout=max(timeout, 600))
+        self.coordinator = coordinator or PullCoordinator(self.base_url, transport=transport, timeout=max(timeout, 600), resolver=resolver)
+        self.resolver = resolver or self.coordinator.resolver
 
     async def models(self) -> OllamaModelsView:
         checked = datetime.now(UTC)
         try:
+            self.base_url = await normalize_loopback_base_url(self.base_url, self.resolver)
             async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
                 response = await client.get(f"{self.base_url}/api/tags")
                 response.raise_for_status()

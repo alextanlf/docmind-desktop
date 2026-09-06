@@ -7,6 +7,10 @@ from app.storage.repositories import OllamaPullStore
 from app.core.ollama_service import OllamaService
 from app.core.ollama_service import run_pull_worker
 
+class ServiceResolver:
+    def __init__(self, answers): self.answers = answers
+    async def resolve(self, host): return self.answers
+
 
 @pytest.mark.asyncio
 async def test_models_normalize_tags_response():
@@ -16,6 +20,12 @@ async def test_models_normalize_tags_response():
     result = await service.models()
     assert result.available is True
     assert result.models[0].name == "qwen2.5:7b"
+
+@pytest.mark.asyncio
+async def test_models_reject_dns_rebinding_before_transport():
+    service = OllamaService("http://localhost:11434", transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"models": []})), resolver=ServiceResolver(["10.0.0.1"]))
+    result = await service.models()
+    assert result.available is False
 
 @pytest.mark.asyncio
 async def test_unavailable_models_are_safe_snapshot():
