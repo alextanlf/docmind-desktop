@@ -20,7 +20,14 @@ class ModelRouter:
             return RoutedStream(GenerationRoute(source="cloud", model=self.cloud_model, mode=self.mode), self.cloud.stream_chat(request))
         try:
             stream = self.local.stream_chat(request)
-            first = await stream.__anext__()
+            first = None
+            while first is None or not first.content:
+                try:
+                    candidate = await stream.__anext__()
+                except StopAsyncIteration as error:
+                    raise DomainError("LOCAL_MODEL_UNAVAILABLE", "本地模型未返回内容", 503, True) from error
+                if candidate.content:
+                    first = candidate
         except Exception as error:
             if self.mode == "automatic" and getattr(error, "code", None) in FALLBACK_CODES:
                 return RoutedStream(GenerationRoute(source="cloud", model=self.cloud_model, mode=self.mode, fallback_reason=error.code), self.cloud.stream_chat(request))
