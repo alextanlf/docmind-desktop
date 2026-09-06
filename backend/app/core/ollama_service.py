@@ -136,7 +136,7 @@ class OllamaService:
         if view.state in {"queued", "running"}:
             view = view.model_copy(update={"state":"cancelled", "status":"已取消", "cancel_requested":True, "error_code":"OLLAMA_PULL_CANCELLED", "last_event_sequence": view.last_event_sequence + 1, "updated_at":datetime.now(UTC)})
             self._pulls[pull_id] = view
-            self._events.setdefault(pull_id, []).append({"sequence": view.last_event_sequence + 1, "type": "error", "payload": view.model_dump(mode="json", by_alias=True)})
+            self._events.setdefault(pull_id, []).append({"sequence": view.last_event_sequence, "type": "error", "payload": view.model_dump(mode="json", by_alias=True)})
             if self.store:
                 row = self.store.get(str(pull_id))
                 if row:
