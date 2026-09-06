@@ -42,7 +42,7 @@ from app.core.llm import (
     ModelConnectionResult,
     OpenAICompatibleProvider,
 )
-from app.core.ollama_service import OllamaService
+from app.core.ollama_service import OllamaService, run_pull_worker
 from app.core.ollama import OllamaProvider
 from app.core.model_router import ModelRouter
 from app.core.retrieval import HybridRetriever
@@ -166,12 +166,9 @@ def create_app(
         ollama_pull_store = OllamaPullStore(database)
         ollama_pull_store.recover_interrupted()
         app.state.ollama_service = OllamaService("http://127.0.0.1:11434", store=ollama_pull_store)
-        async def ollama_pull_worker():
-            while True:
-                app.state.ollama_service.run_queued_once()
-                await asyncio.sleep(0.25)
+        ollama_stop_event = asyncio.Event()
         ollama_worker_task = (
-            asyncio.create_task(ollama_pull_worker())
+            asyncio.create_task(run_pull_worker(app.state.ollama_service, ollama_stop_event))
             if runtime_settings.environment != "test"
             else None
         )
@@ -327,7 +324,7 @@ def create_app(
             yield
         finally:
             if ollama_worker_task is not None:
-                ollama_worker_task.cancel()
+                ollama_stop_event.set()
                 await asyncio.gather(ollama_worker_task, return_exceptions=True)
             tasks = list(app.state.import_tasks)
             for task in tasks:

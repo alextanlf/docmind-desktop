@@ -5,6 +5,7 @@ from app.storage.database import Database
 from app.storage.repositories import OllamaPullStore
 
 from app.core.ollama_service import OllamaService
+from app.core.ollama_service import run_pull_worker
 
 
 @pytest.mark.asyncio
@@ -122,3 +123,15 @@ async def test_run_queued_once_starts_pending_pull(tmp_path):
     assert started == [pull.id]
     await service.wait_for_pull(pull.id)
     assert service.get_pull(pull.id).state == "completed"
+
+@pytest.mark.asyncio
+async def test_pull_worker_stops_without_extra_poll_after_event():
+    class FakeService:
+        def __init__(self): self.calls = 0
+        def run_queued_once(self): self.calls += 1
+    service, stop = FakeService(), asyncio.Event()
+    async def stop_soon():
+        await asyncio.sleep(0.01)
+        stop.set()
+    await asyncio.gather(run_pull_worker(service, stop, interval=0.001), stop_soon())
+    assert service.calls > 0
