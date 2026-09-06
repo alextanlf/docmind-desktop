@@ -3,6 +3,7 @@ import pytest
 
 from app.core.llm import ChatRequest, LLMMessage
 from app.core.ollama import OllamaProvider
+from app.core.ollama import PullCoordinator
 
 
 @pytest.mark.asyncio
@@ -22,3 +23,10 @@ async def test_protocol_error_on_error_line():
     with pytest.raises(Exception) as exc:
         [d async for d in provider.stream_chat(ChatRequest(messages=[]))]
     assert getattr(exc.value, "code", None) == "OLLAMA_PROTOCOL_ERROR"
+
+@pytest.mark.asyncio
+async def test_pull_coordinator_projects_progress_without_raw_payload():
+    coordinator = PullCoordinator("http://127.0.0.1:11434", transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b'{"status":"downloading","completed":5,"total":10}\n{"status":"success","done":true}\n')))
+    events = [event async for event in coordinator.pull("m")]
+    assert events[0]["progress"] == 50
+    assert "completed" not in events[0]
