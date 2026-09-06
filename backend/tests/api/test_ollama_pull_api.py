@@ -6,3 +6,6 @@ def test_pull_create_get_and_cancel(client, auth_headers):
     assert fetched.status_code == 200 and fetched.json()["state"] == "queued"
     cancelled = client.post(f"/api/ollama/models/pull/{pull_id}/cancel", headers=auth_headers)
     assert cancelled.status_code == 200 and cancelled.json()["state"] == "cancelled"
+    events = client.get(f"/api/ollama/models/pull/{pull_id}/events", headers=auth_headers)
+    assert events.status_code == 200
+    assert "event:" in events.text and pull_id in events.text
