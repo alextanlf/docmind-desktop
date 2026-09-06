@@ -10,6 +10,7 @@ class OllamaService:
     def __init__(self, base_url: str, model: str = "", transport: httpx.AsyncBaseTransport | None = None, timeout: float = 5, store: OllamaPullStore | None = None) -> None:
         self.base_url, self.model, self.transport, self.timeout = base_url.rstrip("/"), model, transport, timeout
         self._pulls: dict[UUID, OllamaPullView] = {}
+        self._events: dict[UUID, list[dict[str, object]]] = {}
         self.store = store
 
     async def models(self) -> OllamaModelsView:
@@ -34,6 +35,7 @@ class OllamaService:
         now = datetime.now(UTC); pull_id = uuid4()
         view = OllamaPullView(id=pull_id, model_name=model_name, base_url=self.base_url, state="queued", progress=0, status="排队中", retryable=True, created_at=now, updated_at=now)
         self._pulls[pull_id] = view
+        self._events[pull_id] = [{"sequence": 0, "type": "progress", "payload": view.model_dump(mode="json", by_alias=True)}]
         if self.store:
             self.store.save(OllamaPullRecord(id=str(pull_id), model_name=model_name, base_url=self.base_url, state="queued", progress=0, status="排队中", created_at=now, updated_at=now))
         return view
@@ -50,8 +52,9 @@ class OllamaService:
     def cancel_pull(self, pull_id: UUID) -> OllamaPullView:
         view = self.get_pull(pull_id)
         if view.state in {"queued", "running"}:
-            view = view.model_copy(update={"state":"cancelled", "status":"已取消", "cancel_requested":True, "error_code":"OLLAMA_PULL_CANCELLED", "updated_at":datetime.now(UTC)})
+            view = view.model_copy(update={"state":"cancelled", "status":"已取消", "cancel_requested":True, "error_code":"OLLAMA_PULL_CANCELLED", "last_event_sequence": view.last_event_sequence + 1, "updated_at":datetime.now(UTC)})
             self._pulls[pull_id] = view
+            self._events.setdefault(pull_id, []).append({"sequence": view.last_event_sequence + 1, "type": "error", "payload": view.model_dump(mode="json", by_alias=True)})
             if self.store:
                 row = self.store.get(str(pull_id))
                 if row:
