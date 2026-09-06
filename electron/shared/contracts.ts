@@ -49,6 +49,8 @@ export const SettingsViewSchema = z.object({
 export const OllamaStatusSchema = z.object({available:z.boolean(),baseUrl:z.string(),version:z.string().nullable().optional(),selectedModel:z.string(),selectedModelInstalled:z.boolean(),checkedAt:timestamp,message:z.string()});
 export const OllamaModelSchema = z.object({name:z.string(),digest:z.string().nullable().optional(),sizeBytes:z.number().nullable().optional(),modifiedAt:timestamp.nullable().optional(),family:z.string().nullable().optional()});
 export const OllamaModelsSchema = z.object({available:z.boolean(),models:OllamaModelSchema.array(),checkedAt:timestamp,message:z.string()});
+export const OllamaPullInputSchema = z.object({modelName:z.string().trim().min(1).max(200).regex(/^[^\r\n]+$/)});
+export const OllamaPullSchema = z.object({id,modelName:z.string(),baseUrl:z.string(),state:z.enum(["queued","running","completed","failed","cancelled"]),progress:z.number().int().min(0).max(100),status:z.string().nullable().optional(),totalBytes:z.number().nullable().optional(),completedBytes:z.number().nullable().optional(),errorCode:z.string().nullable().optional(),errorMessage:z.string().nullable().optional(),retryable:z.boolean(),cancelRequested:z.boolean(),lastEventSequence:z.number().int().nonnegative(),createdAt:timestamp,startedAt:timestamp.nullable().optional(),completedAt:timestamp.nullable().optional(),updatedAt:timestamp});
 export const WebSearchSettingsInputSchema = z.object({
   mode: z.enum(["off", "ask", "auto"]),
   maxResults: z.number().int().min(1).max(10),
@@ -527,7 +529,7 @@ export interface BatchesApi {
 }
 
 export interface DocMindApi {
-  ollama: { status(): Promise<z.infer<typeof OllamaStatusSchema>>; models(): Promise<z.infer<typeof OllamaModelsSchema>> };
+  ollama: { status(): Promise<z.infer<typeof OllamaStatusSchema>>; models(): Promise<z.infer<typeof OllamaModelsSchema>>; pull(input: z.infer<typeof OllamaPullInputSchema>): Promise<z.infer<typeof OllamaPullSchema>>; getPull(id: string): Promise<z.infer<typeof OllamaPullSchema>>; cancelPull(id: string): Promise<z.infer<typeof OllamaPullSchema>> };
   settings: {
     get(): Promise<SettingsView>;
     saveModel(input: ModelSettingsInput): Promise<SettingsView>;

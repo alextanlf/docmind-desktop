@@ -40,7 +40,7 @@ import {
   WebSearchRunSchema,
   SearchImportInputSchema,
   ChatSearchInputSchema,
-  OllamaStatusSchema, OllamaModelsSchema,
+  OllamaStatusSchema, OllamaModelsSchema, OllamaPullInputSchema, OllamaPullSchema,
 } from "../shared/contracts";
 
 const require = createRequire(import.meta.url);
@@ -111,6 +111,9 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
   const handlers: IpcHandlerMap = {
     [IPC_CHANNELS.ollamaStatus]: () => proxy.requestJson("/api/ollama/status", {}, OllamaStatusSchema),
     [IPC_CHANNELS.ollamaModels]: () => proxy.requestJson("/api/ollama/models", {}, OllamaModelsSchema),
+    [IPC_CHANNELS.ollamaPull]: (_event, input) => proxy.requestJson("/api/ollama/models/pull", jsonInit("POST", parse(OllamaPullInputSchema, input)), OllamaPullSchema),
+    [IPC_CHANNELS.ollamaGetPull]: (_event, id) => proxy.requestJson(`/api/ollama/models/pull/${parse(UUID, id)}`, {}, OllamaPullSchema),
+    [IPC_CHANNELS.ollamaCancelPull]: (_event, id) => proxy.requestJson(`/api/ollama/models/pull/${parse(UUID, id)}/cancel`, jsonInit("POST"), OllamaPullSchema),
     [IPC_CHANNELS.settingsGet]: () => proxy.requestJson("/api/settings", {}, SettingsViewSchema),
     [IPC_CHANNELS.settingsSaveModel]: (_event, input) =>
       proxy.requestJson(
