@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Request
+from fastapi.responses import StreamingResponse
+import json
 from pydantic import BaseModel
 from uuid import UUID
 from app.core.ollama_service import OllamaService
@@ -35,3 +37,11 @@ async def get_pull(pull_id: UUID, request: Request):
 @router.post("/models/pull/{pull_id}/cancel")
 async def cancel_pull(pull_id: UUID, request: Request):
     return _service(request).cancel_pull(pull_id)
+
+@router.get("/models/pull/{pull_id}/events")
+async def pull_events(pull_id: UUID, request: Request):
+    snapshot = _service(request).get_pull(pull_id)
+    async def stream():
+        payload = snapshot.model_dump_json(by_alias=True)
+        yield f"id: {snapshot.last_event_sequence}\nevent: snapshot\ndata: {payload}\n\n"
+    return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control":"no-cache"})
