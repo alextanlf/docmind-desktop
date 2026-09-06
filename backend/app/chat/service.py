@@ -299,6 +299,9 @@ class ChatService:
                 )
             )
             sanitizer = URLStreamSanitizer()
+            route = getattr(self.llm, "last_route", None)
+            if route is not None:
+                await self._publish(key, "progress", {"route": route.model_dump(by_alias=True)})
             async for delta in self.llm.stream_chat(chat_request):
                 sanitized_delta = sanitizer.feed(delta.content)
                 if sanitized_delta:
