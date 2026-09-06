@@ -47,7 +47,9 @@ async def pull_events(pull_id: UUID, request: Request):
         events = _service(request)._events.get(pull_id, [])
         for event in events:
             if int(event["sequence"]) <= after: continue
-            yield f"id: {event['sequence']}\nevent: {event['type']}\ndata: {json.dumps(event['payload'], ensure_ascii=False)}\n\n"
+            envelope = {"requestId": str(pull_id), "type": "progress", "sequence": event["sequence"], "payload": event["payload"]}
+            yield f"id: {event['sequence']}\nevent: progress\ndata: {json.dumps(envelope, ensure_ascii=False)}\n\n"
         if not events:
-            yield f"id: {snapshot.last_event_sequence}\nevent: snapshot\ndata: {snapshot.model_dump_json(by_alias=True)}\n\n"
+            envelope = {"requestId": str(pull_id), "type": "progress", "sequence": snapshot.last_event_sequence, "payload": snapshot.model_dump(mode="json", by_alias=True)}
+            yield f"id: {snapshot.last_event_sequence}\nevent: progress\ndata: {json.dumps(envelope, ensure_ascii=False)}\n\n"
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control":"no-cache"})

@@ -529,7 +529,7 @@ export interface BatchesApi {
 }
 
 export interface DocMindApi {
-  ollama: { status(): Promise<z.infer<typeof OllamaStatusSchema>>; models(): Promise<z.infer<typeof OllamaModelsSchema>>; pull(input: z.infer<typeof OllamaPullInputSchema>): Promise<z.infer<typeof OllamaPullSchema>>; getPull(id: string): Promise<z.infer<typeof OllamaPullSchema>>; cancelPull(id: string): Promise<z.infer<typeof OllamaPullSchema>> };
+  ollama: { status(): Promise<z.infer<typeof OllamaStatusSchema>>; models(): Promise<z.infer<typeof OllamaModelsSchema>>; pull(input: z.infer<typeof OllamaPullInputSchema>): Promise<z.infer<typeof OllamaPullSchema>>; getPull(id: string): Promise<z.infer<typeof OllamaPullSchema>>; cancelPull(id: string): Promise<z.infer<typeof OllamaPullSchema>>; subscribePull(id: string, afterSequence: number, onEvent: (event: EventEnvelope) => void): StreamSubscription };
   settings: {
     get(): Promise<SettingsView>;
     saveModel(input: ModelSettingsInput): Promise<SettingsView>;
