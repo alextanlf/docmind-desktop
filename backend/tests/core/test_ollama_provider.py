@@ -5,6 +5,10 @@ from app.core.llm import ChatRequest, LLMMessage
 from app.core.ollama import OllamaProvider
 from app.core.ollama import PullCoordinator
 
+class FakeResolver:
+    def __init__(self, answers): self.answers = answers
+    async def resolve(self, host): return self.answers
+
 
 @pytest.mark.asyncio
 async def test_streams_ndjson_content_and_done():
@@ -30,3 +34,10 @@ async def test_pull_coordinator_projects_progress_without_raw_payload():
     events = [event async for event in coordinator.pull("m")]
     assert events[0]["progress"] == 50
     assert "completed" not in events[0]
+
+@pytest.mark.asyncio
+async def test_provider_rejects_non_loopback_dns_answer_before_http():
+    provider = OllamaProvider("http://localhost:11434", "m", resolver=FakeResolver(["192.168.1.4"]), transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b'{"message":{"content":"x"}}\n{"done":true}\n')))
+    with pytest.raises(Exception) as exc:
+        [d async for d in provider.stream_chat(ChatRequest(messages=[]))]
+    assert getattr(exc.value, "code", None) == "OLLAMA_UNAVAILABLE"
