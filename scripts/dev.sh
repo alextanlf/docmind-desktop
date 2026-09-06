@@ -2,11 +2,11 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-command -v node >/dev/null
-command -v python3 >/dev/null
-command -v uv >/dev/null
-if [[ ! -x "$root/backend/.venv/bin/python" ]]; then
-  "$root/scripts/setup-backend.sh"
+source "$root/scripts/lib/runtime-checks.sh"
+check_local_dependencies "$root"
+if ! ensure_backend_venv "$root"; then
+  "$root/scripts/setup-backend.sh" || die "后端依赖安装失败"
 fi
+check_port_available 18900 || die "18900 已被其他服务占用"
 cd "$root"
 exec npm run desktop:dev
