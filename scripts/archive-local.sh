@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if [[ "${DOCMIND_BUILD_LOCAL_ARCHIVE:-0}" != "1" ]]; then
+if [[ "${DOCMIND_ENABLE_LOCAL_ARCHIVE:-0}" != "1" ]]; then
   echo "OPTIONAL / NOT BUILT"
   exit 0
 fi

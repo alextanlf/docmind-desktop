@@ -123,4 +123,4 @@ Phase 1 excludes collaborative sharing, cloud synchronization, automatic backgro
 
 # 本地开发启动
 
-完整的首次安装、日常启动、诊断和归档边界请参阅上面的“本地运行”章节。可选归档 gate 使用 `DOCMIND_BUILD_LOCAL_ARCHIVE=1`，默认保持 `OPTIONAL / NOT BUILT`，且不包含签名或公证。
+完整的首次安装、日常启动、诊断和归档边界请参阅上面的“本地运行”章节。可选归档 gate 使用 `DOCMIND_ENABLE_LOCAL_ARCHIVE=1`，默认保持 `OPTIONAL / NOT BUILT`，且不包含签名或公证。
