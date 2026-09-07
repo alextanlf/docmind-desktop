@@ -5,6 +5,9 @@ import {
   type EventEnvelope,
   type StreamSubscription,
 } from "../../../shared/contracts";
+import { clientErrorMessage } from "../features/settings/ollama-errors";
+
+export type RouteView = { source: "local" | "cloud"; model: string; mode: "local_only" | "cloud_only" | "automatic"; fallbackReason?: string | null };
 
 export type ChatStreamStatus = "idle" | "streaming" | "error" | "stopped";
 
@@ -22,6 +25,7 @@ type ChatStreamState = {
   continuationUserMessageId: string | null;
   streamMode: "chat" | "search";
   warning: string | null;
+  route: RouteView | null;
   start: (input: {
     requestId: string;
     sessionId: string;
@@ -50,6 +54,7 @@ const initialState = {
   continuationUserMessageId: null,
   streamMode: "chat" as const,
   warning: null,
+  route: null,
 };
 
 function mergeCitations(current: Citation[], incoming: Citation[]) {
@@ -82,7 +87,15 @@ function errorMessage(payload: Record<string, unknown>) {
     RATE_LIMITED: "请求过于频繁，请稍后重试",
     BACKEND_UNAVAILABLE: "本地服务暂不可用，请稍后重试",
   };
-  return messages[code] ?? "回答生成失败，请检查设置后重试";
+  return messages[code] ?? clientErrorMessage({ code });
+}
+
+function parseRoute(payload: Record<string, unknown>): RouteView | null {
+  const value = payload.route;
+  if (!value || typeof value !== "object") return null;
+  const route = value as Record<string, unknown>;
+  if ((route.source !== "local" && route.source !== "cloud") || typeof route.model !== "string" || !route.model || !["local_only", "cloud_only", "automatic"].includes(String(route.mode))) return null;
+  return { source: route.source, model: route.model, mode: route.mode as RouteView["mode"], fallbackReason: typeof route.fallbackReason === "string" ? route.fallbackReason : null };
 }
 
 export const useChatStreamStore = create<ChatStreamState>((set, get) => ({
@@ -102,6 +115,7 @@ export const useChatStreamStore = create<ChatStreamState>((set, get) => ({
       continuationUserMessageId: continuationUserMessageId ?? null,
       streamMode: continuationUserMessageId ? "search" : "chat",
       warning: null,
+      route: null,
     }),
   attachSubscription: (subscription) => {
     if (get().requestId === subscription.requestId) set({ subscription });
@@ -124,6 +138,8 @@ export const useChatStreamStore = create<ChatStreamState>((set, get) => ({
       }));
       return true;
     }
+    const eventRoute = parseRoute(event.payload);
+    if (eventRoute) set({ route: eventRoute });
     if (event.type === "citations") {
       const parsed = CitationSchema.array().safeParse(event.payload.citations);
       set((state) => ({
@@ -153,6 +169,7 @@ export const useChatStreamStore = create<ChatStreamState>((set, get) => ({
         userMessage: suggested ? current.userMessage : "",
         searchSuggestion: suggested,
         warning: warning ?? (fallbackReason ? `已自动切换到云端（${fallbackReason}）` : null),
+        route: eventRoute ?? current.route,
         lastSequence: event.sequence,
       });
       return true;
