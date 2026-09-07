@@ -9,6 +9,7 @@ from sqlalchemy import (
     CheckConstraint,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -497,6 +498,20 @@ class SettingRecord(Base):
 
 class OllamaPullRecord(Base):
     __tablename__ = "ollama_pulls"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('queued','running','completed','failed','cancelled')",
+            name="ck_ollama_pulls_state",
+        ),
+        CheckConstraint("progress >= 0 AND progress <= 100", name="ck_ollama_pulls_progress"),
+        CheckConstraint("last_event_sequence >= 0", name="ck_ollama_pulls_event_sequence"),
+        Index(
+            "uq_ollama_pulls_active_base_url",
+            "base_url",
+            unique=True,
+            sqlite_where=text("state IN ('queued','running')"),
+        ),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     model_name: Mapped[str] = mapped_column(String(200), nullable=False)
     base_url: Mapped[str] = mapped_column(String(512), nullable=False)
