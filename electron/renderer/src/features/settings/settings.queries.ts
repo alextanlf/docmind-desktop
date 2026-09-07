@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { RuntimeSettingsInput, WebSearchSettingsInput } from "../../../../shared/contracts";
-import { clientErrorMessage, errorAction, isRetryable } from "./ollama-errors";
+import { isRetryable } from "./ollama-errors";
 
 export { clientErrorMessage, errorAction, isRetryable } from "./ollama-errors";
 
@@ -92,6 +92,8 @@ export function useOllamaPullQuery(pullId: string | null, enabled = true) {
       sub.detach();
       if (subscribedPullId.current === pullId) subscribedPullId.current = null;
     };
+  // The subscription is intentionally keyed to snapshot availability, not each snapshot object.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, enabled, pullId, hasSnapshot]);
   return query;
 }
