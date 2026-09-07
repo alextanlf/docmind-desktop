@@ -1,8 +1,13 @@
 import { expect as baseExpect, test as base, type Page } from "@playwright/test";
 import type { Electron, ElectronApplication } from "playwright";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import net from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import {
+  recordLocalRuntimeSmoke,
+  resolveElectronExecutable,
+} from "../../electron/main/local-runtime-smoke";
 
 const root = resolve(__dirname, "../..");
 export type FixtureDialog = {
@@ -19,6 +24,7 @@ type ElectronHarness = FixtureDialog & {
   failNextModelTest(): Promise<void>;
   delayNextImport(): Promise<void>;
   failNextIndex(): Promise<void>;
+  runLocalRuntimeSmoke(): Promise<ReturnType<typeof recordLocalRuntimeSmoke>>;
 };
 
 type Fixtures = { electronApp: ElectronHarness; page: Page };
@@ -84,6 +90,23 @@ export const test = base.extend<Fixtures>({
       async failNextIndex() {
         await writeControl(dataDir, "fail-next-index");
       },
+      async runLocalRuntimeSmoke() {
+        const rendererLoaded = await page
+          .evaluate(() => document.readyState === "complete")
+          .then((loaded) => (loaded ? "PASS" : ("FAIL" as const)))
+          .catch(() => "FAIL" as const);
+        const health = rendererLoaded === "PASS" ? "PASS" : "FAIL";
+        await app.close().catch(() => {});
+        const backendExited = await waitForBackendExit(artifacts);
+        const portReleased = backendExited === "PASS" ? await waitForPortRelease(18900) : "NOT RUN";
+        return recordLocalRuntimeSmoke({
+          mode: "dev",
+          health,
+          rendererLoaded,
+          backendExited,
+          portReleased,
+        });
+      },
       async setDialogFixture(fixture) {
         await writeDialogFixture(dataDir, resolve(root, fixture));
       },
@@ -121,6 +144,7 @@ async function launch(
   artifacts: string,
 ): Promise<ElectronApplication> {
   const app = await electron.launch({
+    executablePath: resolveElectronExecutable(process.env),
     // CI/headless macOS runners may not expose a usable GPU process. Keep the
     // product's normal GPU path unchanged and make only the fake E2E harness
     // deterministic.
@@ -153,4 +177,34 @@ async function writeDialogFixture(dataDir: string, fixture: string): Promise<voi
   const control = join(dataDir, "e2e", "dialog-path");
   await mkdir(join(dataDir, "e2e"), { recursive: true });
   await writeFile(control, fixture, "utf8");
+}
+
+async function waitForBackendExit(artifacts: string): Promise<"PASS" | "FAIL"> {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const log = await readFile(join(artifacts, "backend.log"), "utf8").catch(() => "");
+    if (log.includes("backend exited")) return "PASS";
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+  }
+  return "FAIL";
+}
+
+async function waitForPortRelease(port: number): Promise<"PASS" | "FAIL"> {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const released = await new Promise<boolean>((resolveConnection) => {
+      const socket = net.createConnection({ host: "127.0.0.1", port });
+      socket.once("connect", () => {
+        socket.destroy();
+        resolveConnection(false);
+      });
+      socket.once("error", (error: NodeJS.ErrnoException) => {
+        socket.destroy();
+        resolveConnection(error.code === "ECONNREFUSED");
+      });
+    });
+    if (released) return "PASS";
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+  }
+  return "FAIL";
 }
