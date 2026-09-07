@@ -6,4 +6,5 @@ cd "$root/backend"
 uv run pytest -v
 uv run ruff check app tests
 cd "$root"
-exec npm run desktop:build
+npm run desktop:build
+exec node scripts/verify-desktop-build.mjs

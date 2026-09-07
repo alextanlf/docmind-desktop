@@ -59,11 +59,45 @@ export function handleWindowOpen(
 }
 export function showAfterDidFinishLoad(window: {
   webContents: {
-    once: (event: "did-finish-load", callback: () => void) => void;
+    once: (event: "did-finish-load" | "did-fail-load", callback: (...args: any[]) => void) => void;
   };
   show: () => void;
 }) {
-  window.webContents.once("did-finish-load", () => window.show());
+  let failed = false;
+  window.webContents.once(
+    "did-fail-load",
+    (_event: unknown, _code: number, _description: string, _url: string, isMainFrame: boolean) => {
+      if (isMainFrame) failed = true;
+    },
+  );
+  window.webContents.once("did-finish-load", () => {
+    if (!failed) window.show();
+  });
+}
+export function attachRendererLoadDiagnostics(
+  window: {
+    webContents: {
+      once: (
+        event: "did-fail-load",
+        callback: (
+          event: unknown,
+          errorCode: number,
+          errorDescription: string,
+          _validatedURL: string,
+          isMainFrame: boolean,
+        ) => void,
+      ) => void;
+    };
+  },
+  onFailure: (error: Error) => void,
+) {
+  window.webContents.once(
+    "did-fail-load",
+    (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
+      if (isMainFrame)
+        onFailure(new Error(`Renderer failed to load (${errorCode}): ${errorDescription}`));
+    },
+  );
 }
 export function createWindow(origin: string) {
   if (!BrowserWindowCtor) throw new Error("Electron unavailable");
