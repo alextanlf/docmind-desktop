@@ -126,6 +126,7 @@ export const citation: Citation = {
 };
 
 export function installDocMindApi(overrides?: {
+  ollama?: Partial<DocMindApi["ollama"]>;
   settings?: Partial<typeof window.docmind.settings>;
   embedding?: Partial<typeof window.docmind.embedding>;
   yuque?: Partial<typeof window.docmind.yuque>;
@@ -141,6 +142,29 @@ export function installDocMindApi(overrides?: {
   webSearch?: Partial<DocMindApi["webSearch"]>;
 }) {
   const api = {
+    ollama: {
+      status: vi.fn().mockResolvedValue({
+        available: false,
+        baseUrl: "http://127.0.0.1:11434",
+        version: null,
+        selectedModel: "llama3.2",
+        selectedModelInstalled: false,
+        checkedAt: "2026-08-31T08:00:00Z",
+        message: "Ollama 未运行",
+      }),
+      models: vi.fn().mockResolvedValue({
+        available: false,
+        models: [],
+        checkedAt: "2026-08-31T08:00:00Z",
+        message: "Ollama 未运行",
+      }),
+      pull: vi.fn(),
+      getPull: vi.fn(),
+      cancelPull: vi.fn(),
+      retryPull: vi.fn(),
+      subscribePull: vi.fn().mockReturnValue({ requestId: "pull", cancel: vi.fn(), detach: vi.fn() }),
+      ...overrides?.ollama,
+    },
     settings: {
       get: vi.fn().mockResolvedValue(readySettings),
       saveModel: vi.fn().mockResolvedValue(readySettings),
