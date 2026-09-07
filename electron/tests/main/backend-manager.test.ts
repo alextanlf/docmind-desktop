@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { BackendManager } from "../../main/backend-manager";
 
 function fakeProcess() {
@@ -14,6 +17,20 @@ function fakeProcess() {
     __exit: () => listeners.exit?.(1),
     __error: (e: Error) => listeners.error?.(e),
     __stderr: (s: string) => listeners.stderr?.(s),
+  };
+}
+
+function packagedRuntimeFixture() {
+  const root = mkdtempSync(join(tmpdir(), "docmind-backend-manager-"));
+  const command = join(root, "python");
+  const cwd = join(root, "backend");
+  writeFileSync(command, "#!/bin/sh\n");
+  chmodSync(command, 0o755);
+  mkdirSync(cwd);
+  return {
+    command,
+    cwd,
+    cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
 }
 
@@ -35,6 +52,26 @@ describe("BackendManager", () => {
         headers: { "X-DocMind-Token": connection.token },
       }),
     );
+  });
+
+  it("generates a new token for each backend lifecycle", async () => {
+    const firstProcess = fakeProcess();
+    const secondProcess = fakeProcess();
+    const processes = [firstProcess, secondProcess];
+    const manager = new BackendManager({
+      spawn: () => processes.shift() as any,
+      fetch: vi.fn().mockResolvedValue(new Response("{}")),
+      healthIntervalMs: 0,
+      shutdownTimeoutMs: 10,
+    });
+    const first = await manager.start();
+    firstProcess.kill.mockImplementation((signal: string) => {
+      if (signal === "SIGTERM") firstProcess.__exit();
+    });
+    await manager.stop();
+    const second = await manager.start();
+    expect(second.token).toMatch(/^[a-f0-9]{64}$/);
+    expect(second.token).not.toBe(first.token);
   });
 
   it("serializes concurrent starts so only one backend is spawned", async () => {
@@ -95,24 +132,42 @@ describe("BackendManager", () => {
       code: "BACKEND_START_FAILED",
     });
   });
+
+  it("rejects packaged commands whose executable or cwd is missing before spawning", async () => {
+    const spawn = vi.fn();
+    const manager = new BackendManager({
+      packaged: true,
+      backendCommand: "/missing/docmind-backend",
+      backendArgs: ["-m", "app"],
+      backendCwd: "/missing/docmind-cwd",
+      spawn: spawn as any,
+    });
+    await expect(manager.start()).rejects.toMatchObject({ code: "BACKEND_START_FAILED" });
+    expect(spawn).not.toHaveBeenCalled();
+  });
   it("starts packaged backend only with configured command arguments and cwd", async () => {
+    const runtime = packagedRuntimeFixture();
     const process = fakeProcess();
     const spawn = vi.fn(() => process as any);
-    const manager = new BackendManager({
-      spawn,
-      fetch: vi.fn().mockResolvedValue(new Response("{}")),
-      packaged: true,
-      backendCommand: "/bundle/python",
-      backendArgs: ["-m", "app"],
-      backendCwd: "/bundle/backend",
-      healthIntervalMs: 0,
-    });
-    await manager.start();
-    expect(spawn).toHaveBeenCalledWith(
-      "/bundle/python",
-      ["-m", "app"],
-      expect.objectContaining({ cwd: "/bundle/backend" }),
-    );
+    try {
+      const manager = new BackendManager({
+        spawn,
+        fetch: vi.fn().mockResolvedValue(new Response("{}")),
+        packaged: true,
+        backendCommand: runtime.command,
+        backendArgs: ["-m", "app"],
+        backendCwd: runtime.cwd,
+        healthIntervalMs: 0,
+      });
+      await manager.start();
+      expect(spawn).toHaveBeenCalledWith(
+        runtime.command,
+        ["-m", "app"],
+        expect.objectContaining({ cwd: runtime.cwd }),
+      );
+    } finally {
+      runtime.cleanup();
+    }
   });
 
   it.each([[[1]], [[null]], [[{ value: "-m" }]]])(
