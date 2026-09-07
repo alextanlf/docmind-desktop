@@ -59,6 +59,9 @@ export const OllamaModelSchema = z.object({name:z.string(),digest:z.string().nul
 export const OllamaModelsSchema = z.object({available:z.boolean(),models:OllamaModelSchema.array(),checkedAt:timestamp,message:z.string()});
 export const OllamaPullInputSchema = z.object({modelName:z.string().trim().min(1).max(200).regex(/^[^\r\n]+$/)});
 export const OllamaPullSchema = z.object({id,modelName:z.string(),baseUrl:z.string(),state:z.enum(["queued","running","completed","failed","cancelled"]),progress:z.number().int().min(0).max(100),status:z.string().nullable().optional(),totalBytes:z.number().nullable().optional(),completedBytes:z.number().nullable().optional(),errorCode:z.string().nullable().optional(),errorMessage:z.string().nullable().optional(),retryable:z.boolean(),cancelRequested:z.boolean(),lastEventSequence:z.number().int().nonnegative(),createdAt:timestamp,startedAt:timestamp.nullable().optional(),completedAt:timestamp.nullable().optional(),updatedAt:timestamp});
+export type OllamaStatusView = z.infer<typeof OllamaStatusSchema>;
+export type OllamaModelView = z.infer<typeof OllamaModelSchema>;
+export type OllamaModelsView = z.infer<typeof OllamaModelsSchema>;
 export const WebSearchSettingsInputSchema = z.object({
   mode: z.enum(["off", "ask", "auto"]),
   maxResults: z.number().int().min(1).max(10),
