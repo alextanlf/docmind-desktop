@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Literal
-from uuid import UUID
 from urllib.parse import urlsplit
-import ipaddress
+from uuid import UUID
 
 from pydantic import Field, field_validator
 
@@ -19,21 +18,27 @@ class OllamaConfig(WireModel):
     @field_validator("base_url")
     @classmethod
     def safe_base_url(cls, value: str) -> str:
-        parsed = urlsplit(value)
-        if parsed.scheme != "http" or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path.rstrip("/"):
+        if not isinstance(value, str) or value != value.strip() or any(char.isspace() for char in value):
             raise ValueError("invalid Ollama URL")
-        if parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
-            try:
-                if not ipaddress.ip_address(parsed.hostname or "").is_loopback: raise ValueError("invalid Ollama URL")
-            except ValueError as error:
-                raise ValueError("invalid Ollama URL") from error
-        if parsed.port not in (None, 11434): raise ValueError("invalid Ollama URL")
-        return value.rstrip("/")
+        try:
+            parsed = urlsplit(value)
+            port = parsed.port
+        except ValueError as error:
+            raise ValueError("invalid Ollama URL") from error
+        if parsed.scheme.lower() != "http" or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path.rstrip("/"):
+            raise ValueError("invalid Ollama URL")
+        if parsed.hostname is None or parsed.hostname.lower() not in {"localhost", "127.0.0.1", "::1"}:
+            raise ValueError("invalid Ollama URL")
+        if port not in (None, 11434):
+            raise ValueError("invalid Ollama URL")
+        host = parsed.hostname.lower()
+        rendered_host = f"[{host}]" if ":" in host else host
+        return f"http://{rendered_host}:11434"
 
     @field_validator("model")
     @classmethod
     def valid_model(cls, value: str) -> str:
-        if any(ord(char) < 32 for char in value):
+        if any(ord(char) < 32 or ord(char) == 127 or char.isspace() for char in value):
             raise ValueError("invalid model tag")
         return value
 
@@ -100,6 +105,6 @@ class OllamaPullView(WireModel):
 
 
 def validate_model_tag(value: str) -> str:
-    if not value or len(value) > 200 or any(ord(char) < 32 or ord(char) == 127 for char in value):
+    if not value or len(value) > 200 or any(ord(char) < 32 or ord(char) == 127 or char.isspace() for char in value):
         raise ValueError("invalid model tag")
     return value

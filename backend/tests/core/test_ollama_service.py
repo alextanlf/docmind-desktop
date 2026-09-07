@@ -1,15 +1,28 @@
 import asyncio
+
 import httpx
 import pytest
+
+from app.core.ollama_service import OllamaService, run_pull_worker
+from app.schemas.ollama import OllamaConfig
 from app.storage.database import Database
 from app.storage.repositories import OllamaPullStore
 
-from app.core.ollama_service import OllamaService
-from app.core.ollama_service import run_pull_worker
 
 class ServiceResolver:
     def __init__(self, answers): self.answers = answers
     async def resolve(self, host): return self.answers
+
+
+class FakeClock:
+    def __init__(self):
+        self.value = 0.0
+
+    def __call__(self):
+        return self.value
+
+    def advance(self, seconds):
+        self.value += seconds
 
 
 @pytest.mark.asyncio
@@ -33,6 +46,83 @@ async def test_unavailable_models_are_safe_snapshot():
         raise httpx.ConnectError("offline")
     result = await OllamaService("http://127.0.0.1:11434", transport=httpx.MockTransport(handler)).models()
     assert result.available is False and result.models == []
+
+
+@pytest.mark.asyncio
+async def test_status_caches_health_and_fetches_version_only_once():
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        if request.url.path == "/api/tags":
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {
+                            "name": "qwen2.5:7b",
+                            "digest": "sha256:x",
+                            "size": 12,
+                            "modified_at": "2026-09-06T00:00:00Z",
+                            "details": {"family": "qwen2"},
+                        }
+                    ]
+                },
+            )
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json={"version": "0.5.4"})
+        return httpx.Response(404)
+
+    clock = FakeClock()
+    service = OllamaService(
+        config=OllamaConfig(model="qwen2.5:7b"),
+        transport=httpx.MockTransport(handler),
+        clock=clock,
+    )
+    first = await service.status()
+    second = await service.status()
+    assert first.available is True
+    assert first.version == "0.5.4"
+    assert first.selected_model_installed is True
+    assert second.checked_at == first.checked_at
+    assert calls.count("/api/tags") == 1
+    assert calls.count("/api/version") == 1
+
+    clock.advance(5.1)
+    await service.status()
+    assert calls.count("/api/tags") == 2
+
+
+@pytest.mark.asyncio
+async def test_invalidate_health_forces_refresh_and_malformed_models_are_safe():
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        if request.url.path == "/api/tags":
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {"name": "qwen2.5:7b", "size": "unknown", "modified_at": "bad"},
+                        {"name": "\nnot-safe"},
+                        {"digest": "missing-name"},
+                    ]
+                },
+            )
+        return httpx.Response(200, json={"version": "0.5.4"})
+
+    service = OllamaService(
+        config=OllamaConfig(), transport=httpx.MockTransport(handler)
+    )
+    models = await service.models()
+    assert models.available is True
+    assert [model.name for model in models.models] == ["qwen2.5:7b"]
+    assert models.models[0].size_bytes is None
+    service.invalidate_health()
+    await service.status()
+    assert calls == 3
 
 def test_pull_survives_service_recreation(tmp_path):
     db = Database(f"sqlite+pysqlite:///{tmp_path/'db.sqlite'}"); db.upgrade(); store = OllamaPullStore(db)

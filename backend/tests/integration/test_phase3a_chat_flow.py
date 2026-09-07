@@ -1,6 +1,8 @@
 import pytest
-from app.core.llm import ChatRequest, ChatDelta
+
+from app.core.llm import ChatDelta, ChatRequest
 from app.core.model_router import ModelRouter
+
 
 @pytest.mark.asyncio
 async def test_cloud_only_router_streams_cloud_without_local_call():

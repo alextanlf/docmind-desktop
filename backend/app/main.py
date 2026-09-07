@@ -42,9 +42,9 @@ from app.core.llm import (
     ModelConnectionResult,
     OpenAICompatibleProvider,
 )
-from app.core.ollama_service import OllamaService, run_pull_worker
-from app.core.ollama import OllamaProvider
 from app.core.model_router import ModelRouter
+from app.core.ollama import OllamaProvider
+from app.core.ollama_service import OllamaService, run_pull_worker
 from app.core.retrieval import HybridRetriever
 from app.core.secrets import KeyringSecretStore, MemorySecretStore, SecretStore
 from app.document.chunker import SemanticChunker
@@ -72,10 +72,10 @@ from app.storage.repositories import (
     DocumentStore,
     ImportJobStore,
     MemoryStore,
+    OllamaPullStore,
     RepositoryStore,
     SettingStore,
     VectorCleanupStore,
-    OllamaPullStore,
     WebSearchRunStore,
 )
 from app.storage.vectorstore import PersistentVectorStore
@@ -114,9 +114,12 @@ class _RuntimeLLMProvider:
 class _RoutedLLMProvider:
     def __init__(self, router: ModelRouter) -> None: self.router, self.last_route = router, None
     async def test_connection(self): return await self.router.cloud.test_connection()
-    async def stream_chat(self, request):
+    async def open_stream(self, request):
         routed = await self.router.open_stream(request)
         self.last_route = routed.route
+        return routed
+    async def stream_chat(self, request):
+        routed = await self.open_stream(request)
         async for delta in routed.deltas: yield delta
 
 
@@ -250,6 +253,7 @@ def create_app(
                 cloud_llm_provider,
                 runtime_config.ollama.model,
                 app.state.settings_service.model().model,
+                local_service=app.state.ollama_service,
             ))
         app.state.repository_store = repository_store
         app.state.document_store = document_store

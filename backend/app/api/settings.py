@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import socket
 from collections.abc import Callable
 from pathlib import Path
 
@@ -8,7 +10,9 @@ from fastapi import APIRouter, Request, Response
 from app.api.errors import DomainError
 from app.config import AppSettings
 from app.core.llm import LLMProvider, ModelConfig, OpenAICompatibleProvider
+from app.core.ollama_validation import normalize_loopback_base_url
 from app.core.secrets import SecretStore
+from app.schemas.ollama import OllamaConfig, RoutingSettings, RuntimeSettingsInput
 from app.schemas.settings import (
     MODEL_PRESETS,
     ModelConnectionResult,
@@ -17,7 +21,6 @@ from app.schemas.settings import (
     SettingsView,
     WebSearchSettingsUpdate,
 )
-from app.schemas.ollama import OllamaConfig, RoutingSettings, RuntimeSettingsInput
 from app.schemas.web_search import SearchConnectionResult, WebSearchSettings
 from app.search.tavily import TavilyProvider
 from app.storage.repositories import SettingStore
@@ -40,10 +43,12 @@ class SettingsService:
         setting_store: SettingStore,
         secret_store: SecretStore,
         provider_factory: ProviderFactory = OpenAICompatibleProvider,
+        resolver=None,
     ) -> None:
         self.setting_store = setting_store
         self.secret_store = secret_store
         self.provider_factory = provider_factory
+        self.resolver = resolver or _SettingsResolver()
 
     def model(self) -> ModelSettingsView:
         raw = self.setting_store.get(MODEL_CONFIG_KEY)
@@ -117,9 +122,24 @@ class SettingsService:
             raise DomainError("SETTINGS_INVALID", "运行时设置无效，请重新配置", 500) from error
         return RuntimeSettingsInput(ollama=ollama, routing=routing)
 
-    def save_runtime(self, update: RuntimeSettingsInput) -> RuntimeSettingsInput:
-        self.setting_store.set_many({OLLAMA_RUNTIME_CONFIG_KEY: update.ollama.model_dump_json(), MODEL_ROUTING_KEY: update.routing.model_dump_json()})
-        return update
+    async def save_runtime(self, update: RuntimeSettingsInput) -> RuntimeSettingsInput:
+        # Resolve/validate the complete update before touching either key so a
+        # bad DNS answer cannot partially overwrite the previous runtime.
+        normalized_base_url = await normalize_loopback_base_url(
+            update.ollama.base_url, self.resolver
+        )
+        normalized = update.model_copy(
+            update={
+                "ollama": update.ollama.model_copy(update={"base_url": normalized_base_url})
+            }
+        )
+        self.setting_store.set_many(
+            {
+                OLLAMA_RUNTIME_CONFIG_KEY: normalized.ollama.model_dump_json(),
+                MODEL_ROUTING_KEY: normalized.routing.model_dump_json(),
+            }
+        )
+        return normalized
 
     def web_search(self) -> WebSearchSettings:
         raw = self.setting_store.get(WEB_SEARCH_CONFIG_KEY)
@@ -174,6 +194,14 @@ def _screenshot_count(directory: Path) -> int:
     )
 
 
+class _SettingsResolver:
+    async def resolve(self, host: str):
+        rows = await asyncio.to_thread(
+            socket.getaddrinfo, host, 11434, type=socket.SOCK_STREAM
+        )
+        return sorted({row[4][0] for row in rows})
+
+
 def _service(request: Request) -> SettingsService:
     return request.app.state.settings_service
 
@@ -199,7 +227,7 @@ async def test_model(request: Request) -> ModelConnectionResult:
 
 @router.post("/runtime", response_model=SettingsView)
 async def save_runtime(update: RuntimeSettingsInput, request: Request) -> SettingsView:
-    _service(request).save_runtime(update)
+    await _service(request).save_runtime(update)
     return _service(request).view(_settings(request))
 
 

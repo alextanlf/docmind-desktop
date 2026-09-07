@@ -1,9 +1,9 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
-
-from app.main import create_app
-from app.config import AppSettings
 from pydantic import SecretStr
+
+from app.config import AppSettings
+from app.main import create_app
 
 
 @pytest.mark.asyncio
