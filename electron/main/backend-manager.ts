@@ -2,6 +2,10 @@ import { randomBytes } from "node:crypto";
 import { spawn as nodeSpawn, ChildProcess } from "node:child_process";
 import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  resolveBackendRuntime,
+  type BackendRuntimeContract,
+} from "./backend-runtime-contract";
 
 export interface BackendConnection {
   baseUrl: string;
@@ -32,11 +36,8 @@ export class BackendManager {
   private readonly interval: number;
   private readonly timeout: number;
   private readonly shutdownTimeout: number;
-  private readonly cwd: string;
-  private readonly command: string;
-  private readonly args: string[];
-  private readonly configuredPackagedCommand: boolean;
-  private readonly invalidPackagedArgs: boolean;
+  private readonly runtime: BackendRuntimeContract;
+  private readonly configurationError?: BackendStartError;
   private lifecycleTail?: Promise<void>;
   constructor(opts: {
     spawn?: SpawnFn;
@@ -53,29 +54,37 @@ export class BackendManager {
   }) {
     this.spawn = opts.spawn ?? (nodeSpawn as SpawnFn);
     this.fetchFn = opts.fetch ?? fetch;
-    this.dataDir = opts.dataDir ?? "";
     this.interval = opts.healthIntervalMs ?? 100;
     this.timeout = opts.startupTimeoutMs ?? 15000;
     this.shutdownTimeout = opts.shutdownTimeoutMs ?? 3000;
     const packaged = opts.packaged ?? false;
-    const rawBackendArgs = opts.backendArgs as unknown;
-    const validBackendArgs =
-      rawBackendArgs === undefined ||
-      (Array.isArray(rawBackendArgs) &&
-        Array.from(rawBackendArgs).every((arg) => typeof arg === "string"));
-    this.invalidPackagedArgs = packaged && !validBackendArgs;
-    this.cwd = packaged ? (opts.backendCwd ?? "") : join(opts.repoDir ?? process.cwd(), "backend");
-    this.configuredPackagedCommand =
-      !packaged ||
-      Boolean(
-        opts.backendCommand && opts.backendCwd && validBackendArgs && Array.isArray(rawBackendArgs),
+    try {
+      this.runtime = resolveBackendRuntime(
+        packaged
+          ? {
+              DOCMIND_BACKEND_COMMAND: opts.backendCommand,
+              DOCMIND_BACKEND_ARGS:
+                opts.backendArgs === undefined ? undefined : JSON.stringify(opts.backendArgs),
+              DOCMIND_BACKEND_CWD: opts.backendCwd,
+            }
+          : {},
+        {
+          packaged,
+          repoDir: opts.repoDir ?? process.cwd(),
+          dataDir: opts.dataDir ?? "",
+        },
       );
-    this.command = packaged ? (opts.backendCommand ?? "") : "uv";
-    this.args = packaged
-      ? validBackendArgs && Array.isArray(rawBackendArgs)
-        ? (rawBackendArgs as string[])
-        : []
-      : ["run", "python", "-m", "app"];
+    } catch {
+      this.runtime = {
+        command: "",
+        args: [],
+        cwd: "",
+        dataDir: opts.dataDir ?? "",
+        port: 18900,
+      };
+      this.configurationError = new BackendStartError();
+    }
+    this.dataDir = this.runtime.dataDir;
   }
   private runLifecycleOperation<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.lifecycleTail ? this.lifecycleTail.then(operation, operation) : operation();
@@ -94,20 +103,20 @@ export class BackendManager {
   }
   private async startOnce(): Promise<BackendConnection> {
     if (this.connection) return this.connection;
-    if (!this.configuredPackagedCommand || this.invalidPackagedArgs) throw new BackendStartError();
+    if (this.configurationError) throw this.configurationError;
     this.token = randomBytes(32).toString("hex");
     const env = {
       ...process.env,
       DOCMIND_SESSION_TOKEN: this.token,
       DOCMIND_DATA_DIR: this.dataDir,
-      DOCMIND_PORT: "18900",
+      DOCMIND_PORT: String(this.runtime.port),
     };
     let startError: Error | undefined;
     let exited = false;
     this.childExited = false;
     try {
-      this.child = this.spawn(this.command, this.args, {
-        cwd: this.cwd,
+      this.child = this.spawn(this.runtime.command, this.runtime.args, {
+        cwd: this.runtime.cwd,
         env,
         stdio: ["ignore", "ignore", "pipe"],
       });
@@ -148,7 +157,7 @@ export class BackendManager {
         );
         if (response.ok) {
           this.connection = {
-            baseUrl: "http://127.0.0.1:18900",
+            baseUrl: `http://127.0.0.1:${this.runtime.port}`,
             token: this.token,
           };
           return this.connection;
@@ -187,7 +196,7 @@ export class BackendManager {
     }, 10);
     try {
       return await Promise.race([
-        this.fetchFn("http://127.0.0.1:18900/health", {
+        this.fetchFn(`http://127.0.0.1:${this.runtime.port}/health`, {
           headers: { "X-DocMind-Token": this.token },
           signal: controller.signal,
         }),
