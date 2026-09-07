@@ -232,6 +232,7 @@ class ChatService:
         answer_parts: list[str] = []
         user_persisted = False
         assistant_persistence_attempted = False
+        route_payload: dict[str, Any] | None = None
         try:
             if request.existing_user_message_id:
                 user_message = self.conversation_store.get_message(request.existing_user_message_id)
@@ -299,10 +300,19 @@ class ChatService:
                 )
             )
             sanitizer = URLStreamSanitizer()
-            route = getattr(self.llm, "last_route", None)
-            if route is not None:
-                await self._publish(key, "progress", {"route": route.model_dump(by_alias=True)})
-            async for delta in self.llm.stream_chat(chat_request):
+            open_stream = getattr(self.llm, "open_stream", None)
+            if open_stream is not None:
+                routed = await open_stream(chat_request)
+                route_payload = routed.route.model_dump(by_alias=True)
+                deltas = routed.deltas
+            else:
+                route = getattr(self.llm, "last_route", None)
+                if route is not None:
+                    route_payload = route.model_dump(by_alias=True)
+                deltas = self.llm.stream_chat(chat_request)
+            if route_payload is not None:
+                await self._publish(key, "progress", {"stage": "generating", "route": route_payload})
+            async for delta in deltas:
                 sanitized_delta = sanitizer.feed(delta.content)
                 if sanitized_delta:
                     answer_parts.append(sanitized_delta)
@@ -317,6 +327,8 @@ class ChatService:
             assistant_persistence_attempted = True
             assistant = self._persist_assistant(request.session_id, answer, citations, "completed")
             terminal = {"messageId": assistant.id}
+            if route_payload is not None:
+                terminal["route"] = route_payload
             self.conversation_store.complete_chat_request(key, "done", terminal)
             await self._publish(key, "done", terminal)
             await self._start_cleanup(key)
@@ -324,6 +336,8 @@ class ChatService:
             raise
         except Exception as error:  # noqa: BLE001 - producer owns the operation error boundary
             details = _error_details(error)
+            if route_payload is not None:
+                details["route"] = route_payload
             if user_persisted and not assistant_persistence_attempted:
                 try:
                     self._persist_assistant(

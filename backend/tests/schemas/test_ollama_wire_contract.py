@@ -1,5 +1,6 @@
-from app.schemas.ollama import GenerationRoute, RuntimeSettingsInput
 import pytest
+
+from app.schemas.ollama import GenerationRoute, RuntimeSettingsInput
 
 
 def test_wire_models_serialize_runtime_and_optional_route_in_camel_case():
