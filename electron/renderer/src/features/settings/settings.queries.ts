@@ -1,6 +1,9 @@
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { RuntimeSettingsInput, WebSearchSettingsInput } from "../../../../shared/contracts";
+import { clientErrorMessage, errorAction, isRetryable } from "./ollama-errors";
+
+export { clientErrorMessage, errorAction, isRetryable } from "./ollama-errors";
 
 export const settingsKeys = {
   root: ["settings"] as const,
@@ -35,17 +38,29 @@ export function useRuntimeSettingsQuery(enabled = true) {
 }
 
 export function useOllamaStatusQuery(enabled = true) {
-  return useQuery({ queryKey: ollamaKeys.status, queryFn: () => window.docmind.ollama.status(), enabled, refetchInterval: (query) => query.state.data?.available ? 10_000 : false });
+  return useQuery({
+    queryKey: ollamaKeys.status,
+    queryFn: () => window.docmind.ollama.status(),
+    enabled,
+    refetchInterval: (query) => (query.state.data?.available ? 10_000 : false),
+    retry: (failureCount, error) => failureCount < 1 && isRetryable(error),
+  });
 }
 
 export function useOllamaModelsQuery(enabled = true) {
-  return useQuery({ queryKey: ollamaKeys.models, queryFn: () => window.docmind.ollama.models(), enabled });
+  return useQuery({
+    queryKey: ollamaKeys.models,
+    queryFn: () => window.docmind.ollama.models(),
+    enabled,
+    retry: (failureCount, error) => failureCount < 1 && isRetryable(error),
+  });
 }
 
 const terminalPullStates = new Set(["completed", "failed", "cancelled"]);
 
 export function useOllamaPullQuery(pullId: string | null, enabled = true) {
   const client = useQueryClient();
+  const subscribedPullId = useRef<string | null>(null);
   const query = useQuery({
     queryKey: ollamaKeys.pull(pullId ?? ""),
     queryFn: () => window.docmind.ollama.getPull(pullId as string),
@@ -54,23 +69,30 @@ export function useOllamaPullQuery(pullId: string | null, enabled = true) {
       const state = q.state.data?.state;
       return state && !terminalPullStates.has(state) ? 1_000 : false;
     },
+    retry: (failureCount, error) => failureCount < 1 && isRetryable(error),
   });
   const pullData = query.data;
+  const hasSnapshot = Boolean(pullData);
   const lastSequence = useRef(0);
   useEffect(() => {
     if (!pullId || !enabled || !pullData) return;
+    if (subscribedPullId.current === pullId) return;
+    subscribedPullId.current = pullId;
     lastSequence.current = pullData.lastEventSequence;
     const sub = window.docmind.ollama.subscribePull(pullId, lastSequence.current, (event) => {
-      const payload = event.payload as { pull?: typeof pullData; sequence?: number };
-      const next = payload.pull;
+      const payload = event.payload as typeof pullData & { pull?: typeof pullData; sequence?: number };
+      const next = payload.pull ?? payload;
       const sequence = payload.sequence ?? event.sequence ?? 0;
       if (!next || sequence <= lastSequence.current) return;
       lastSequence.current = sequence;
       client.setQueryData(ollamaKeys.pull(pullId), next);
       if (terminalPullStates.has(next.state)) void client.invalidateQueries({ queryKey: ollamaKeys.models });
     });
-    return () => sub.detach();
-  }, [client, enabled, pullId, pullData]);
+    return () => {
+      sub.detach();
+      if (subscribedPullId.current === pullId) subscribedPullId.current = null;
+    };
+  }, [client, enabled, pullId, hasSnapshot]);
   return query;
 }
 
@@ -85,41 +107,4 @@ export function useSaveWebSearchMutation() {
     mutationFn: (input: WebSearchSettingsInput) => window.docmind.settings.saveWebSearch(input),
     onSuccess: (settings) => client.setQueryData(settingsKeys.root, settings),
   });
-}
-
-export function clientErrorMessage(error: unknown): string {
-  const value = error as { code?: string } | null;
-  const messages: Record<string, string> = {
-    MODEL_AUTH_FAILED: "API Key 无效，请更新密钥后重试",
-    MODEL_NOT_FOUND: "未找到指定模型，请检查模型名称",
-    MODEL_PRESET_INVALID: "模型预设无效，请重新选择",
-    MODEL_TIMEOUT: "模型连接超时，请检查网络或调大超时时间",
-    RATE_LIMITED: "请求过于频繁，请稍后重试",
-    MODEL_RATE_LIMITED: "请求过于频繁，请稍后重试",
-    PROTOCOL_ERROR: "模型服务响应格式异常，请检查 Base URL 或接口兼容性",
-    MODEL_PROTOCOL_ERROR: "模型服务响应格式异常，请检查 Base URL 或接口兼容性",
-    UNAVAILABLE: "模型服务暂不可用，请稍后重试",
-    MODEL_UNAVAILABLE: "模型服务暂不可用，请稍后重试",
-    BACKEND_UNAVAILABLE: "本地服务暂不可用，请稍后重试",
-    EMBEDDING_DOWNLOAD_FAILED: "Embedding 模型下载失败，请检查网络后重试",
-    YUQUE_LOGIN_REQUIRED: "语雀登录已失效，请重新登录",
-    BATCH_STALE_CONFIRMATION: "目录内容已变化，请重新选择目录后再试",
-    BATCH_SOURCE_CHANGED: "目录内容已变化，请重新选择目录",
-    BATCH_STATE_CONFLICT: "批量导入状态已变化，请刷新后重试",
-    OLLAMA_UNAVAILABLE: "Ollama 未运行或暂时无法连接",
-    OLLAMA_MODEL_NOT_INSTALLED: "选定模型尚未安装",
-    OLLAMA_PULL_FAILED: "模型拉取失败",
-    OLLAMA_PULL_CANCELLED: "模型拉取已取消",
-    OLLAMA_PULL_INTERRUPTED: "应用退出时中断了模型拉取",
-    OLLAMA_PROTOCOL_ERROR: "本地模型服务返回了无法识别的数据",
-    LOCAL_MODEL_UNAVAILABLE: "本地模型暂时不可用",
-    ROUTING_CLOUD_UNAVAILABLE: "本地和云端都不可用",
-  };
-  if (value?.code && messages[value.code]) return messages[value.code];
-  if (
-    value?.code &&
-    ["VALIDATION_ERROR", "INVALID_REQUEST", "MODEL_VALIDATION_FAILED"].includes(value.code)
-  )
-    return "设置内容无效，请检查填写内容";
-  return "操作失败，请检查设置后重试";
 }
