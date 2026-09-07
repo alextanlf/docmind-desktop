@@ -12,14 +12,20 @@ export function RuntimeModelSettings({ settings }: { settings: SettingsView }) {
   const [draft, setDraft] = useState<RuntimeSettingsInput>(initial);
   const update = (patch: Partial<RuntimeSettingsInput>) => setDraft((value) => ({ ...value, ...patch }));
   const save = () => mutation.mutate(draft);
+  const modeCopy: Record<RuntimeSettingsInput["routing"]["mode"], string> = {
+    local_only: "内容不会发送到云端",
+    automatic: "本地不可用时可能使用云端",
+    cloud_only: "使用现有云端配置",
+  };
   return <div className="runtime-model-settings">
     <fieldset>
-      <legend>运行模式</legend>
-      <div role="radiogroup" aria-label="运行模式">
+      <legend>对话运行方式</legend>
+      <div role="radiogroup" aria-label="对话运行方式">
         {([['automatic','自动回退'],['local_only','仅本地'],['cloud_only','仅云端']] as const).map(([value,label]) => <label key={value}>
-          <input type="radio" name="routing-mode" value={value} checked={draft.routing.mode === value} onChange={() => update({ routing: { mode: value } })} />{label}
+          <input type="radio" role="radio" aria-checked={draft.routing.mode === value} name="routing-mode" value={value} checked={draft.routing.mode === value} onChange={() => update({ routing: { mode: value } })} />{label}
         </label>)}
       </div>
+      <p role="status">{modeCopy[draft.routing.mode]}</p>
     </fieldset>
     <label>Ollama 地址<input type="url" value={draft.ollama.baseUrl} onChange={(e) => update({ ollama: { ...draft.ollama, baseUrl: e.target.value } })} /></label>
     <label>本地模型<input value={draft.ollama.model} onChange={(e) => update({ ollama: { ...draft.ollama, model: e.target.value } })} /></label>
