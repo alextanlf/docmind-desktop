@@ -7,7 +7,7 @@ from collections.abc import Callable
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import and_, delete, event, func, or_, select, text, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -37,6 +37,7 @@ from app.storage.models import (
     MemoryChunkRecord,
     MemoryVectorCleanupRecord,
     MessageRecord,
+    OllamaPullRecord,
     RepositoryRecord,
     SessionRecord,
     SessionSummaryRecord,
@@ -44,7 +45,6 @@ from app.storage.models import (
     VectorCleanupRecord,
     WebSearchResultRecord,
     WebSearchRunRecord,
-    OllamaPullRecord,
 )
 
 
@@ -63,31 +63,148 @@ _batch_confirmation_session: ContextVar[Session | None] = ContextVar(
 class OllamaPullStore:
     def __init__(self, database: Database) -> None:
         self.database = database
-    def get(self, pull_id: str) -> OllamaPullRecord | None:
-        with self.database.session() as session: return session.get(OllamaPullRecord, pull_id)
-    def find_active(self, *, model_name: str, base_url: str) -> OllamaPullRecord | None:
+    @staticmethod
+    def _detach(session: Session, record: OllamaPullRecord | None) -> OllamaPullRecord | None:
+        if record is not None:
+            session.expunge(record)
+        return record
+
+    def create(
+        self,
+        *,
+        model_name: str,
+        base_url: str,
+        state: str = "queued",
+        **values: Any,
+    ) -> OllamaPullRecord:
+        now = utc_now()
+        record = OllamaPullRecord(
+            id=str(values.pop("id", uuid4())),
+            model_name=model_name,
+            base_url=base_url.rstrip("/"),
+            state=state,
+            created_at=values.pop("created_at", now),
+            updated_at=values.pop("updated_at", now),
+            **values,
+        )
         with self.database.session() as session:
-            return session.scalar(
-                select(OllamaPullRecord)
-                .where(
-                    OllamaPullRecord.model_name == model_name,
-                    OllamaPullRecord.base_url == base_url,
-                    OllamaPullRecord.state.in_(["queued", "running"]),
-                )
-                .order_by(OllamaPullRecord.created_at.asc())
+            session.add(record)
+            session.flush()
+            session.expunge(record)
+        return record
+
+    def get(self, pull_id: str | UUID) -> OllamaPullRecord | None:
+        with self.database.session() as session:
+            return self._detach(session, session.get(OllamaPullRecord, str(pull_id)))
+
+    def find_active(
+        self,
+        base_url: str | None = None,
+        *,
+        model_name: str | None = None,
+    ) -> OllamaPullRecord | None:
+        # ``model_name`` remains an optional compatibility filter for the
+        # Phase 3 foundation callers; uniqueness is intentionally per address.
+        if base_url is None:
+            raise TypeError("base_url is required")
+        with self.database.session() as session:
+            query = select(OllamaPullRecord).where(
+                OllamaPullRecord.base_url == base_url.rstrip("/"),
+                OllamaPullRecord.state.in_(["queued", "running"]),
             )
+            if model_name is not None:
+                query = query.where(OllamaPullRecord.model_name == model_name)
+            record = session.scalar(query.order_by(OllamaPullRecord.created_at.asc()))
+            return self._detach(session, record)
+
     def list_queued(self, *, base_url: str) -> list[OllamaPullRecord]:
         with self.database.session() as session:
-            return list(session.scalars(select(OllamaPullRecord).where(OllamaPullRecord.base_url == base_url, OllamaPullRecord.state == "queued").order_by(OllamaPullRecord.created_at.asc())))
+            records = list(
+                session.scalars(
+                    select(OllamaPullRecord)
+                    .where(
+                        OllamaPullRecord.base_url == base_url.rstrip("/"),
+                        OllamaPullRecord.state == "queued",
+                    )
+                    .order_by(OllamaPullRecord.created_at.asc())
+                )
+            )
+            for record in records:
+                session.expunge(record)
+            return records
+
+    def update(self, pull_id: str | UUID, **changes: Any) -> OllamaPullRecord:
+        allowed = {
+            "model_name", "base_url", "state", "progress", "status", "total_bytes",
+            "completed_bytes", "error_code", "error_message", "retryable",
+            "cancel_requested", "created_at", "started_at", "completed_at",
+            "updated_at", "last_event_sequence",
+        }
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError(f"unknown pull fields: {sorted(unknown)}")
+        if "progress" in changes and changes["progress"] is not None:
+            changes["progress"] = max(0, min(100, int(changes["progress"])))
+        changes.setdefault("updated_at", utc_now())
+        with self.database.session() as session:
+            record = session.get(OllamaPullRecord, str(pull_id))
+            if record is None:
+                raise KeyError(str(pull_id))
+            for key, value in changes.items():
+                setattr(record, key, value)
+            session.flush()
+            session.expunge(record)
+            return record
+
+    def allocate_event_sequence(self, pull_id: str | UUID, **changes: Any) -> int:
+        """Persist optional snapshot changes and return the next event number."""
+        allowed = {
+            "model_name", "base_url", "state", "progress", "status", "total_bytes",
+            "completed_bytes", "error_code", "error_message", "retryable",
+            "cancel_requested", "started_at", "completed_at",
+        }
+        if set(changes) - allowed:
+            raise ValueError("unknown pull fields")
+        if "progress" in changes:
+            changes["progress"] = max(0, min(100, int(changes["progress"])))
+        with self.database.session() as session:
+            record = session.get(OllamaPullRecord, str(pull_id))
+            if record is None:
+                raise KeyError(str(pull_id))
+            for key, value in changes.items():
+                setattr(record, key, value)
+            record.last_event_sequence = int(record.last_event_sequence or 0) + 1
+            record.updated_at = utc_now()
+            session.flush()
+            return record.last_event_sequence
+
     def save(self, record: OllamaPullRecord) -> OllamaPullRecord:
+        # Preserve the old repository boundary while ensuring callers never
+        # retain a session-bound ORM instance.
         with self.database.session() as session:
-            session.merge(record)
-        return record
-    def recover_interrupted(self) -> None:
+            merged = session.merge(record)
+            session.flush()
+            session.expunge(merged)
+            return merged
+
+    def recover_on_startup(self) -> None:
+        now = utc_now()
         with self.database.session() as session:
-            rows = session.scalars(select(OllamaPullRecord).where(OllamaPullRecord.state.in_(["queued", "running"]))).all()
+            rows = session.scalars(
+                select(OllamaPullRecord).where(
+                    OllamaPullRecord.state.in_(["queued", "running"])
+                )
+            ).all()
             for row in rows:
-                row.state, row.error_code, row.retryable, row.updated_at = "failed", "OLLAMA_PULL_INTERRUPTED", True, utc_now()
+                row.state = "failed"
+                row.error_code = "OLLAMA_PULL_INTERRUPTED"
+                row.error_message = "模型拉取因应用退出而中断"
+                row.retryable = True
+                row.completed_at = now
+                row.updated_at = now
+
+    def recover_interrupted(self) -> None:
+        self.recover_on_startup()
 
 
 class RepositoryStore:
