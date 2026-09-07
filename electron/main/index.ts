@@ -3,7 +3,7 @@ import { BackendManager, BackendStartError } from "./backend-manager";
 import { BackendProxy } from "./backend-proxy";
 import { registerIpcHandlers } from "./ipc-handlers";
 import { StagedFileService } from "./staged-files";
-import { createWindow, showAfterDidFinishLoad } from "./window-manager";
+import { attachRendererLoadDiagnostics, createWindow, showAfterDidFinishLoad } from "./window-manager";
 import { logger } from "./logger";
 import { isE2ERuntime, readE2EDialogPath } from "./e2e-runtime";
 let backend: BackendManager;
@@ -65,6 +65,7 @@ app.whenReady().then(async () => {
     const origin =
       process.env.ELECTRON_RENDERER_URL ?? `file://${__dirname}/../renderer/index.html`;
     const win = createWindow(origin);
+    attachRendererLoadDiagnostics(win, (error) => logger.error(error));
     showAfterDidFinishLoad(win);
     await win.loadURL(origin);
   } catch (error) {

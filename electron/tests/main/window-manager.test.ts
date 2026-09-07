@@ -3,6 +3,7 @@ import {
   buildWindowOptions,
   isAllowedNavigation,
   handleWindowOpen,
+  attachRendererLoadDiagnostics,
   showAfterDidFinishLoad,
 } from "../../main/window-manager";
 
@@ -43,5 +44,42 @@ describe("window security", () => {
     expect(show).not.toHaveBeenCalled();
     callback?.();
     expect(show).toHaveBeenCalledOnce();
+  });
+  it("reports main-frame renderer load failures without exposing the URL", () => {
+    let callback:
+      | ((
+          event: unknown,
+          code: number,
+          description: string,
+          url: string,
+          mainFrame: boolean,
+        ) => void)
+      | undefined;
+    const onFailure = vi.fn();
+    attachRendererLoadDiagnostics(
+      { webContents: { once: (_event: string, cb: typeof callback) => (callback = cb) } } as any,
+      onFailure,
+    );
+    callback?.({}, -2, "ERR_FAILED", "file:///Users/secret/index.html", true);
+    expect(onFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Renderer failed to load (-2): ERR_FAILED" }),
+    );
+    callback?.({}, -2, "ERR_FAILED", "file:///Users/secret/index.html", false);
+    expect(onFailure).toHaveBeenCalledTimes(1);
+  });
+  it("never shows a window after a main-frame load failure", () => {
+    const callbacks: Record<string, Array<(...args: any[]) => void>> = {};
+    const show = vi.fn();
+    showAfterDidFinishLoad({
+      webContents: {
+        once: (event: string, cb: (...args: any[]) => void) => {
+          (callbacks[event] ??= []).push(cb);
+        },
+      },
+      show,
+    } as any);
+    callbacks["did-fail-load"]?.[0]?.({}, -2, "ERR_FAILED", "file:///secret", true);
+    callbacks["did-finish-load"]?.[0]?.();
+    expect(show).not.toHaveBeenCalled();
   });
 });
