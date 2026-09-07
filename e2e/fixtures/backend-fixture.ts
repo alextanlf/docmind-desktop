@@ -121,7 +121,16 @@ async function launch(
   artifacts: string,
 ): Promise<ElectronApplication> {
   const app = await electron.launch({
-    args: [resolve(root, "out/main/index.js")],
+    // CI/headless macOS runners may not expose a usable GPU process. Keep the
+    // product's normal GPU path unchanged and make only the fake E2E harness
+    // deterministic.
+    args: [
+      "--disable-gpu",
+      "--in-process-gpu",
+      "--disable-software-rasterizer",
+      "--no-sandbox",
+      resolve(root, "out/main/index.js"),
+    ],
     env: {
       ...process.env,
       DOCMIND_E2E: "1",
