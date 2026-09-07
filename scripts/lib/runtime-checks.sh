@@ -11,5 +11,6 @@ check_local_dependencies() {
 }
 ensure_backend_venv() { [[ -x "$1/backend/.venv/bin/python" ]]; }
 check_port_available() {
-  ! (command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1)
+  command -v lsof >/dev/null 2>&1 || die "无法检查端口：缺少 lsof"
+  ! lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
 }
