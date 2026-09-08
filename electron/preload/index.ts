@@ -9,6 +9,7 @@ import {
   CreateRepositoryInputSchema,
   CreateSessionInputSchema,
   DocumentDetailSchema,
+  DocumentVersionSchema,
   DocumentInputSchema,
   DocumentSummarySchema,
   EventEnvelopeSchema,
@@ -193,6 +194,10 @@ const api: DocMindApi = {
         uuid(documentId),
         ConflictResolutionSchema.parse(resolution),
       ),
+  },
+  versions: {
+    list: (documentId) =>
+      invoke(IPC_CHANNELS.versionsList, DocumentVersionSchema.array(), uuid(documentId)),
   },
   documents: {
     list: (repositoryId) =>

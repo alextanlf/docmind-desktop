@@ -11,6 +11,7 @@ import {
   CreateRepositoryInputSchema,
   CreateSessionInputSchema,
   DocumentDetailSchema,
+  DocumentVersionSchema,
   DocumentInputSchema,
   DocumentSummarySchema,
   ErrorEnvelopeSchema,
@@ -213,6 +214,12 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
       proxy.requestVoid(
         `/api/documents/${parse(UUID, documentId)}/conflict`,
         jsonInit("POST", parse(ConflictResolutionSchema, resolution)),
+      ),
+    [IPC_CHANNELS.versionsList]: (_event, documentId) =>
+      proxy.requestJson(
+        `/api/documents/${parse(UUID, documentId)}/versions`,
+        {},
+        z.array(DocumentVersionSchema),
       ),
     [IPC_CHANNELS.documentsList]: (_event, repositoryId) => {
       const id = parse(UUID, repositoryId);

@@ -22,6 +22,7 @@ export const IPC_CHANNELS = {
   syncTrigger: "sync:trigger",
   conflictsList: "conflicts:list",
   conflictsResolve: "conflicts:resolve",
+  versionsList: "versions:list",
   documentsList: "documents:list",
   documentsRead: "documents:read",
   documentsCreate: "documents:create",

@@ -73,3 +73,11 @@ export function useResolveConflictMutation(repositoryId: string | null) {
     },
   });
 }
+
+export function useVersionsQuery(documentId: string | null) {
+  return useQuery({
+    queryKey: ["documents", documentId, "versions"],
+    queryFn: () => window.docmind.versions.list(documentId!),
+    enabled: documentId !== null,
+  });
+}
