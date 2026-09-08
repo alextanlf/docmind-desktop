@@ -987,3 +987,17 @@ async def test_document_creation_save_error_is_not_replayed(
     assert page.clicked.count("[data-testid=editor-save]") == 1
     assert len(page.screenshots) == 1
     assert page.screenshots[0].name.endswith("-create-document.png")
+
+
+async def test_wait_for_any_records_candidate_attempts() -> None:
+    page = FixturePage({"[data-testid=fallback]"})
+    base = BasePage(page, request_id="r")
+
+    await base.wait_for_any(("testid=primary", "[data-testid=fallback]"))
+
+    assert [attempt.selector for attempt in base._selector_attempts] == [
+        "testid=primary",
+        "[data-testid=fallback]",
+    ]
+    assert [attempt.matched for attempt in base._selector_attempts] == [False, True]
+    assert base._matched_selector == "[data-testid=fallback]"
