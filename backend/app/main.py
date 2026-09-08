@@ -81,6 +81,7 @@ from app.storage.repositories import (
     WebSearchRunStore,
 )
 from app.storage.vectorstore import PersistentVectorStore
+from app.sync.conflict import SyncConflictService
 from app.sync.refresher import DocumentRefresher
 from app.sync.scheduler import SyncScheduler
 from app.sync.service import IncrementalSyncService
@@ -356,6 +357,14 @@ def create_app(
         app.state.sync_service = sync_service
         app.state.sync_state_store = sync_state_store
         app.state.sync_scheduler = sync_scheduler
+        app.state.conflict_service = SyncConflictService(
+            document_store=document_store,
+            sync_state_store=sync_state_store,
+            snapshot_reader=read_repo_snapshot,
+            gateway=runtime_yuque_gateway,
+            refresher=refresher,
+            repository_store=repository_store,
+        )
         summary_task = asyncio.create_task(summary_scheduler.run())
         sync_task = asyncio.create_task(sync_scheduler.run())
         await app.state.import_service.recover_pending_vector_cleanup()

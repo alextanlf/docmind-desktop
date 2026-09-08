@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import cast
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Request, Response, status
 
 from app.api.errors import DomainError
 from app.core.embedding import EmbeddingProvider
@@ -18,6 +18,7 @@ from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
 from app.schemas.documents import DocumentDelete, DocumentDetail, DocumentInput, DocumentSummary
 from app.schemas.imports import DownloadedDocument
+from app.schemas.sync import ConflictResolution
 from app.schemas.yuque import CreateYuqueDocumentRequest, UpdateYuqueDocumentRequest, YuqueDocument
 from app.storage.models import DocumentChunkRecord, DocumentRecord
 from app.storage.repositories import (
@@ -1003,3 +1004,11 @@ async def delete_document(request: Request, document_id: str, body: DocumentDele
         _cleanup_store(request).create(
             document.repository_id, document.id, deletable_ids
         )
+
+
+@router.post("/api/documents/{document_id}/conflict", status_code=status.HTTP_204_NO_CONTENT)
+async def resolve_conflict(request: Request, document_id: str) -> Response:
+    payload = await request.json()
+    resolution = ConflictResolution(payload.get("resolution", ""))
+    await request.app.state.conflict_service.resolve(document_id, resolution)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
