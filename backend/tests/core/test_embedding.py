@@ -4,7 +4,11 @@ import pytest
 from pydantic import SecretStr
 
 from app.config import AppSettings, EmbeddingSettings
-from app.core.embedding import BGEEmbeddingProvider, FakeEmbeddingProvider
+from app.core.embedding import (
+    BGEEmbeddingProvider,
+    FakeEmbeddingProvider,
+    create_embedding_provider,
+)
 
 
 @pytest.fixture
@@ -18,6 +22,11 @@ async def test_fake_embedding_is_deterministic(fake_embedding: FakeEmbeddingProv
 
     assert first == second
     assert len(first) == 8
+
+
+def test_bge_m3_provider_reports_1024_dimension() -> None:
+    provider = create_embedding_provider(EmbeddingSettings(model_name="BAAI/bge-m3"))
+    assert provider.dimension == 1024
 
 
 async def test_fake_embedding_scores_shared_state_token_above_retrieval_threshold() -> None:

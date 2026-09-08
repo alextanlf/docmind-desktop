@@ -32,6 +32,10 @@ class BGEEmbeddingProvider:
         self._lock = asyncio.Lock()
 
     @property
+    def dimension(self) -> int:
+        return self.settings.dimension
+
+    @property
     def status(self) -> ModelStatus:
         return self._status.model_copy()
 
@@ -153,4 +157,6 @@ class FakeEmbeddingProvider:
 
 
 def create_embedding_provider(settings: EmbeddingSettings) -> EmbeddingProvider:
+    if "bge-m3" in settings.model_name and settings.dimension == 768:
+        settings = settings.model_copy(update={"dimension": 1024})
     return BGEEmbeddingProvider(settings)

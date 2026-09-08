@@ -605,3 +605,12 @@ class GraphEdgeRecord(Base):
     source_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     target_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     relation: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class EmbeddingRebuildRecord(Base):
+    __tablename__ = "embedding_rebuild"
+
+    document_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    needs_rebuild: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("1")
+    )
