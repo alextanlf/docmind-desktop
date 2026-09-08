@@ -13,6 +13,8 @@ class RepositoryPage(BasePage):
     )
 
     async def list_documents(self, repository_id: str) -> list[YuqueDocument]:
+        if hasattr(self.page, "bring_to_front"):
+            return await self._list_from_catalog(repository_id)
         locator = await self.wait_for_any(self._document_selectors)
         locators = await maybe_await(locator.all())
         documents: list[YuqueDocument] = []
@@ -25,6 +27,30 @@ class RepositoryPage(BasePage):
             documents.append(
                 YuqueDocument(
                     yuque_id=url or f"document-{index}",
+                    repository_id=repository_id,
+                    title=title,
+                    url=url,
+                )
+            )
+        return documents
+
+    async def _list_from_catalog(self, repository_id: str) -> list[YuqueDocument]:
+        locator = self.page.locator(f"a[href*='{repository_id}/']")
+        await locator.first.wait_for(state="visible", timeout=5_000)
+        documents: list[YuqueDocument] = []
+        seen: set[str] = set()
+        for item in await maybe_await(locator.all()):
+            title = (await item.inner_text()).split("\n")[0].strip()
+            if not title:
+                continue
+            url = await item.get_attribute("href")
+            key = url or title
+            if key in seen:
+                continue
+            seen.add(key)
+            documents.append(
+                YuqueDocument(
+                    yuque_id=url or title,
                     repository_id=repository_id,
                     title=title,
                     url=url,
