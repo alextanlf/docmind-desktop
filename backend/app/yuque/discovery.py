@@ -16,6 +16,7 @@ from app.schemas.batches import (
     DiscoveryResult,
     RemoteBinding,
 )
+from app.schemas.sync import RemoteDocumentState
 from app.yuque.gateway import YuqueGateway
 
 _MARKER_RE = re.compile(r"\n?<!--\s*docmind[^>]*-->\s*", re.IGNORECASE)
@@ -80,3 +81,21 @@ class YuqueDiscovery:
             raise DomainError("YUQUE_DISCOVERY_FAILED", "语雀文档发现失败", 503, True) from exc
         await emit(DiscoveryProgress(stage="awaiting_confirmation", visited=len(sources), candidate_count=len(sources), rejected_count=0, message="语雀发现完成"))
         return DiscoveryResult(sources=sources, discovery_version=1, total_count=len(sources), rejected_count=0)
+
+
+async def read_remote_snapshot(
+    gateway: YuqueGateway, repository_id: str
+) -> list[RemoteDocumentState]:
+    states: list[RemoteDocumentState] = []
+    for document in await gateway.list_documents(repository_id):
+        content = await gateway.read_document(document.yuque_id)
+        digest = hashlib.sha256(content.content.encode("utf-8")).hexdigest()
+        states.append(
+            RemoteDocumentState(
+                document_id=document.yuque_id,
+                title=document.title,
+                content_sha256=digest,
+                url=document.url or document.yuque_id,
+            )
+        )
+    return states
