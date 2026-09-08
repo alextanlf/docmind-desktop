@@ -191,6 +191,15 @@ export const ConflictViewSchema = z.object({
 });
 
 export const ConflictResolutionSchema = z.enum(["keep_local", "keep_remote", "keep_both"]);
+
+export const DocumentVersionSchema = z.object({
+  documentId: z.string(),
+  versionNo: z.number().int().nonnegative(),
+  title: text(240),
+  content: bounded(2_000_000),
+  contentSha256: z.string(),
+  createdAt: z.string(),
+});
 export const DocumentDetailSchema = DocumentSummarySchema.extend({
   content: z.string().max(2_000_000),
 });
@@ -557,6 +566,7 @@ export type SyncOutcome = z.infer<typeof SyncOutcomeSchema>;
 export type SyncStatus = z.infer<typeof SyncStatusSchema>;
 export type ConflictView = z.infer<typeof ConflictViewSchema>;
 export type ConflictResolution = z.infer<typeof ConflictResolutionSchema>;
+export type DocumentVersion = z.infer<typeof DocumentVersionSchema>;
 export type DocumentInput = z.infer<typeof DocumentInputSchema>;
 export type DocumentSummary = z.infer<typeof DocumentSummarySchema>;
 export type DocumentDetail = z.infer<typeof DocumentDetailSchema>;
@@ -659,6 +669,9 @@ export interface DocMindApi {
   conflicts: {
     list(repositoryId: string): Promise<ConflictView[]>;
     resolve(documentId: string, resolution: ConflictResolution): Promise<void>;
+  };
+  versions: {
+    list(documentId: string): Promise<DocumentVersion[]>;
   };
   documents: {
     list(repositoryId: string): Promise<DocumentSummary[]>;
