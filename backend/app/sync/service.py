@@ -28,10 +28,12 @@ class IncrementalSyncService:
         sync_state_store: Any,
         snapshot_reader: SnapshotReader,
         refresher: DocumentRefresher,
+        document_store: Any,
     ) -> None:
         self.sync_state_store = sync_state_store
         self.snapshot_reader = snapshot_reader
         self.refresher = refresher
+        self.document_store = document_store
         self._locks: dict[str, asyncio.Lock] = {}
 
     async def sync_repository(self, repository_id: str) -> SyncOutcome:
@@ -43,17 +45,24 @@ class IncrementalSyncService:
         started = datetime.now(UTC).isoformat()
         previous = self.sync_state_store.get_snapshot(repository_id)
         remote = await self.snapshot_reader(repository_id)
+        remote_by_id = {state.document_id: (state, content) for state, content in remote}
 
         added = changed = deleted = unchanged = failed = 0
-        remote_ids: set[str] = set()
-        for state, content in remote:
-            remote_ids.add(state.document_id)
+        for document in self.document_store.list_for_repository(repository_id):
+            if not document.yuque_id:
+                continue
+            entry = remote_by_id.get(document.yuque_id)
+            if entry is None:
+                try:
+                    await self.refresher.mark_remote_deleted(repository_id, document.yuque_id)
+                    deleted += 1
+                except Exception:  # noqa: BLE001 - one deletion must not stop the repo
+                    failed += 1
+                continue
+            state, content = entry
             prior = previous.get(state.document_id)
             if prior is None:
-                if await self._upsert(repository_id, state, content):
-                    added += 1
-                else:
-                    failed += 1
+                added += 1
             elif prior.title != state.title or prior.content_sha256 != state.content_sha256:
                 if await self._upsert(repository_id, state, content):
                     changed += 1
@@ -61,16 +70,6 @@ class IncrementalSyncService:
                     failed += 1
             else:
                 unchanged += 1
-
-        for document_id in previous:
-            if document_id not in remote_ids:
-                try:
-                    await self.refresher.mark_remote_deleted(repository_id, document_id)
-                    deleted += 1
-                except Exception:  # noqa: BLE001 - one deletion must not stop the repo
-                    failed += 1
-
-        for state, _content in remote:
             self.sync_state_store.upsert(
                 repository_id,
                 state.document_id,

@@ -392,6 +392,41 @@ class DocumentStore:
             )
             return session.scalar(statement)
 
+    def find_by_yuque_id(self, repository_id: str, yuque_id: str) -> DocumentRecord | None:
+        with self.database.session() as session:
+            statement = select(DocumentRecord).where(
+                DocumentRecord.repository_id == repository_id,
+                DocumentRecord.yuque_id == yuque_id,
+            )
+            return session.scalar(statement)
+
+    def mark_remote_deleted(self, document_id: str) -> None:
+        with self.database.session() as session:
+            document = session.get(DocumentRecord, document_id)
+            if document is not None:
+                document.remote_deleted = True
+                document.updated_at = utc_now()
+                session.flush()
+
+    def update_synced_content(
+        self,
+        document_id: str,
+        *,
+        title: str,
+        content_hash: str,
+        source_url: str,
+    ) -> None:
+        with self.database.session() as session:
+            document = session.get(DocumentRecord, document_id)
+            if document is None:
+                raise DomainError("IMPORT_STATE_CONFLICT", "导入文档不存在", 409)
+            document.title = title
+            document.content_hash = content_hash
+            document.source_url = source_url
+            document.remote_deleted = False
+            document.updated_at = utc_now()
+            session.flush()
+
     def update_import_metadata(
         self,
         document_id: str,

@@ -29,6 +29,7 @@ from app.api.search import router as search_router
 from app.api.sessions import router as sessions_router
 from app.api.settings import SettingsService
 from app.api.settings import router as settings_router
+from app.api.sync import router as sync_router
 from app.api.web_search import router as web_search_router
 from app.api.yuque import router as yuque_router
 from app.chat.service import ChatService
@@ -74,12 +75,16 @@ from app.storage.repositories import (
     MemoryStore,
     OllamaPullStore,
     RepositoryStore,
+    RepositorySyncStateStore,
     SettingStore,
     VectorCleanupStore,
     WebSearchRunStore,
 )
 from app.storage.vectorstore import PersistentVectorStore
-from app.yuque.discovery import YuqueDiscovery
+from app.sync.refresher import DocumentRefresher
+from app.sync.scheduler import SyncScheduler
+from app.sync.service import IncrementalSyncService
+from app.yuque.discovery import YuqueDiscovery, read_remote_snapshot
 from app.yuque.gateway import PlaywrightYuqueGateway, YuqueGateway
 
 
@@ -322,7 +327,37 @@ def create_app(
             document_saver=lambda **kwargs: save_distillation_document(app, **kwargs),
             event_broker=app.state.distillation_event_broker,
         )
+        sync_state_store = RepositorySyncStateStore(database)
+        refresher = DocumentRefresher(
+            document_store=document_store,
+            parser=DocumentParser(),
+            chunker=SemanticChunker(),
+            embedding_provider=runtime_embedding_provider,
+            vector_store=vector_store,
+        )
+
+        async def read_repo_snapshot(repository_id: str):
+            repository = repository_store.get(repository_id)
+            if repository is None or not repository.yuque_id:
+                return []
+            return await read_remote_snapshot(runtime_yuque_gateway, repository.yuque_id)
+
+        sync_service = IncrementalSyncService(
+            sync_state_store=sync_state_store,
+            snapshot_reader=read_repo_snapshot,
+            refresher=refresher,
+            document_store=document_store,
+        )
+        sync_scheduler = SyncScheduler(
+            sync_service,
+            repository_store,
+            interval_seconds=runtime_settings.sync_interval_seconds,
+        )
+        app.state.sync_service = sync_service
+        app.state.sync_state_store = sync_state_store
+        app.state.sync_scheduler = sync_scheduler
         summary_task = asyncio.create_task(summary_scheduler.run())
+        sync_task = asyncio.create_task(sync_scheduler.run())
         await app.state.import_service.recover_pending_vector_cleanup()
         try:
             yield
@@ -338,6 +373,8 @@ def create_app(
             await chat_service.stop()
             summary_scheduler.stop()
             await summary_task
+            sync_scheduler.stop()
+            await sync_task
             await runtime_yuque_gateway.close()
             database.engine.dispose()
 
@@ -371,6 +408,7 @@ def create_app(
     app.include_router(web_search_router)
     app.include_router(memory_router)
     app.include_router(ollama_router)
+    app.include_router(sync_router)
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:

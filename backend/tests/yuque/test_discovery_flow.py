@@ -43,6 +43,8 @@ async def test_read_remote_snapshot_hashes_content(tmp_path: Path) -> None:
     states = await read_remote_snapshot(gateway, repo.yuque_id)
 
     assert len(states) == 1
-    assert states[0].title == "One"
-    assert states[0].document_id.startswith("doc-")
-    assert len(states[0].content_sha256) == 64
+    state, content = states[0]
+    assert state.title == "One"
+    assert state.document_id.startswith("doc-")
+    assert len(state.content_sha256) == 64
+    assert content == "# One"
