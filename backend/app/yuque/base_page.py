@@ -3,13 +3,22 @@ from __future__ import annotations
 import asyncio
 import inspect
 import re
+import time
 from collections.abc import Awaitable, Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar
 
 from playwright.async_api import Error as PlaywrightError
 
 from app.api.errors import DomainError
+from app.yuque.diagnostics import (
+    SelectorAttempt,
+    YuqueDiagnostic,
+    diagnostic_json,
+    redact_dom_snapshot,
+    redact_page_url,
+)
 
 T = TypeVar("T")
 
@@ -19,10 +28,19 @@ RETRY_DELAYS = (0.2, 0.5, 1.0)
 class BasePage:
     """Small selector and retry boundary around a Playwright page."""
 
-    def __init__(self, page: Any, screenshots_dir: Path | None = None, request_id: str = "yuque") -> None:
+    def __init__(
+        self,
+        page: Any,
+        screenshots_dir: Path | None = None,
+        request_id: str = "yuque",
+        operation: str = "",
+    ) -> None:
         self.page = page
         self.screenshots_dir = screenshots_dir
         self.request_id = request_id
+        self.operation = operation
+        self._selector_attempts: list[SelectorAttempt] = []
+        self._matched_selector: str | None = None
 
     async def click_any(self, selectors: Sequence[str]) -> None:
         locator = await self.wait_for_any(selectors)
@@ -35,11 +53,19 @@ class BasePage:
     async def wait_for_any(self, selectors: Sequence[str], timeout: int = 5_000) -> Any:
         last_error: Exception | None = None
         for selector in selectors:
+            start = time.monotonic()
             locator = self._locator(selector)
             try:
                 await locator.wait_for(state="visible", timeout=timeout)
+                self._selector_attempts.append(
+                    SelectorAttempt(selector, True, (time.monotonic() - start) * 1000)
+                )
+                self._matched_selector = selector
                 return locator
             except _RETRYABLE_ERRORS as error:
+                self._selector_attempts.append(
+                    SelectorAttempt(selector, False, (time.monotonic() - start) * 1000)
+                )
                 last_error = error
         raise DomainError("YUQUE_PAGE_CHANGED", "语雀页面结构已变化，请重新登录后重试", 503, True) from last_error
 
@@ -47,6 +73,8 @@ class BasePage:
         self, operation_name: str, operation: Callable[[], Awaitable[T]]
     ) -> T:
         for attempt, delay in enumerate((*RETRY_DELAYS, None)):
+            self._selector_attempts = []
+            self._matched_selector = None
             try:
                 return await operation()
             except DomainError as error:
@@ -65,17 +93,41 @@ class BasePage:
                 await asyncio.sleep(delay)
         raise AssertionError("retry loop must return or raise")
 
-    async def _capture_failure(self, operation_name: str) -> None:
+    async def _capture_failure(
+        self, operation_name: str, error_code: str = "YUQUE_PAGE_CHANGED"
+    ) -> None:
         if self.screenshots_dir is None or not hasattr(self.page, "screenshot"):
             return
         self.screenshots_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        filename = f"{_safe_filename(self.request_id)}-{_safe_filename(operation_name)}.png"
+        base = f"{_safe_filename(self.request_id)}-{_safe_filename(operation_name)}"
+        filename = f"{base}.png"
         try:
             if hasattr(self.page, "add_style_tag"):
                 await self.page.add_style_tag(content=_SCREENSHOT_MASK_CSS)
             await self.page.screenshot(path=str(self.screenshots_dir / filename))
         except _RETRYABLE_ERRORS:
             return
+        if hasattr(self.page, "content"):
+            try:
+                raw = await self.page.content()
+                (self.screenshots_dir / f"{base}.dom.html").write_text(
+                    redact_dom_snapshot(raw), encoding="utf-8"
+                )
+            except _RETRYABLE_ERRORS:
+                pass
+        diagnostic = YuqueDiagnostic(
+            operation=self.operation or operation_name,
+            step=operation_name,
+            page_host=redact_page_url(getattr(self.page, "url", "")),
+            candidate_selectors=tuple(a.selector for a in self._selector_attempts),
+            matched_selector=self._matched_selector,
+            attempts=tuple(self._selector_attempts),
+            error_code=error_code,
+            occurred_at=datetime.now(UTC).isoformat(),
+        )
+        (self.screenshots_dir / f"{base}.json").write_text(
+            diagnostic_json(diagnostic), encoding="utf-8"
+        )
 
     def _locator(self, selector: str) -> Any:
         if selector.startswith("role="):

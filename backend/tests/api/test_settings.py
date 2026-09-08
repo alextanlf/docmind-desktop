@@ -355,6 +355,28 @@ def test_clear_diagnostics_deletes_only_regular_png_children(
     assert document.exists()
 
 
+def test_clear_diagnostics_removes_json_and_html_but_not_symlinks(
+    client, auth_headers, app_settings, tmp_path: Path
+) -> None:
+    directory = app_settings.screenshots_dir
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "a.png").write_bytes(b"png")
+    (directory / "a.json").write_text("{}", encoding="utf-8")
+    (directory / "a.html").write_text("<html></html>", encoding="utf-8")
+    outside = tmp_path / "outside.html"
+    outside.write_text("<html></html>", encoding="utf-8")
+    (directory / "link.html").symlink_to(outside)
+
+    response = client.post("/api/settings/diagnostics/clear", headers=auth_headers)
+
+    assert response.status_code == 204
+    assert not (directory / "a.png").exists()
+    assert not (directory / "a.json").exists()
+    assert not (directory / "a.html").exists()
+    assert (directory / "link.html").is_symlink()
+    assert outside.exists()
+
+
 def test_clear_diagnostics_refuses_symlinked_children(client, auth_headers, app_settings, tmp_path: Path) -> None:
     target = tmp_path / "outside.png"
     link = app_settings.screenshots_dir / "linked.png"

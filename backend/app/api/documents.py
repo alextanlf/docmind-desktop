@@ -434,7 +434,7 @@ async def _delete_remote_idempotently(
     """Delete once, accepting NOT_FOUND only after a separate absence check."""
     gateway = _gateway(request)
     try:
-        await gateway.delete_document(document_id)
+        await gateway.delete_document(document_id, repository_id)
     except asyncio.CancelledError:
         raise
     except DomainError as error:
@@ -531,15 +531,27 @@ async def _compensate_mutation_unshielded(request: Request, mutation_id: str) ->
                     )
             else:
                 old = cast(dict[str, object], payload.get("old_snapshot") or {})
-                await _await_shielded(
-                    _gateway(request).update_document(
-                        UpdateYuqueDocumentRequest(
-                            document_id=remote_id,
-                            title=str(old.get("remote_title", old.get("title", ""))),
-                            content=str(old.get("remote_content", old.get("content", ""))),
+                old_content = str(old.get("remote_content", old.get("content", "")))
+                restore_remote = True
+                try:
+                    current = await _await_shielded(
+                        _gateway(request).read_document(remote_id)
+                    )
+                    restore_remote = current.content != old_content
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 - read-back is best-effort
+                    complete = False
+                if restore_remote:
+                    await _await_shielded(
+                        _gateway(request).update_document(
+                            UpdateYuqueDocumentRequest(
+                                document_id=remote_id,
+                                title=str(old.get("remote_title", old.get("title", ""))),
+                                content=old_content,
+                            )
                         )
                     )
-                )
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - preserve intent across every failure
@@ -881,6 +893,7 @@ async def update_document(request: Request, document_id: str, body: DocumentInpu
         remote_title=old_remote.title,
         remote_content=old_remote.content,
     )
+    marker = f"docmind-mutation:{uuid4()!s}"
     intent = _mutation_store(request).create(
         operation="update",
         repository_id=document.repository_id,
@@ -892,13 +905,18 @@ async def update_document(request: Request, document_id: str, body: DocumentInpu
             "old_snapshot": old_snapshot,
             "new_title": body.title,
             "new_content": body.content,
+            "marker": marker,
         },
     )
     if not _claim_mutation(request.app, intent.id):  # pragma: no cover - UUID collision
         raise DomainError("MUTATION_CONFLICT", "文档变更正在进行", 409)
     try:
         remote = await _gateway(request).update_document(
-            UpdateYuqueDocumentRequest(document_id=document.yuque_id, title=body.title, content=body.content)
+            UpdateYuqueDocumentRequest(
+                document_id=document.yuque_id,
+                title=body.title,
+                content=_marked_create_content(body.content, marker),
+            )
         )
         _update_intent(
             request,
@@ -965,8 +983,11 @@ async def delete_document(request: Request, document_id: str, body: DocumentDele
         raise DomainError("CONFIRMATION_REQUIRED", "请确认删除文档", 400)
     if not document.yuque_id:
         raise _not_found()
+    repository = _repository_store(request).get(document.repository_id)
+    if repository is None or not repository.yuque_id:
+        raise _not_found()
     try:
-        await _gateway(request).delete_document(document.yuque_id)
+        await _gateway(request).delete_document(document.yuque_id, repository.yuque_id)
     except Exception as error:  # noqa: BLE001 - gateway boundary maps all failures
         raise _remote_failure(error) from None
     vector_ids = _document_store(request).vector_ids(document.id)

@@ -42,7 +42,7 @@ async def test_fake_gateway_supports_repository_and_document_crud(fake_yuque: Fa
     )
 
     assert updated.title == "State 2"
-    await fake_yuque.delete_document(created.yuque_id)
+    await fake_yuque.delete_document(created.yuque_id, repository.yuque_id)
     assert await fake_yuque.list_documents(repository.yuque_id) == []
 
 
@@ -91,5 +91,5 @@ async def test_fake_gateway_discovers_marker_and_verifies_document_absence(
     assert found == created
     assert await fake_yuque.find_document_by_marker(repository.yuque_id, "missing") is None
     assert await fake_yuque.document_exists(repository.yuque_id, created.yuque_id) is True
-    await fake_yuque.delete_document(created.yuque_id)
+    await fake_yuque.delete_document(created.yuque_id, repository.yuque_id)
     assert await fake_yuque.document_exists(repository.yuque_id, created.yuque_id) is False
