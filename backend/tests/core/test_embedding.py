@@ -38,14 +38,14 @@ async def test_fake_embedding_scores_shared_state_token_above_retrieval_threshol
     assert sum(left * right for left, right in zip(query, document, strict=True)) >= 0.65
 
 
-def test_embedding_defaults_use_bge_base_zh_dimension(tmp_path) -> None:
+def test_embedding_defaults_use_bge_m3_dimension(tmp_path) -> None:
     app_settings = AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
 
-    assert EmbeddingSettings().model_name == "BAAI/bge-base-zh-v1.5"
-    assert EmbeddingSettings().dimension == 768
-    assert app_settings.embedding_model_name == "BAAI/bge-base-zh-v1.5"
-    assert app_settings.embedding_dimension == 768
-    assert app_settings.embedding_settings.dimension == 768
+    assert EmbeddingSettings().model_name == "BAAI/bge-m3"
+    assert EmbeddingSettings().dimension == 1024
+    assert app_settings.embedding_model_name == "BAAI/bge-m3"
+    assert app_settings.embedding_dimension == 1024
+    assert app_settings.embedding_settings.dimension == 1024
 
 
 async def test_bge_provider_defers_model_import_until_explicit_preparation(monkeypatch) -> None:
