@@ -44,6 +44,7 @@ class DocumentSummary(WireModel):
     yuque_url: str | None
     chunk_count: int
     status: str
+    remote_deleted: bool
     created_at: datetime
     updated_at: datetime
 

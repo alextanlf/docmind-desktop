@@ -18,6 +18,8 @@ import {
   ModelSettingsInputSchema,
   ModelStatusSchema,
   RepositorySchema,
+  SyncOutcomeSchema,
+  SyncStatusSchema,
   SessionSummarySchema,
   SettingsViewSchema,
   SourcePreviewSchema,
@@ -186,6 +188,18 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         "/api/repositories",
         jsonInit("POST", parse(CreateRepositoryInputSchema, input)),
         RepositorySchema,
+      ),
+    [IPC_CHANNELS.syncGet]: (_event, repositoryId) =>
+      proxy.requestJson(
+        `/api/repositories/${parse(UUID, repositoryId)}/sync`,
+        {},
+        SyncStatusSchema,
+      ),
+    [IPC_CHANNELS.syncTrigger]: (_event, repositoryId) =>
+      proxy.requestJson(
+        `/api/repositories/${parse(UUID, repositoryId)}/sync`,
+        jsonInit("POST"),
+        SyncOutcomeSchema,
       ),
     [IPC_CHANNELS.documentsList]: (_event, repositoryId) => {
       const id = parse(UUID, repositoryId);

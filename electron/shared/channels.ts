@@ -18,6 +18,8 @@ export const IPC_CHANNELS = {
   yuqueLogin: "yuque:login",
   repositoriesList: "repositories:list",
   repositoriesCreate: "repositories:create",
+  syncGet: "sync:get",
+  syncTrigger: "sync:trigger",
   documentsList: "documents:list",
   documentsRead: "documents:read",
   documentsCreate: "documents:create",

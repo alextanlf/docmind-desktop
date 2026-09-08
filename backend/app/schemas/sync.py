@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.schemas.common import WireModel
+
 
 @dataclass(frozen=True)
 class RemoteDocumentState:
@@ -11,8 +13,7 @@ class RemoteDocumentState:
     url: str
 
 
-@dataclass(frozen=True)
-class SyncOutcome:
+class SyncOutcome(WireModel):
     repository_id: str
     added: int
     changed: int

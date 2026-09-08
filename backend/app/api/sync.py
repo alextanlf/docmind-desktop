@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict
-
 from fastapi import APIRouter, Request
 
 router = APIRouter(prefix="/api/repositories", tags=["sync"])
@@ -10,7 +8,7 @@ router = APIRouter(prefix="/api/repositories", tags=["sync"])
 @router.post("/{repository_id}/sync")
 async def sync_repository(request: Request, repository_id: str) -> dict[str, object]:
     outcome = await request.app.state.sync_service.sync_repository(repository_id)
-    return asdict(outcome)
+    return outcome.model_dump()
 
 
 @router.get("/{repository_id}/sync")

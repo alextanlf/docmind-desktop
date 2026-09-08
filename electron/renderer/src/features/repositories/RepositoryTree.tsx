@@ -1,7 +1,12 @@
 import { ChevronDown, ChevronRight, FilePlus2, FolderPlus, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { clientErrorMessage } from "../settings/settings.queries";
-import { useDocumentsQuery, useRepositoriesQuery } from "./repository.queries";
+import {
+  useDocumentsQuery,
+  useRepositoriesQuery,
+  useRepositorySyncQuery,
+  useSyncRepositoryMutation,
+} from "./repository.queries";
 
 type RepositoryTreeProps = {
   onOpenDocument?: (documentId: string, repositoryId: string) => void;
@@ -35,9 +40,29 @@ function RepositoryDocuments({
           <button onClick={() => onOpenDocument?.(document.id, repositoryId)} type="button">
             {document.title}
           </button>
+          {document.remoteDeleted ? (
+            <span className="remote-deleted-badge">远端已删除</span>
+          ) : null}
         </li>
       ))}
     </ul>
+  );
+}
+
+function RepositorySyncButton({ repositoryId }: { repositoryId: string }) {
+  const sync = useRepositorySyncQuery(repositoryId);
+  const mutation = useSyncRepositoryMutation(repositoryId);
+  return (
+    <button
+      aria-label="立即同步"
+      className="tree-icon-button"
+      disabled={mutation.isPending}
+      onClick={() => mutation.mutate()}
+      title={sync.data?.lastSyncedAt ? `上次同步：${sync.data.lastSyncedAt}` : "立即同步"}
+      type="button"
+    >
+      <RefreshCw aria-hidden="true" size={14} />
+    </button>
   );
 }
 
@@ -143,6 +168,7 @@ export function RepositoryTree({ onOpenDocument }: RepositoryTreeProps) {
                 <span>{repository.name}</span>
                 <small>{repository.documentCount}</small>
               </button>
+              <RepositorySyncButton repositoryId={repository.id} />
               {expanded ? (
                 <RepositoryDocuments onOpenDocument={onOpenDocument} repositoryId={repository.id} />
               ) : null}
