@@ -17,6 +17,8 @@ import {
   ModelSettingsInputSchema,
   ModelStatusSchema,
   RepositorySchema,
+  SyncOutcomeSchema,
+  SyncStatusSchema,
   SessionSummarySchema,
   SettingsViewSchema,
   SourcePreviewSchema,
@@ -172,6 +174,12 @@ const api: DocMindApi = {
         RepositorySchema,
         CreateRepositoryInputSchema.parse(input),
       ),
+  },
+  sync: {
+    get: (repositoryId) =>
+      invoke(IPC_CHANNELS.syncGet, SyncStatusSchema, uuid(repositoryId)),
+    trigger: (repositoryId) =>
+      invoke(IPC_CHANNELS.syncTrigger, SyncOutcomeSchema, uuid(repositoryId)),
   },
   documents: {
     list: (repositoryId) =>

@@ -165,9 +165,23 @@ export const DocumentSummarySchema = z.object({
   yuqueUrl: z.string().max(4_000).nullable().optional(),
   chunkCount: z.number().int().nonnegative(),
   status: z.string(),
+  remoteDeleted: z.boolean(),
   createdAt: timestamp,
   updatedAt: timestamp,
 });
+
+export const SyncOutcomeSchema = z.object({
+  repositoryId: z.string(),
+  added: z.number().int().nonnegative(),
+  changed: z.number().int().nonnegative(),
+  deleted: z.number().int().nonnegative(),
+  unchanged: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  startedAt: z.string(),
+  finishedAt: z.string(),
+});
+
+export const SyncStatusSchema = z.object({ lastSyncedAt: z.string().nullable() });
 export const DocumentDetailSchema = DocumentSummarySchema.extend({
   content: z.string().max(2_000_000),
 });
@@ -530,6 +544,8 @@ export type ModelStatus = z.infer<typeof ModelStatusSchema>;
 export type YuqueStatus = z.infer<typeof YuqueStatusSchema>;
 export type Repository = z.infer<typeof RepositorySchema>;
 export type CreateRepositoryInput = z.infer<typeof CreateRepositoryInputSchema>;
+export type SyncOutcome = z.infer<typeof SyncOutcomeSchema>;
+export type SyncStatus = z.infer<typeof SyncStatusSchema>;
 export type DocumentInput = z.infer<typeof DocumentInputSchema>;
 export type DocumentSummary = z.infer<typeof DocumentSummarySchema>;
 export type DocumentDetail = z.infer<typeof DocumentDetailSchema>;
@@ -624,6 +640,10 @@ export interface DocMindApi {
   repositories: {
     list(): Promise<Repository[]>;
     create(input: CreateRepositoryInput): Promise<Repository>;
+  };
+  sync: {
+    get(repositoryId: string): Promise<SyncStatus>;
+    trigger(repositoryId: string): Promise<SyncOutcome>;
   };
   documents: {
     list(repositoryId: string): Promise<DocumentSummary[]>;

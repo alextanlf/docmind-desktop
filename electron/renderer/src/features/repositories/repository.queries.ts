@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 export const repositoryKeys = {
   root: ["repositories"] as const,
@@ -26,5 +26,24 @@ export function useDocumentQuery(documentId: string | null) {
     queryKey: documentId ? repositoryKeys.document(documentId) : ["documents", "detail"],
     queryFn: () => window.docmind.documents.read(documentId!),
     enabled: documentId !== null,
+  });
+}
+
+export function useRepositorySyncQuery(repositoryId: string | null) {
+  return useQuery({
+    queryKey: ["repositories", repositoryId, "sync"],
+    queryFn: () => window.docmind.sync.get(repositoryId!),
+    enabled: repositoryId !== null,
+  });
+}
+
+export function useSyncRepositoryMutation(repositoryId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => window.docmind.sync.trigger(repositoryId!),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["repositories", repositoryId, "sync"] });
+      void queryClient.invalidateQueries({ queryKey: ["repositories", repositoryId, "documents"] });
+    },
   });
 }

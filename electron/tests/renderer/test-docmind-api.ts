@@ -63,6 +63,7 @@ export const document: DocumentDetail = {
   yuqueUrl: "https://www.yuque.com/test/swiftui/state",
   chunkCount: 3,
   status: "已同步",
+  remoteDeleted: false,
   content: "# State 管理\n\n内容",
   createdAt: "2026-08-31T00:00:00Z",
   updatedAt: "2026-08-31T00:00:00Z",
@@ -131,6 +132,7 @@ export function installDocMindApi(overrides?: {
   embedding?: Partial<typeof window.docmind.embedding>;
   yuque?: Partial<typeof window.docmind.yuque>;
   repositories?: Partial<DocMindApi["repositories"]>;
+  sync?: Partial<DocMindApi["sync"]>;
   documents?: Partial<DocMindApi["documents"]>;
   imports?: Partial<DocMindApi["imports"]>;
   chat?: Partial<DocMindApi["chat"]>;
@@ -198,6 +200,20 @@ export function installDocMindApi(overrides?: {
       list: vi.fn().mockResolvedValue([repository]),
       create: vi.fn().mockResolvedValue(repository),
       ...overrides?.repositories,
+    },
+    sync: {
+      get: vi.fn().mockResolvedValue({ lastSyncedAt: null }),
+      trigger: vi.fn().mockResolvedValue({
+        repositoryId: "",
+        added: 0,
+        changed: 0,
+        deleted: 0,
+        unchanged: 0,
+        failed: 0,
+        startedAt: "",
+        finishedAt: "",
+      }),
+      ...overrides?.sync,
     },
     documents: {
       list: vi.fn().mockResolvedValue([document]),

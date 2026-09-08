@@ -77,6 +77,7 @@ def _summary(document: DocumentRecord, remote: YuqueDocument | None = None) -> D
         yuque_url=remote.url if remote is not None else document.yuque_url,
         chunk_count=document.chunk_count,
         status=document.status,
+        remote_deleted=document.remote_deleted,
         created_at=document.created_at,
         updated_at=document.updated_at,
     )
