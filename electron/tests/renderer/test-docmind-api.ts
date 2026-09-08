@@ -197,6 +197,10 @@ export function installDocMindApi(overrides?: {
         accountLabel: "DocMind 测试账号",
         requiresLogin: false,
       }),
+      installBrowser: vi.fn().mockResolvedValue({
+        installed: true,
+        message: "语雀浏览器已安装",
+      }),
       ...overrides?.yuque,
     },
     repositories: {

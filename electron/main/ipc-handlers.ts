@@ -34,6 +34,7 @@ import {
   YuqueStatusSchema,
   BatchImportSchema,
   BatchItemPageSchema,
+  BrowserInstallResultSchema,
   CreateBatchInputSchema,
   ConfirmBatchInputSchema,
   RetryBatchInputSchema,
@@ -186,6 +187,8 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
     [IPC_CHANNELS.yuqueStatus]: () => proxy.requestJson("/api/yuque/status", {}, YuqueStatusSchema),
     [IPC_CHANNELS.yuqueLogin]: () =>
       proxy.requestJson("/api/yuque/login", jsonInit("POST"), YuqueStatusSchema),
+    [IPC_CHANNELS.yuqueInstallBrowser]: () =>
+      proxy.requestJson("/api/yuque/browser/install", jsonInit("POST"), BrowserInstallResultSchema),
     [IPC_CHANNELS.repositoriesList]: () =>
       proxy.requestJson("/api/repositories", {}, z.array(RepositorySchema)),
     [IPC_CHANNELS.repositoriesCreate]: (_event, input) =>

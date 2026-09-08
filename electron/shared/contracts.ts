@@ -138,6 +138,10 @@ export const YuqueStatusSchema = z.object({
   accountLabel: z.string().nullable().optional(),
   requiresLogin: z.boolean(),
 });
+export const BrowserInstallResultSchema = z.object({
+  installed: z.boolean(),
+  message: z.string(),
+});
 
 export const RepositorySchema = z.object({
   id,
@@ -573,6 +577,7 @@ export type SettingsView = z.infer<typeof SettingsViewSchema>;
 export type ModelConnectionResult = z.infer<typeof ModelConnectionResultSchema>;
 export type ModelStatus = z.infer<typeof ModelStatusSchema>;
 export type YuqueStatus = z.infer<typeof YuqueStatusSchema>;
+export type BrowserInstallResult = z.infer<typeof BrowserInstallResultSchema>;
 export type Repository = z.infer<typeof RepositorySchema>;
 export type CreateRepositoryInput = z.infer<typeof CreateRepositoryInputSchema>;
 export type SyncOutcome = z.infer<typeof SyncOutcomeSchema>;
@@ -672,7 +677,11 @@ export interface DocMindApi {
     status(): Promise<ModelStatus>;
     prepare(): Promise<ModelStatus>;
   };
-  yuque: { status(): Promise<YuqueStatus>; login(): Promise<YuqueStatus> };
+  yuque: {
+    status(): Promise<YuqueStatus>;
+    login(): Promise<YuqueStatus>;
+    installBrowser(): Promise<BrowserInstallResult>;
+  };
   repositories: {
     list(): Promise<Repository[]>;
     create(input: CreateRepositoryInput): Promise<Repository>;
@@ -762,6 +771,7 @@ export const schemas = {
   ModelConnectionResultSchema,
   ModelStatusSchema,
   YuqueStatusSchema,
+  BrowserInstallResultSchema,
   RepositorySchema,
   DocumentSummarySchema,
   DocumentDetailSchema,

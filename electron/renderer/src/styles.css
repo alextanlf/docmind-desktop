@@ -1264,7 +1264,7 @@ button:disabled {
 .form-field-wide {
   grid-column: 2;
 }
-input,
+input:not([type="checkbox"]):not([type="radio"]),
 select {
   width: 100%;
   height: 36px;
@@ -1744,6 +1744,72 @@ progress::-webkit-progress-bar {
   padding: 6px 9px;
   border: 1px solid var(--line-strong);
   border-radius: 5px;
+}
+.runtime-model-settings {
+  display: grid;
+  max-width: 680px;
+  gap: 14px;
+}
+.runtime-model-settings fieldset {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.runtime-model-settings legend {
+  padding: 0 4px;
+  color: #4f5763;
+  font-size: 12px;
+  font-weight: 600;
+}
+.runtime-model-settings [role="radiogroup"] {
+  display: grid;
+  gap: 4px;
+}
+.runtime-model-settings [role="radiogroup"] label {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px;
+  border-radius: 5px;
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+}
+.runtime-model-settings [role="radiogroup"] label:hover {
+  background: #f0f2f5;
+}
+.runtime-model-settings [role="radiogroup"] input {
+  width: 15px;
+  height: 15px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--blue);
+}
+.runtime-model-settings fieldset > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.runtime-model-settings > label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.runtime-model-settings > p[role="alert"] {
+  margin: 0;
+  color: var(--red);
+  font-size: 12px;
+}
+.runtime-model-settings > p[role="status"] {
+  margin: 0;
+  color: var(--green);
+  font-size: 12px;
 }
 .chat-search-suggestion {
   display: flex;

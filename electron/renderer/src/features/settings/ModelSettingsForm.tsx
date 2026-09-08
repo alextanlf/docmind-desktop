@@ -46,6 +46,7 @@ export function ModelSettingsForm({
   const revisionRef = useRef(0);
   const activeOperationRef = useRef<{ kind: "save" | "test"; revision: number } | null>(null);
   const busy = saving || testing;
+  const savedKeyPlaceholder = "••••••••";
 
   function invalidateConnection() {
     revisionRef.current += 1;
@@ -71,12 +72,13 @@ export function ModelSettingsForm({
     setSaving(true);
     setMessage(null);
     try {
+      const submittedKey = clearKey ? "" : apiKey.trim() || undefined;
       const saved = await window.docmind.settings.saveModel({
         preset,
         baseUrl: baseUrl.trim(),
         model: model.trim(),
         timeoutSeconds,
-        apiKey: clearKey ? "" : apiKey.trim() || undefined,
+        apiKey: submittedKey,
       });
       appQueryClient.setQueryData(settingsKeys.root, saved);
       if (activeOperationRef.current !== operation || revisionRef.current !== operation.revision)
@@ -86,6 +88,11 @@ export function ModelSettingsForm({
       setClearKey(false);
       setNeedsSave(false);
       setMessage({ tone: "success", text: "设置已保存" });
+      activeOperationRef.current = null;
+      setSaving(false);
+      if (saved.hasApiKey && !clearKey) {
+        await runConnectionTest();
+      }
     } catch (error) {
       if (activeOperationRef.current !== operation || revisionRef.current !== operation.revision)
         return;
@@ -98,8 +105,7 @@ export function ModelSettingsForm({
     }
   }
 
-  async function testConnection() {
-    if (activeOperationRef.current || needsSave || !hasSavedKey) return;
+  async function runConnectionTest() {
     const operation = { kind: "test" as const, revision: revisionRef.current };
     activeOperationRef.current = operation;
     setTesting(true);
@@ -124,6 +130,11 @@ export function ModelSettingsForm({
         setTesting(false);
       }
     }
+  }
+
+  async function testConnection() {
+    if (activeOperationRef.current || needsSave || !hasSavedKey) return;
+    await runConnectionTest();
   }
 
   return (
@@ -191,7 +202,7 @@ export function ModelSettingsForm({
             }}
             placeholder={hasSavedKey ? "已安全保存，留空可保留" : "请输入 API Key"}
             type="password"
-            value={apiKey}
+            value={hasSavedKey && !clearKey && apiKey === "" ? savedKeyPlaceholder : apiKey}
           />
         </label>
       </div>

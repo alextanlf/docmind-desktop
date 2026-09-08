@@ -6,6 +6,7 @@ from app.yuque.base_page import BasePage, maybe_await
 
 class RepositoryPage(BasePage):
     _document_selectors = (
+        "[data-testid^='doc-']",
         "role=link[name=文档]",
         "testid=document-link",
         "text=文档",
@@ -16,10 +17,11 @@ class RepositoryPage(BasePage):
         locators = await maybe_await(locator.all())
         documents: list[YuqueDocument] = []
         for index, item in enumerate(locators, start=1):
-            title = (await item.inner_text()).strip()
+            link = item.locator("a").first if hasattr(item, "locator") else item
+            title = (await link.inner_text()).strip() or (await item.inner_text()).strip()
             if not title:
                 continue
-            url = await item.get_attribute("href")
+            url = await link.get_attribute("href") or await item.get_attribute("href")
             documents.append(
                 YuqueDocument(
                     yuque_id=url or f"document-{index}",

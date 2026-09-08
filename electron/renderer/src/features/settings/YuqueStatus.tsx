@@ -8,6 +8,9 @@ export function YuqueStatus({ loginLabel }: { loginLabel?: string }) {
   const query = useYuqueStatusQuery();
   const [loggingIn, setLoggingIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [browserUnavailable, setBrowserUnavailable] = useState(false);
+  const [installingBrowser, setInstallingBrowser] = useState(false);
+  const [installMessage, setInstallMessage] = useState<string | null>(null);
 
   async function login() {
     setLoggingIn(true);
@@ -15,21 +18,54 @@ export function YuqueStatus({ loginLabel }: { loginLabel?: string }) {
     try {
       const result = await window.docmind.yuque.login();
       appQueryClient.setQueryData(settingsKeys.yuque, result);
+      setBrowserUnavailable(false);
     } catch (loginError) {
+      setBrowserUnavailable((loginError as { code?: string }).code === "YUQUE_BROWSER_UNAVAILABLE");
       setError(clientErrorMessage(loginError));
     } finally {
       setLoggingIn(false);
     }
   }
 
+  async function installBrowser() {
+    setInstallingBrowser(true);
+    setInstallMessage(null);
+    try {
+      const result = await window.docmind.yuque.installBrowser();
+      setInstallMessage(result.message);
+      setBrowserUnavailable(false);
+      await query.refetch();
+    } catch (installError) {
+      setInstallMessage(clientErrorMessage(installError));
+    } finally {
+      setInstallingBrowser(false);
+    }
+  }
+
   if (query.isPending) return <p className="muted-row">正在检查语雀登录状态…</p>;
   if (query.isError) {
+    const unavailable = (query.error as { code?: string }).code === "YUQUE_BROWSER_UNAVAILABLE";
     return (
       <div className="inline-error" role="alert">
         <span>{clientErrorMessage(query.error)}</span>
-        <button className="button button-secondary" onClick={() => query.refetch()}>
-          重新检查
-        </button>
+        {unavailable ? (
+          <button
+            className="button button-secondary"
+            disabled={installingBrowser}
+            onClick={installBrowser}
+          >
+            {installingBrowser ? "正在安装…" : "安装浏览器"}
+          </button>
+        ) : (
+          <button className="button button-secondary" onClick={() => query.refetch()}>
+            重新检查
+          </button>
+        )}
+        {installMessage ? (
+          <p className="error-copy" role="status">
+            {installMessage}
+          </p>
+        ) : null}
       </div>
     );
   }
@@ -48,6 +84,20 @@ export function YuqueStatus({ loginLabel }: { loginLabel?: string }) {
         {error ? (
           <p className="error-copy" role="alert">
             {error}
+          </p>
+        ) : null}
+        {browserUnavailable ? (
+          <button
+            className="button button-secondary"
+            disabled={installingBrowser}
+            onClick={installBrowser}
+          >
+            {installingBrowser ? "正在安装…" : "安装浏览器"}
+          </button>
+        ) : null}
+        {installMessage ? (
+          <p className="error-copy" role="status">
+            {installMessage}
           </p>
         ) : null}
       </div>

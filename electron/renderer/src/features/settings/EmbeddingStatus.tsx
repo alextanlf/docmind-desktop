@@ -1,10 +1,10 @@
-import { Download, LoaderCircle, RotateCcw } from "lucide-react";
+import { Download, LoaderCircle, Play, RotateCcw } from "lucide-react";
 import { appQueryClient } from "../../app/query-client";
 import { StatusBadge } from "../../components/StatusBadge";
 import { clientErrorMessage, settingsKeys, useEmbeddingStatusQuery } from "./settings.queries";
 
 const STATUS = {
-  unavailable: { label: "未下载", tone: "neutral" },
+  unavailable: { label: "未加载", tone: "neutral" },
   downloading: { label: "下载中", tone: "pending" },
   ready: { label: "已就绪", tone: "success" },
   error: { label: "下载失败", tone: "error" },
@@ -40,7 +40,11 @@ export function EmbeddingStatus() {
   }
 
   const status = query.data;
-  const presentation = STATUS[status.state];
+  const cached = status.state === "unavailable" && status.message.includes("已缓存");
+  const presentation = {
+    ...STATUS[status.state],
+    label: cached ? "已缓存" : STATUS[status.state].label,
+  };
   return (
     <div className="status-row">
       <div className="status-copy">
@@ -48,7 +52,7 @@ export function EmbeddingStatus() {
           <strong>{status.modelName}</strong>
           <StatusBadge label={presentation.label} tone={presentation.tone} />
         </div>
-        <p>约 400 MB，首次导入前需要下载</p>
+        <p>{cached ? "模型已缓存，无需重新下载" : "约 400 MB，首次导入前需要下载"}</p>
         {status.state === "error" ? (
           <p className="error-copy" role="alert">
             {status.message}
@@ -70,10 +74,12 @@ export function EmbeddingStatus() {
         <button className="button button-secondary" onClick={prepare}>
           {status.state === "error" ? (
             <RotateCcw aria-hidden="true" size={16} />
+          ) : cached ? (
+            <Play aria-hidden="true" size={16} />
           ) : (
             <Download aria-hidden="true" size={16} />
           )}
-          {status.state === "error" ? "重试下载" : "下载模型"}
+          {status.state === "error" ? "重试下载" : cached ? "加载模型" : "下载模型"}
         </button>
       ) : status.state === "downloading" ? (
         <LoaderCircle aria-hidden="true" className="spin status-spinner" size={18} />
