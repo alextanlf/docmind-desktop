@@ -37,6 +37,7 @@ from app.storage.models import (
     DocumentMutationRecord,
     DocumentRecord,
     DocumentVersionRecord,
+    EmbeddingRebuildRecord,
     GraphEdgeRecord,
     GraphNodeRecord,
     ImportJobRecord,
@@ -2638,3 +2639,32 @@ class GraphStore:
                 GraphEdge(source_id=r.source_id, target_id=r.target_id, relation=r.relation)
                 for r in records
             ]
+
+
+class EmbeddingRebuildStore:
+    """Marks documents whose vectors must be rebuilt after an embedding change."""
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def mark_needs_rebuild(self, document_id: str) -> None:
+        with self.database.session() as session:
+            record = session.get(EmbeddingRebuildRecord, document_id)
+            if record is None:
+                session.add(
+                    EmbeddingRebuildRecord(document_id=document_id, needs_rebuild=True)
+                )
+            else:
+                record.needs_rebuild = True
+            session.flush()
+
+    def clear(self, document_id: str) -> None:
+        with self.database.session() as session:
+            record = session.get(EmbeddingRebuildRecord, document_id)
+            if record is not None:
+                session.delete(record)
+
+    def needs_rebuild(self, document_id: str) -> bool:
+        with self.database.session() as session:
+            record = session.get(EmbeddingRebuildRecord, document_id)
+            return record is not None and record.needs_rebuild

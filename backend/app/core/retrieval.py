@@ -7,6 +7,7 @@ from rank_bm25 import BM25Okapi
 from sqlalchemy import select
 
 from app.core.embedding import EmbeddingProvider
+from app.core.multilingual import detect_language, retrieval_threshold
 from app.schemas.retrieval import RetrievalHit, RetrievalResult
 from app.storage.database import Database
 from app.storage.models import DocumentChunkRecord, DocumentRecord
@@ -110,7 +111,8 @@ class HybridRetriever:
         fused = reciprocal_rank_fusion(
             [hit.id for hit in vector_hits], [identifier for identifier, _ in keyword_hits]
         )
-        if max_score < self.similarity_threshold:
+        threshold = retrieval_threshold(detect_language(query))
+        if max_score < threshold:
             return RetrievalResult(hits=[], max_score=max_score)
         vector_scores = {hit.id: hit.similarity for hit in vector_hits}
         keyword_scores = dict(keyword_hits)
