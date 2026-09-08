@@ -200,6 +200,19 @@ export const DocumentVersionSchema = z.object({
   contentSha256: z.string(),
   createdAt: z.string(),
 });
+
+export const GraphNodeSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["document", "topic", "citation", "tag"]),
+  label: text(240),
+  documentId: z.string().nullable().optional(),
+});
+
+export const GraphEdgeSchema = z.object({
+  sourceId: z.string(),
+  targetId: z.string(),
+  relation: z.enum(["references", "mentions", "tags"]),
+});
 export const DocumentDetailSchema = DocumentSummarySchema.extend({
   content: z.string().max(2_000_000),
 });
@@ -567,6 +580,8 @@ export type SyncStatus = z.infer<typeof SyncStatusSchema>;
 export type ConflictView = z.infer<typeof ConflictViewSchema>;
 export type ConflictResolution = z.infer<typeof ConflictResolutionSchema>;
 export type DocumentVersion = z.infer<typeof DocumentVersionSchema>;
+export type GraphNode = z.infer<typeof GraphNodeSchema>;
+export type GraphEdge = z.infer<typeof GraphEdgeSchema>;
 export type DocumentInput = z.infer<typeof DocumentInputSchema>;
 export type DocumentSummary = z.infer<typeof DocumentSummarySchema>;
 export type DocumentDetail = z.infer<typeof DocumentDetailSchema>;
@@ -672,6 +687,10 @@ export interface DocMindApi {
   };
   versions: {
     list(documentId: string): Promise<DocumentVersion[]>;
+  };
+  graph: {
+    nodes(): Promise<GraphNode[]>;
+    adjacency(nodeId: string): Promise<GraphEdge[]>;
   };
   documents: {
     list(repositoryId: string): Promise<DocumentSummary[]>;
