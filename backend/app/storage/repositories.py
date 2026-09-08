@@ -19,6 +19,7 @@ from app.api.errors import DomainError
 from app.imports.batch_state_machine import ensure_item_mutable, transition
 from app.imports.state_machine import ensure_transition_allowed
 from app.schemas.batches import BatchItemPage, BatchItemView, ConfirmBatchInput
+from app.schemas.graph import GraphEdge, GraphNode
 from app.schemas.sync import RemoteDocumentState
 from app.schemas.versioning import DocumentVersion
 from app.storage.database import Database
@@ -36,6 +37,8 @@ from app.storage.models import (
     DocumentMutationRecord,
     DocumentRecord,
     DocumentVersionRecord,
+    GraphEdgeRecord,
+    GraphNodeRecord,
     ImportJobRecord,
     ImportStatus,
     MemoryChunkRecord,
@@ -2573,4 +2576,65 @@ class VersionStore:
                     created_at=record.created_at.isoformat(),
                 )
                 for record in records
+            ]
+
+
+class GraphStore:
+    """Persists rule-extracted knowledge graph nodes and edges."""
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def replace_document_graph(
+        self, document_id: str, nodes: list[GraphNode], edges: list[GraphEdge]
+    ) -> None:
+        with self.database.session() as session:
+            session.execute(
+                delete(GraphEdgeRecord).where(GraphEdgeRecord.source_id == document_id)
+            )
+            session.execute(
+                delete(GraphNodeRecord).where(GraphNodeRecord.document_id == document_id)
+            )
+            for node in nodes:
+                session.add(
+                    GraphNodeRecord(
+                        id=node.id,
+                        kind=node.kind,
+                        label=node.label,
+                        document_id=node.document_id,
+                    )
+                )
+            for edge in edges:
+                session.add(
+                    GraphEdgeRecord(
+                        source_id=edge.source_id,
+                        target_id=edge.target_id,
+                        relation=edge.relation,
+                    )
+                )
+            session.flush()
+
+    def list_nodes(self) -> list[GraphNode]:
+        with self.database.session() as session:
+            records = session.scalars(
+                select(GraphNodeRecord).order_by(GraphNodeRecord.label)
+            )
+            return [
+                GraphNode(id=r.id, kind=r.kind, label=r.label, document_id=r.document_id)
+                for r in records
+            ]
+
+    def adjacency(self, node_id: str) -> list[GraphEdge]:
+        with self.database.session() as session:
+            records = session.scalars(
+                select(GraphEdgeRecord).where(
+                    or_(
+                        GraphEdgeRecord.source_id == node_id,
+                        GraphEdgeRecord.target_id == node_id,
+                    )
+                )
+            )
+            return [
+                GraphEdge(source_id=r.source_id, target_id=r.target_id, relation=r.relation)
+                for r in records
             ]

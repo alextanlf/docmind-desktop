@@ -71,6 +71,7 @@ from app.storage.repositories import (
     CrawlEntryStore,
     DocumentMutationStore,
     DocumentStore,
+    GraphStore,
     ImportJobStore,
     MemoryStore,
     OllamaPullStore,
@@ -331,6 +332,7 @@ def create_app(
         )
         sync_state_store = RepositorySyncStateStore(database)
         version_store = VersionStore(database)
+        graph_store = GraphStore(database)
         refresher = DocumentRefresher(
             document_store=document_store,
             parser=DocumentParser(),
@@ -338,6 +340,7 @@ def create_app(
             embedding_provider=runtime_embedding_provider,
             vector_store=vector_store,
             version_store=version_store,
+            graph_store=graph_store,
         )
 
         async def read_repo_snapshot(repository_id: str):
@@ -361,6 +364,7 @@ def create_app(
         app.state.sync_state_store = sync_state_store
         app.state.sync_scheduler = sync_scheduler
         app.state.version_store = version_store
+        app.state.graph_store = graph_store
         app.state.conflict_service = SyncConflictService(
             document_store=document_store,
             sync_state_store=sync_state_store,

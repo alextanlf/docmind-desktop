@@ -588,3 +588,20 @@ class DocumentVersionRecord(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+
+
+class GraphNodeRecord(Base):
+    __tablename__ = "graph_nodes"
+
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    label: Mapped[str] = mapped_column(String(1024), nullable=False)
+    document_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+
+
+class GraphEdgeRecord(Base):
+    __tablename__ = "graph_edges"
+
+    source_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    target_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    relation: Mapped[str] = mapped_column(String(32), nullable=False)

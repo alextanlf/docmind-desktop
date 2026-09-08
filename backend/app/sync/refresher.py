@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
 from app.api.errors import DomainError
+from app.graph.extractor import extract_graph
 from app.schemas.imports import DownloadedDocument
 from app.storage.models import DocumentChunkRecord, DocumentRecord
 
@@ -22,6 +23,7 @@ class DocumentRefresher:
         embedding_provider,
         vector_store,
         version_store=None,
+        graph_store=None,
     ) -> None:
         self.document_store = document_store
         self.parser = parser
@@ -29,6 +31,7 @@ class DocumentRefresher:
         self.embedding_provider = embedding_provider
         self.vector_store = vector_store
         self.version_store = version_store
+        self.graph_store = graph_store
 
     async def upsert_from_remote(
         self, repository_id: str, document_id: str, title: str, content: str
@@ -96,6 +99,9 @@ class DocumentRefresher:
             content_hash=sha256(content.encode("utf-8")).hexdigest(),
             source_url=document.source_url or document_id,
         )
+        if self.graph_store is not None:
+            nodes, edges = extract_graph(document.id, title, content)
+            self.graph_store.replace_document_graph(document.id, nodes, edges)
         return document.id
 
     def _snapshot_previous(self, document: DocumentRecord) -> None:
