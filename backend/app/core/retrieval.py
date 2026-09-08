@@ -4,13 +4,13 @@ import re
 from dataclasses import dataclass
 
 from rank_bm25 import BM25Okapi
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.core.embedding import EmbeddingProvider
 from app.core.multilingual import detect_language, retrieval_threshold
 from app.schemas.retrieval import RetrievalHit, RetrievalResult
 from app.storage.database import Database
-from app.storage.models import DocumentChunkRecord, DocumentRecord
+from app.storage.models import DocumentChunkRecord, DocumentRecord, EmbeddingRebuildRecord
 from app.storage.vectorstore import PersistentVectorStore
 
 
@@ -149,9 +149,17 @@ class HybridRetriever:
             rows = session.execute(
                 select(DocumentChunkRecord, DocumentRecord)
                 .join(DocumentRecord, DocumentChunkRecord.document_id == DocumentRecord.id)
+                .outerjoin(
+                    EmbeddingRebuildRecord,
+                    EmbeddingRebuildRecord.document_id == DocumentRecord.id,
+                )
                 .where(
                     DocumentChunkRecord.id.in_(chunk_ids),
                     DocumentChunkRecord.repository_id.in_(repository_ids),
+                    or_(
+                        EmbeddingRebuildRecord.needs_rebuild.is_(None),
+                        EmbeddingRebuildRecord.needs_rebuild.is_(False),
+                    ),
                 )
             ).all()
         return {chunk.id: (chunk, document) for chunk, document in rows}

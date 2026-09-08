@@ -349,6 +349,10 @@ class DocumentStore:
     def __init__(self, database: Database) -> None:
         self.database = database
 
+    def list_all(self) -> list[DocumentRecord]:
+        with self.database.session() as session:
+            return list(session.scalars(select(DocumentRecord)))
+
     def list_for_repository(self, repository_id: str) -> list[DocumentRecord]:
         with self.database.session() as session:
             statement = (

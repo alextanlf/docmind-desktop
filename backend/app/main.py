@@ -72,6 +72,7 @@ from app.storage.repositories import (
     CrawlEntryStore,
     DocumentMutationStore,
     DocumentStore,
+    EmbeddingRebuildStore,
     GraphStore,
     ImportJobStore,
     MemoryStore,
@@ -334,6 +335,7 @@ def create_app(
         sync_state_store = RepositorySyncStateStore(database)
         version_store = VersionStore(database)
         graph_store = GraphStore(database)
+        rebuild_store = EmbeddingRebuildStore(database)
         refresher = DocumentRefresher(
             document_store=document_store,
             parser=DocumentParser(),
@@ -366,6 +368,13 @@ def create_app(
         app.state.sync_scheduler = sync_scheduler
         app.state.version_store = version_store
         app.state.graph_store = graph_store
+        app.state.embedding_rebuild_store = rebuild_store
+        current_dimension = str(runtime_settings.embedding_dimension)
+        if SettingStore(database).get("embedding_dimension") != current_dimension:
+            for document in document_store.list_all():
+                if document.chunk_count > 0:
+                    rebuild_store.mark_needs_rebuild(document.id)
+            SettingStore(database).set("embedding_dimension", current_dimension)
         app.state.conflict_service = SyncConflictService(
             document_store=document_store,
             sync_state_store=sync_state_store,

@@ -9,10 +9,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class EmbeddingSettings(BaseModel):
-    model_name: str = "BAAI/bge-base-zh-v1.5"
+    model_name: str = "BAAI/bge-m3"
     device: str = "cpu"
     cache_dir: Path | None = None
-    dimension: int = Field(default=768, gt=0)
+    dimension: int = Field(default=1024, gt=0)
 
 
 class VectorStoreSettings(BaseModel):
@@ -32,9 +32,9 @@ class AppSettings(BaseSettings):
     html_markdown_max_bytes: int = 20 * 1024 * 1024
     pdf_max_bytes: int = 100 * 1024 * 1024
     max_request_body_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
-    embedding_model_name: str = "BAAI/bge-base-zh-v1.5"
+    embedding_model_name: str = "BAAI/bge-m3"
     embedding_device: str = "cpu"
-    embedding_dimension: int = Field(default=768, gt=0)
+    embedding_dimension: int = Field(default=1024, gt=0)
     rag_similarity_threshold: float = Field(default=0.65, ge=-1.0, le=1.0)
     staging_manifest_max_bytes: int = Field(default=2 * 1024 * 1024, gt=0)
     batch_max_items: int = Field(default=1000, gt=0)
