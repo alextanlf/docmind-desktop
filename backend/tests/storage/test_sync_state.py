@@ -7,7 +7,8 @@ from alembic.config import Config
 from sqlalchemy import inspect
 
 from app.storage.database import Database
-from app.storage.repositories import RepositorySyncStateStore
+from app.storage.models import DocumentRecord
+from app.storage.repositories import DocumentStore, RepositoryStore, RepositorySyncStateStore
 
 
 def test_phase4b1_migration_adds_sync_state_and_remote_deleted(tmp_path: Path) -> None:
@@ -46,3 +47,39 @@ def test_sync_last_synced_at_roundtrip(database: Database) -> None:
 
     store.set_last_synced_at("repo-1", "2026-09-08T00:00:00+00:00")
     assert store.last_synced_at("repo-1") == "2026-09-08T00:00:00+00:00"
+
+
+def _seed_repository(database: Database) -> str:
+    return RepositoryStore(database).upsert_remote(
+        yuque_id="yuque-1", name="SwiftUI", description=None, yuque_url=None
+    ).id
+
+
+def test_document_sync_state_and_dirty_defaults(database: Database) -> None:
+    store = DocumentStore(database)
+    record = store.create(
+        DocumentRecord(
+            repository_id=_seed_repository(database),
+            title="State",
+            source_type="import",
+        )
+    )
+    fresh = store.get(record.id)
+    assert fresh.sync_state == "synced"
+    assert fresh.local_dirty is False
+
+
+def test_set_local_dirty_and_sync_state(database: Database) -> None:
+    store = DocumentStore(database)
+    record = store.create(
+        DocumentRecord(
+            repository_id=_seed_repository(database),
+            title="State",
+            source_type="import",
+        )
+    )
+    store.set_local_dirty(record.id, True)
+    store.set_sync_state(record.id, "conflict")
+    fresh = store.get(record.id)
+    assert fresh.local_dirty is True
+    assert fresh.sync_state == "conflict"

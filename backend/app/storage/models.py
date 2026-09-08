@@ -178,6 +178,8 @@ class DocumentRecord(Base):
     source_identity: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
     remote_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    sync_state: Mapped[str] = mapped_column(String(32), default="synced", server_default=text("'synced'"))
+    local_dirty: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
     )
