@@ -15,6 +15,8 @@ import {
   DocumentInputSchema,
   DocumentSummarySchema,
   ErrorEnvelopeSchema,
+  GraphEdgeSchema,
+  GraphNodeSchema,
   ImportJobSchema,
   MessageSchema,
   ModelConnectionResultSchema,
@@ -220,6 +222,14 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         `/api/documents/${parse(UUID, documentId)}/versions`,
         {},
         z.array(DocumentVersionSchema),
+      ),
+    [IPC_CHANNELS.graphNodes]: () =>
+      proxy.requestJson("/api/graph/nodes", {}, z.array(GraphNodeSchema)),
+    [IPC_CHANNELS.graphAdjacency]: (_event, nodeId) =>
+      proxy.requestJson(
+        `/api/graph/nodes/${encodeURIComponent(String(nodeId))}/adjacency`,
+        {},
+        z.array(GraphEdgeSchema),
       ),
     [IPC_CHANNELS.documentsList]: (_event, repositoryId) => {
       const id = parse(UUID, repositoryId);

@@ -135,6 +135,7 @@ export function installDocMindApi(overrides?: {
   sync?: Partial<DocMindApi["sync"]>;
   conflicts?: Partial<DocMindApi["conflicts"]>;
   versions?: Partial<DocMindApi["versions"]>;
+  graph?: Partial<DocMindApi["graph"]>;
   documents?: Partial<DocMindApi["documents"]>;
   imports?: Partial<DocMindApi["imports"]>;
   chat?: Partial<DocMindApi["chat"]>;
@@ -225,6 +226,11 @@ export function installDocMindApi(overrides?: {
     versions: {
       list: vi.fn().mockResolvedValue([]),
       ...overrides?.versions,
+    },
+    graph: {
+      nodes: vi.fn().mockResolvedValue([]),
+      adjacency: vi.fn().mockResolvedValue([]),
+      ...overrides?.graph,
     },
     documents: {
       list: vi.fn().mockResolvedValue([document]),

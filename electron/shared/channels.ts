@@ -23,6 +23,8 @@ export const IPC_CHANNELS = {
   conflictsList: "conflicts:list",
   conflictsResolve: "conflicts:resolve",
   versionsList: "versions:list",
+  graphNodes: "graph:nodes",
+  graphAdjacency: "graph:adjacency",
   documentsList: "documents:list",
   documentsRead: "documents:read",
   documentsCreate: "documents:create",

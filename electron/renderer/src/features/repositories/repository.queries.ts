@@ -81,3 +81,18 @@ export function useVersionsQuery(documentId: string | null) {
     enabled: documentId !== null,
   });
 }
+
+export function useGraphNodesQuery() {
+  return useQuery({
+    queryKey: ["graph", "nodes"],
+    queryFn: () => window.docmind.graph.nodes(),
+  });
+}
+
+export function useGraphAdjacencyQuery(nodeId: string | null) {
+  return useQuery({
+    queryKey: ["graph", "adjacency", nodeId],
+    queryFn: () => window.docmind.graph.adjacency(nodeId!),
+    enabled: nodeId !== null,
+  });
+}

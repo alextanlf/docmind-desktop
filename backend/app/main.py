@@ -19,6 +19,7 @@ from app.api.documents import recover_document_mutations, save_distillation_docu
 from app.api.documents import router as documents_router
 from app.api.embedding import router as embedding_router
 from app.api.errors import DomainError, domain_error_handler, request_validation_handler
+from app.api.graph import router as graph_router
 from app.api.import_batches import router as import_batches_router
 from app.api.imports import router as imports_router
 from app.api.memory import router as memory_router
@@ -426,6 +427,7 @@ def create_app(
     app.include_router(memory_router)
     app.include_router(ollama_router)
     app.include_router(sync_router)
+    app.include_router(graph_router)
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:

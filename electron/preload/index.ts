@@ -13,6 +13,8 @@ import {
   DocumentInputSchema,
   DocumentSummarySchema,
   EventEnvelopeSchema,
+  GraphEdgeSchema,
+  GraphNodeSchema,
   ImportJobSchema,
   IpcResultSchema,
   MessageSchema,
@@ -198,6 +200,11 @@ const api: DocMindApi = {
   versions: {
     list: (documentId) =>
       invoke(IPC_CHANNELS.versionsList, DocumentVersionSchema.array(), uuid(documentId)),
+  },
+  graph: {
+    nodes: () => invoke(IPC_CHANNELS.graphNodes, GraphNodeSchema.array()),
+    adjacency: (nodeId) =>
+      invoke(IPC_CHANNELS.graphAdjacency, GraphEdgeSchema.array(), String(nodeId)),
   },
   documents: {
     list: (repositoryId) =>
