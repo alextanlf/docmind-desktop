@@ -33,6 +33,7 @@ import {
   YuqueStatusSchema,
   BatchImportSchema,
   BatchItemPageSchema,
+  BrowserInstallResultSchema,
   CreateBatchInputSchema,
   ConfirmBatchInputSchema,
   RetryBatchInputSchema,
@@ -170,6 +171,7 @@ const api: DocMindApi = {
   yuque: {
     status: () => invoke(IPC_CHANNELS.yuqueStatus, YuqueStatusSchema),
     login: () => invoke(IPC_CHANNELS.yuqueLogin, YuqueStatusSchema),
+    installBrowser: () => invoke(IPC_CHANNELS.yuqueInstallBrowser, BrowserInstallResultSchema),
   },
   repositories: {
     list: () => invoke(IPC_CHANNELS.repositoriesList, RepositorySchema.array()),

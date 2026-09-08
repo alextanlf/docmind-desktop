@@ -16,6 +16,7 @@ export const IPC_CHANNELS = {
   embeddingPrepare: "embedding:prepare",
   yuqueStatus: "yuque:status",
   yuqueLogin: "yuque:login",
+  yuqueInstallBrowser: "yuque:installBrowser",
   repositoriesList: "repositories:list",
   repositoriesCreate: "repositories:create",
   syncGet: "sync:get",

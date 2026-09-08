@@ -64,7 +64,12 @@ export function RuntimeModelSettings({ settings }: { settings: SettingsView }) {
           onChange={(e) => update({ ollama: { ...draft.ollama, model: e.target.value } })}
         />
       </label>
-      <button type="button" onClick={save} disabled={mutation.isPending}>
+      <button
+        className="button button-primary"
+        type="button"
+        onClick={save}
+        disabled={mutation.isPending}
+      >
         {mutation.isPending ? "保存中…" : "保存运行设置"}
       </button>
       {mutation.isError && <p role="alert">{clientErrorMessage(mutation.error)}</p>}

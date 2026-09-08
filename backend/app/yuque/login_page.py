@@ -10,6 +10,8 @@ from app.yuque.base_page import BasePage
 class LoginPage(BasePage):
     is_logged_in_selector = "testid=dashboard"
     _logged_in_selectors = (
+        "testid=dashboard:index",
+        "testid=dashboard-index",
         "role=link[name=工作台]",
         "testid=dashboard",
         "text=工作台",

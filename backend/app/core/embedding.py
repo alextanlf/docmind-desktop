@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import math
 import re
+from pathlib import Path
 from typing import Protocol
 
 from app.api.errors import DomainError
@@ -26,8 +27,11 @@ class BGEEmbeddingProvider:
     def __init__(self, settings: EmbeddingSettings) -> None:
         self.settings = settings
         self._model: object | None = None
+        self._cached_model = self._cache_root().is_dir()
         self._status = ModelStatus(
-            state="unavailable", model_name=settings.model_name, message="模型尚未准备"
+            state="unavailable",
+            model_name=settings.model_name,
+            message="模型已缓存，点击加载" if self._cached_model else "模型尚未准备",
         )
         self._lock = asyncio.Lock()
 
@@ -84,7 +88,13 @@ class BGEEmbeddingProvider:
             self.settings.model_name,
             device=self.settings.device,
             cache_folder=str(self.settings.cache_dir) if self.settings.cache_dir else None,
+            local_files_only=self._cached_model,
         )
+
+    def _cache_root(self) -> Path:
+        if self.settings.cache_dir is None:
+            return Path("__missing_docmind_cache__")
+        return self.settings.cache_dir / f"models--{self.settings.model_name.replace('/', '--')}"
 
     async def _embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:

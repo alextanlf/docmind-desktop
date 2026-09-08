@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -16,6 +17,7 @@ from playwright.async_api import Error as PlaywrightError
 from app.api.errors import DomainError
 from app.config import AppSettings
 from app.schemas.yuque import (
+    BrowserInstallResult,
     CreateRepositoryRequest,
     CreateYuqueDocumentRequest,
     LoginResult,
@@ -36,6 +38,8 @@ class YuqueGateway(Protocol):
     async def login_status(self) -> LoginStatus: ...
 
     async def begin_login(self) -> LoginResult: ...
+
+    async def install_browser(self) -> BrowserInstallResult: ...
 
     async def list_repositories(self) -> list[YuqueRepository]: ...
 
@@ -108,6 +112,9 @@ class FakeYuqueGateway:
                 os.makedirs(os.path.dirname(self._login_marker), exist_ok=True)
                 Path(self._login_marker).touch()
             return LoginResult(logged_in=True, account_label="f***e", requires_login=False)
+
+    async def install_browser(self) -> BrowserInstallResult:
+        return BrowserInstallResult(installed=True, message="测试环境无需安装浏览器")
 
     async def list_repositories(self) -> list[YuqueRepository]:
         async with self._serialized():
@@ -315,6 +322,25 @@ class PlaywrightYuqueGateway:
                 True,
                 "安装后重试",
             ) from None
+
+    async def install_browser(self) -> BrowserInstallResult:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "playwright",
+            "install",
+            "chromium",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        output, _ = await process.communicate()
+        installed = process.returncode == 0
+        message = (
+            "语雀浏览器已安装"
+            if installed
+            else f"浏览器安装失败：{(output or b'').decode(errors='replace').strip()[:300]}"
+        )
+        return BrowserInstallResult(installed=installed, message=message)
 
     async def list_repositories(self) -> list[YuqueRepository]:
         async with self._background_page("list-repositories") as operation:

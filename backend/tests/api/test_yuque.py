@@ -36,3 +36,13 @@ def test_yuque_status_returns_masked_logged_in_state(client, auth_headers) -> No
         "accountLabel": "f***e",
         "requiresLogin": False,
     }
+
+
+def test_yuque_install_browser_route_uses_injected_gateway(client, auth_headers) -> None:
+    fake_yuque = FakeYuqueGateway()
+    client.app.state.yuque_gateway = fake_yuque
+
+    response = client.post("/api/yuque/browser/install", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["installed"] is True

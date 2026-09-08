@@ -92,8 +92,8 @@ describe("首次设置", () => {
     expect(testConnection).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
-    await screen.findByText("设置已保存");
-    expect(next).toBeDisabled();
+    await screen.findByText("连接成功，延迟 86 毫秒");
+    expect(next).toBeEnabled();
     expect(testConnection).toBeEnabled();
 
     fireEvent.click(testConnection);

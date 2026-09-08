@@ -70,6 +70,7 @@ export function Workspace() {
   const setReferencePanelOpen = useUiStore((state) => state.setReferencePanelOpen);
   const openDistillation = useUiStore((state) => state.openDistillation);
   const sidebarToggleRef = useRef<HTMLButtonElement>(null);
+  const sidebarLibraryRef = useRef<HTMLDivElement>(null);
   const importNavigationRef = useRef<HTMLButtonElement>(null);
   const sidebarFocusTransferPending = useRef(false);
   const prepareSidebarFocusTransfer = useCallback(() => {
@@ -203,7 +204,18 @@ export function Workspace() {
           selectedSessionId={selectedSession?.id}
         />
         <nav className="nav-list" aria-label="功能导航">
-          <button aria-label="知识库" title="知识库" type="button">
+          <button
+            aria-label="知识库"
+            title="知识库"
+            type="button"
+            onClick={() => {
+              setActiveView("workspace");
+              sidebarLibraryRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+              window.setTimeout(() => {
+                sidebarLibraryRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+              }, 0);
+            }}
+          >
             <Library aria-hidden="true" size={17} />
             <span>知识库</span>
           </button>
@@ -222,7 +234,7 @@ export function Workspace() {
             <span>记忆</span>
           </button>
         </nav>
-        <div className="sidebar-library">
+        <div className="sidebar-library" ref={sidebarLibraryRef}>
           <RepositoryTree
             onOpenDocument={(documentId) => {
               setSelectedDocumentId(documentId);

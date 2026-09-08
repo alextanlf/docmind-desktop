@@ -31,7 +31,7 @@ describe("设置", () => {
     expect(api.settings.saveModel).toHaveBeenLastCalledWith(
       expect.objectContaining({ apiKey: undefined }),
     );
-    await screen.findByText("设置已保存");
+    await screen.findByText("连接成功，延迟 86 毫秒");
 
     fireEvent.click(screen.getByRole("checkbox", { name: "清除已保存的 API Key" }));
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
@@ -100,6 +100,26 @@ describe("设置", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "登录语雀" }));
     expect(api.yuque.login).toHaveBeenCalledTimes(1);
+  });
+
+  it("installs the Yuque browser when login reports a missing browser", async () => {
+    const api = installDocMindApi({
+      yuque: {
+        status: vi.fn().mockResolvedValue(loggedOutYuque),
+        login: vi.fn().mockRejectedValue({
+          code: "YUQUE_BROWSER_UNAVAILABLE",
+          message: "本机尚未安装语雀登录浏览器",
+          retryable: true,
+        }),
+      },
+    });
+    renderSettings();
+
+    fireEvent.click(await screen.findByRole("button", { name: "登录语雀" }));
+    fireEvent.click(await screen.findByRole("button", { name: "安装浏览器" }));
+
+    expect(await screen.findByText("语雀浏览器已安装")).toBeVisible();
+    expect(api.yuque.installBrowser).toHaveBeenCalledTimes(1);
   });
 
   it("offers retry after an embedding failure", async () => {

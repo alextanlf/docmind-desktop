@@ -13,6 +13,11 @@ class LoginResult(LoginStatus):
     pass
 
 
+class BrowserInstallResult(WireModel):
+    installed: bool
+    message: str
+
+
 class YuqueRepository(WireModel):
     yuque_id: str
     name: str
