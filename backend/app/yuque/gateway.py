@@ -308,7 +308,13 @@ class PlaywrightYuqueGateway:
         except DomainError:
             raise
         except PlaywrightError:
-            raise DomainError("YUQUE_LOGIN_REQUIRED", "语雀登录状态不可用", 401, True, "重新登录语雀") from None
+            raise DomainError(
+                "YUQUE_BROWSER_UNAVAILABLE",
+                "本机缺少语雀登录浏览器，请先安装 Playwright Chromium",
+                503,
+                True,
+                "安装后重试",
+            ) from None
 
     async def list_repositories(self) -> list[YuqueRepository]:
         async with self._background_page("list-repositories") as operation:

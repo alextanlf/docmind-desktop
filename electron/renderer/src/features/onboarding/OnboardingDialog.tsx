@@ -41,7 +41,7 @@ export function OnboardingDialog({ onComplete }: { onComplete: () => void }) {
       <header className="onboarding-header">
         <div>
           <h1 id="onboarding-title">开始使用 DocMind</h1>
-          <p>完成模型连接和语雀登录后进入工作台</p>
+          <p>完成模型连接，可稍后再登录语雀</p>
         </div>
         <ol className="onboarding-steps" aria-label="设置步骤">
           <li className={step === 1 ? "is-active" : modelConnected ? "is-complete" : undefined}>
@@ -99,14 +99,19 @@ export function OnboardingDialog({ onComplete }: { onComplete: () => void }) {
             <ArrowRight aria-hidden="true" size={16} />
           </button>
         ) : (
-          <button
-            className="button button-primary"
-            disabled={!yuque.data.loggedIn}
-            onClick={onComplete}
-          >
-            <Check aria-hidden="true" size={16} />
-            进入工作台
-          </button>
+          <div className="onboarding-footer-actions">
+            <button className="button button-secondary" onClick={onComplete}>
+              稍后登录
+            </button>
+            <button
+              className="button button-primary"
+              disabled={!yuque.data.loggedIn}
+              onClick={onComplete}
+            >
+              <Check aria-hidden="true" size={16} />
+              进入工作台
+            </button>
+          </div>
         )}
       </footer>
     </Modal>
