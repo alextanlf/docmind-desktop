@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 export default defineConfig({
   main: {
     build: {
+      externalizeDeps: false,
       rollupOptions: { input: resolve(__dirname, "electron/main/index.ts") },
     },
   },

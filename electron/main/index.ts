@@ -17,6 +17,15 @@ let rendererOrigin: string | null = null;
 const e2eRuntime = isE2ERuntime(process.env, app.isPackaged);
 let waitingForBackendExit = false;
 
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (app.isReady()) openMainWindow();
+  });
+}
+
 if (e2eRuntime && process.env.DOCMIND_E2E_DATA_DIR) {
   app.setPath("userData", process.env.DOCMIND_E2E_DATA_DIR);
 }
@@ -94,6 +103,7 @@ app.whenReady().then(async () => {
   }
 });
 app.on("before-quit", (event) => {
+  if (!backend) return;
   if (waitingForBackendExit) return;
   event.preventDefault();
   waitingForBackendExit = true;
