@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import re
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any, TypeVar
@@ -10,6 +11,7 @@ from typing import Any, TypeVar
 from playwright.async_api import Error as PlaywrightError
 
 from app.api.errors import DomainError
+from app.yuque.diagnostics import SelectorAttempt
 
 T = TypeVar("T")
 
@@ -23,6 +25,8 @@ class BasePage:
         self.page = page
         self.screenshots_dir = screenshots_dir
         self.request_id = request_id
+        self._selector_attempts: list[SelectorAttempt] = []
+        self._matched_selector: str | None = None
 
     async def click_any(self, selectors: Sequence[str]) -> None:
         locator = await self.wait_for_any(selectors)
@@ -35,11 +39,19 @@ class BasePage:
     async def wait_for_any(self, selectors: Sequence[str], timeout: int = 5_000) -> Any:
         last_error: Exception | None = None
         for selector in selectors:
+            start = time.monotonic()
             locator = self._locator(selector)
             try:
                 await locator.wait_for(state="visible", timeout=timeout)
+                self._selector_attempts.append(
+                    SelectorAttempt(selector, True, (time.monotonic() - start) * 1000)
+                )
+                self._matched_selector = selector
                 return locator
             except _RETRYABLE_ERRORS as error:
+                self._selector_attempts.append(
+                    SelectorAttempt(selector, False, (time.monotonic() - start) * 1000)
+                )
                 last_error = error
         raise DomainError("YUQUE_PAGE_CHANGED", "语雀页面结构已变化，请重新登录后重试", 503, True) from last_error
 
@@ -47,6 +59,8 @@ class BasePage:
         self, operation_name: str, operation: Callable[[], Awaitable[T]]
     ) -> T:
         for attempt, delay in enumerate((*RETRY_DELAYS, None)):
+            self._selector_attempts = []
+            self._matched_selector = None
             try:
                 return await operation()
             except DomainError as error:
