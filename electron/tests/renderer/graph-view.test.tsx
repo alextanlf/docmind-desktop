@@ -13,12 +13,12 @@ describe("graph view", () => {
   it("lists nodes and adjacent relationships", async () => {
     installDocMindApi({
       graph: {
-        nodes: vi.fn().mockResolvedValue([
-          { id: "n1", kind: "citation", label: "S1", documentId: null },
-        ]),
-        adjacency: vi.fn().mockResolvedValue([
-          { sourceId: "doc-1", targetId: "n1", relation: "references" },
-        ]),
+        nodes: vi
+          .fn()
+          .mockResolvedValue([{ id: "n1", kind: "citation", label: "S1", documentId: null }]),
+        adjacency: vi
+          .fn()
+          .mockResolvedValue([{ sourceId: "doc-1", targetId: "n1", relation: "references" }]),
       },
     });
 

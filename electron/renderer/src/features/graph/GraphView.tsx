@@ -23,9 +23,7 @@ export function GraphView() {
       {selectedId && adjacency.data ? (
         <ul aria-label="相邻关系">
           {adjacency.data.map((edge) => (
-            <li key={`${edge.sourceId}-${edge.targetId}-${edge.relation}`}>
-              {edge.relation}
-            </li>
+            <li key={`${edge.sourceId}-${edge.targetId}-${edge.relation}`}>{edge.relation}</li>
           ))}
         </ul>
       ) : null}

@@ -181,8 +181,7 @@ const api: DocMindApi = {
       ),
   },
   sync: {
-    get: (repositoryId) =>
-      invoke(IPC_CHANNELS.syncGet, SyncStatusSchema, uuid(repositoryId)),
+    get: (repositoryId) => invoke(IPC_CHANNELS.syncGet, SyncStatusSchema, uuid(repositoryId)),
     trigger: (repositoryId) =>
       invoke(IPC_CHANNELS.syncTrigger, SyncOutcomeSchema, uuid(repositoryId)),
   },
