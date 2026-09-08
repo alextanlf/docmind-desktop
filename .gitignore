@@ -16,3 +16,5 @@ test-results/
 blob-report/
 .docmind-test-data/
 artifacts/
+build/electron-dist/Electron.app
+build/electron-dist/version
