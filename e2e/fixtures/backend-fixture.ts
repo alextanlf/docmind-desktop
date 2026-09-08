@@ -92,7 +92,8 @@ export const test = base.extend<Fixtures>({
       },
       async runLocalRuntimeSmoke() {
         const rendererLoaded = await page
-          .evaluate(() => document.readyState === "complete")
+          .waitForLoadState("load", { timeout: 10_000 })
+          .then(() => page.evaluate(() => document.readyState === "complete"))
           .then((loaded) => (loaded ? "PASS" : ("FAIL" as const)))
           .catch(() => "FAIL" as const);
         const health = rendererLoaded === "PASS" ? "PASS" : "FAIL";
