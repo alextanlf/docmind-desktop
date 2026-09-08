@@ -2,6 +2,18 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [[ -z "${DOCMIND_ELECTRON_PATH:-}" ]]; then
+  for candidate in \
+    "$HOME/Applications/Electron.app/Contents/MacOS/Electron" \
+    "$root/build/electron-dist/Electron.app/Contents/MacOS/Electron"; do
+    if [[ -x "$candidate" ]]; then
+      export DOCMIND_ELECTRON_PATH="$candidate"
+      break
+    fi
+  done
+fi
+
 cd "$root/backend"
 uv run pytest -v
 uv run ruff check app tests
