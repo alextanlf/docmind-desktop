@@ -378,6 +378,44 @@ def test_update_rollback_restores_non_utf8_bytes_exactly(client, auth_headers) -
     assert asyncio.run(gateway.read_document("doc-1")) == remote_before
 
 
+def test_update_compensation_skips_remote_restore_when_update_did_not_land(
+    client, auth_headers
+) -> None:
+    """Read-back avoids rewriting remote content when the update never landed."""
+    repository, gateway = _install_gateway(client)
+    _install_vector_store(client)
+    created = client.post(
+        f"/api/repositories/{repository.id}/documents",
+        headers=auth_headers,
+        json={"title": "State", "content": "# State"},
+    ).json()
+    client.app.state.document_mutation_store.create(
+        mutation_id=str(uuid4()),
+        operation="update",
+        repository_id=repository.id,
+        document_id=created["id"],
+        payload={
+            "phase": "remote_pending",
+            "remote_applied": False,
+            "remote_id": "doc-1",
+            "old_snapshot": {
+                "remote_content": "# State",
+                "remote_title": "State",
+                "title": "State",
+                "content": "# State",
+                "file_state": "unconfigured",
+                "markdown_path": None,
+                "chunks": [],
+            },
+        },
+    )
+    response = client.get(
+        f"/api/repositories/{repository.id}/documents", headers=auth_headers
+    )
+    assert response.status_code == 200
+    assert "update_document" not in gateway.write_calls
+
+
 def test_unreadable_snapshot_aborts_before_remote_update(
     client, auth_headers, monkeypatch
 ) -> None:
