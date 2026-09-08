@@ -7,7 +7,12 @@ import {
 } from "../../../shared/contracts";
 import { clientErrorMessage } from "../features/settings/ollama-errors";
 
-export type RouteView = { source: "local" | "cloud"; model: string; mode: "local_only" | "cloud_only" | "automatic"; fallbackReason?: string | null };
+export type RouteView = {
+  source: "local" | "cloud";
+  model: string;
+  mode: "local_only" | "cloud_only" | "automatic";
+  fallbackReason?: string | null;
+};
 
 export type ChatStreamStatus = "idle" | "streaming" | "error" | "stopped";
 
@@ -94,8 +99,19 @@ function parseRoute(payload: Record<string, unknown>): RouteView | null {
   const value = payload.route;
   if (!value || typeof value !== "object") return null;
   const route = value as Record<string, unknown>;
-  if ((route.source !== "local" && route.source !== "cloud") || typeof route.model !== "string" || !route.model || !["local_only", "cloud_only", "automatic"].includes(String(route.mode))) return null;
-  return { source: route.source, model: route.model, mode: route.mode as RouteView["mode"], fallbackReason: typeof route.fallbackReason === "string" ? route.fallbackReason : null };
+  if (
+    (route.source !== "local" && route.source !== "cloud") ||
+    typeof route.model !== "string" ||
+    !route.model ||
+    !["local_only", "cloud_only", "automatic"].includes(String(route.mode))
+  )
+    return null;
+  return {
+    source: route.source,
+    model: route.model,
+    mode: route.mode as RouteView["mode"],
+    fallbackReason: typeof route.fallbackReason === "string" ? route.fallbackReason : null,
+  };
 }
 
 export const useChatStreamStore = create<ChatStreamState>((set, get) => ({
@@ -154,7 +170,8 @@ export const useChatStreamStore = create<ChatStreamState>((set, get) => ({
           ? { userMessageId: event.payload.userMessageId }
           : null;
       const rawWarning = event.payload.warning;
-      const fallbackReason = typeof event.payload.fallbackReason === "string" ? event.payload.fallbackReason : null;
+      const fallbackReason =
+        typeof event.payload.fallbackReason === "string" ? event.payload.fallbackReason : null;
       const warning =
         typeof rawWarning === "string"
           ? rawWarning

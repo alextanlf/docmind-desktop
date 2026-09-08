@@ -162,7 +162,9 @@ export function installDocMindApi(overrides?: {
       getPull: vi.fn(),
       cancelPull: vi.fn(),
       retryPull: vi.fn(),
-      subscribePull: vi.fn().mockReturnValue({ requestId: "pull", cancel: vi.fn(), detach: vi.fn() }),
+      subscribePull: vi
+        .fn()
+        .mockReturnValue({ requestId: "pull", cancel: vi.fn(), detach: vi.fn() }),
       ...overrides?.ollama,
     },
     settings: {

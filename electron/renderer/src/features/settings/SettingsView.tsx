@@ -52,7 +52,13 @@ export function SettingsView() {
         <EmbeddingStatus />
       </section>
       <section className="settings-section" aria-labelledby="runtime-settings-title">
-        <div className="section-heading"><KeyRound aria-hidden="true" size={18} /><div><h2 id="runtime-settings-title">本地运行与路由</h2><p>配置 Ollama 与云端回退策略</p></div></div>
+        <div className="section-heading">
+          <KeyRound aria-hidden="true" size={18} />
+          <div>
+            <h2 id="runtime-settings-title">本地运行与路由</h2>
+            <p>配置 Ollama 与云端回退策略</p>
+          </div>
+        </div>
         <RuntimeModelSettings settings={settings.data} />
       </section>
       <section className="settings-section" aria-labelledby="yuque-settings-title">

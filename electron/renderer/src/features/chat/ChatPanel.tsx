@@ -136,11 +136,17 @@ export function ChatPanel({
 
   const disabled = !canSend;
   const route = activeStream?.route;
-  const routeLabel = route ? `${route.source === "local" ? "本地" : "云端"} · ${route.model}${route.fallbackReason ? "（本地不可用，已回退）" : ""}` : null;
+  const routeLabel = route
+    ? `${route.source === "local" ? "本地" : "云端"} · ${route.model}${route.fallbackReason ? "（本地不可用，已回退）" : ""}`
+    : null;
   const errorCode = activeStream?.error ? (activeStream.error as string) : null;
   return (
     <section className="chat-panel" aria-label="对话">
-      {routeLabel ? <div className="route-badge" aria-label="当前模型路由">{routeLabel}</div> : null}
+      {routeLabel ? (
+        <div className="route-badge" aria-label="当前模型路由">
+          {routeLabel}
+        </div>
+      ) : null}
       <div className="chat-messages">
         {messages.isPending ? <p className="chat-loading">正在读取消息…</p> : null}
         {messages.isError ? <p className="chat-error">无法读取消息，请重新选择会话。</p> : null}
@@ -166,7 +172,15 @@ export function ChatPanel({
       {activeStream?.error ? (
         <div className="chat-stream-error" role="alert">
           <span>{activeStream.error}</span>
-          {errorCode?.includes("选定模型尚未安装") ? <button type="button" className="button button-secondary" aria-label="打开设置并拉取模型">打开设置并拉取模型</button> : null}
+          {errorCode?.includes("选定模型尚未安装") ? (
+            <button
+              type="button"
+              className="button button-secondary"
+              aria-label="打开设置并拉取模型"
+            >
+              打开设置并拉取模型
+            </button>
+          ) : null}
           {activeStream.status === "error" ? (
             <button className="button button-secondary" onClick={retry} type="button">
               {activeStream.streamMode === "search" ? "重试联网搜索" : "重新编辑问题"}
@@ -174,7 +188,11 @@ export function ChatPanel({
           ) : null}
         </div>
       ) : null}
-      {route?.fallbackReason ? <p className="chat-route-status" role="status">本次回答已使用云端模型（{route.fallbackReason}）</p> : null}
+      {route?.fallbackReason ? (
+        <p className="chat-route-status" role="status">
+          本次回答已使用云端模型（{route.fallbackReason}）
+        </p>
+      ) : null}
       {activeStream?.warning ? (
         <p className="chat-stream-warning" role="status">
           {activeStream.warning}

@@ -10,7 +10,15 @@ describe("统一任务进度", () => {
   });
 
   it("exposes ARIA values and disables cancel while cancelling", () => {
-    render(<TaskProgress title="导入文档" progress={37} progressText="37%" cancelPending onCancel={() => {}} />);
+    render(
+      <TaskProgress
+        title="导入文档"
+        progress={37}
+        progressText="37%"
+        cancelPending
+        onCancel={() => {}}
+      />,
+    );
     const bar = screen.getByRole("progressbar");
     expect(bar).toHaveAttribute("aria-valuemin", "0");
     expect(bar).toHaveAttribute("aria-valuemax", "100");
