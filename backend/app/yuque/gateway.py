@@ -265,22 +265,25 @@ class PlaywrightYuqueGateway:
 
     async def login_status(self) -> LoginStatus:
         request_id = uuid4().hex
-        async with self._new_page(visible_login=False) as page:
-            login = LoginPage(page, self.settings.screenshots_dir, request_id)
+        try:
+            async with self._new_page(visible_login=False) as page:
+                login = LoginPage(page, self.settings.screenshots_dir, request_id)
 
-            async def status() -> LoginStatus:
-                await page.goto("https://www.yuque.com/dashboard", wait_until="domcontentloaded")
-                if await login.is_logged_in():
-                    return LoginStatus(
-                        logged_in=True,
-                        account_label=_mask_account(await login.account_label()),
-                        requires_login=False,
-                    )
-                if _is_login_url(page.url):
-                    return LoginStatus(logged_in=False, account_label=None, requires_login=True)
-                raise DomainError("YUQUE_PAGE_CHANGED", "语雀页面结构已变化，请重新登录后重试", 503, True)
+                async def status() -> LoginStatus:
+                    await page.goto("https://www.yuque.com/dashboard", wait_until="domcontentloaded")
+                    if await login.is_logged_in():
+                        return LoginStatus(
+                            logged_in=True,
+                            account_label=_mask_account(await login.account_label()),
+                            requires_login=False,
+                        )
+                    if _is_login_url(page.url):
+                        return LoginStatus(logged_in=False, account_label=None, requires_login=True)
+                    raise DomainError("YUQUE_PAGE_CHANGED", "语雀页面结构已变化，请重新登录后重试", 503, True)
 
-            return await login.with_retry("login-status", status)
+                return await login.with_retry("login-status", status)
+        except PlaywrightError:
+            return LoginStatus(logged_in=False, account_label=None, requires_login=True)
 
     async def begin_login(self) -> LoginResult:
         if self._login_lock.locked():

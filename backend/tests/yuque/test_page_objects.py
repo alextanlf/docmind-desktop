@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
+from playwright.async_api import Error as PlaywrightError
 from pydantic import SecretStr
 
 from app.api.errors import DomainError
@@ -205,6 +206,25 @@ async def test_real_gateway_reports_logged_out_status_without_raising(tmp_path: 
     status = await gateway.login_status()
 
     assert status.logged_in is False
+    assert status.requires_login is True
+
+
+async def test_real_gateway_reports_logged_out_when_browser_unavailable(tmp_path: Path) -> None:
+    settings = AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
+    gateway = PlaywrightYuqueGateway(settings)
+
+    @asynccontextmanager
+    async def unavailable_new_page(*, visible_login: bool):
+        assert visible_login is False
+        raise PlaywrightError("Executable doesn't exist")
+        yield
+
+    gateway._new_page = unavailable_new_page  # type: ignore[method-assign]
+
+    status = await gateway.login_status()
+
+    assert status.logged_in is False
+    assert status.account_label is None
     assert status.requires_login is True
 
 
