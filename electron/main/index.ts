@@ -14,9 +14,6 @@ let backend: BackendManager;
 let proxy: BackendProxy;
 let mainWindow: any = null;
 let rendererOrigin: string | null = null;
-const PACKAGED_BACKEND_COMMAND =
-  "backend/.venv/bin/python";
-const PACKAGED_BACKEND_CWD = "backend";
 const e2eRuntime = isE2ERuntime(process.env, app.isPackaged);
 let waitingForBackendExit = false;
 
@@ -84,12 +81,9 @@ app.whenReady().then(async () => {
       dataDir: app.getPath("userData"),
       repoDir: process.cwd(),
       packaged: app.isPackaged,
-      backendCommand:
-        process.env.DOCMIND_BACKEND_COMMAND ??
-        (app.isPackaged ? PACKAGED_BACKEND_COMMAND : undefined),
-      backendArgs: packagedArgs.args ?? (app.isPackaged ? ["-m", "app"] : undefined),
-      backendCwd:
-        process.env.DOCMIND_BACKEND_CWD ?? (app.isPackaged ? PACKAGED_BACKEND_CWD : undefined),
+      backendCommand: process.env.DOCMIND_BACKEND_COMMAND,
+      backendArgs: packagedArgs.args,
+      backendCwd: process.env.DOCMIND_BACKEND_CWD,
     });
     await backend.start();
     proxy = new BackendProxy({
