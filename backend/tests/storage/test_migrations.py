@@ -54,7 +54,7 @@ def test_upgrade_creates_exact_phase_one_columns(database: Database) -> None:
     assert {column["name"] for column in inspector.get_columns("documents")} == {
         "id", "repository_id", "yuque_id", "title", "source_url", "raw_path", "markdown_path",
         "source_type", "content_hash", "chunk_count", "status", "yuque_url", "source_identity",
-        "source_revision", "remote_deleted", "created_at", "updated_at",
+        "source_revision", "remote_deleted", "sync_state", "local_dirty", "created_at", "updated_at",
     }
     assert {column["name"] for column in inspector.get_columns("document_chunks")} == {
         "id", "document_id", "repository_id", "chunk_index", "text", "section_path", "page_number",

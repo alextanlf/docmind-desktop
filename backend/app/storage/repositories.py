@@ -408,6 +408,22 @@ class DocumentStore:
                 document.updated_at = utc_now()
                 session.flush()
 
+    def set_local_dirty(self, document_id: str, dirty: bool) -> None:
+        with self.database.session() as session:
+            document = session.get(DocumentRecord, document_id)
+            if document is not None:
+                document.local_dirty = dirty
+                document.updated_at = utc_now()
+                session.flush()
+
+    def set_sync_state(self, document_id: str, state: str) -> None:
+        with self.database.session() as session:
+            document = session.get(DocumentRecord, document_id)
+            if document is not None:
+                document.sync_state = state
+                document.updated_at = utc_now()
+                session.flush()
+
     def update_synced_content(
         self,
         document_id: str,
