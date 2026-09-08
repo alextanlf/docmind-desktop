@@ -260,12 +260,12 @@ class LostDeleteAcknowledgementGateway(FakeYuqueGateway):
         self.delete_calls = 0
         self.exists_checks = 0
 
-    async def delete_document(self, document_id: str) -> None:
+    async def delete_document(self, document_id: str, repository_id: str) -> None:
         self.delete_calls += 1
         if self.delete_calls == 1:
-            await super().delete_document(document_id)
+            await super().delete_document(document_id, repository_id)
             raise ConnectionError("delete acknowledgement lost")
-        await super().delete_document(document_id)
+        await super().delete_document(document_id, repository_id)
 
     async def document_exists(self, repository_id: str, document_id: str) -> bool:
         self.exists_checks += 1
@@ -558,10 +558,10 @@ class BlockingDeleteGateway(FakeYuqueGateway):
         self.delete_started = asyncio.Event()
         self.delete_release = asyncio.Event()
 
-    async def delete_document(self, document_id: str) -> None:
+    async def delete_document(self, document_id: str, repository_id: str) -> None:
         self.delete_started.set()
         await self.delete_release.wait()
-        await super().delete_document(document_id)
+        await super().delete_document(document_id, repository_id)
 
 
 async def _seed_pending_remote_create(app, gateway: BlockingDeleteGateway, repository_id: str):  # type: ignore[no-untyped-def]
