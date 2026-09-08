@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -19,6 +20,7 @@ from app.imports.batch_state_machine import ensure_item_mutable, transition
 from app.imports.state_machine import ensure_transition_allowed
 from app.schemas.batches import BatchItemPage, BatchItemView, ConfirmBatchInput
 from app.schemas.sync import RemoteDocumentState
+from app.schemas.versioning import DocumentVersion
 from app.storage.database import Database
 from app.storage.models import (
     BatchImportRecord,
@@ -33,6 +35,7 @@ from app.storage.models import (
     DocumentChunkRecord,
     DocumentMutationRecord,
     DocumentRecord,
+    DocumentVersionRecord,
     ImportJobRecord,
     ImportStatus,
     MemoryChunkRecord,
@@ -2509,3 +2512,65 @@ class RepositorySyncStateStore:
             if record is None or record.last_synced_at is None:
                 return None
             return record.last_synced_at.isoformat()
+
+
+class VersionStore:
+    """Bounded per-document version snapshots."""
+
+    def __init__(self, database: Database, *, max_versions: int = 20) -> None:
+        self.database = database
+        self.max_versions = max_versions
+
+    def snapshot(self, document_id: str, title: str, content: str) -> DocumentVersion:
+        with self.database.session() as session:
+            current_max = session.scalar(
+                select(func.max(DocumentVersionRecord.version_no)).where(
+                    DocumentVersionRecord.document_id == document_id
+                )
+            )
+            version_no = (current_max or 0) + 1
+            record = DocumentVersionRecord(
+                document_id=document_id,
+                version_no=version_no,
+                title=title,
+                content=content,
+                content_sha256=sha256(content.encode("utf-8")).hexdigest(),
+                created_at=utc_now(),
+            )
+            session.add(record)
+            session.flush()
+            cutoff = version_no - self.max_versions
+            if cutoff > 0:
+                session.execute(
+                    delete(DocumentVersionRecord).where(
+                        DocumentVersionRecord.document_id == document_id,
+                        DocumentVersionRecord.version_no <= cutoff,
+                    )
+                )
+            return DocumentVersion(
+                document_id=document_id,
+                version_no=version_no,
+                title=title,
+                content=content,
+                content_sha256=record.content_sha256,
+                created_at=record.created_at.isoformat(),
+            )
+
+    def list(self, document_id: str) -> list[DocumentVersion]:
+        with self.database.session() as session:
+            records = session.scalars(
+                select(DocumentVersionRecord)
+                .where(DocumentVersionRecord.document_id == document_id)
+                .order_by(DocumentVersionRecord.version_no)
+            )
+            return [
+                DocumentVersion(
+                    document_id=record.document_id,
+                    version_no=record.version_no,
+                    title=record.title,
+                    content=record.content,
+                    content_sha256=record.content_sha256,
+                    created_at=record.created_at.isoformat(),
+                )
+                for record in records
+            ]

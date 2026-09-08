@@ -577,3 +577,14 @@ class RepositorySyncMetaRecord(Base):
 
     repository_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class DocumentVersionRecord(Base):
+    __tablename__ = "document_versions"
+
+    document_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    version_no: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(1024), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
