@@ -12,6 +12,8 @@ import { logger } from "./logger";
 import { isE2ERuntime, readE2EDialogPath } from "./e2e-runtime";
 let backend: BackendManager;
 let proxy: BackendProxy;
+let mainWindow: any = null;
+let rendererOrigin: string | null = null;
 const e2eRuntime = isE2ERuntime(process.env, app.isPackaged);
 let waitingForBackendExit = false;
 
@@ -34,6 +36,23 @@ function stagedFilesForRuntime(dataDir: string): StagedFileService {
       : {}),
   });
 }
+
+function openMainWindow() {
+  if (!rendererOrigin) return;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+    return;
+  }
+  const win = createWindow(rendererOrigin);
+  attachRendererLoadDiagnostics(win, (error) => logger.error(error));
+  showAfterDidFinishLoad(win);
+  mainWindow = win;
+  win.on("closed", () => {
+    mainWindow = null;
+  });
+  void win.loadURL(rendererOrigin);
+}
+
 function parsePackagedArgs(value: string | undefined) {
   if (value === undefined) return { valid: true, args: undefined };
   try {
@@ -66,12 +85,9 @@ app.whenReady().then(async () => {
       stagedFiles: stagedFilesForRuntime(app.getPath("userData")),
       app,
     });
-    const origin =
+    rendererOrigin =
       process.env.ELECTRON_RENDERER_URL ?? `file://${__dirname}/../renderer/index.html`;
-    const win = createWindow(origin);
-    attachRendererLoadDiagnostics(win, (error) => logger.error(error));
-    showAfterDidFinishLoad(win);
-    await win.loadURL(origin);
+    openMainWindow();
   } catch (error) {
     logger.error(error);
     app.quit();
@@ -92,4 +108,7 @@ app.on("before-quit", (event) => {
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+app.on("activate", () => {
+  openMainWindow();
 });
