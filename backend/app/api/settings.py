@@ -180,7 +180,7 @@ class SettingsService:
         for child in root.iterdir():
             if child.is_symlink() or child.parent.resolve() != root:
                 continue
-            if child.is_file() and child.suffix == ".png":
+            if child.is_file() and child.suffix in {".png", ".json", ".html"}:
                 child.unlink()
 
 
