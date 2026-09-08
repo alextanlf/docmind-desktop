@@ -1,6 +1,7 @@
 import { ChevronDown, ChevronRight, FilePlus2, FolderPlus, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { clientErrorMessage } from "../settings/settings.queries";
+import { ConflictList } from "./ConflictList";
 import {
   useDocumentsQuery,
   useRepositoriesQuery,
@@ -170,7 +171,13 @@ export function RepositoryTree({ onOpenDocument }: RepositoryTreeProps) {
               </button>
               <RepositorySyncButton repositoryId={repository.id} />
               {expanded ? (
-                <RepositoryDocuments onOpenDocument={onOpenDocument} repositoryId={repository.id} />
+                <>
+                  <RepositoryDocuments
+                    onOpenDocument={onOpenDocument}
+                    repositoryId={repository.id}
+                  />
+                  <ConflictList repositoryId={repository.id} />
+                </>
               ) : null}
             </li>
           );

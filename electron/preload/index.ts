@@ -3,6 +3,8 @@ import { z } from "zod";
 import { IPC_CHANNELS, streamEventChannel } from "../shared/channels";
 import {
   ChatStreamInputSchema,
+  ConflictResolutionSchema,
+  ConflictViewSchema,
   CreateImportInputSchema,
   CreateRepositoryInputSchema,
   CreateSessionInputSchema,
@@ -180,6 +182,17 @@ const api: DocMindApi = {
       invoke(IPC_CHANNELS.syncGet, SyncStatusSchema, uuid(repositoryId)),
     trigger: (repositoryId) =>
       invoke(IPC_CHANNELS.syncTrigger, SyncOutcomeSchema, uuid(repositoryId)),
+  },
+  conflicts: {
+    list: (repositoryId) =>
+      invoke(IPC_CHANNELS.conflictsList, ConflictViewSchema.array(), uuid(repositoryId)),
+    resolve: (documentId, resolution) =>
+      invoke(
+        IPC_CHANNELS.conflictsResolve,
+        z.undefined(),
+        uuid(documentId),
+        ConflictResolutionSchema.parse(resolution),
+      ),
   },
   documents: {
     list: (repositoryId) =>
