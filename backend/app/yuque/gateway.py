@@ -55,7 +55,7 @@ class YuqueGateway(Protocol):
 
     async def update_document(self, request: UpdateYuqueDocumentRequest) -> YuqueDocument: ...
 
-    async def delete_document(self, document_id: str) -> None: ...
+    async def delete_document(self, document_id: str, repository_id: str) -> None: ...
 
     async def close(self) -> None: ...
 
@@ -194,10 +194,11 @@ class FakeYuqueGateway:
             self._persist_state()
             return _document_summary(document)
 
-    async def delete_document(self, document_id: str) -> None:
+    async def delete_document(self, document_id: str, repository_id: str) -> None:
         self.write_calls.append("delete_document")
         async with self._serialized():
             self._require_login(allow_first_use=True)
+            self._repository(repository_id)
             self._document(document_id)
             del self._documents[document_id]
             self._persist_state()
@@ -349,56 +350,66 @@ class PlaywrightYuqueGateway:
 
     async def create_document(self, request: CreateYuqueDocumentRequest) -> YuqueDocument:
         self.write_calls.append("create_document")
-        async with self._background_page("create-document") as operation:
-            page, request_id = operation
-            repository = RepositoryPage(page, self.settings.screenshots_dir, request_id)
-            editor = EditorPage(page, self.settings.screenshots_dir, request_id)
+        marker = _extract_mutation_marker(request.content)
+        try:
+            async with self._background_page("create-document") as operation:
+                page, request_id = operation
+                repository = RepositoryPage(page, self.settings.screenshots_dir, request_id, operation="create-document")
+                editor = EditorPage(page, self.settings.screenshots_dir, request_id, operation="create-document")
 
-            async def create() -> None:
-                await _open_yuque_resource(page, request.repository_id)
-                await repository.open_new_document()
-                await editor.set_title(request.title)
-                await editor.import_markdown(request.content)
+                async def create() -> None:
+                    await _open_yuque_resource(page, request.repository_id)
+                    await repository.open_new_document()
+                    await editor.set_title(request.title)
+                    await editor.import_markdown(request.content)
 
-            async def confirm_created_document() -> YuqueDocument:
-                parsed_url = urlparse(page.url)
-                repository_id = _repository_id_from_document_url(page.url)
-                document_id = _resource_identity(page.url)
-                requested_repository_id = _resource_identity(request.repository_id)
-                if (
-                    parsed_url.scheme != "https"
-                    or parsed_url.hostname != "www.yuque.com"
-                    or parsed_url.username is not None
-                    or parsed_url.password is not None
-                    or repository_id != requested_repository_id
-                    or document_id == requested_repository_id
-                ):
-                    raise DomainError("YUQUE_PAGE_CHANGED", "新建文档后未找到文档，请重新登录后重试", 503, True)
-                title = await editor.read_title()
-                if title != request.title:
-                    raise DomainError("YUQUE_PAGE_CHANGED", "新建文档后未找到文档，请重新登录后重试", 503, True)
-                return YuqueDocument(
-                    yuque_id=document_id,
-                    repository_id=request.repository_id,
-                    title=title,
-                    url=page.url,
-                )
+                async def confirm_created_document() -> YuqueDocument:
+                    parsed_url = urlparse(page.url)
+                    repository_id = _repository_id_from_document_url(page.url)
+                    document_id = _resource_identity(page.url)
+                    requested_repository_id = _resource_identity(request.repository_id)
+                    if (
+                        parsed_url.scheme != "https"
+                        or parsed_url.hostname != "www.yuque.com"
+                        or parsed_url.username is not None
+                        or parsed_url.password is not None
+                        or repository_id != requested_repository_id
+                        or document_id == requested_repository_id
+                    ):
+                        raise DomainError("YUQUE_PAGE_CHANGED", "新建文档后未找到文档，请重新登录后重试", 503, True)
+                    title = await editor.read_title()
+                    if title != request.title:
+                        raise DomainError("YUQUE_PAGE_CHANGED", "新建文档后未找到文档，请重新登录后重试", 503, True)
+                    return YuqueDocument(
+                        yuque_id=document_id,
+                        repository_id=request.repository_id,
+                        title=title,
+                        url=page.url,
+                    )
 
-            try:
-                await create()
-            except DomainError as error:
-                if not error.retryable:
-                    raise
-                await editor._capture_failure("create-document")
-                raise DomainError(
-                    "YUQUE_PAGE_CHANGED", "语雀页面响应异常，请重新登录后重试", 503, True
-                ) from None
-            except (PlaywrightError, TimeoutError, ConnectionError, OSError):
-                await editor._capture_failure("create-document")
-                raise DomainError(
-                    "YUQUE_PAGE_CHANGED", "语雀页面响应异常，请重新登录后重试", 503, True
-                ) from None
-            return await editor.with_retry("confirm-created-document", confirm_created_document)
+                try:
+                    await create()
+                except DomainError as error:
+                    if not error.retryable:
+                        raise
+                    await editor._capture_failure("create-document", error.code)
+                    raise DomainError(
+                        "YUQUE_PAGE_CHANGED", "语雀页面响应异常，请重新登录后重试", 503, True
+                    ) from None
+                except (PlaywrightError, TimeoutError, ConnectionError, OSError):
+                    await editor._capture_failure("create-document")
+                    raise DomainError(
+                        "YUQUE_PAGE_CHANGED", "语雀页面响应异常，请重新登录后重试", 503, True
+                    ) from None
+                return await editor.with_retry("confirm-created-document", confirm_created_document)
+        except DomainError as error:
+            if error.retryable and marker is not None:
+                discovered = await self.find_document_by_marker(request.repository_id, marker)
+                if discovered is not None:
+                    return discovered
+            raise
+        except (PlaywrightError, TimeoutError, ConnectionError, OSError):
+            raise DomainError("YUQUE_PAGE_CHANGED", "语雀页面响应异常，请重新登录后重试", 503, True) from None
 
     async def find_document_by_marker(
         self, repository_id: str, marker: str
@@ -450,34 +461,56 @@ class PlaywrightYuqueGateway:
 
     async def update_document(self, request: UpdateYuqueDocumentRequest) -> YuqueDocument:
         self.write_calls.append("update_document")
-        async with self._background_page("update-document") as operation:
-            page, request_id = operation
-            editor = EditorPage(page, self.settings.screenshots_dir, request_id)
+        marker = _extract_mutation_marker(request.content)
+        try:
+            async with self._background_page("update-document") as operation:
+                page, request_id = operation
+                editor = EditorPage(page, self.settings.screenshots_dir, request_id, operation="update-document")
 
-            async def update() -> YuqueDocument:
-                await _open_yuque_resource(page, request.document_id)
-                await editor.set_title(request.title)
-                await editor.import_markdown(request.content)
-                return YuqueDocument(
-                    yuque_id=request.document_id,
-                    repository_id=_repository_id_from_document_url(page.url),
-                    title=await editor.read_title(),
-                    url=page.url,
-                )
+                async def update() -> YuqueDocument:
+                    await _open_yuque_resource(page, request.document_id)
+                    await editor.set_title(request.title)
+                    await editor.import_markdown(request.content)
+                    return YuqueDocument(
+                        yuque_id=request.document_id,
+                        repository_id=_repository_id_from_document_url(page.url),
+                        title=await editor.read_title(),
+                        url=page.url,
+                    )
 
-            return await editor.with_retry("update-document", update)
+                return await editor.with_retry("update-document", update)
+        except DomainError as error:
+            if error.retryable and marker is not None:
+                current = await self._read_document(request.document_id, strip_mutation_marker=False)
+                if marker in current.content:
+                    return YuqueDocument(
+                        yuque_id=request.document_id,
+                        repository_id=current.repository_id,
+                        title=current.title,
+                        url=current.url,
+                    )
+            raise
+        except (PlaywrightError, TimeoutError, ConnectionError, OSError):
+            raise DomainError("YUQUE_PAGE_CHANGED", "语雀页面响应异常，请重新登录后重试", 503, True) from None
 
-    async def delete_document(self, document_id: str) -> None:
+    async def delete_document(self, document_id: str, repository_id: str) -> None:
         self.write_calls.append("delete_document")
-        async with self._background_page("delete-document") as operation:
-            page, request_id = operation
-            repository = RepositoryPage(page, self.settings.screenshots_dir, request_id)
+        try:
+            async with self._background_page("delete-document") as operation:
+                page, request_id = operation
+                repository = RepositoryPage(page, self.settings.screenshots_dir, request_id, operation="delete-document")
 
-            async def delete() -> None:
-                await _open_yuque_resource(page, document_id)
-                await repository.delete_current_document()
+                async def delete() -> None:
+                    await _open_yuque_resource(page, document_id)
+                    await repository.delete_current_document()
 
-            await repository.with_retry("delete-document", delete)
+                await repository.with_retry("delete-document", delete)
+        except DomainError as error:
+            if error.retryable and not await self.document_exists(repository_id, document_id):
+                return
+            raise
+        except (PlaywrightError, TimeoutError, ConnectionError, OSError):
+            raise DomainError("YUQUE_PAGE_CHANGED", "语雀页面响应异常，请重新登录后重试", 503, True) from None
 
     async def close(self) -> None:
         async with self._context_lock:
@@ -565,7 +598,13 @@ def _resource_identity(value: str | None) -> str:
 
 
 _MUTATION_MARKER_RE = re.compile(r"\n\n<!--\s*docmind-mutation:[^>]+-->\Z")
+_MUTATION_MARKER_IDENT_RE = re.compile(r"<!--\s*(docmind-mutation:[A-Za-z0-9-]+)\s*-->")
 
 
 def _strip_mutation_marker(content: str) -> str:
     return _MUTATION_MARKER_RE.sub("", content)
+
+
+def _extract_mutation_marker(content: str) -> str | None:
+    match = _MUTATION_MARKER_IDENT_RE.search(content)
+    return match.group(1) if match else None

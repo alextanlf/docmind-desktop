@@ -14,6 +14,8 @@ from app.schemas.yuque import (
     CreateRepositoryRequest,
     CreateYuqueDocumentRequest,
     UpdateYuqueDocumentRequest,
+    YuqueDocument,
+    YuqueDocumentContent,
 )
 from app.yuque.base_page import BasePage
 from app.yuque.dashboard_page import DashboardPage
@@ -557,7 +559,7 @@ async def test_create_missing_document_and_delete_confirmation_are_retryable(tmp
         await gateway.create_document(
             CreateYuqueDocumentRequest(repository_id="swiftui", title="State", content="# State")
         )
-    await gateway.delete_document("swiftui/state")
+    await gateway.delete_document("swiftui/state", "swiftui")
 
     assert error.value.code == "YUQUE_PAGE_CHANGED"
     assert "[data-testid=delete-confirmation]" in page.waited_selectors
@@ -1037,3 +1039,131 @@ async def test_terminal_failure_writes_redacted_diagnostic_artifacts(tmp_path: P
     assert record["step"] == "import-markdown"
     assert record["page_host"] == "https://www.yuque.com"
     assert record["error_code"] == "YUQUE_PAGE_CHANGED"
+
+
+async def test_create_reads_back_when_save_confirmation_is_lost(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    page = FixturePage(
+        {
+            "[data-testid=dashboard]",
+            "[data-testid=create-document]",
+            "[data-testid=editor-title]",
+            "[data-testid=editor-markdown]",
+            "[data-testid=editor-save]",
+        }
+    )
+
+    async def no_delay(_: float) -> None:
+        return None
+
+    monkeypatch.setattr("app.yuque.base_page.asyncio.sleep", no_delay)
+
+    @asynccontextmanager
+    async def fake_new_page(*, visible_login: bool):
+        assert visible_login is False
+        yield page
+
+    gateway._new_page = fake_new_page  # type: ignore[method-assign]
+
+    async def fake_find(repository_id: str, marker: str) -> YuqueDocument:
+        assert marker == "docmind-mutation:create-1"
+        return YuqueDocument(
+            yuque_id="swiftui/new-state",
+            repository_id=repository_id,
+            title="State",
+            url="https://www.yuque.com/swiftui/new-state",
+        )
+
+    gateway.find_document_by_marker = fake_find  # type: ignore[method-assign]
+
+    created = await gateway.create_document(
+        CreateYuqueDocumentRequest(
+            repository_id="swiftui",
+            title="State",
+            content="# State\n\n<!-- docmind-mutation:create-1 -->",
+        )
+    )
+    assert created.yuque_id == "swiftui/new-state"
+    assert page.clicked.count("[data-testid=editor-save]") == 1
+
+
+async def test_update_reads_back_by_marker_when_confirmation_is_lost(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    page = FixturePage(
+        {
+            "[data-testid=dashboard]",
+            "[data-testid=editor-title]",
+            "[data-testid=editor-markdown]",
+            "[data-testid=editor-save]",
+        }
+    )
+
+    async def no_delay(_: float) -> None:
+        return None
+
+    monkeypatch.setattr("app.yuque.base_page.asyncio.sleep", no_delay)
+
+    @asynccontextmanager
+    async def fake_new_page(*, visible_login: bool):
+        assert visible_login is False
+        yield page
+
+    gateway._new_page = fake_new_page  # type: ignore[method-assign]
+
+    async def fake_read(document_id: str, *, strip_mutation_marker: bool) -> YuqueDocumentContent:
+        del strip_mutation_marker
+        return YuqueDocumentContent(
+            yuque_id=document_id,
+            repository_id="swiftui",
+            title="State",
+            content="# State\n\n<!-- docmind-mutation:update-1 -->",
+            url="https://www.yuque.com/swiftui/state",
+        )
+
+    gateway._read_document = fake_read  # type: ignore[method-assign]
+
+    updated = await gateway.update_document(
+        UpdateYuqueDocumentRequest(
+            document_id="swiftui/state",
+            title="State",
+            content="# State\n\n<!-- docmind-mutation:update-1 -->",
+        )
+    )
+    assert updated.yuque_id == "swiftui/state"
+
+
+async def test_delete_treats_already_gone_as_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    page = FixturePage(
+        {
+            "[data-testid=dashboard]",
+            "[data-testid=delete-document]",
+            "[data-testid=confirm-delete]",
+        }
+    )
+
+    async def no_delay(_: float) -> None:
+        return None
+
+    monkeypatch.setattr("app.yuque.base_page.asyncio.sleep", no_delay)
+
+    @asynccontextmanager
+    async def fake_new_page(*, visible_login: bool):
+        assert visible_login is False
+        yield page
+
+    gateway._new_page = fake_new_page  # type: ignore[method-assign]
+
+    async def fake_exists(repository_id: str, document_id: str) -> bool:
+        return False
+
+    gateway.document_exists = fake_exists  # type: ignore[method-assign]
+
+    await gateway.delete_document("swiftui/state", "swiftui")
+    assert page.clicked.count("[data-testid=confirm-delete]") >= 1
