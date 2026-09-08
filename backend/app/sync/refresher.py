@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from hashlib import sha256
+from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
 from app.api.errors import DomainError
@@ -20,12 +21,14 @@ class DocumentRefresher:
         chunker,
         embedding_provider,
         vector_store,
+        version_store=None,
     ) -> None:
         self.document_store = document_store
         self.parser = parser
         self.chunker = chunker
         self.embedding_provider = embedding_provider
         self.vector_store = vector_store
+        self.version_store = version_store
 
     async def upsert_from_remote(
         self, repository_id: str, document_id: str, title: str, content: str
@@ -41,6 +44,8 @@ class DocumentRefresher:
                     status="uploaded",
                 )
             )
+        else:
+            self._snapshot_previous(document)
 
         parsed = self.parser.parse(
             DownloadedDocument(
@@ -92,6 +97,17 @@ class DocumentRefresher:
             source_url=document.source_url or document_id,
         )
         return document.id
+
+    def _snapshot_previous(self, document: DocumentRecord) -> None:
+        if self.version_store is None:
+            return
+        previous_content = ""
+        if document.markdown_path:
+            try:
+                previous_content = Path(document.markdown_path).read_text(encoding="utf-8")
+            except OSError:
+                previous_content = ""
+        self.version_store.snapshot(document.id, document.title, previous_content)
 
     async def mark_remote_deleted(self, repository_id: str, document_id: str) -> None:
         document = self.document_store.find_by_yuque_id(repository_id, document_id)
