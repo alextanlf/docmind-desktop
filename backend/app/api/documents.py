@@ -19,6 +19,7 @@ from app.document.parser import DocumentParser
 from app.schemas.documents import DocumentDelete, DocumentDetail, DocumentInput, DocumentSummary
 from app.schemas.imports import DownloadedDocument
 from app.schemas.sync import ConflictResolution
+from app.schemas.versioning import DocumentVersion
 from app.schemas.yuque import CreateYuqueDocumentRequest, UpdateYuqueDocumentRequest, YuqueDocument
 from app.storage.models import DocumentChunkRecord, DocumentRecord
 from app.storage.repositories import (
@@ -885,6 +886,9 @@ async def update_document(request: Request, document_id: str, body: DocumentInpu
     if document is None or not document.yuque_id:
         raise _not_found()
     old_snapshot = _document_snapshot(request, document)
+    request.app.state.version_store.snapshot(
+        document.id, document.title, str(old_snapshot.get("content", ""))
+    )
     try:
         old_remote = await _gateway(request).read_document(document.yuque_id)
     except asyncio.CancelledError:
@@ -1012,3 +1016,8 @@ async def resolve_conflict(request: Request, document_id: str) -> Response:
     resolution = ConflictResolution(payload.get("resolution", ""))
     await request.app.state.conflict_service.resolve(document_id, resolution)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/api/documents/{document_id}/versions", response_model=list[DocumentVersion])
+async def list_versions(request: Request, document_id: str) -> list[DocumentVersion]:
+    return request.app.state.version_store.list(document_id)

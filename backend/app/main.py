@@ -78,6 +78,7 @@ from app.storage.repositories import (
     RepositorySyncStateStore,
     SettingStore,
     VectorCleanupStore,
+    VersionStore,
     WebSearchRunStore,
 )
 from app.storage.vectorstore import PersistentVectorStore
@@ -329,12 +330,14 @@ def create_app(
             event_broker=app.state.distillation_event_broker,
         )
         sync_state_store = RepositorySyncStateStore(database)
+        version_store = VersionStore(database)
         refresher = DocumentRefresher(
             document_store=document_store,
             parser=DocumentParser(),
             chunker=SemanticChunker(),
             embedding_provider=runtime_embedding_provider,
             vector_store=vector_store,
+            version_store=version_store,
         )
 
         async def read_repo_snapshot(repository_id: str):
@@ -357,6 +360,7 @@ def create_app(
         app.state.sync_service = sync_service
         app.state.sync_state_store = sync_state_store
         app.state.sync_scheduler = sync_scheduler
+        app.state.version_store = version_store
         app.state.conflict_service = SyncConflictService(
             document_store=document_store,
             sync_state_store=sync_state_store,
