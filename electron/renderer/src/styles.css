@@ -1507,6 +1507,11 @@ progress::-webkit-progress-bar {
   border-top: 1px solid var(--line);
   background: var(--surface-subtle);
 }
+.onboarding-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .onboarding-loading {
   display: flex;
   align-items: center;

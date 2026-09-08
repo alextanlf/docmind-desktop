@@ -55,6 +55,27 @@ describe("首次设置", () => {
     expect(await screen.findByLabelText("工作台")).toBeVisible();
   });
 
+  it("allows skipping Yuque login after the model connection is ready", async () => {
+    const api = installDocMindApi({
+      settings: {
+        get: vi.fn().mockResolvedValue({ ...readySettings, hasApiKey: true }),
+      },
+      yuque: { status: vi.fn().mockResolvedValue(loggedOutYuque) },
+    });
+    render(<App />);
+
+    const testConnection = await screen.findByRole("button", { name: "测试模型连接" });
+    await waitFor(() => expect(testConnection).toBeEnabled());
+    fireEvent.click(testConnection);
+    fireEvent.click(await screen.findByRole("button", { name: "下一步" }));
+
+    expect(screen.getByRole("heading", { name: "登录语雀" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "稍后登录" }));
+
+    expect(api.yuque.login).not.toHaveBeenCalled();
+    expect(await screen.findByLabelText("工作台")).toBeVisible();
+  });
+
   it("invalidates a successful model test after edits, saves, or key clearing", async () => {
     installDocMindApi({
       yuque: { status: vi.fn().mockResolvedValue(loggedOutYuque) },

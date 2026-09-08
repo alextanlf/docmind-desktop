@@ -228,6 +228,26 @@ async def test_real_gateway_reports_logged_out_when_browser_unavailable(tmp_path
     assert status.requires_login is True
 
 
+async def test_begin_login_reports_missing_browser_without_generic_login_error(
+    tmp_path: Path,
+) -> None:
+    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+
+    @asynccontextmanager
+    async def unavailable_new_page(*, visible_login: bool):
+        assert visible_login is True
+        raise PlaywrightError("Executable doesn't exist")
+        yield
+
+    gateway._new_page = unavailable_new_page  # type: ignore[method-assign]
+
+    with pytest.raises(DomainError) as error:
+        await gateway.begin_login()
+
+    assert error.value.code == "YUQUE_BROWSER_UNAVAILABLE"
+    assert error.value.retryable is True
+
+
 async def test_real_gateway_maps_expired_cookie_to_login_required(tmp_path: Path) -> None:
     settings = AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
     gateway = PlaywrightYuqueGateway(settings)

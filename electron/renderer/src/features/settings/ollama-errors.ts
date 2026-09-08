@@ -9,6 +9,7 @@ const messages: Record<string, string> = {
   OLLAMA_PROTOCOL_ERROR: "本地模型服务返回了无法识别的数据",
   LOCAL_MODEL_UNAVAILABLE: "本地模型暂时不可用",
   ROUTING_CLOUD_UNAVAILABLE: "本地和云端都不可用",
+  YUQUE_BROWSER_UNAVAILABLE: "本机尚未安装语雀登录浏览器，暂无法打开登录窗口",
 };
 
 const actions: Record<string, string> = {
@@ -20,6 +21,7 @@ const actions: Record<string, string> = {
   OLLAMA_PROTOCOL_ERROR: "重新检查 Ollama",
   LOCAL_MODEL_UNAVAILABLE: "重试或切换模式",
   ROUTING_CLOUD_UNAVAILABLE: "检查设置并重试",
+  YUQUE_BROWSER_UNAVAILABLE: "安装后重试",
 };
 
 export function isRetryable(error: unknown): boolean {
@@ -46,6 +48,7 @@ export function clientErrorMessage(error: unknown): string {
     UNAVAILABLE: "模型服务暂不可用，请稍后重试",
     MODEL_UNAVAILABLE: "模型服务暂不可用，请稍后重试",
     BACKEND_UNAVAILABLE: "本地服务暂不可用，请稍后重试",
+    YUQUE_BROWSER_UNAVAILABLE: "本机尚未安装语雀登录浏览器，暂无法打开登录窗口",
     EMBEDDING_DOWNLOAD_FAILED: "Embedding 模型下载失败，请检查网络后重试",
     YUQUE_LOGIN_REQUIRED: "语雀登录已失效，请重新登录",
     BATCH_STALE_CONFIRMATION: "目录内容已变化，请重新选择目录后再试",
