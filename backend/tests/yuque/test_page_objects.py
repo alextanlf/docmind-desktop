@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -109,6 +110,7 @@ class FixturePage:
         self.document_save_error: Exception | None = None
         self.document_url_after_save: str | None = None
         self.document_title_after_save: str | None = None
+        self.dom_html = "<html><body>fixture</body></html>"
 
     def locator(self, selector: str) -> FixtureLocator:
         return FixtureLocator(self, selector, selector in self.available)
@@ -130,6 +132,9 @@ class FixturePage:
 
     async def add_style_tag(self, content: str) -> None:
         self.mask_styles.append(content)
+
+    async def content(self) -> str:
+        return self.dom_html
 
     async def goto(self, url: str, wait_until: str = "load") -> None:
         del wait_until
@@ -1001,3 +1006,34 @@ async def test_wait_for_any_records_candidate_attempts() -> None:
     ]
     assert [attempt.matched for attempt in base._selector_attempts] == [False, True]
     assert base._matched_selector == "[data-testid=fallback]"
+
+
+async def test_terminal_failure_writes_redacted_diagnostic_artifacts(tmp_path: Path) -> None:
+    page = FixturePage(set())
+    page.url = "https://www.yuque.com/team/repo/doc?query=secret"
+    page.dom_html = (
+        '<html><body><div data-testid="doc">secret body'
+        '<a href="https://yuque.com/team/doc">title</a></div></body></html>'
+    )
+    base = BasePage(page, screenshots_dir=tmp_path, request_id="request", operation="create-document")
+
+    async def fail() -> None:
+        raise TimeoutError("not available")
+
+    with pytest.raises(DomainError):
+        await base.with_retry("import-markdown", fail)
+
+    names = {path.name for path in tmp_path.iterdir()}
+    assert names == {
+        "request-import-markdown.png",
+        "request-import-markdown.dom.html",
+        "request-import-markdown.json",
+    }
+    dom = (tmp_path / "request-import-markdown.dom.html").read_text(encoding="utf-8")
+    assert "secret body" not in dom
+    assert "href" not in dom
+    record = json.loads((tmp_path / "request-import-markdown.json").read_text(encoding="utf-8"))
+    assert record["operation"] == "create-document"
+    assert record["step"] == "import-markdown"
+    assert record["page_host"] == "https://www.yuque.com"
+    assert record["error_code"] == "YUQUE_PAGE_CHANGED"
