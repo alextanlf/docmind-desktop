@@ -39,7 +39,10 @@ import {
   WebSearchRunSchema,
   SearchImportInputSchema,
   ChatSearchInputSchema,
-  OllamaStatusSchema, OllamaModelsSchema, OllamaPullInputSchema, OllamaPullSchema,
+  OllamaStatusSchema,
+  OllamaModelsSchema,
+  OllamaPullInputSchema,
+  OllamaPullSchema,
   RuntimeSettingsInputSchema,
 } from "../shared/contracts";
 import type { DocMindApi, EventEnvelope } from "../shared/contracts";
@@ -116,7 +119,20 @@ function subscription(
 const activeSubscriptions = new Map<string, { cancel(): void }>();
 
 const api: DocMindApi = {
-  ollama: { status: () => invoke(IPC_CHANNELS.ollamaStatus, OllamaStatusSchema), models: () => invoke(IPC_CHANNELS.ollamaModels, OllamaModelsSchema), pull: (input) => invoke(IPC_CHANNELS.ollamaPull, OllamaPullSchema, OllamaPullInputSchema.parse(input)), getPull: (id) => invoke(IPC_CHANNELS.ollamaGetPull, OllamaPullSchema, uuid(id)), cancelPull: (id) => invoke(IPC_CHANNELS.ollamaCancelPull, OllamaPullSchema, uuid(id)), retryPull: (id) => invoke(IPC_CHANNELS.ollamaRetryPull, OllamaPullSchema, uuid(id)), subscribePull: (id, afterSequence, onEvent) => { const value = uuid(id); if (!Number.isInteger(afterSequence) || afterSequence < 0) throw new Error("INVALID_REQUEST"); return subscription(IPC_CHANNELS.ollamaSubscribePull, value, [value], onEvent, afterSequence); } },
+  ollama: {
+    status: () => invoke(IPC_CHANNELS.ollamaStatus, OllamaStatusSchema),
+    models: () => invoke(IPC_CHANNELS.ollamaModels, OllamaModelsSchema),
+    pull: (input) =>
+      invoke(IPC_CHANNELS.ollamaPull, OllamaPullSchema, OllamaPullInputSchema.parse(input)),
+    getPull: (id) => invoke(IPC_CHANNELS.ollamaGetPull, OllamaPullSchema, uuid(id)),
+    cancelPull: (id) => invoke(IPC_CHANNELS.ollamaCancelPull, OllamaPullSchema, uuid(id)),
+    retryPull: (id) => invoke(IPC_CHANNELS.ollamaRetryPull, OllamaPullSchema, uuid(id)),
+    subscribePull: (id, afterSequence, onEvent) => {
+      const value = uuid(id);
+      if (!Number.isInteger(afterSequence) || afterSequence < 0) throw new Error("INVALID_REQUEST");
+      return subscription(IPC_CHANNELS.ollamaSubscribePull, value, [value], onEvent, afterSequence);
+    },
+  },
   settings: {
     get: () => invoke(IPC_CHANNELS.settingsGet, SettingsViewSchema),
     saveModel: (input) =>
@@ -133,7 +149,12 @@ const api: DocMindApi = {
         SettingsViewSchema,
         WebSearchSettingsInputSchema.parse(input),
       ),
-    saveRuntime: (input) => invoke(IPC_CHANNELS.settingsSaveRuntime, SettingsViewSchema, RuntimeSettingsInputSchema.parse(input)),
+    saveRuntime: (input) =>
+      invoke(
+        IPC_CHANNELS.settingsSaveRuntime,
+        SettingsViewSchema,
+        RuntimeSettingsInputSchema.parse(input),
+      ),
   },
   embedding: {
     status: () => invoke(IPC_CHANNELS.embeddingStatus, ModelStatusSchema),

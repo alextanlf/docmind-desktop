@@ -40,7 +40,10 @@ import {
   WebSearchRunSchema,
   SearchImportInputSchema,
   ChatSearchInputSchema,
-  OllamaStatusSchema, OllamaModelsSchema, OllamaPullInputSchema, OllamaPullSchema,
+  OllamaStatusSchema,
+  OllamaModelsSchema,
+  OllamaPullInputSchema,
+  OllamaPullSchema,
   RuntimeSettingsInputSchema,
 } from "../shared/contracts";
 
@@ -110,16 +113,41 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
     dependencies.stagedFiles ?? dependencies.files ?? dependencies.stagedFileService;
   if (!stagedFiles) throw new Error("IPC handlers require staged file service");
   const handlers: IpcHandlerMap = {
-    [IPC_CHANNELS.ollamaStatus]: () => proxy.requestJson("/api/ollama/status", {}, OllamaStatusSchema),
-    [IPC_CHANNELS.ollamaModels]: () => proxy.requestJson("/api/ollama/models", {}, OllamaModelsSchema),
-    [IPC_CHANNELS.ollamaPull]: (_event, input) => proxy.requestJson("/api/ollama/models/pull", jsonInit("POST", parse(OllamaPullInputSchema, input)), OllamaPullSchema),
-    [IPC_CHANNELS.ollamaGetPull]: (_event, id) => proxy.requestJson(`/api/ollama/models/pull/${parse(UUID, id)}`, {}, OllamaPullSchema),
-    [IPC_CHANNELS.ollamaCancelPull]: (_event, id) => proxy.requestJson(`/api/ollama/models/pull/${parse(UUID, id)}/cancel`, jsonInit("POST"), OllamaPullSchema),
-    [IPC_CHANNELS.ollamaRetryPull]: (_event, id) => proxy.requestJson(`/api/ollama/models/pull/${parse(UUID, id)}/retry`, jsonInit("POST"), OllamaPullSchema),
+    [IPC_CHANNELS.ollamaStatus]: () =>
+      proxy.requestJson("/api/ollama/status", {}, OllamaStatusSchema),
+    [IPC_CHANNELS.ollamaModels]: () =>
+      proxy.requestJson("/api/ollama/models", {}, OllamaModelsSchema),
+    [IPC_CHANNELS.ollamaPull]: (_event, input) =>
+      proxy.requestJson(
+        "/api/ollama/models/pull",
+        jsonInit("POST", parse(OllamaPullInputSchema, input)),
+        OllamaPullSchema,
+      ),
+    [IPC_CHANNELS.ollamaGetPull]: (_event, id) =>
+      proxy.requestJson(`/api/ollama/models/pull/${parse(UUID, id)}`, {}, OllamaPullSchema),
+    [IPC_CHANNELS.ollamaCancelPull]: (_event, id) =>
+      proxy.requestJson(
+        `/api/ollama/models/pull/${parse(UUID, id)}/cancel`,
+        jsonInit("POST"),
+        OllamaPullSchema,
+      ),
+    [IPC_CHANNELS.ollamaRetryPull]: (_event, id) =>
+      proxy.requestJson(
+        `/api/ollama/models/pull/${parse(UUID, id)}/retry`,
+        jsonInit("POST"),
+        OllamaPullSchema,
+      ),
     [IPC_CHANNELS.ollamaSubscribePull]: (event, id, afterSequence) => {
       const pullId = parse(UUID, id);
-      if (!Number.isInteger(afterSequence) || afterSequence < 0) throw new DocMindClientError("INVALID_REQUEST", "事件序号无效");
-      return proxy.openStream({requestId: pullId, route: `/api/ollama/models/pull/${pullId}/events`, sender: event.sender ?? {send: () => {}}, afterSequence, headers: {"Last-Event-ID": String(afterSequence)}});
+      if (!Number.isInteger(afterSequence) || afterSequence < 0)
+        throw new DocMindClientError("INVALID_REQUEST", "事件序号无效");
+      return proxy.openStream({
+        requestId: pullId,
+        route: `/api/ollama/models/pull/${pullId}/events`,
+        sender: event.sender ?? { send: () => {} },
+        afterSequence,
+        headers: { "Last-Event-ID": String(afterSequence) },
+      });
     },
     [IPC_CHANNELS.settingsGet]: () => proxy.requestJson("/api/settings", {}, SettingsViewSchema),
     [IPC_CHANNELS.settingsSaveModel]: (_event, input) =>
@@ -139,7 +167,11 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         SettingsViewSchema,
       ),
     [IPC_CHANNELS.settingsSaveRuntime]: (_event, input) =>
-      proxy.requestJson("/api/settings/runtime", jsonInit("POST", parse(RuntimeSettingsInputSchema, input)), SettingsViewSchema),
+      proxy.requestJson(
+        "/api/settings/runtime",
+        jsonInit("POST", parse(RuntimeSettingsInputSchema, input)),
+        SettingsViewSchema,
+      ),
     [IPC_CHANNELS.embeddingStatus]: () =>
       proxy.requestJson("/api/embedding/status", {}, ModelStatusSchema),
     [IPC_CHANNELS.embeddingPrepare]: () =>

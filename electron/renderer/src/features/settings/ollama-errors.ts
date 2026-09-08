@@ -53,7 +53,10 @@ export function clientErrorMessage(error: unknown): string {
     BATCH_STATE_CONFLICT: "批量导入状态已变化，请刷新后重试",
   };
   if (value?.code && legacy[value.code]) return legacy[value.code];
-  if (value?.code && ["VALIDATION_ERROR", "INVALID_REQUEST", "MODEL_VALIDATION_FAILED"].includes(value.code)) {
+  if (
+    value?.code &&
+    ["VALIDATION_ERROR", "INVALID_REQUEST", "MODEL_VALIDATION_FAILED"].includes(value.code)
+  ) {
     return "设置内容无效，请检查填写内容";
   }
   return "操作失败，请检查设置后重试";

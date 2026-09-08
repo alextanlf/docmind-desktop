@@ -2,10 +2,7 @@ import { randomBytes } from "node:crypto";
 import { spawn as nodeSpawn, ChildProcess } from "node:child_process";
 import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
-import {
-  resolveBackendRuntime,
-  type BackendRuntimeContract,
-} from "./backend-runtime-contract";
+import { resolveBackendRuntime, type BackendRuntimeContract } from "./backend-runtime-contract";
 
 export interface BackendConnection {
   baseUrl: string;

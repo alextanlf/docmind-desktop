@@ -106,7 +106,11 @@ export function ImportProgress({ job, onOpenDocument }: ImportProgressProps) {
   const isTerminal = terminalStates.has(activeJob.state);
   return (
     <section aria-label="导入进度" className="import-progress">
-      <TaskProgress label="导入进度" progress={activeJob.progress} status={activeJob.currentStage ?? "导入任务"} />
+      <TaskProgress
+        label="导入进度"
+        progress={activeJob.progress}
+        status={activeJob.currentStage ?? "导入任务"}
+      />
       <p>{activeJob.message}</p>
       {activeJob.errorMessage ? (
         <p className="editor-error" role="alert">

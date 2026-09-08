@@ -45,20 +45,74 @@ export const SettingsViewSchema = z.object({
       hasApiKey: z.boolean(),
     })
     .default({ provider: "tavily", mode: "ask", maxResults: 5, hasApiKey: false }),
-  runtime: z.object({
-    ollama: z.object({ baseUrl: z.string(), model: z.string().max(200), timeoutSeconds: z.number().positive().max(600) }),
-    routing: z.object({ mode: z.enum(["local_only", "cloud_only", "automatic"]) }),
-  }).optional(),
+  runtime: z
+    .object({
+      ollama: z.object({
+        baseUrl: z.string(),
+        model: z.string().max(200),
+        timeoutSeconds: z.number().positive().max(600),
+      }),
+      routing: z.object({ mode: z.enum(["local_only", "cloud_only", "automatic"]) }),
+    })
+    .optional(),
 });
 export const RuntimeSettingsInputSchema = z.object({
-  ollama: z.object({ baseUrl: z.string(), model: z.string().max(200), timeoutSeconds: z.number().positive().max(600) }),
+  ollama: z.object({
+    baseUrl: z.string(),
+    model: z.string().max(200),
+    timeoutSeconds: z.number().positive().max(600),
+  }),
   routing: z.object({ mode: z.enum(["local_only", "cloud_only", "automatic"]) }),
 });
-export const OllamaStatusSchema = z.object({available:z.boolean(),baseUrl:z.string(),version:z.string().nullable().optional(),selectedModel:z.string(),selectedModelInstalled:z.boolean(),checkedAt:timestamp,message:z.string()});
-export const OllamaModelSchema = z.object({name:z.string(),digest:z.string().nullable().optional(),sizeBytes:z.number().nullable().optional(),modifiedAt:timestamp.nullable().optional(),family:z.string().nullable().optional()});
-export const OllamaModelsSchema = z.object({available:z.boolean(),models:OllamaModelSchema.array(),checkedAt:timestamp,message:z.string()});
-export const OllamaPullInputSchema = z.object({modelName:z.string().trim().min(1).max(200).regex(/^[^\r\n]+$/)});
-export const OllamaPullSchema = z.object({id,modelName:z.string(),baseUrl:z.string(),state:z.enum(["queued","running","completed","failed","cancelled"]),progress:z.number().int().min(0).max(100),status:z.string().nullable().optional(),totalBytes:z.number().nullable().optional(),completedBytes:z.number().nullable().optional(),errorCode:z.string().nullable().optional(),errorMessage:z.string().nullable().optional(),retryable:z.boolean(),cancelRequested:z.boolean(),lastEventSequence:z.number().int().nonnegative(),createdAt:timestamp,startedAt:timestamp.nullable().optional(),completedAt:timestamp.nullable().optional(),updatedAt:timestamp});
+export const OllamaStatusSchema = z.object({
+  available: z.boolean(),
+  baseUrl: z.string(),
+  version: z.string().nullable().optional(),
+  selectedModel: z.string(),
+  selectedModelInstalled: z.boolean(),
+  checkedAt: timestamp,
+  message: z.string(),
+});
+export const OllamaModelSchema = z.object({
+  name: z.string(),
+  digest: z.string().nullable().optional(),
+  sizeBytes: z.number().nullable().optional(),
+  modifiedAt: timestamp.nullable().optional(),
+  family: z.string().nullable().optional(),
+});
+export const OllamaModelsSchema = z.object({
+  available: z.boolean(),
+  models: OllamaModelSchema.array(),
+  checkedAt: timestamp,
+  message: z.string(),
+});
+export const OllamaPullInputSchema = z.object({
+  modelName: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .regex(/^[^\r\n]+$/),
+});
+export const OllamaPullSchema = z.object({
+  id,
+  modelName: z.string(),
+  baseUrl: z.string(),
+  state: z.enum(["queued", "running", "completed", "failed", "cancelled"]),
+  progress: z.number().int().min(0).max(100),
+  status: z.string().nullable().optional(),
+  totalBytes: z.number().nullable().optional(),
+  completedBytes: z.number().nullable().optional(),
+  errorCode: z.string().nullable().optional(),
+  errorMessage: z.string().nullable().optional(),
+  retryable: z.boolean(),
+  cancelRequested: z.boolean(),
+  lastEventSequence: z.number().int().nonnegative(),
+  createdAt: timestamp,
+  startedAt: timestamp.nullable().optional(),
+  completedAt: timestamp.nullable().optional(),
+  updatedAt: timestamp,
+});
 export type OllamaStatusView = z.infer<typeof OllamaStatusSchema>;
 export type OllamaModelView = z.infer<typeof OllamaModelSchema>;
 export type OllamaModelsView = z.infer<typeof OllamaModelsSchema>;
@@ -541,7 +595,19 @@ export interface BatchesApi {
 }
 
 export interface DocMindApi {
-  ollama: { status(): Promise<z.infer<typeof OllamaStatusSchema>>; models(): Promise<z.infer<typeof OllamaModelsSchema>>; pull(input: z.infer<typeof OllamaPullInputSchema>): Promise<z.infer<typeof OllamaPullSchema>>; getPull(id: string): Promise<z.infer<typeof OllamaPullSchema>>; cancelPull(id: string): Promise<z.infer<typeof OllamaPullSchema>>; retryPull(id: string): Promise<z.infer<typeof OllamaPullSchema>>; subscribePull(id: string, afterSequence: number, onEvent: (event: EventEnvelope) => void): StreamSubscription };
+  ollama: {
+    status(): Promise<z.infer<typeof OllamaStatusSchema>>;
+    models(): Promise<z.infer<typeof OllamaModelsSchema>>;
+    pull(input: z.infer<typeof OllamaPullInputSchema>): Promise<z.infer<typeof OllamaPullSchema>>;
+    getPull(id: string): Promise<z.infer<typeof OllamaPullSchema>>;
+    cancelPull(id: string): Promise<z.infer<typeof OllamaPullSchema>>;
+    retryPull(id: string): Promise<z.infer<typeof OllamaPullSchema>>;
+    subscribePull(
+      id: string,
+      afterSequence: number,
+      onEvent: (event: EventEnvelope) => void,
+    ): StreamSubscription;
+  };
   settings: {
     get(): Promise<SettingsView>;
     saveModel(input: ModelSettingsInput): Promise<SettingsView>;

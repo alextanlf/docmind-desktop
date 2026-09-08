@@ -3,7 +3,11 @@ import { BackendManager, BackendStartError } from "./backend-manager";
 import { BackendProxy } from "./backend-proxy";
 import { registerIpcHandlers } from "./ipc-handlers";
 import { StagedFileService } from "./staged-files";
-import { attachRendererLoadDiagnostics, createWindow, showAfterDidFinishLoad } from "./window-manager";
+import {
+  attachRendererLoadDiagnostics,
+  createWindow,
+  showAfterDidFinishLoad,
+} from "./window-manager";
 import { logger } from "./logger";
 import { isE2ERuntime, readE2EDialogPath } from "./e2e-runtime";
 let backend: BackendManager;

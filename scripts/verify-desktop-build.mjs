@@ -8,7 +8,8 @@ function fail(message) {
 }
 
 const rootArgument = process.argv.indexOf("--root");
-const root = rootArgument >= 0 ? process.argv[rootArgument + 1] : resolve(import.meta.dirname, "..");
+const root =
+  rootArgument >= 0 ? process.argv[rootArgument + 1] : resolve(import.meta.dirname, "..");
 if (!root || !isAbsolute(root)) {
   fail("构建产物校验失败：root 必须是绝对路径");
 } else {
@@ -26,12 +27,12 @@ if (!root || !isAbsolute(root)) {
       if (invalid) {
         fail(`${invalid[0]} 产物不可读：${invalid[1]}`);
       } else {
-      accessSync(join(root, "out/main/index.js"), constants.R_OK);
-      accessSync(join(root, "out/preload/index.js"), constants.R_OK);
-      accessSync(join(root, "out/renderer/index.html"), constants.R_OK);
-      const rendererUrl = `file://${resolve(root, "out/renderer/index.html")}`;
-      if (!rendererUrl.startsWith("file://")) throw new Error("renderer URL");
-      console.log("desktop build verified");
+        accessSync(join(root, "out/main/index.js"), constants.R_OK);
+        accessSync(join(root, "out/preload/index.js"), constants.R_OK);
+        accessSync(join(root, "out/renderer/index.html"), constants.R_OK);
+        const rendererUrl = `file://${resolve(root, "out/renderer/index.html")}`;
+        if (!rendererUrl.startsWith("file://")) throw new Error("renderer URL");
+        console.log("desktop build verified");
       }
     } catch {
       fail("构建产物校验失败：产物不可读");

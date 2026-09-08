@@ -34,7 +34,12 @@ export function useYuqueStatusQuery() {
 }
 
 export function useRuntimeSettingsQuery(enabled = true) {
-  return useQuery({ queryKey: settingsKeys.runtime, queryFn: () => window.docmind.settings.get(), enabled, select: (settings) => settings.runtime });
+  return useQuery({
+    queryKey: settingsKeys.runtime,
+    queryFn: () => window.docmind.settings.get(),
+    enabled,
+    select: (settings) => settings.runtime,
+  });
 }
 
 export function useOllamaStatusQuery(enabled = true) {
@@ -80,27 +85,39 @@ export function useOllamaPullQuery(pullId: string | null, enabled = true) {
     subscribedPullId.current = pullId;
     lastSequence.current = pullData.lastEventSequence;
     const sub = window.docmind.ollama.subscribePull(pullId, lastSequence.current, (event) => {
-      const payload = event.payload as typeof pullData & { pull?: typeof pullData; sequence?: number };
+      const payload = event.payload as typeof pullData & {
+        pull?: typeof pullData;
+        sequence?: number;
+      };
       const next = payload.pull ?? payload;
       const sequence = payload.sequence ?? event.sequence ?? 0;
       if (!next || sequence <= lastSequence.current) return;
       lastSequence.current = sequence;
       client.setQueryData(ollamaKeys.pull(pullId), next);
-      if (terminalPullStates.has(next.state)) void client.invalidateQueries({ queryKey: ollamaKeys.models });
+      if (terminalPullStates.has(next.state))
+        void client.invalidateQueries({ queryKey: ollamaKeys.models });
     });
     return () => {
       sub.detach();
       if (subscribedPullId.current === pullId) subscribedPullId.current = null;
     };
-  // The subscription is intentionally keyed to snapshot availability, not each snapshot object.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // The subscription is intentionally keyed to snapshot availability, not each snapshot object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, enabled, pullId, hasSnapshot]);
   return query;
 }
 
 export function useSaveRuntimeMutation() {
   const client = useQueryClient();
-  return useMutation({ mutationFn: (input: RuntimeSettingsInput) => window.docmind.settings.saveRuntime(input), onSuccess: (settings) => { client.setQueryData(settingsKeys.root, settings); client.setQueryData(settingsKeys.runtime, settings.runtime); void client.invalidateQueries({ queryKey: ollamaKeys.status }); void client.invalidateQueries({ queryKey: ollamaKeys.models }); } });
+  return useMutation({
+    mutationFn: (input: RuntimeSettingsInput) => window.docmind.settings.saveRuntime(input),
+    onSuccess: (settings) => {
+      client.setQueryData(settingsKeys.root, settings);
+      client.setQueryData(settingsKeys.runtime, settings.runtime);
+      void client.invalidateQueries({ queryKey: ollamaKeys.status });
+      void client.invalidateQueries({ queryKey: ollamaKeys.models });
+    },
+  });
 }
 
 export function useSaveWebSearchMutation() {
