@@ -531,15 +531,27 @@ async def _compensate_mutation_unshielded(request: Request, mutation_id: str) ->
                     )
             else:
                 old = cast(dict[str, object], payload.get("old_snapshot") or {})
-                await _await_shielded(
-                    _gateway(request).update_document(
-                        UpdateYuqueDocumentRequest(
-                            document_id=remote_id,
-                            title=str(old.get("remote_title", old.get("title", ""))),
-                            content=str(old.get("remote_content", old.get("content", ""))),
+                old_content = str(old.get("remote_content", old.get("content", "")))
+                restore_remote = True
+                try:
+                    current = await _await_shielded(
+                        _gateway(request).read_document(remote_id)
+                    )
+                    restore_remote = current.content != old_content
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 - read-back is best-effort
+                    complete = False
+                if restore_remote:
+                    await _await_shielded(
+                        _gateway(request).update_document(
+                            UpdateYuqueDocumentRequest(
+                                document_id=remote_id,
+                                title=str(old.get("remote_title", old.get("title", ""))),
+                                content=old_content,
+                            )
                         )
                     )
-                )
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - preserve intent across every failure
