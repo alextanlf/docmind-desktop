@@ -41,9 +41,7 @@ function RepositoryDocuments({
           <button onClick={() => onOpenDocument?.(document.id, repositoryId)} type="button">
             {document.title}
           </button>
-          {document.remoteDeleted ? (
-            <span className="remote-deleted-badge">远端已删除</span>
-          ) : null}
+          {document.remoteDeleted ? <span className="remote-deleted-badge">远端已删除</span> : null}
         </li>
       ))}
     </ul>
