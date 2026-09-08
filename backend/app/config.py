@@ -38,6 +38,7 @@ class AppSettings(BaseSettings):
     rag_similarity_threshold: float = Field(default=0.65, ge=-1.0, le=1.0)
     staging_manifest_max_bytes: int = Field(default=2 * 1024 * 1024, gt=0)
     batch_max_items: int = Field(default=1000, gt=0)
+    sync_interval_seconds: float = Field(default=0.0, ge=0.0)
 
     model_config = SettingsConfigDict(env_prefix="DOCMIND_", extra="ignore")
 

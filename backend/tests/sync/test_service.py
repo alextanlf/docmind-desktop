@@ -6,6 +6,19 @@ from app.schemas.sync import RemoteDocumentState
 from app.sync.service import IncrementalSyncService
 
 
+class FakeDoc:
+    def __init__(self, yuque_id: str | None) -> None:
+        self.yuque_id = yuque_id
+
+
+class FakeDocumentStore:
+    def __init__(self, docs: list[FakeDoc]) -> None:
+        self.docs = docs
+
+    def list_for_repository(self, repository_id: str) -> list[FakeDoc]:
+        return self.docs
+
+
 class FakeRefresher:
     def __init__(self) -> None:
         self.upserts: list[tuple[str, str, str]] = []
@@ -47,8 +60,26 @@ class FakeSyncStateStore:
         self.last_synced = iso
 
 
+def _service(
+    *,
+    store: FakeSyncStateStore,
+    docs: list[FakeDoc],
+    remote: list[tuple[RemoteDocumentState, str]],
+    refresher: FakeRefresher,
+) -> IncrementalSyncService:
+    async def reader(repository_id: str) -> list[tuple[RemoteDocumentState, str]]:
+        return remote
+
+    return IncrementalSyncService(
+        sync_state_store=store,
+        snapshot_reader=reader,
+        refresher=refresher,
+        document_store=FakeDocumentStore(docs),
+    )
+
+
 @pytest.mark.asyncio
-async def test_sync_reimports_added_and_changed_and_skips_unchanged() -> None:
+async def test_sync_reconciles_bound_documents_only() -> None:
     store = FakeSyncStateStore(
         {
             "doc-A": RemoteDocumentState("doc-A", "A", "hash-A", ""),
@@ -56,48 +87,40 @@ async def test_sync_reimports_added_and_changed_and_skips_unchanged() -> None:
             "doc-D": RemoteDocumentState("doc-D", "D", "hash-D", ""),
         }
     )
-
-    async def reader(repository_id: str) -> list[tuple[RemoteDocumentState, str]]:
-        return [
-            (RemoteDocumentState("doc-A", "A", "hash-A", ""), "# A"),
-            (RemoteDocumentState("doc-B", "B2", "hash-B2", ""), "# B2"),
-            (RemoteDocumentState("doc-C", "C", "hash-C", ""), "# C"),
-        ]
-
+    docs = [FakeDoc("doc-A"), FakeDoc("doc-B"), FakeDoc("doc-C"), FakeDoc("doc-D")]
+    remote = [
+        (RemoteDocumentState("doc-A", "A", "hash-A", ""), "# A"),
+        (RemoteDocumentState("doc-B", "B2", "hash-B2", ""), "# B2"),
+        (RemoteDocumentState("doc-C", "C", "hash-C", ""), "# C"),
+        (RemoteDocumentState("doc-E", "E", "hash-E", ""), "# E"),
+    ]
     refresher = FakeRefresher()
-    service = IncrementalSyncService(
-        sync_state_store=store, snapshot_reader=reader, refresher=refresher
-    )
 
-    outcome = await service.sync_repository("repo-1")
+    outcome = await _service(
+        store=store, docs=docs, remote=remote, refresher=refresher
+    ).sync_repository("repo-1")
 
     assert (outcome.added, outcome.changed, outcome.deleted, outcome.unchanged, outcome.failed) == (
         1, 1, 1, 1, 0,
     )
-    assert refresher.upserts == [("repo-1", "doc-B", "B2"), ("repo-1", "doc-C", "C")]
+    assert refresher.upserts == [("repo-1", "doc-B", "B2")]
     assert refresher.deleted == [("repo-1", "doc-D")]
-    assert set(store.upserts) == {("repo-1", "doc-A"), ("repo-1", "doc-B"), ("repo-1", "doc-C")}
-    assert store.last_synced is not None
 
 
 @pytest.mark.asyncio
 async def test_sync_continues_after_document_failure() -> None:
-    store = FakeSyncStateStore({"doc-A": RemoteDocumentState("doc-A", "A", "hash-A", "")})
-
-    async def reader(repository_id: str) -> list[tuple[RemoteDocumentState, str]]:
-        return [
-            (RemoteDocumentState("doc-A", "A", "hash-A", ""), "# A"),
-            (RemoteDocumentState("doc-B", "B", "hash-B", ""), "# B"),
-        ]
-
-    refresher = FakeRefresher()
-    refresher.fail_on.add("doc-B")
-    service = IncrementalSyncService(
-        sync_state_store=store, snapshot_reader=reader, refresher=refresher
+    store = FakeSyncStateStore(
+        {"doc-A": RemoteDocumentState("doc-A", "A", "hash-A", "")}
     )
+    docs = [FakeDoc("doc-A")]
+    remote = [(RemoteDocumentState("doc-A", "A2", "hash-A2", ""), "# A2")]
+    refresher = FakeRefresher()
+    refresher.fail_on.add("doc-A")
 
-    outcome = await service.sync_repository("repo-1")
+    outcome = await _service(
+        store=store, docs=docs, remote=remote, refresher=refresher
+    ).sync_repository("repo-1")
 
     assert (outcome.added, outcome.changed, outcome.deleted, outcome.unchanged, outcome.failed) == (
-        0, 0, 0, 1, 1,
+        0, 0, 0, 0, 1,
     )

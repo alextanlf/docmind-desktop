@@ -85,17 +85,20 @@ class YuqueDiscovery:
 
 async def read_remote_snapshot(
     gateway: YuqueGateway, repository_id: str
-) -> list[RemoteDocumentState]:
-    states: list[RemoteDocumentState] = []
+) -> list[tuple[RemoteDocumentState, str]]:
+    states: list[tuple[RemoteDocumentState, str]] = []
     for document in await gateway.list_documents(repository_id):
         content = await gateway.read_document(document.yuque_id)
         digest = hashlib.sha256(content.content.encode("utf-8")).hexdigest()
         states.append(
-            RemoteDocumentState(
-                document_id=document.yuque_id,
-                title=document.title,
-                content_sha256=digest,
-                url=document.url or document.yuque_id,
+            (
+                RemoteDocumentState(
+                    document_id=document.yuque_id,
+                    title=document.title,
+                    content_sha256=digest,
+                    url=document.url or document.yuque_id,
+                ),
+                content.content,
             )
         )
     return states
