@@ -177,6 +177,7 @@ class DocumentRecord(Base):
     yuque_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_identity: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
+    remote_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
     )
@@ -556,3 +557,21 @@ class WebSearchResultRecord(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     selected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default())
+
+
+class RepositorySyncStateRecord(Base):
+    __tablename__ = "repository_sync_state"
+
+    repository_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    document_id: Mapped[str] = mapped_column(String(512), primary_key=True)
+    title: Mapped[str] = mapped_column(String(1024), nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+
+
+class RepositorySyncMetaRecord(Base):
+    __tablename__ = "repository_sync_meta"
+
+    repository_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)

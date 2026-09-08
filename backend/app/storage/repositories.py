@@ -18,6 +18,7 @@ from app.api.errors import DomainError
 from app.imports.batch_state_machine import ensure_item_mutable, transition
 from app.imports.state_machine import ensure_transition_allowed
 from app.schemas.batches import BatchItemPage, BatchItemView, ConfirmBatchInput
+from app.schemas.sync import RemoteDocumentState
 from app.storage.database import Database
 from app.storage.models import (
     BatchImportRecord,
@@ -39,6 +40,8 @@ from app.storage.models import (
     MessageRecord,
     OllamaPullRecord,
     RepositoryRecord,
+    RepositorySyncMetaRecord,
+    RepositorySyncStateRecord,
     SessionRecord,
     SessionSummaryRecord,
     SettingRecord,
@@ -2384,3 +2387,74 @@ class SettingStore:
                 else:
                     record.value = value
                     record.updated_at = utc_now()
+
+
+class RepositorySyncStateStore:
+    """Durable last-known remote state and per-repository sync metadata."""
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def upsert(
+        self,
+        repository_id: str,
+        document_id: str,
+        title: str,
+        content_sha256: str,
+        url: str,
+    ) -> None:
+        with self.database.session() as session:
+            record = session.get(RepositorySyncStateRecord, (repository_id, document_id))
+            if record is None:
+                session.add(
+                    RepositorySyncStateRecord(
+                        repository_id=repository_id,
+                        document_id=document_id,
+                        title=title,
+                        content_sha256=content_sha256,
+                        url=url,
+                        last_seen_at=utc_now(),
+                    )
+                )
+            else:
+                record.title = title
+                record.content_sha256 = content_sha256
+                record.url = url
+                record.last_seen_at = utc_now()
+            session.flush()
+
+    def get_snapshot(self, repository_id: str) -> dict[str, RemoteDocumentState]:
+        with self.database.session() as session:
+            records = session.scalars(
+                select(RepositorySyncStateRecord).where(
+                    RepositorySyncStateRecord.repository_id == repository_id
+                )
+            )
+            return {
+                record.document_id: RemoteDocumentState(
+                    record.document_id,
+                    record.title,
+                    record.content_sha256,
+                    record.url,
+                )
+                for record in records
+            }
+
+    def set_last_synced_at(self, repository_id: str, iso: str) -> None:
+        value = datetime.fromisoformat(iso)
+        with self.database.session() as session:
+            record = session.get(RepositorySyncMetaRecord, repository_id)
+            if record is None:
+                session.add(
+                    RepositorySyncMetaRecord(repository_id=repository_id, last_synced_at=value)
+                )
+            else:
+                record.last_synced_at = value
+            session.flush()
+
+    def last_synced_at(self, repository_id: str) -> str | None:
+        with self.database.session() as session:
+            record = session.get(RepositorySyncMetaRecord, repository_id)
+            if record is None or record.last_synced_at is None:
+                return None
+            return record.last_synced_at.isoformat()
