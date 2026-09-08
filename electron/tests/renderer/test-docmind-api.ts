@@ -133,6 +133,7 @@ export function installDocMindApi(overrides?: {
   yuque?: Partial<typeof window.docmind.yuque>;
   repositories?: Partial<DocMindApi["repositories"]>;
   sync?: Partial<DocMindApi["sync"]>;
+  conflicts?: Partial<DocMindApi["conflicts"]>;
   documents?: Partial<DocMindApi["documents"]>;
   imports?: Partial<DocMindApi["imports"]>;
   chat?: Partial<DocMindApi["chat"]>;
@@ -214,6 +215,11 @@ export function installDocMindApi(overrides?: {
         finishedAt: "",
       }),
       ...overrides?.sync,
+    },
+    conflicts: {
+      list: vi.fn().mockResolvedValue([]),
+      resolve: vi.fn().mockResolvedValue(undefined),
+      ...overrides?.conflicts,
     },
     documents: {
       list: vi.fn().mockResolvedValue([document]),

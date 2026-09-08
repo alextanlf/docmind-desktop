@@ -47,3 +47,29 @@ export function useSyncRepositoryMutation(repositoryId: string | null) {
     },
   });
 }
+
+export function useConflictsQuery(repositoryId: string | null) {
+  return useQuery({
+    queryKey: ["repositories", repositoryId, "conflicts"],
+    queryFn: () => window.docmind.conflicts.list(repositoryId!),
+    enabled: repositoryId !== null,
+  });
+}
+
+export function useResolveConflictMutation(repositoryId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      documentId: string;
+      resolution: "keep_local" | "keep_remote" | "keep_both";
+    }) => window.docmind.conflicts.resolve(input.documentId, input.resolution),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["repositories", repositoryId, "conflicts"],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["repositories", repositoryId, "documents"],
+      });
+    },
+  });
+}

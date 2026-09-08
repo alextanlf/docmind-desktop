@@ -5,6 +5,8 @@ import { StagedFileService } from "./staged-files";
 import { IPC_CHANNELS, streamEventChannel } from "../shared/channels";
 import {
   ChatStreamInputSchema,
+  ConflictResolutionSchema,
+  ConflictViewSchema,
   CreateImportInputSchema,
   CreateRepositoryInputSchema,
   CreateSessionInputSchema,
@@ -200,6 +202,17 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         `/api/repositories/${parse(UUID, repositoryId)}/sync`,
         jsonInit("POST"),
         SyncOutcomeSchema,
+      ),
+    [IPC_CHANNELS.conflictsList]: (_event, repositoryId) =>
+      proxy.requestJson(
+        `/api/repositories/${parse(UUID, repositoryId)}/conflicts`,
+        {},
+        z.array(ConflictViewSchema),
+      ),
+    [IPC_CHANNELS.conflictsResolve]: (_event, documentId, resolution) =>
+      proxy.requestVoid(
+        `/api/documents/${parse(UUID, documentId)}/conflict`,
+        jsonInit("POST", parse(ConflictResolutionSchema, resolution)),
       ),
     [IPC_CHANNELS.documentsList]: (_event, repositoryId) => {
       const id = parse(UUID, repositoryId);
