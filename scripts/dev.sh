@@ -8,6 +8,7 @@ if ! ensure_backend_venv "$root"; then
   "$root/scripts/setup-backend.sh" || die "后端依赖安装失败"
 fi
 check_port_available 18900 || die "18900 已被其他服务占用"
+resolve_electron_exec "$root"
 cd "$root"
 if [[ "${DOCMIND_DEV_DRY_RUN:-0}" == "1" ]]; then
   echo "desktop:dev"

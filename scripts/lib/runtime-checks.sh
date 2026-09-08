@@ -14,3 +14,23 @@ check_port_available() {
   command -v lsof >/dev/null 2>&1 || die "无法检查端口：缺少 lsof"
   ! lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
 }
+
+resolve_electron_exec() {
+  local root="$1"
+  if [[ -n "${ELECTRON_EXEC_PATH:-}" && -x "$ELECTRON_EXEC_PATH" ]]; then
+    return 0
+  fi
+  if [[ -x "$root/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron" ]]; then
+    return 0
+  fi
+  local candidate
+  for candidate in \
+    "${HOME:-}/Applications/Electron.app/Contents/MacOS/Electron" \
+    "/Applications/Electron.app/Contents/MacOS/Electron"
+  do
+    if [[ -x "$candidate" ]]; then
+      export ELECTRON_EXEC_PATH="$candidate"
+      return 0
+    fi
+  done
+}

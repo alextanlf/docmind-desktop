@@ -152,4 +152,35 @@ describe("local development startup diagnostics", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("desktop:dev");
   });
+
+  it("resolves a locally installed Electron app when the bundled runtime is absent", async () => {
+    const home = await mkdtemp(join(tmpdir(), "docmind-home-"));
+    temporaryDirectories.push(home);
+    const electronApp = join(home, "Applications", "Electron.app", "Contents", "MacOS");
+    await mkdir(electronApp, { recursive: true });
+    const electronBin = join(electronApp, "Electron");
+    await writeFile(electronBin, "#!/bin/sh\n", "utf8");
+    await chmod(electronBin, 0o755);
+
+    const fakeRepo = await fakeRoot({ nodeModules: true, venv: true });
+    const path = await fakePath(["node", "npm", "python3", "uv"]);
+    const script = `
+      source "$DOCMIND_REPO/scripts/lib/runtime-checks.sh"
+      resolve_electron_exec "$DOCMIND_FAKE_ROOT"
+      printf '%s' "$ELECTRON_EXEC_PATH"
+    `;
+    const result = await run("/bin/bash", ["-c", script], {
+      cwd: root,
+      env: {
+        ...process.env,
+        HOME: home,
+        PATH: `${path}:/bin:/usr/bin`,
+        DOCMIND_REPO: root,
+        DOCMIND_FAKE_ROOT: fakeRepo,
+        ELECTRON_EXEC_PATH: "",
+      },
+    });
+
+    expect(result.stdout).toBe(electronBin);
+  });
 });
