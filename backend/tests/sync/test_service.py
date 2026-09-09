@@ -101,9 +101,13 @@ async def test_sync_reconciles_bound_documents_only() -> None:
     ).sync_repository("repo-1")
 
     assert (outcome.added, outcome.changed, outcome.deleted, outcome.unchanged, outcome.failed) == (
-        1, 1, 1, 1, 0,
+        2, 1, 1, 1, 0,
     )
-    assert refresher.upserts == [("repo-1", "doc-B", "B2")]
+    assert refresher.upserts == [
+        ("repo-1", "doc-B", "B2"),
+        ("repo-1", "doc-C", "C"),
+        ("repo-1", "doc-E", "E"),
+    ]
     assert refresher.deleted == [("repo-1", "doc-D")]
 
 

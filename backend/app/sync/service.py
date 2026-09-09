@@ -46,23 +46,21 @@ class IncrementalSyncService:
         previous = self.sync_state_store.get_snapshot(repository_id)
         remote = await self.snapshot_reader(repository_id)
         remote_by_id = {state.document_id: (state, content) for state, content in remote}
+        local_by_id = {
+            document.yuque_id: document
+            for document in self.document_store.list_for_repository(repository_id)
+            if document.yuque_id
+        }
 
         added = changed = deleted = unchanged = failed = 0
-        for document in self.document_store.list_for_repository(repository_id):
-            if not document.yuque_id:
-                continue
-            entry = remote_by_id.get(document.yuque_id)
-            if entry is None:
-                try:
-                    await self.refresher.mark_remote_deleted(repository_id, document.yuque_id)
-                    deleted += 1
-                except Exception:  # noqa: BLE001 - one deletion must not stop the repo
-                    failed += 1
-                continue
+        for document_id, entry in remote_by_id.items():
             state, content = entry
             prior = previous.get(state.document_id)
             if prior is None:
-                added += 1
+                if await self._upsert(repository_id, state, content):
+                    added += 1
+                else:
+                    failed += 1
             elif prior.title != state.title or prior.content_sha256 != state.content_sha256:
                 if await self._upsert(repository_id, state, content):
                     changed += 1
@@ -77,6 +75,16 @@ class IncrementalSyncService:
                 state.content_sha256,
                 state.url,
             )
+
+        for document_id in local_by_id:
+            if document_id in remote_by_id:
+                continue
+            try:
+                await self.refresher.mark_remote_deleted(repository_id, document_id)
+                deleted += 1
+            except Exception:  # noqa: BLE001 - one deletion must not stop the repo
+                failed += 1
+
         finished = datetime.now(UTC).isoformat()
         self.sync_state_store.set_last_synced_at(repository_id, finished)
 

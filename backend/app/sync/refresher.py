@@ -22,6 +22,7 @@ class DocumentRefresher:
         chunker,
         embedding_provider,
         vector_store,
+        documents_dir=None,
         version_store=None,
         graph_store=None,
     ) -> None:
@@ -30,6 +31,7 @@ class DocumentRefresher:
         self.chunker = chunker
         self.embedding_provider = embedding_provider
         self.vector_store = vector_store
+        self.documents_dir = documents_dir
         self.version_store = version_store
         self.graph_store = graph_store
 
@@ -93,11 +95,18 @@ class DocumentRefresher:
         self.document_store.replace_chunks(document.id, records)
         if stale_ids:
             await asyncio.to_thread(self.vector_store.delete, repository_id, stale_ids)
+        markdown_path = None
+        if self.documents_dir is not None:
+            directory = Path(self.documents_dir) / document.id
+            directory.mkdir(parents=True, exist_ok=True)
+            markdown_path = directory / "document.md"
+            markdown_path.write_text(content, encoding="utf-8")
         self.document_store.update_synced_content(
             document.id,
             title=title,
             content_hash=sha256(content.encode("utf-8")).hexdigest(),
             source_url=document.source_url or document_id,
+            markdown_path=str(markdown_path) if markdown_path is not None else None,
         )
         if self.graph_store is not None:
             nodes, edges = extract_graph(document.id, title, content)

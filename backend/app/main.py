@@ -342,6 +342,7 @@ def create_app(
             chunker=SemanticChunker(),
             embedding_provider=runtime_embedding_provider,
             vector_store=vector_store,
+            documents_dir=runtime_settings.documents_dir,
             version_store=version_store,
             graph_store=graph_store,
         )

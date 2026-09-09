@@ -193,7 +193,7 @@ async def test_yuque_manual_pull_attach_indexes_and_restart_never_writes(test_ap
         repository_id=local.yuque_id, title="状态指南",
         content="# 状态指南\n\n@State 管理视图拥有的状态。\n<!-- docmind fixture -->"
     ))
-    await gateway.create_document(CreateYuqueDocumentRequest(
+    unselected_remote = await gateway.create_document(CreateYuqueDocumentRequest(
         repository_id=local.yuque_id, title="不选择", content="# 不选择\n\n不得导入。"
     ))
     gateway.write_calls.clear()
@@ -233,7 +233,22 @@ async def test_yuque_manual_pull_attach_indexes_and_restart_never_writes(test_ap
         response = await client.post(f"/api/import-batches/{batch['id']}/continue")
         response.raise_for_status()
         assert (await harness.wait_for_batch(batch["id"])).state == "completed"
-        await assert_index_and_citations(harness, repository.id, {document.id})
+        synced_documents: list = []
+        for _ in range(80):
+            synced_documents = restarted.state.document_store.list_for_repository(repository.id)
+            if {item.yuque_id for item in synced_documents} == {
+                remote.yuque_id,
+                unselected_remote.yuque_id,
+            } and all(item.markdown_path for item in synced_documents):
+                break
+            await asyncio.sleep(0.05)
+        assert {item.yuque_id for item in synced_documents} == {
+            remote.yuque_id,
+            unselected_remote.yuque_id,
+        }
+        await assert_index_and_citations(
+            harness, repository.id, {item.id for item in synced_documents}
+        )
         assert [job.id for job in restarted.state.import_job_store.list()] == [jobs[0].id]
         assert gateway.write_calls == []
 
