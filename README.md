@@ -1,126 +1,94 @@
 # DocMind
 
-DocMind is a local macOS knowledge workspace. It imports URL, PDF, and UTF-8 Markdown sources into Yuque, keeps a local SQLite/Chroma index, and answers questions with trusted source citations.
+DocMind 是一个运行在 macOS 本机的个人知识库助手。它把网页、PDF、Markdown 和语雀文档集中到一个地方，让你可以浏览、整理和提问，并且每个回答都尽量带上来源引用。
 
-## Prerequisites
+## 它能做什么
 
-- macOS, Node.js 20 or later, Python 3.11 or later, and [uv](https://docs.astral.sh/uv/)
-- A Yuque account for real-service use
-- A model API key for one of the DeepSeek, Qwen, OpenAI, or custom OpenAI-compatible presets
+- 导入网页、PDF 和 Markdown 文件
+- 连接语雀仓库，浏览和同步文档
+- 建立本地索引，快速检索资料
+- 基于你的资料回答问题，并显示引用来源
+- 选择云端模型或本地 Ollama 模型
 
-For ordinary development on a trusted machine, follow the local runtime workflow below. For restricted validation environments where Electron downloads or launches are intentionally blocked, install JavaScript packages without postinstall scripts:
+## 适合谁
 
-```bash
-npm install --ignore-scripts
-```
+适合希望把分散资料整理成私人知识库的个人用户，尤其是经常阅读长文、处理 PDF、使用语雀，并且希望回答可追溯的人。
 
-That restricted setup supports static checks and unit tests only. It cannot start `npm run dev` or run Electron E2E; complete those checks later on a trusted runtime.
+## 支持的内容
 
-The first-run dialog saves non-secret model settings locally and stores the API key only in the macOS Keychain. The key is never written to SQLite, diagnostics, IPC values, or logs. Choose a preset (DeepSeek, Qwen, OpenAI, or Custom), save a valid key, then test the model connection.
+| 类型     | 说明                         | 限制                        |
+| -------- | ---------------------------- | --------------------------- |
+| 网页     | 通过 HTTP/HTTPS 链接导入文章 | Markdown 转换后不超过 20 MB |
+| PDF      | 导入本地 PDF                 | 单个文件不超过 100 MB       |
+| Markdown | 导入 UTF-8 编码的 Markdown   | 单个文件不超过 20 MB        |
+| 语雀     | 登录后同步已有仓库           | 需要完成语雀登录            |
 
-The first real import requires explicit embedding preparation. It downloads about 400 MB for `BAAI/bge-base-zh-v1.5`; it is never downloaded by setup or ordinary backend tests. Run the visible Yuque login flow from the app and complete it in the browser window before creating a repository or importing a source.
+## 快速开始
 
-## 本地运行
+### 1. 准备环境
 
-### 首次安装
+需要 macOS，以及：
 
-首次安装、lockfile 变化或后端虚拟环境缺失时，在仓库根目录执行：
+- Node.js 20 或更高版本
+- Python 3.11 或更高版本
+- [uv](https://docs.astral.sh/uv/)
+
+### 2. 安装依赖
+
+在项目根目录执行：
 
 ```bash
 npm install
 ./scripts/setup-backend.sh
 ```
 
-运行需要 Node.js 20+、npm、Python 3.11+、`uv` 和可用的 `backend/.venv`。`setup-backend.sh` 只同步后端依赖；它不会下载 Electron、Playwright Chromium、embedding 模型或 Ollama，也不会启动 Ollama。
-
-### 日常启动
-
-依赖准备好后，日常只需：
+### 3. 启动应用
 
 ```bash
 npm run dev
 ```
 
-启动脚本会再次检查 `node`、`npm`、`python3`、`uv`、Electron 依赖、后端 venv 和固定端口 `127.0.0.1:18900`。端口被其他服务占用时会拒绝启动，不会连接未知服务。Electron 为本次进程生成随机会话令牌，并在后端通过令牌保护的健康检查成功、renderer 加载完成后才显示窗口；Ollama 不会成为 Electron 的 child process。
+### 4. 首次配置
 
-### 数据目录与测试隔离
+启动后，在设置中选择模型服务，并填写 API Key。DocMind 支持 DeepSeek、Qwen、OpenAI 和自定义 OpenAI-compatible 服务。
 
-普通运行使用 Electron 的 `app.getPath("userData")` 作为权威数据目录，并通过 `DOCMIND_DATA_DIR` 传给 FastAPI；SQLite、Chroma、缓存、浏览器 profile 和诊断文件都应写入该目录。正常启动不会迁移、删除或重置已有 userData。
+API Key 只保存在 macOS Keychain 中，不会写入 SQLite、诊断信息或日志。
 
-本地 runtime smoke 使用新建的临时目录作为 `DOCMIND_DATA_DIR` 和 Electron userData，测试结束只清理本次明确创建的临时目录，不触碰开发者的真实数据、Keychain、浏览器 profile 或文档。测试记录只包含 health、rendererLoaded、backendExited、portReleased 四项结果，不包含会话令牌、密钥或用户路径。
+如果需要使用语雀，按应用提示完成语雀登录。第一次需要语义检索时，应用会提示准备 embedding 模型，下载体积约 400 MB。
 
-### 按需准备的外部依赖
+## 使用本地模型
 
-- 第一次真实语雀导入前，按需完成可见的语雀登录，并在后端环境中安装 Playwright Python 包和 **Playwright Chromium**：`cd backend && uv run playwright install chromium`。缺少 Chromium 不阻止基础窗口启动，语雀操作会给出明确依赖错误。
-- 第一次需要语义检索的真实导入前，按需准备 embedding 模型。该模型不会被 `npm install`、`setup-backend.sh` 或 `npm run dev` 隐式下载。
-- Ollama 由用户自行安装和运行，只能通过 loopback HTTP 使用。Ollama 未运行时，`cloud_only` 仍可启动；选择 `local_only` 时会显示本地服务不可用的分层错误。云端模型的 API key 仍只存储在 macOS Keychain，设置页可以在未配置 key 时打开。
+如果你希望使用本地模型，可以自行安装并运行 [Ollama](https://ollama.com/)，然后在 DocMind 的设置中选择本地模型。Ollama 只允许通过本机回环地址访问。
 
-### 停止与常见诊断
+## 隐私和数据归属
 
-关闭 Electron 窗口或使用应用退出操作即可停止。退出顺序是清理 proxy 流、向本次 Electron 创建的后端发送 `SIGTERM`，超时后才对同一个 child 发送 `SIGKILL`；不会使用 `killall` 或终止无关进程。需要确认端口已释放时，可执行：
+- 文档索引和缓存默认保存在本机应用数据目录
+- API Key 仅保存在 macOS Keychain
+- 只有在你主动配置后，应用才会访问模型服务、搜索服务或语雀
+- 本地文件路径不会进入回答中的引用或持久化内容
+
+## 常见问题
+
+### 启动失败
+
+先确认 Node.js、Python、uv 和项目依赖都已安装。如果提示端口被占用，通常是 `127.0.0.1:18900` 已被其他进程使用。
+
+### 打开后显示后端不可用
+
+检查后端依赖是否完整。必要时重新运行：
 
 ```bash
-lsof -nP -iTCP:18900 -sTCP:LISTEN
+./scripts/setup-backend.sh
 ```
 
-命令无输出表示没有监听者；若仍有监听者，先确认是否为本次启动的后端，再处理占用进程，不要广泛杀进程。
+### 有可以下载的安装包吗
 
-| 现象                                     | 启动行为                                  | 最小排查动作                                                |
-| ---------------------------------------- | ----------------------------------------- | ----------------------------------------------------------- |
-| 缺少 Node/npm/Python/uv 或 Electron 依赖 | 启动前停止并指出缺少项                    | 安装对应依赖后重试；Electron 依赖缺失时运行 `npm install`   |
-| `backend/.venv` 缺失或 setup 失败        | 自动尝试 setup，失败返回非零              | 重新运行 `./scripts/setup-backend.sh` 并检查 Python/uv 环境 |
-| `18900` 被占用                           | 拒绝连接未知服务                          | 用上面的 `lsof` 查看监听者，关闭确认无关的服务后重试        |
-| 后端健康超时或提前退出                   | 不显示窗口并报告脱敏的后端错误            | 检查后端依赖和端口；不要记录令牌或完整用户路径              |
-| renderer 加载失败                        | 不显示空白成功窗口                        | 确认构建产物存在并重试 `npm run desktop:build`              |
-| Playwright Chromium 缺失                 | 基础应用继续运行                          | 按需执行 `cd backend && uv run playwright install chromium` |
-| Ollama 未运行                            | `cloud_only` 正常；本地模式提示服务不可用 | 用户自行启动 Ollama，并确认仅监听 loopback 地址             |
+当前版本以本地开发方式运行，暂不提供签名后的 `.dmg` 或 `.app` 安装包。
 
-`npm run desktop:build` 只编译 electron-vite 并验证 main/preload/renderer 静态产物；它不是可分发 `.app`，也不会内置 Python、后端依赖、Playwright 浏览器、embedding 模型或 Ollama。
+## 开发者
 
-### 本机归档边界
-
-本阶段默认不生成 `.app` 或 `.dmg`，验收状态为 **OPTIONAL / NOT BUILT**。如未来显式启用本机归档 gate，产物也只供创建它的同一台可信 Mac 本地或内部实验使用，并依赖外部后端路径和本机依赖；归档不得包含 API key、会话令牌、浏览器 profile、SQLite 或真实文档。
-
-归档不会获得 Developer ID 签名或 notarization，也不做自动更新、跨平台发布或 Gatekeeper 绕过。未签名、未 notarize 的文件可能在下载位置或另一台 Mac 上被 Gatekeeper 拦截，不能承诺其他用户下载后正常安装打开；正式公开分发需要单独立项。
-
-## Sources And Limits
-
-- HTTP(S) article URL, subject to safe-address checks, at most 5 redirects, a 10-second connection timeout, a 30-second read timeout, and a 20 MB converted Markdown limit
-- UTF-8 Markdown file up to 20 MB
-- PDF file up to 100 MB
-
-The renderer stages local files through the desktop process; absolute source paths do not enter backend previews, persisted citations, or chat output.
-
-## Testing
-
-Run the full developer sequence with:
+运行完整检查：
 
 ```bash
 npm run verify
 ```
-
-It runs backend tests and Ruff, Vitest, TypeScript, ESLint, Prettier, and Electron E2E. E2E requires a separately installed browser dependency:
-
-```bash
-cd backend && uv run playwright install chromium
-```
-
-`DOCMIND_FAKE_SERVICES=1` enables deterministic, in-memory Keychain, embedding, Yuque, and LLM replacements only outside production. It seeds no user data, makes no Yuque request, and does not download a model. The backend vertical integration test uses this mode. Electron E2E uses the same fake mode with a temporary data directory and the fixed local backend address `127.0.0.1:18900`.
-
-Real-service validation is separate from fake-service evidence. After configuring credentials in the app and completing the visible Yuque login, use this smoke checklist:
-
-1. Import one supported URL.
-2. Import one supported PDF.
-3. Import one UTF-8 Markdown file.
-4. Ask one question and open its citation.
-5. Create, edit, and delete one document with title confirmation.
-
-Record each item as `PASS`, `FAIL`, or `NOT RUN`. Do not treat fake-service results as real-service validation.
-
-## Phase 1 Boundaries
-
-Phase 1 excludes collaborative sharing, cloud synchronization, automatic background Yuque synchronization, multi-user accounts, arbitrary local filesystem access from the renderer, and uncited answers outside retrieved evidence. These exclusions are binding for Phase 1; they are not silently enabled by configuration or treated as supported workflows.
-
-# 本地开发启动
-
-完整的首次安装、日常启动、诊断和归档边界请参阅上面的“本地运行”章节。可选归档 gate 使用 `DOCMIND_ENABLE_LOCAL_ARCHIVE=1`，默认保持 `OPTIONAL / NOT BUILT`，且不包含签名或公证。
