@@ -55,6 +55,7 @@ class IncrementalSyncService:
         added = changed = deleted = unchanged = failed = 0
         for document_id, entry in remote_by_id.items():
             state, content = entry
+            document = local_by_id.get(document_id)
             prior = previous.get(state.document_id)
             if prior is None:
                 if await self._upsert(repository_id, state, content):
@@ -64,6 +65,11 @@ class IncrementalSyncService:
             elif prior.title != state.title or prior.content_sha256 != state.content_sha256:
                 if await self._upsert(repository_id, state, content):
                     changed += 1
+                else:
+                    failed += 1
+            elif document is not None and getattr(document, "markdown_path", "") is None:
+                if await self._upsert(repository_id, state, content):
+                    unchanged += 1
                 else:
                     failed += 1
             else:
