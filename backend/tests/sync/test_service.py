@@ -7,8 +7,9 @@ from app.sync.service import IncrementalSyncService
 
 
 class FakeDoc:
-    def __init__(self, yuque_id: str | None) -> None:
+    def __init__(self, yuque_id: str | None, markdown_path: str | None = "") -> None:
         self.yuque_id = yuque_id
+        self.markdown_path = markdown_path
 
 
 class FakeDocumentStore:
@@ -128,3 +129,20 @@ async def test_sync_continues_after_document_failure() -> None:
     assert (outcome.added, outcome.changed, outcome.deleted, outcome.unchanged, outcome.failed) == (
         0, 0, 0, 0, 1,
     )
+
+
+@pytest.mark.asyncio
+async def test_sync_repairs_existing_remote_document_without_markdown_file() -> None:
+    store = FakeSyncStateStore(
+        {"doc-A": RemoteDocumentState("doc-A", "A", "hash-A", "")}
+    )
+    docs = [FakeDoc("doc-A", markdown_path=None)]
+    remote = [(RemoteDocumentState("doc-A", "A", "hash-A", ""), "# A")]
+    refresher = FakeRefresher()
+
+    outcome = await _service(
+        store=store, docs=docs, remote=remote, refresher=refresher
+    ).sync_repository("repo-1")
+
+    assert outcome.unchanged == 1
+    assert refresher.upserts == [("repo-1", "doc-A", "A")]
