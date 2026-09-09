@@ -442,6 +442,7 @@ class DocumentStore:
         title: str,
         content_hash: str,
         source_url: str,
+        markdown_path: str | None = None,
     ) -> None:
         with self.database.session() as session:
             document = session.get(DocumentRecord, document_id)
@@ -450,6 +451,8 @@ class DocumentStore:
             document.title = title
             document.content_hash = content_hash
             document.source_url = source_url
+            if markdown_path is not None:
+                document.markdown_path = markdown_path
             document.remote_deleted = False
             document.updated_at = utc_now()
             session.flush()

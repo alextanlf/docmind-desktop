@@ -16,6 +16,8 @@ from playwright.async_api import Error as PlaywrightError
 
 from app.api.errors import DomainError
 from app.config import AppSettings
+from app.document.parser import DocumentParser
+from app.schemas.imports import DownloadedDocument
 from app.schemas.yuque import (
     BrowserInstallResult,
     CreateRepositoryRequest,
@@ -481,6 +483,11 @@ class PlaywrightYuqueGateway:
 
             async def read() -> YuqueDocumentContent:
                 await _open_yuque_resource(page, document_id)
+                api_document = await self._read_document_via_api(page, document_id)
+                if api_document is not None:
+                    if strip_mutation_marker:
+                        api_document.content = _strip_mutation_marker(api_document.content)
+                    return api_document
                 content = await editor.read_markdown()
                 if strip_mutation_marker:
                     content = _strip_mutation_marker(content)
@@ -493,6 +500,52 @@ class PlaywrightYuqueGateway:
                 )
 
             return await editor.with_retry("read-document", read)
+
+    async def _read_document_via_api(
+        self, page: Any, document_id: str
+    ) -> YuqueDocumentContent | None:
+        if not hasattr(page, "evaluate") or not hasattr(page, "request"):
+            return None
+        slug = await page.evaluate(
+            "window.appData?.doc?.slug || location.pathname.split('/').filter(Boolean).pop()"
+        )
+        book_id = await page.evaluate(
+            "window.appData?.doc?.book_id || window.appData?.book?.id"
+        )
+        if not slug or not book_id:
+            return None
+        url = (
+            f"https://www.yuque.com/api/docs/{slug}"
+            "?include_contributors=true&include_like=true&include_hits=true"
+            f"&merge_dynamic_data=false&book_id={book_id}"
+        )
+        response = await page.request.get(url)
+        if not response.ok:
+            return None
+        try:
+            payload = await response.json()
+            data = payload.get("data", {}) if isinstance(payload, dict) else {}
+        except Exception:  # noqa: BLE001 - malformed API response falls back to DOM
+            return None
+        content = data.get("content")
+        if not isinstance(content, str) or not content.strip():
+            return None
+        title = data.get("title") or await page.title()
+        parsed = DocumentParser().parse(
+            DownloadedDocument(
+                title=str(title),
+                source_url=page.url,
+                media_type="text/html",
+                raw_bytes=content.encode("utf-8"),
+            )
+        )
+        return YuqueDocumentContent(
+            yuque_id=document_id,
+            repository_id=_repository_id_from_document_url(page.url),
+            title=str(title),
+            content=parsed.markdown,
+            url=page.url,
+        )
 
     async def update_document(self, request: UpdateYuqueDocumentRequest) -> YuqueDocument:
         self.write_calls.append("update_document")
