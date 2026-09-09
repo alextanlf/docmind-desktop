@@ -1,4 +1,9 @@
 .worktrees/
+.superpowers/
+docs/superpowers/
+DocMind-架构设计文档.md
+DocMind-业务流程图.mermaid
+DocMind-架构图.mermaid
 .venv/
 __pycache__/
 .pytest_cache/
