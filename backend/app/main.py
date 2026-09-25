@@ -101,6 +101,11 @@ from app.sync.service import IncrementalSyncService
 from app.yuque.discovery import YuqueDiscovery, read_remote_snapshot
 from app.yuque.gateway import PlaywrightYuqueGateway, YuqueGateway
 
+# 界面启动时会拉起语雀浏览器做"首次设置"检查；启动同步必须排在它后面，
+# 否则用户会看到几十秒的转圈。
+SYNC_STARTUP_DELAY_SECONDS = 5.0
+
+
 class _RuntimeLLMProvider:
     def __init__(
         self, settings_service: SettingsService, secret_store: SecretStore
@@ -462,6 +467,9 @@ def create_app(
             sync_service,
             repository_store,
             interval_seconds=runtime_settings.sync_interval_seconds,
+            startup_delay_seconds=(
+                0.0 if runtime_settings.environment == "test" else SYNC_STARTUP_DELAY_SECONDS
+            ),
         )
         app.state.sync_service = sync_service
         app.state.sync_state_store = sync_state_store

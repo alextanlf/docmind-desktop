@@ -10,6 +10,7 @@ const messages: Record<string, string> = {
   LOCAL_MODEL_UNAVAILABLE: "本地模型暂时不可用",
   ROUTING_CLOUD_UNAVAILABLE: "本地和云端都不可用",
   YUQUE_BROWSER_UNAVAILABLE: "本机尚未安装语雀登录浏览器，暂无法打开登录窗口",
+  YUQUE_PAGE_UNAVAILABLE: "语雀页面加载超时，请检查网络后重试",
 };
 
 const actions: Record<string, string> = {
@@ -22,6 +23,7 @@ const actions: Record<string, string> = {
   LOCAL_MODEL_UNAVAILABLE: "重试或切换模式",
   ROUTING_CLOUD_UNAVAILABLE: "检查设置并重试",
   YUQUE_BROWSER_UNAVAILABLE: "安装后重试",
+  YUQUE_PAGE_UNAVAILABLE: "检查网络后重试",
 };
 
 export function isRetryable(error: unknown): boolean {
