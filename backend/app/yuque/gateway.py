@@ -4,6 +4,7 @@ import asyncio
 import os
 import re
 import sys
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -35,9 +36,73 @@ from app.yuque.editor_page import EditorPage
 from app.yuque.login_page import LoginPage
 from app.yuque.repository_page import RepositoryPage
 
+# 语雀页面依赖 CDN 上的阻塞脚本，网络异常（例如 IPv6 路由不通）时页面可能
+# 永远到不了 domcontentloaded。登录状态探测必须有自己的时间预算，不能把
+# 桌面端启动流程挂在那里等。
+# 任何语雀页面操作都不允许无限等待：导航和"页面壳是否渲染出来"各自有预算，
+# 否则一次网络异常会长时间占住串行浏览器锁，拖死整个应用启动流程。
+_PAGE_NAVIGATION_TIMEOUT_MS = 15_000
+_PAGE_RENDER_TIMEOUT_MS = 8_000
+_LOGIN_STATUS_NAV_TIMEOUT_MS = 6_000
+_LOGIN_STATUS_RENDER_TIMEOUT_MS = 3_000
+_LOGIN_STATUS_SETTLE_SECONDS = 1.5
+_LOGIN_STATUS_POLL_SECONDS = 0.25
+_LOGIN_STATUS_SELECTOR_TIMEOUT_MS = 300
+_YUQUE_SESSION_COOKIE_NAMES = ("_yuque_session", "yuque_ctoken")
+
 
 class YuqueGateway(Protocol):
-    async def login_status(self) -> LoginStatus: ...
+    async def login_status(self) -> LoginStatus:
+        """Best-effort login probe with a hard time budget.
+
+        Yuque renders its shell with blocking scripts served from a CDN.  When
+        those requests stall (offline CDN, broken IPv6 route) ``domcontentloaded``
+        never fires, so the probe commits the navigation, waits a bounded amount
+        of time for a decisive signal and falls back to the stored session cookie
+        instead of leaving the desktop app spinning for minutes.
+        """
+        request_id = uuid4().hex
+        try:
+            async with self._new_page(visible_login=False) as page:
+                login = LoginPage(page, self.settings.screenshots_dir, request_id)
+                await page.goto(
+                    "https://www.yuque.com/dashboard",
+                    wait_until="commit",
+                    timeout=_LOGIN_STATUS_NAV_TIMEOUT_MS,
+                )
+                status = await self._read_login_status(page, login)
+                if status is not None:
+                    return status
+                if await _wait_for_render(page, _LOGIN_STATUS_RENDER_TIMEOUT_MS):
+                    deadline = time.monotonic() + _LOGIN_STATUS_SETTLE_SECONDS
+                    while time.monotonic() < deadline:
+                        status = await self._read_login_status(page, login)
+                        if status is not None:
+                            return status
+                        await asyncio.sleep(_LOGIN_STATUS_POLL_SECONDS)
+                    raise DomainError(
+                        "YUQUE_PAGE_CHANGED",
+                        "语雀页面结构已变化，请重新登录后重试",
+                        503,
+                        True,
+                    )
+                if await _has_yuque_session_cookie(page):
+                    return LoginStatus(logged_in=True, account_label=None, requires_login=False)
+                return LoginStatus(logged_in=False, account_label=None, requires_login=True)
+        except PlaywrightError:
+            return LoginStatus(logged_in=False, account_label=None, requires_login=True)
+
+    async def _read_login_status(self, page: Any, login: LoginPage) -> LoginStatus | None:
+        """Decisive login signal from the current page state, if there is one."""
+        if _is_login_url(page.url):
+            return LoginStatus(logged_in=False, account_label=None, requires_login=True)
+        if await login.is_logged_in(timeout=_LOGIN_STATUS_SELECTOR_TIMEOUT_MS):
+            return LoginStatus(
+                logged_in=True,
+                account_label=_mask_account(await login.account_label()),
+                requires_login=False,
+            )
+        return None
 
     async def begin_login(self) -> LoginResult: ...
 
@@ -273,24 +338,47 @@ class PlaywrightYuqueGateway:
         self._playwright: Any | None = None
 
     async def login_status(self) -> LoginStatus:
+        """Best-effort login probe with a hard time budget.
+
+        The Yuque shell is rendered by blocking scripts served from a CDN.  When
+        those requests stall (offline CDN, broken IPv6 route), ``domcontentloaded``
+        never fires, so the probe commits the navigation, polls briefly for a
+        decisive signal and finally falls back to the session cookie instead of
+        blocking the desktop app for minutes.
+        """
         request_id = uuid4().hex
         try:
             async with self._new_page(visible_login=False) as page:
                 login = LoginPage(page, self.settings.screenshots_dir, request_id)
-
-                async def status() -> LoginStatus:
-                    await page.goto("https://www.yuque.com/dashboard", wait_until="domcontentloaded")
-                    if await login.is_logged_in():
+                await page.goto(
+                    "https://www.yuque.com/dashboard",
+                    wait_until="commit",
+                    timeout=_LOGIN_STATUS_NAV_TIMEOUT_MS,
+                )
+                rendered = await _wait_for_render(page, _LOGIN_STATUS_RENDER_TIMEOUT_MS)
+                deadline = time.monotonic() + _LOGIN_STATUS_SETTLE_SECONDS
+                while True:
+                    if _is_login_url(page.url):
+                        return LoginStatus(logged_in=False, account_label=None, requires_login=True)
+                    if await login.is_logged_in(timeout=_LOGIN_STATUS_SELECTOR_TIMEOUT_MS):
                         return LoginStatus(
                             logged_in=True,
                             account_label=_mask_account(await login.account_label()),
                             requires_login=False,
                         )
-                    if _is_login_url(page.url):
-                        return LoginStatus(logged_in=False, account_label=None, requires_login=True)
-                    raise DomainError("YUQUE_PAGE_CHANGED", "语雀页面结构已变化，请重新登录后重试", 503, True)
-
-                return await login.with_retry("login-status", status)
+                    if time.monotonic() >= deadline:
+                        break
+                    await asyncio.sleep(_LOGIN_STATUS_POLL_SECONDS)
+                if rendered:
+                    raise DomainError(
+                        "YUQUE_PAGE_CHANGED",
+                        "语雀页面结构已变化，请重新登录后重试",
+                        503,
+                        True,
+                    )
+                if await _has_yuque_session_cookie(page):
+                    return LoginStatus(logged_in=True, account_label=None, requires_login=False)
+                return LoginStatus(logged_in=False, account_label=None, requires_login=True)
         except PlaywrightError:
             return LoginStatus(logged_in=False, account_label=None, requires_login=True)
 
@@ -614,7 +702,19 @@ class PlaywrightYuqueGateway:
             login = LoginPage(page, self.settings.screenshots_dir, request_id)
 
             async def authenticate() -> None:
-                await page.goto("https://www.yuque.com/dashboard", wait_until="domcontentloaded")
+                await page.goto(
+                    "https://www.yuque.com/dashboard",
+                    wait_until="commit",
+                    timeout=_PAGE_NAVIGATION_TIMEOUT_MS,
+                )
+                if not await _wait_for_render(page, _PAGE_RENDER_TIMEOUT_MS):
+                    raise DomainError(
+                        "YUQUE_PAGE_UNAVAILABLE",
+                        "语雀页面加载超时，请检查网络后重试",
+                        503,
+                        False,
+                        "检查网络后重试",
+                    )
                 if await login.is_logged_in():
                     return
                 if _is_login_url(page.url):
@@ -642,10 +742,52 @@ class PlaywrightYuqueGateway:
                 )
                 await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
                 page = context.pages[0] if context.pages else await context.new_page()
+                setter = getattr(page, "set_default_navigation_timeout", None)
+                if setter is not None:
+                    setter(_PAGE_NAVIGATION_TIMEOUT_MS)
                 yield page
             finally:
                 if context is not None:
                     await context.close()
+
+
+async def _wait_for_render(page: Any, timeout_ms: int) -> bool:
+    """True when the page actually reached ``domcontentloaded``.
+
+    A rendered page that still lacks every login marker means the Yuque DOM moved
+    and is worth surfacing; a page that never finished loading is a network
+    problem and must not be reported as a structure change.
+    """
+    waiter = getattr(page, "wait_for_load_state", None)
+    if waiter is None:
+        return False
+    try:
+        await waiter("domcontentloaded", timeout=timeout_ms)
+    except PlaywrightError:
+        return False
+    return True
+
+
+async def _has_yuque_session_cookie(page: Any) -> bool:
+    """True when the persistent profile still holds a Yuque session cookie.
+
+    Yuque keeps the login in ``_yuque_session``; the cookie stays valid even when
+    the page itself cannot finish rendering.
+    """
+    context = getattr(page, "context", None)
+    cookies = getattr(context, "cookies", None)
+    if cookies is None:
+        return False
+    try:
+        stored = await cookies("https://www.yuque.com")
+    except (PlaywrightError, OSError):
+        return False
+    return any(
+        isinstance(cookie, dict)
+        and cookie.get("name") in _YUQUE_SESSION_COOKIE_NAMES
+        and cookie.get("value")
+        for cookie in stored
+    )
 
 
 def _mask_account(value: str | None) -> str | None:

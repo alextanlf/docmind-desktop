@@ -24,6 +24,9 @@ function ResolvedApp({ initialReady }: { initialReady: boolean }) {
 function AppContent() {
   const settings = useSettingsQuery();
   const yuque = useYuqueStatusQuery();
+  // 语雀网关同一时刻只允许一个浏览器上下文：启动检查（会拉起浏览器）返回前不挂载
+  // 工作台，避免知识库列表请求抢占浏览器，把"正在检查首次设置"拖成几十秒。
+  const startupPending = settings.isPending || yuque.isPending;
 
   if (settings.isError || yuque.isError) {
     return (
@@ -44,10 +47,9 @@ function AppContent() {
       </>
     );
   }
-  if (settings.isPending || yuque.isPending) {
+  if (startupPending) {
     return (
       <>
-        <Workspace />
         <Modal
           labelledBy="startup-loading-title"
           className="confirm-dialog onboarding-error-dialog"

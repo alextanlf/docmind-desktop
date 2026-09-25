@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 from playwright.async_api import Error as PlaywrightError
@@ -84,10 +86,22 @@ class FixtureLocator:
         return self.page.values.get(self.selector, "")
 
 
+class FixtureCookieContext:
+    """Minimal stand-in for a BrowserContext that exposes stored cookies."""
+
+    def __init__(self, cookies: list[dict[str, Any]]) -> None:
+        self._cookies = cookies
+
+    async def cookies(self, urls: str | None = None) -> list[dict[str, Any]]:
+        del urls
+        return list(self._cookies)
+
+
 class FixturePage:
     def __init__(self, available: set[str], fixture: Path | None = None) -> None:
         self.available = available
         self.fixture = fixture
+        self.context: FixtureCookieContext | None = None
         self.clicked: list[str] = []
         self.fill_attempts: list[tuple[str, str]] = []
         self.filled: dict[str, str] = {}
@@ -104,6 +118,7 @@ class FixturePage:
         self.mask_styles: list[str] = []
         self.resource_goto_failures = 0
         self.login_goto_failures = 0
+        self.load_state_hook: Any = None
         self.goto_attempts: list[str] = []
         self.document_list_visibility_after: int | None = None
         self.document_list_calls = 0
@@ -139,8 +154,15 @@ class FixturePage:
     async def content(self) -> str:
         return self.dom_html
 
-    async def goto(self, url: str, wait_until: str = "load") -> None:
-        del wait_until
+    async def wait_for_load_state(self, state: str = "load", timeout: int | None = None) -> None:
+        del state, timeout
+        if self.load_state_hook is not None:
+            await self.load_state_hook()
+
+    async def goto(
+        self, url: str, wait_until: str = "load", timeout: int | None = None
+    ) -> None:
+        del wait_until, timeout
         self.goto_attempts.append(url)
         if url == "https://www.yuque.com/login" and self.login_goto_failures:
             self.login_goto_failures -= 1
@@ -188,6 +210,61 @@ async def test_real_gateway_checks_login_after_navigating_to_local_dashboard(
     assert gateway._playwright is None
     assert page.gotos == ["https://www.yuque.com/dashboard"]
     assert status.logged_in is True
+
+
+async def test_real_gateway_login_status_stays_bounded_when_page_never_renders(
+    tmp_path: Path,
+) -> None:
+    """A stalled page must not hang the desktop startup check."""
+    settings = AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
+    gateway = PlaywrightYuqueGateway(settings)
+    page = FixturePage(set())
+
+    async def never_renders() -> None:
+        raise PlaywrightError("Timeout 3000ms exceeded while waiting for domcontentloaded")
+
+    page.load_state_hook = never_renders
+
+    @asynccontextmanager
+    async def fake_new_page(*, visible_login: bool):
+        assert visible_login is False
+        yield page
+
+    gateway._new_page = fake_new_page  # type: ignore[method-assign]
+
+    started = time.monotonic()
+    status = await gateway.login_status()
+    elapsed = time.monotonic() - started
+
+    assert status.logged_in is False
+    assert status.requires_login is True
+    assert elapsed < 8
+    assert page.goto_attempts == ["https://www.yuque.com/dashboard"]
+
+
+async def test_real_gateway_login_status_falls_back_to_session_cookie(tmp_path: Path) -> None:
+    """Yuque's shell cannot render without its CDN; the session cookie still counts."""
+    settings = AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
+    gateway = PlaywrightYuqueGateway(settings)
+    page = FixturePage(set())
+    page.context = FixtureCookieContext([{"name": "_yuque_session", "value": "secret"}])
+
+    async def never_renders() -> None:
+        raise PlaywrightError("Timeout 3000ms exceeded while waiting for domcontentloaded")
+
+    page.load_state_hook = never_renders
+
+    @asynccontextmanager
+    async def fake_new_page(*, visible_login: bool):
+        assert visible_login is False
+        yield page
+
+    gateway._new_page = fake_new_page  # type: ignore[method-assign]
+
+    status = await gateway.login_status()
+
+    assert status.logged_in is True
+    assert status.requires_login is False
 
 
 async def test_real_gateway_reports_logged_out_status_without_raising(tmp_path: Path) -> None:

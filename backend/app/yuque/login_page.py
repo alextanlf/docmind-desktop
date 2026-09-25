@@ -17,9 +17,9 @@ class LoginPage(BasePage):
         "text=工作台",
     )
 
-    async def is_logged_in(self) -> bool:
+    async def is_logged_in(self, timeout: int = 1_000) -> bool:
         try:
-            await self.wait_for_any(self._logged_in_selectors, timeout=1_000)
+            await self.wait_for_any(self._logged_in_selectors, timeout=timeout)
         except DomainError:
             return False
         return True
