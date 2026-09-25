@@ -7,7 +7,7 @@ import { appQueryClient } from "../../renderer/src/app/query-client";
 import { Workspace } from "../../renderer/src/app/Workspace";
 import { repositoryKeys } from "../../renderer/src/features/repositories/repository.queries";
 import { useUiStore } from "../../renderer/src/stores/ui-store";
-import { document, installDocMindApi, repository } from "./test-docmind-api";
+import { document, installDocMindApi, repository, session } from "./test-docmind-api";
 
 class BrokenView extends Component {
   render(): ReactNode {
@@ -39,14 +39,46 @@ describe("Workspace", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders stable three-column workspace dimensions and responsive classes", () => {
+  it("keeps the reference panel out of the empty home view", () => {
     renderWorkspace();
 
-    expect(screen.getByLabelText("工作台")).toHaveClass("workspace-grid");
+    const workspace = screen.getByLabelText("工作台");
+    expect(workspace).toHaveClass("workspace-grid");
+    expect(workspace).toHaveClass("reference-is-closed");
     expect(screen.getByLabelText("主导航")).toHaveClass("w-[248px]");
     expect(screen.getByLabelText("主导航")).toHaveClass("workspace-sidebar");
-    expect(screen.getByLabelText("引用资料")).toHaveClass("w-[320px]");
+    expect(screen.queryByLabelText("引用资料")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "打开引用资料" })).not.toBeInTheDocument();
+  });
+
+  it("restores the reference panel for a session and for an open document", async () => {
+    renderWorkspace();
+
+    fireEvent.click(await screen.findByRole("button", { name: session.title }));
+
+    const workspace = screen.getByLabelText("工作台");
+    expect(workspace).not.toHaveClass("reference-is-closed");
     expect(screen.getByLabelText("引用资料")).toHaveClass("workspace-reference");
+    expect(screen.getByLabelText("引用资料")).toHaveClass("w-[320px]");
+
+    fireEvent.click(screen.getByRole("button", { name: `展开 ${repository.name}` }));
+    fireEvent.click(await screen.findByRole("button", { name: document.title }));
+
+    expect(workspace).not.toHaveClass("reference-is-closed");
+    expect(screen.getByLabelText("引用资料")).toBeInTheDocument();
+  });
+
+  it("hides the reference panel again on the settings and memory views", async () => {
+    renderWorkspace();
+
+    fireEvent.click(await screen.findByRole("button", { name: session.title }));
+    expect(screen.getByLabelText("引用资料")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "记忆" }));
+    expect(screen.queryByLabelText("引用资料")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    expect(screen.queryByLabelText("引用资料")).not.toBeInTheDocument();
   });
 
   it("supports keyboard sidebar controls with accessible icon labels", () => {
@@ -75,9 +107,10 @@ describe("Workspace", () => {
     }
   });
 
-  it("reopens the reference panel after it is closed", () => {
+  it("reopens the reference panel after it is closed", async () => {
     renderWorkspace();
 
+    fireEvent.click(await screen.findByRole("button", { name: session.title }));
     fireEvent.click(screen.getByRole("button", { name: "关闭引用资料" }));
     expect(screen.getByLabelText("工作台")).toHaveClass("reference-is-closed");
     const reopen = screen.getByRole("button", { name: "打开引用资料" });

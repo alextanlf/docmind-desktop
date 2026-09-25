@@ -152,6 +152,11 @@ export function Workspace() {
     stream.sessionId,
   ]);
 
+  // 引用资料只服务于工作台里已打开的会话或文档，首页空状态与设置/记忆视图不显示。
+  const referenceInScope =
+    activeView === "workspace" && (selectedSession !== null || selectedDocumentId !== null);
+  const referencePanelVisible = referenceInScope && referencePanelOpen;
+
   const selectSession = (session: SessionSummary) => {
     if (selectedSession?.id !== session.id) {
       useChatStreamStore.getState().cancelForSession(selectedSession?.id ?? null);
@@ -167,7 +172,7 @@ export function Workspace() {
       className={clsx(
         "workspace-grid",
         sidebarCollapsed && "sidebar-is-collapsed",
-        !referencePanelOpen && "reference-is-closed",
+        !referencePanelVisible && "reference-is-closed",
       )}
       data-reference-layout={forcedIconRail ? "drawer" : "grid"}
     >
@@ -257,7 +262,7 @@ export function Workspace() {
         aria-label={activeView === "settings" ? "设置内容" : "对话工作区"}
       >
         <div className="workspace-content">
-          {!referencePanelOpen ? (
+          {referenceInScope && !referencePanelOpen ? (
             <IconButton
               className="reference-reopen"
               icon={<PanelRightOpen aria-hidden="true" size={17} />}
@@ -364,18 +369,20 @@ export function Workspace() {
           </section>
         ) : null}
       </section>
-      <aside aria-label="引用资料" className="workspace-reference w-[320px]">
-        <ReferencePanel
-          citations={citations}
-          onBatchCreated={(id) => {
-            setBatchId(id);
-            setOpenBatchConfirmation(true);
-            setImportOpen(true);
-          }}
-          repositoryId={selectedRepositoryIds[0] ?? null}
-          sessionId={selectedSession?.id ?? null}
-        />
-      </aside>
+      {referencePanelVisible ? (
+        <aside aria-label="引用资料" className="workspace-reference w-[320px]">
+          <ReferencePanel
+            citations={citations}
+            onBatchCreated={(id) => {
+              setBatchId(id);
+              setOpenBatchConfirmation(true);
+              setImportOpen(true);
+            }}
+            repositoryId={selectedRepositoryIds[0] ?? null}
+            sessionId={selectedSession?.id ?? null}
+          />
+        </aside>
+      ) : null}
       <ImportDialog
         onClose={() => {
           setImportOpen(false);

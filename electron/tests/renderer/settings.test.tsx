@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppProviders } from "../../renderer/src/app/AppProviders";
 import { appQueryClient } from "../../renderer/src/app/query-client";
@@ -83,6 +83,23 @@ describe("设置", () => {
     );
     expect(clientErrorMessage(new Error(raw))).not.toContain("ZodError");
     expect(clientErrorMessage(new Error(raw))).not.toContain("/Users/private");
+  });
+
+  it("jumps between settings sections from the section navigation", async () => {
+    installDocMindApi();
+    renderSettings();
+
+    await screen.findByDisplayValue("deepseek-chat");
+    const nav = screen.getByRole("navigation", { name: "设置分区" });
+    expect(within(nav).getAllByRole("button")).toHaveLength(6);
+
+    const target = within(nav).getByRole("button", { name: "本地数据与诊断" });
+    fireEvent.click(target);
+
+    expect(target).toHaveAttribute("aria-current", "true");
+    expect(
+      screen.getByRole("heading", { name: "本地数据与诊断" }).closest("section"),
+    ).toHaveFocus();
   });
 
   it("shows embedding download details, progress, retry, and Yuque login controls", async () => {

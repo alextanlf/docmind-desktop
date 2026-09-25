@@ -1,11 +1,43 @@
-import { Database, Globe, KeyRound, Link2, RefreshCw } from "lucide-react";
+import type { ReactNode } from "react";
+import { RefreshCw } from "lucide-react";
 import { ConnectionSettings } from "./ConnectionSettings";
 import { DiagnosticsSection } from "./DiagnosticsSection";
 import { EmbeddingStatus } from "./EmbeddingStatus";
 import { ModelSettingsForm } from "./ModelSettingsForm";
+import { SettingsNav } from "./SettingsNav";
 import { WebSearchSettings } from "./WebSearchSettings";
 import { RuntimeModelSettings } from "./RuntimeModelSettings";
+import {
+  SETTINGS_SECTIONS,
+  settingsSectionTitleId,
+  type SettingsSectionMeta,
+} from "./settings-sections";
 import { clientErrorMessage, useSettingsQuery } from "./settings.queries";
+
+function SettingsSection({
+  meta,
+  description,
+  children,
+}: {
+  meta: SettingsSectionMeta;
+  description: string;
+  children: ReactNode;
+}) {
+  const titleId = settingsSectionTitleId(meta.id);
+  const Icon = meta.icon;
+  return (
+    <section aria-labelledby={titleId} className="settings-section" id={meta.id} tabIndex={-1}>
+      <div className="section-heading">
+        <Icon aria-hidden="true" size={18} />
+        <div>
+          <h2 id={titleId}>{meta.label}</h2>
+          <p>{description}</p>
+        </div>
+      </div>
+      {children}
+    </section>
+  );
+}
 
 export function SettingsView() {
   const settings = useSettingsQuery();
@@ -31,66 +63,49 @@ export function SettingsView() {
           <p>管理模型、连接绑定、Embedding 和本地诊断信息</p>
         </div>
       </header>
-      <section className="settings-section" aria-labelledby="model-settings-title">
-        <div className="section-heading">
-          <KeyRound aria-hidden="true" size={18} />
-          <div>
-            <h2 id="model-settings-title">对话模型</h2>
-            <p>使用 OpenAI 兼容接口连接模型服务</p>
-          </div>
+      <div className="settings-body">
+        <div className="settings-subnav-column">
+          <SettingsNav />
         </div>
-        <ModelSettingsForm settings={settings.data} />
-      </section>
-      <section className="settings-section" aria-labelledby="embedding-settings-title">
-        <div className="section-heading">
-          <Database aria-hidden="true" size={18} />
-          <div>
-            <h2 id="embedding-settings-title">Embedding 模型</h2>
-            <p>本地生成文档向量，不上传原文</p>
-          </div>
+        <div className="settings-sections">
+          <SettingsSection
+            description="使用 OpenAI 兼容接口连接模型服务"
+            meta={SETTINGS_SECTIONS.model}
+          >
+            <ModelSettingsForm settings={settings.data} />
+          </SettingsSection>
+          <SettingsSection
+            description="本地生成文档向量，不上传原文"
+            meta={SETTINGS_SECTIONS.embedding}
+          >
+            <EmbeddingStatus />
+          </SettingsSection>
+          <SettingsSection
+            description="配置 Ollama 与云端回退策略"
+            meta={SETTINGS_SECTIONS.runtime}
+          >
+            <RuntimeModelSettings settings={settings.data} />
+          </SettingsSection>
+          <SettingsSection
+            description="语雀网页、语雀 API 和飞书均为可选连接，不影响 DocMind 启动"
+            meta={SETTINGS_SECTIONS.connections}
+          >
+            <ConnectionSettings settings={settings.data} />
+          </SettingsSection>
+          <SettingsSection
+            description="本地证据不足时按模型内置联网、Tavily、免费兜底的顺序搜索"
+            meta={SETTINGS_SECTIONS.webSearch}
+          >
+            <WebSearchSettings settings={settings.data} />
+          </SettingsSection>
+          <SettingsSection
+            description="查看数据位置并管理失败截图"
+            meta={SETTINGS_SECTIONS.diagnostics}
+          >
+            <DiagnosticsSection settings={settings.data} />
+          </SettingsSection>
         </div>
-        <EmbeddingStatus />
-      </section>
-      <section className="settings-section" aria-labelledby="runtime-settings-title">
-        <div className="section-heading">
-          <KeyRound aria-hidden="true" size={18} />
-          <div>
-            <h2 id="runtime-settings-title">本地运行与路由</h2>
-            <p>配置 Ollama 与云端回退策略</p>
-          </div>
-        </div>
-        <RuntimeModelSettings settings={settings.data} />
-      </section>
-      <section className="settings-section" aria-labelledby="connections-settings-title">
-        <div className="section-heading">
-          <Link2 aria-hidden="true" size={18} />
-          <div>
-            <h2 id="connections-settings-title">连接与绑定</h2>
-            <p>语雀网页、语雀 API 和飞书均为可选连接，不影响 DocMind 启动</p>
-          </div>
-        </div>
-        <ConnectionSettings settings={settings.data} />
-      </section>
-      <section className="settings-section" aria-labelledby="web-search-settings-title">
-        <div className="section-heading">
-          <Globe aria-hidden="true" size={18} />
-          <div>
-            <h2 id="web-search-settings-title">联网搜索</h2>
-            <p>本地证据不足时按模型内置联网、Tavily、免费兜底的顺序搜索</p>
-          </div>
-        </div>
-        <WebSearchSettings settings={settings.data} />
-      </section>
-      <section className="settings-section" aria-labelledby="diagnostics-settings-title">
-        <div className="section-heading">
-          <Database aria-hidden="true" size={18} />
-          <div>
-            <h2 id="diagnostics-settings-title">本地数据与诊断</h2>
-            <p>查看数据位置并管理失败截图</p>
-          </div>
-        </div>
-        <DiagnosticsSection settings={settings.data} />
-      </section>
+      </div>
     </div>
   );
 }
