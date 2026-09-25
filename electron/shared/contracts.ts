@@ -39,12 +39,25 @@ export const SettingsViewSchema = z.object({
   screenshotCount: z.number().int().nonnegative(),
   webSearch: z
     .object({
-      provider: z.literal("tavily"),
       mode: z.enum(["off", "ask", "auto"]),
       maxResults: z.number().int().min(1).max(10),
       hasApiKey: z.boolean(),
+      queryRewrite: z.boolean().default(true),
+      searxngUrl: z.string().max(500).default(""),
+      modelSearchAvailable: z.boolean().default(false),
+      modelSearchLabel: z.string().max(200).default(""),
+      freeFallbackAvailable: z.boolean().default(true),
     })
-    .default({ provider: "tavily", mode: "ask", maxResults: 5, hasApiKey: false }),
+    .default({
+      mode: "ask",
+      maxResults: 5,
+      hasApiKey: false,
+      queryRewrite: true,
+      searxngUrl: "",
+      modelSearchAvailable: false,
+      modelSearchLabel: "",
+      freeFallbackAvailable: true,
+    }),
   runtime: z
     .object({
       ollama: z.object({
@@ -119,6 +132,8 @@ export type OllamaModelsView = z.infer<typeof OllamaModelsSchema>;
 export const WebSearchSettingsInputSchema = z.object({
   mode: z.enum(["off", "ask", "auto"]),
   maxResults: z.number().int().min(1).max(10),
+  queryRewrite: z.boolean(),
+  searxngUrl: z.string().max(500),
   apiKey: z.string().max(2_000).nullable().optional(),
 });
 export const ModelConnectionResultSchema = z.object({
@@ -494,6 +509,7 @@ export const SearchResultSchema = z.object({
 export const WebSearchRunSchema = z.object({
   id,
   status: z.string().max(32),
+  provider: z.string().max(32).nullable().optional(),
   errorCode: z.string().max(128).nullable().optional(),
   results: z.array(SearchResultSchema).max(10),
 });

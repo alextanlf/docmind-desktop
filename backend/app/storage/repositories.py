@@ -299,9 +299,13 @@ class WebSearchRunStore:
                 select(WebSearchRunRecord).where(WebSearchRunRecord.request_id == request_id)
             )
 
-    def complete(self, run_id: str, results: list[Any]) -> WebSearchRunRecord:
+    def complete(
+        self, run_id: str, results: list[Any], provider: str | None = None
+    ) -> WebSearchRunRecord:
         with self.database.session() as s:
             run = s.get(WebSearchRunRecord, run_id)
+            if provider:
+                run.provider = provider[:32]
             for r in results:
                 s.add(
                     WebSearchResultRecord(

@@ -31,7 +31,12 @@ async def create_run(request: Request, body: SearchRunRequest):
     ):
         raise DomainError("SEARCH_INVALID_CONTEXT", "会话或用户消息不存在", 400)
     view = await _service(request).run(body, authorization_mode=body.authorization_mode)
-    return {"id": view.id, "status": view.status, "results": [_result(r) for r in view.results]}
+    return {
+        "id": view.id,
+        "status": view.status,
+        "provider": view.provider,
+        "results": [_result(r) for r in view.results],
+    }
 
 @router.get("/runs/{run_id}")
 async def get_run(request: Request, run_id: UUID, session_id: Annotated[UUID, Query()]):
@@ -41,6 +46,7 @@ async def get_run(request: Request, run_id: UUID, session_id: Annotated[UUID, Qu
     if run.session_id != str(session_id):
         raise DomainError("SEARCH_RUN_NOT_FOUND", "搜索任务不存在", 404)
     return {"id": run.id, "status": run.status, "errorCode": run.error_code,
+            "provider": run.provider,
             "results": [_result(r) for r in _service(request).run_store.results(run.id)]}
 
 @router.get("/runs/{run_id}/results", response_model=list[SearchResultView])

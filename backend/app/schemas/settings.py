@@ -37,6 +37,8 @@ class SettingsView(WireModel):
 class WebSearchSettingsUpdate(WireModel):
     mode: Literal["off", "ask", "auto"]
     max_results: int = Field(ge=1, le=10)
+    query_rewrite: bool = True
+    searxng_url: str = ""
     api_key: str | None = None
 
 

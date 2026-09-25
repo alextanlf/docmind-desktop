@@ -16,7 +16,7 @@ class Settings:
         self.mode = mode
 
     def web_search(self):
-        return SimpleNamespace(mode=self.mode, max_results=5)
+        return SimpleNamespace(mode=self.mode, max_results=5, query_rewrite=False)
 
 
 class Search:

@@ -1745,6 +1745,61 @@ progress::-webkit-progress-bar {
   border: 1px solid var(--line-strong);
   border-radius: 5px;
 }
+.web-search-settings > .web-search-rewrite {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.web-search-sources {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.web-search-sources h4 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.web-search-sources ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 20px;
+}
+.web-search-sources li {
+  display: grid;
+  gap: 2px;
+}
+.web-search-sources span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.web-search-advanced {
+  display: grid;
+  gap: 10px;
+}
+.web-search-advanced summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+.web-search-advanced small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.web-search-advanced > label {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
 .runtime-model-settings {
   display: grid;
   max-width: 680px;

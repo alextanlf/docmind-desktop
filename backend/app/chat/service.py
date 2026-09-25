@@ -266,7 +266,7 @@ class ChatService:
                 authorization = "explicit" if request.web_search_permission == "explicit" else "auto"
                 try:
                     run = await self.search_service.run(
-                        SearchRunRequest(request_id=request.request_id, session_id=request.session_id, user_message_id=user_message.id, query=request.message, max_results=search_settings.max_results, authorization_mode=authorization),
+                        SearchRunRequest(request_id=request.request_id, session_id=request.session_id, user_message_id=user_message.id, query=request.message, max_results=search_settings.max_results, query_rewrite=search_settings.query_rewrite, authorization_mode=authorization),
                         authorization_mode=authorization,
                     )
                     web_results = run.results

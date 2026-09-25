@@ -9,6 +9,9 @@ import pytest
 from sqlalchemy import select
 
 from app.core.llm import ChatDelta, ModelConnectionResult
+from app.search.bing import BingProvider
+from app.search.duckduckgo import DuckDuckGoProvider
+from app.search.searxng import SearxngProvider
 from app.search.tavily import TavilyProvider
 from app.storage.models import (
     DocumentChunkRecord,
@@ -79,15 +82,65 @@ async def search_app(test_app, staged_markdown, monkeypatch):
             },
         )
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(respond), base_url="https://tavily.fixture"
-    ) as provider_client:
+    def respond_free(request):
+        assert str(request.url) == "https://html.duckduckgo.com/html/"
+        if wire.fail:
+            raise httpx.ConnectError("free provider failed", request=request)
+        return httpx.Response(200, text=FREE_SEARCH_HTML)
+
+    def respond_searxng(request):
+        assert request.url.path == "/search"
+        assert request.url.params["format"] == "json"
+        if wire.fail:
+            raise httpx.ConnectError("searxng provider failed", request=request)
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "url": "https://searx.test/evidence",
+                        "title": "SearxEvidence",
+                        "content": "Searx evidence snippet.",
+                    }
+                ]
+            },
+        )
+
+    def respond_bing(request):
+        # Bing stays unavailable here so the chain must fall through to DuckDuckGo;
+        # Bing parsing itself is covered by unit tests.
+        raise httpx.ConnectError("bing provider failed", request=request)
+
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(respond), base_url="https://tavily.fixture"
+        ) as provider_client,
+        httpx.AsyncClient(transport=httpx.MockTransport(respond_free)) as free_client,
+        httpx.AsyncClient(transport=httpx.MockTransport(respond_bing)) as bing_client,
+        httpx.AsyncClient(transport=httpx.MockTransport(respond_searxng)) as searxng_client,
+    ):
 
         def provider_factory(api_key):
             return TavilyProvider(api_key, client=provider_client)
 
+        def free_provider_factory():
+            return DuckDuckGoProvider(client=free_client)
+
+        def bing_provider_factory():
+            return BingProvider(client=bing_client)
+
+        def searxng_provider_factory(base_url):
+            return SearxngProvider(base_url, client=searxng_client)
+
         monkeypatch.setattr("app.main.TavilyProvider", provider_factory)
+        monkeypatch.setattr("app.main.BingProvider", bing_provider_factory)
+        monkeypatch.setattr("app.main.SearxngProvider", searxng_provider_factory)
+        monkeypatch.setattr("app.main.DuckDuckGoProvider", free_provider_factory)
         monkeypatch.setattr("app.api.settings.TavilyProvider", provider_factory)
+        # Query planning and page fetching are covered by unit tests; keep the
+        # integration flow offline and deterministic.
+        state.search_service.query_planner = None
+        state.search_service.enricher = None
         llm = AcceptanceLLM()
         state.chat_service.llm = llm
 
@@ -153,13 +206,24 @@ def assert_no_secrets(context, caplog):
         assert secret not in public
 
 
+FREE_SEARCH_HTML = """
+<html><body>
+<div class="result results_links">
+  <h2 class="result__title">
+    <a class="result__a" href="https://free.test/evidence">FreeEvidence</a>
+  </h2>
+  <a class="result__snippet">Free evidence snippet.</a>
+</div>
+</body></html>
+"""
+
+
 @pytest.mark.parametrize(
     ("mode", "permission", "key", "suggested"),
     [
         ("off", "inherit", SEARCH_KEY, False),
         ("ask", "inherit", SEARCH_KEY, True),
         ("auto", "off", SEARCH_KEY, False),
-        ("auto", "inherit", "", False),
     ],
 )
 async def test_unauthorized_modes_make_zero_provider_calls(
@@ -173,6 +237,71 @@ async def test_unauthorized_modes_make_zero_provider_calls(
     assert context.wire.calls == []
     assert context.llm.requests == []
     assert rows(context, WebSearchRunRecord) == []
+
+
+async def test_free_fallback_runs_without_any_search_key(search_app):
+    context = search_app
+    await settings(context, "auto", "")
+    events = await stream(context)
+    assert events[-1]["type"] == "done", events[-1]
+    assert context.wire.calls == []
+    runs = rows(context, WebSearchRunRecord)
+    assert len(runs) == 1
+    assert runs[0].provider == "duckduckgo"
+    assert runs[0].status == "completed"
+    citations = events[0]["payload"]["citations"]
+    assert any(item.get("sourceUrl") == "https://free.test/evidence" for item in citations)
+
+
+class StubPlanner:
+    def __init__(self, variants: list[str]) -> None:
+        self.variants = variants
+        self.calls = 0
+
+    async def plan(self, query: str, *, max_queries: int = 3) -> list[str]:
+        self.calls += 1
+        return [query, *self.variants][:max_queries]
+
+
+async def test_query_rewrite_searches_every_variant(search_app):
+    context = search_app
+    planner = StubPlanner(["DeepSeek V4 发布时间", "DeepSeek V4 release date"])
+    context.state.search_service.query_planner = planner
+    await settings(context, "auto")
+
+    events = await stream(context)
+
+    assert events[-1]["type"] == "done", events[-1]
+    assert planner.calls == 1
+    assert len(context.wire.calls) == 3
+    assert {call["query"] for call in context.wire.calls} == {
+        QUESTION,
+        "DeepSeek V4 发布时间",
+        "DeepSeek V4 release date",
+    }
+    runs = rows(context, WebSearchRunRecord)
+    assert len(runs) == 1
+    assert runs[0].status == "completed"
+    assert runs[0].provider == "tavily"
+
+
+async def test_configured_searxng_instance_is_used(search_app):
+    context = search_app
+    await settings(context, "auto", "")
+    response = await context.harness.client.put(
+        "/api/settings/web-search",
+        json={"mode": "auto", "maxResults": 3, "searxngUrl": "https://searx.example.com"},
+    )
+    assert response.status_code == 200, response.text
+
+    events = await stream(context)
+
+    assert events[-1]["type"] == "done", events[-1]
+    assert context.wire.calls == []
+    runs = rows(context, WebSearchRunRecord)
+    assert len(runs) == 1
+    assert runs[0].provider == "searxng"
+    assert runs[0].status == "completed"
 
 
 async def explicit_results(context):
