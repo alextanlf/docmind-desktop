@@ -20,7 +20,12 @@ afterEach(async () => {
 async function makeTree(missing?: string) {
   const directory = await mkdtemp(join(tmpdir(), "docmind-desktop-build-"));
   temporaryDirectories.push(directory);
-  for (const relative of ["out/main/index.js", "out/preload/index.js", "out/renderer/index.html"]) {
+  for (const relative of [
+    "out/main/index.js",
+    "out/preload/index.js",
+    "out/renderer/index.html",
+    "out/renderer/icon-256.png",
+  ]) {
     if (relative === missing) continue;
     const target = join(directory, relative);
     await mkdir(join(target, ".."), { recursive: true });

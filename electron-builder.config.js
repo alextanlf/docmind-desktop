@@ -18,6 +18,7 @@ module.exports = {
   asar: true,
   npmRebuild: false,
   mac: {
+    icon: "build/icons/DocMind.icns",
     category: "public.app-category.productivity",
     target: ["dir"],
     identity: null,
@@ -30,5 +31,12 @@ module.exports = {
         DOCMIND_BACKEND_CWD: backendCwd,
       },
     },
+  },
+  win: {
+    icon: "build/icons/DocMind.ico",
+  },
+  linux: {
+    icon: "build/icons/png/docmind-icon-512.png",
+    category: "Office",
   },
 };
