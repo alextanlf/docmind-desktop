@@ -32,6 +32,25 @@ export const ModelSettingsViewSchema = z.object({
   model: z.string(),
   timeoutSeconds: z.number(),
 });
+export const ConnectionBindingViewSchema = z.object({
+  configured: z.boolean(),
+  verified: z.boolean(),
+  label: z.string().nullable().optional(),
+});
+export const YuqueApiBindingViewSchema = ConnectionBindingViewSchema.extend({
+  active: z.boolean(),
+});
+export const ConnectionTestResultSchema = z.object({
+  connected: z.boolean(),
+  message: z.string(),
+  label: z.string().nullable().optional(),
+});
+export const YuqueApiSettingsInputSchema = z.object({
+  token: z.string().max(2_000).nullable().optional(),
+});
+export const FeishuBindingInputSchema = z.object({
+  webhookUrl: z.string().max(2_000).nullable().optional(),
+});
 export const SettingsViewSchema = z.object({
   model: ModelSettingsViewSchema,
   hasApiKey: z.boolean(),
@@ -68,6 +87,17 @@ export const SettingsViewSchema = z.object({
       routing: z.object({ mode: z.enum(["local_only", "cloud_only", "automatic"]) }),
     })
     .optional(),
+  yuqueApi: YuqueApiBindingViewSchema.default({
+    configured: false,
+    verified: false,
+    label: null,
+    active: false,
+  }),
+  feishu: ConnectionBindingViewSchema.default({
+    configured: false,
+    verified: false,
+    label: null,
+  }),
 });
 export const RuntimeSettingsInputSchema = z.object({
   ollama: z.object({
@@ -170,7 +200,10 @@ export const RepositorySchema = z.object({
   createdAt: timestamp,
   updatedAt: timestamp,
 });
-export const CreateRepositoryInputSchema = z.object({ name: text(120) });
+export const CreateRepositoryInputSchema = z.object({
+  name: text(120),
+  createRemote: z.boolean().optional(),
+});
 
 export const DocumentInputSchema = z.object({
   title: text(240),
@@ -590,6 +623,9 @@ export type ErrorEnvelope = z.infer<typeof ErrorEnvelopeSchema>;
 export type ModelSettingsInput = z.infer<typeof ModelSettingsInputSchema>;
 export type RuntimeSettingsInput = z.infer<typeof RuntimeSettingsInputSchema>;
 export type SettingsView = z.infer<typeof SettingsViewSchema>;
+export type YuqueApiSettingsInput = z.infer<typeof YuqueApiSettingsInputSchema>;
+export type FeishuBindingInput = z.infer<typeof FeishuBindingInputSchema>;
+export type ConnectionTestResult = z.infer<typeof ConnectionTestResultSchema>;
 export type ModelConnectionResult = z.infer<typeof ModelConnectionResultSchema>;
 export type ModelStatus = z.infer<typeof ModelStatusSchema>;
 export type YuqueStatus = z.infer<typeof YuqueStatusSchema>;
@@ -688,6 +724,10 @@ export interface DocMindApi {
     clearDiagnostics(): Promise<void>;
     saveWebSearch(input: WebSearchSettingsInput): Promise<SettingsView>;
     saveRuntime(input: z.infer<typeof RuntimeSettingsInputSchema>): Promise<SettingsView>;
+    saveYuqueApi(input: YuqueApiSettingsInput): Promise<SettingsView>;
+    testYuqueApi(): Promise<ConnectionTestResult>;
+    saveFeishu(input: FeishuBindingInput): Promise<SettingsView>;
+    testFeishu(): Promise<ConnectionTestResult>;
   };
   embedding: {
     status(): Promise<ModelStatus>;
@@ -784,6 +824,9 @@ export interface DocMindApi {
 
 export const schemas = {
   SettingsViewSchema,
+  ConnectionTestResultSchema,
+  YuqueApiSettingsInputSchema,
+  FeishuBindingInputSchema,
   ModelConnectionResultSchema,
   ModelStatusSchema,
   YuqueStatusSchema,

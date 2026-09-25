@@ -245,12 +245,17 @@ def make_service(
     return service, source, vector_store, gateway
 
 
-async def create_job(service: ImportService, source: FakeSourceInspector, decision=None):
+async def create_job(
+    service: ImportService,
+    source: FakeSourceInspector,
+    decision=None,
+    repository_id: str = "repository-1",
+):
     preview = await source.inspect(SourceRef(kind="url", value="https://example.test/imported.md"))
     return await service.create(
         ImportCreateRequest(
             source=SourceRef(kind="url", value="https://example.test/imported.md"),
-            repository_id="repository-1",
+            repository_id=repository_id,
             fingerprint=preview.fingerprint,
             duplicate_decision=decision,
         )
@@ -727,6 +732,27 @@ async def test_run_completes_full_import_with_exact_progress(database, tmp_path)
     assert document.yuque_id == "remote-document-1"  # type: ignore[union-attr]
     assert Path(document.raw_path).read_bytes() == source.document.raw_bytes  # type: ignore[arg-type,union-attr]
     assert Path(document.markdown_path).read_text() == "# Imported\n\nUseful text"  # type: ignore[arg-type,union-attr]
+
+
+async def test_local_repository_import_skips_yuque_but_indexes_content(
+    database, tmp_path
+) -> None:
+    service, source, vector_store, gateway = make_service(
+        database, tmp_path, seed_repository=False
+    )
+    repository = service.repository_store.create_local(name="Local knowledge")
+    job = await create_job(service, source, repository_id=repository.id)
+
+    await service.run(job.id)
+
+    completed = service.job_store.get(job.id)
+    assert completed.state == ImportStatus.COMPLETED  # type: ignore[union-attr]
+    document = service.document_store.get(completed.document_id)  # type: ignore[union-attr]
+    assert document is not None
+    assert document.yuque_id is None
+    assert Path(document.markdown_path).read_text() == "# Imported\n\nUseful text"  # type: ignore[arg-type]
+    assert len(vector_store.upserts) == 1
+    assert gateway.create_calls == gateway.update_calls == 0
 
 
 async def test_retry_reconciles_remote_marker_after_lost_create_response(

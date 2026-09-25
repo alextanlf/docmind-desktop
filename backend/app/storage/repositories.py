@@ -233,6 +233,19 @@ class RepositoryStore:
         with self.database.session() as session:
             return session.get(RepositoryRecord, repository_id)
 
+    def create_local(self, *, name: str, description: str | None = None) -> RepositoryRecord:
+        with self.database.session() as session:
+            record = RepositoryRecord(
+                name=name,
+                description=description,
+                yuque_id=None,
+                yuque_url=None,
+                sync_status="local",
+            )
+            session.add(record)
+            session.flush()
+            return record
+
     def set_document_count(self, repository_id: str, count: int) -> None:
         with self.database.session() as session:
             record = session.get(RepositoryRecord, repository_id)
@@ -436,6 +449,16 @@ class DocumentStore:
             document = session.get(DocumentRecord, document_id)
             if document is not None:
                 document.sync_state = state
+                document.updated_at = utc_now()
+                session.flush()
+
+    def mark_local(self, document_id: str) -> None:
+        with self.database.session() as session:
+            document = session.get(DocumentRecord, document_id)
+            if document is not None:
+                document.status = "local"
+                document.sync_state = "local"
+                document.local_dirty = True
                 document.updated_at = utc_now()
                 session.flush()
 

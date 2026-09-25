@@ -1,8 +1,8 @@
-import { Database, Globe, KeyRound, MessageSquareText, RefreshCw } from "lucide-react";
+import { Database, Globe, KeyRound, Link2, RefreshCw } from "lucide-react";
+import { ConnectionSettings } from "./ConnectionSettings";
 import { DiagnosticsSection } from "./DiagnosticsSection";
 import { EmbeddingStatus } from "./EmbeddingStatus";
 import { ModelSettingsForm } from "./ModelSettingsForm";
-import { YuqueStatus } from "./YuqueStatus";
 import { WebSearchSettings } from "./WebSearchSettings";
 import { RuntimeModelSettings } from "./RuntimeModelSettings";
 import { clientErrorMessage, useSettingsQuery } from "./settings.queries";
@@ -28,7 +28,7 @@ export function SettingsView() {
       <header className="view-header">
         <div>
           <h1>设置</h1>
-          <p>管理模型、Embedding、语雀登录和本地诊断信息</p>
+          <p>管理模型、连接绑定、Embedding 和本地诊断信息</p>
         </div>
       </header>
       <section className="settings-section" aria-labelledby="model-settings-title">
@@ -61,15 +61,15 @@ export function SettingsView() {
         </div>
         <RuntimeModelSettings settings={settings.data} />
       </section>
-      <section className="settings-section" aria-labelledby="yuque-settings-title">
+      <section className="settings-section" aria-labelledby="connections-settings-title">
         <div className="section-heading">
-          <MessageSquareText aria-hidden="true" size={18} />
+          <Link2 aria-hidden="true" size={18} />
           <div>
-            <h2 id="yuque-settings-title">语雀连接</h2>
-            <p>登录状态只保存在本机</p>
+            <h2 id="connections-settings-title">连接与绑定</h2>
+            <p>语雀网页、语雀 API 和飞书均为可选连接，不影响 DocMind 启动</p>
           </div>
         </div>
-        <YuqueStatus />
+        <ConnectionSettings settings={settings.data} />
       </section>
       <section className="settings-section" aria-labelledby="web-search-settings-title">
         <div className="section-heading">

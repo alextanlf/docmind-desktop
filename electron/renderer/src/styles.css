@@ -1347,6 +1347,84 @@ input:disabled {
   overflow-wrap: anywhere;
   font-size: 13px;
 }
+
+.connection-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+.connection-card {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 14px;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+}
+.connection-card > header {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+.connection-card > header > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--blue);
+}
+.connection-card > header div {
+  min-width: 0;
+}
+.connection-card h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.connection-card header p,
+.connection-binding-form > p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.connection-card .status-row {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 12px;
+}
+.connection-card .status-row > .button {
+  align-self: flex-start;
+}
+.connection-binding-form {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 10px;
+}
+.connection-field {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: #4f5763;
+  font-size: 12px;
+  font-weight: 600;
+}
+.connection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.connection-help-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--blue);
+  font-size: 12px;
+  text-decoration: none;
+}
+.connection-help-link:hover {
+  text-decoration: underline;
+}
 .progress-line {
   display: grid;
   grid-template-columns: minmax(100px, 320px) 40px;
