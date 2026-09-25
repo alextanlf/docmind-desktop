@@ -19,17 +19,30 @@ describe("search preload API", () => {
       hasApiKey: false,
       dataPath: "/tmp",
       screenshotCount: 0,
-      webSearch: { provider: "tavily", mode: "ask", maxResults: 5, hasApiKey: true },
+      webSearch: {
+        mode: "ask",
+        maxResults: 5,
+        hasApiKey: true,
+        queryRewrite: true,
+        searxngUrl: "https://searx.example.com",
+        modelSearchAvailable: false,
+        modelSearchLabel: "",
+        freeFallbackAvailable: true,
+      },
     };
     invoke.mockResolvedValueOnce({ ok: true, value });
     const result = await exposed.docmind.settings.saveWebSearch({
       mode: "ask",
       maxResults: 5,
+      queryRewrite: true,
+      searxngUrl: "https://searx.example.com",
       apiKey: "secret",
     });
     expect(invoke).toHaveBeenLastCalledWith("settings:saveWebSearch", {
       mode: "ask",
       maxResults: 5,
+      queryRewrite: true,
+      searxngUrl: "https://searx.example.com",
       apiKey: "secret",
     });
     expect(JSON.stringify(result)).not.toContain("secret");

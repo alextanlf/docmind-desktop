@@ -22,6 +22,8 @@ from app.schemas.settings import (
     WebSearchSettingsUpdate,
 )
 from app.schemas.web_search import SearchConnectionResult, WebSearchSettings
+from app.search.model_native import ModelSearchProvider, detect_native_search
+from app.search.searxng import SearxngProvider
 from app.search.tavily import TavilyProvider
 from app.storage.repositories import SettingStore
 
@@ -147,11 +149,48 @@ class SettingsService:
             config = WebSearchSettings.model_validate_json(raw)
         else:
             config = WebSearchSettings()
-        return config.model_copy(update={"has_api_key": bool(self.secret_store.get(WEB_SEARCH_API_KEY_NAME))})
+        model_search_available = False
+        model_search_label = ""
+        try:
+            support = detect_native_search(self.model())
+            if support is None:
+                model_search_label = "当前模型不支持内置联网，自动跳过"
+            elif self.runtime().routing.mode == "local_only":
+                model_search_label = "本地模式不调用云端联网，自动跳过"
+            elif not self.secret_store.get(MODEL_API_KEY_NAME):
+                model_search_label = "需要配置模型 API Key"
+            else:
+                model_search_available = True
+                model_search_label = f"可用 · {support.label}"
+        except (DomainError, OSError):
+            pass
+        try:
+            has_api_key = bool(self.secret_store.get(WEB_SEARCH_API_KEY_NAME))
+        except (DomainError, OSError):
+            has_api_key = False
+        return config.model_copy(
+            update={
+                "has_api_key": has_api_key,
+                "model_search_available": model_search_available,
+                "model_search_label": model_search_label,
+            }
+        )
 
     def save_web_search(self, update: WebSearchSettingsUpdate) -> WebSearchSettings:
         if update.mode not in {"off", "ask", "auto"} or not 1 <= update.max_results <= 10:
             raise DomainError("SEARCH_SETTINGS_INVALID", "联网搜索设置无效", 422)
+        try:
+            config = WebSearchSettings(
+                mode=update.mode,
+                max_results=update.max_results,
+                query_rewrite=update.query_rewrite,
+                searxng_url=update.searxng_url,
+                has_api_key=False,
+            )
+        except ValueError as error:
+            raise DomainError(
+                "SEARCH_SETTINGS_INVALID", "SearXNG 实例地址无效", 422
+            ) from error
         previous = self.secret_store.get(WEB_SEARCH_API_KEY_NAME)
         if update.api_key is not None:
             if update.api_key:
@@ -159,7 +198,7 @@ class SettingsService:
             else:
                 self.secret_store.delete(WEB_SEARCH_API_KEY_NAME)
         try:
-            self.setting_store.set_many({WEB_SEARCH_CONFIG_KEY: WebSearchSettings(mode=update.mode, max_results=update.max_results, has_api_key=False).model_dump_json()})
+            self.setting_store.set_many({WEB_SEARCH_CONFIG_KEY: config.model_dump_json()})
         except Exception:
             if previous is None: self.secret_store.delete(WEB_SEARCH_API_KEY_NAME)
             else: self.secret_store.set(WEB_SEARCH_API_KEY_NAME, previous)
@@ -167,10 +206,20 @@ class SettingsService:
         return self.web_search()
 
     async def test_web_search(self) -> SearchConnectionResult:
+        model_provider = ModelSearchProvider(
+            lambda: (self.model(), self.secret_store.get(MODEL_API_KEY_NAME))
+        )
+        if model_provider.available():
+            return await model_provider.test_connection()
         key = self.secret_store.get(WEB_SEARCH_API_KEY_NAME)
-        if not key:
-            raise DomainError("SEARCH_AUTH_FAILED", "请先配置搜索 API Key", 400)
-        return await TavilyProvider(key).test_connection()
+        if key:
+            return await TavilyProvider(key).test_connection()
+        instance = self.web_search().searxng_url
+        if instance:
+            return await SearxngProvider(instance).test_connection()
+        return SearchConnectionResult(
+            ok=True, provider="bing", message="将使用免费兜底（Bing / DuckDuckGo）"
+        )
 
     def clear_diagnostics(self, settings: AppSettings) -> None:
         directory = settings.screenshots_dir

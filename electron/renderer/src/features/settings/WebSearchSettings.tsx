@@ -6,11 +6,20 @@ export function WebSearchSettings({ settings }: { settings: SettingsView }) {
   const save = useSaveWebSearchMutation();
   const [mode, setMode] = useState(settings.webSearch.mode);
   const [maxResults, setMaxResults] = useState(settings.webSearch.maxResults);
+  const [queryRewrite, setQueryRewrite] = useState(settings.webSearch.queryRewrite);
+  const [searxngUrl, setSearxngUrl] = useState(settings.webSearch.searxngUrl);
   const [apiKey, setApiKey] = useState("");
   const [clearApiKey, setClearApiKey] = useState(false);
+  const { hasApiKey, modelSearchLabel, freeFallbackAvailable } = settings.webSearch;
   const submit = () =>
     save.mutate(
-      { mode, maxResults, ...(clearApiKey ? { apiKey: "" } : apiKey ? { apiKey } : {}) },
+      {
+        mode,
+        maxResults,
+        queryRewrite,
+        searxngUrl,
+        ...(clearApiKey ? { apiKey: "" } : apiKey ? { apiKey } : {}),
+      },
       {
         onSuccess: () => {
           setApiKey("");
@@ -51,28 +60,73 @@ export function WebSearchSettings({ settings }: { settings: SettingsView }) {
           value={maxResults}
         />
       </label>
-      <label>
-        Tavily API Key
+      <label className="web-search-rewrite">
         <input
-          aria-label="Tavily API Key"
-          autoComplete="off"
-          disabled={clearApiKey}
-          onChange={(event) => setApiKey(event.target.value)}
-          placeholder={settings.webSearch.hasApiKey ? "已安全保存，留空则不修改" : "输入 API Key"}
-          type="password"
-          value={apiKey}
+          checked={queryRewrite}
+          onChange={(event) => setQueryRewrite(event.target.checked)}
+          type="checkbox"
         />
+        智能改写搜索词（用当前模型生成 2-3 组查询，提升召回）
       </label>
-      {settings.webSearch.hasApiKey ? (
+      <section aria-label="搜索来源优先级" className="web-search-sources">
+        <h4>搜索来源（按优先级自动切换）</h4>
+        <ol>
+          <li>
+            <strong>模型内置联网</strong>
+            <span>{modelSearchLabel || "当前模型不支持内置联网，自动跳过"}</span>
+          </li>
+          <li>
+            <strong>Tavily</strong>
+            <span>{hasApiKey ? "已配置，作为第二来源" : "未配置，自动跳过"}</span>
+          </li>
+          <li>
+            <strong>SearXNG（自建）</strong>
+            <span>{searxngUrl ? "已配置，作为第三来源" : "未配置，自动跳过"}</span>
+          </li>
+          <li>
+            <strong>免费兜底</strong>
+            <span>
+              {freeFallbackAvailable ? "Bing / DuckDuckGo（无需配置，自动抓正文）" : "暂不可用"}
+            </span>
+          </li>
+        </ol>
+      </section>
+      <details className="web-search-advanced">
+        <summary>高级：自建 SearXNG / Tavily API Key</summary>
         <label>
+          SearXNG 实例地址
           <input
-            checked={clearApiKey}
-            onChange={(event) => setClearApiKey(event.target.checked)}
-            type="checkbox"
+            aria-label="SearXNG 实例地址"
+            onChange={(event) => setSearxngUrl(event.target.value)}
+            placeholder="https://searx.example.com"
+            type="url"
+            value={searxngUrl}
           />
-          删除已保存的密钥
+          <small>需在实例的 settings.yml 中开启 JSON 输出（search.formats 加上 json）</small>
         </label>
-      ) : null}
+        <label>
+          Tavily API Key
+          <input
+            aria-label="Tavily API Key"
+            autoComplete="off"
+            disabled={clearApiKey}
+            onChange={(event) => setApiKey(event.target.value)}
+            placeholder={hasApiKey ? "已安全保存，留空则不修改" : "输入 API Key"}
+            type="password"
+            value={apiKey}
+          />
+        </label>
+        {hasApiKey ? (
+          <label>
+            <input
+              checked={clearApiKey}
+              onChange={(event) => setClearApiKey(event.target.checked)}
+              type="checkbox"
+            />
+            删除已保存的密钥
+          </label>
+        ) : null}
+      </details>
       <button
         className="button button-primary"
         disabled={save.isPending}

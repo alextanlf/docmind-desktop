@@ -7,6 +7,11 @@ from bs4 import BeautifulSoup
 from markdownify import markdownify
 
 from app.api.errors import DomainError
+from app.document.extraction import (
+    extract_main_content,
+    strip_document_noise,
+    strip_hidden_content,
+)
 from app.schemas.imports import DownloadedDocument, ParsedDocument, ParsedSection
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
@@ -36,21 +41,17 @@ class DocumentParser:
 
     def _parse_html(self, document: DownloadedDocument) -> ParsedDocument:
         soup = BeautifulSoup(document.raw_bytes, "html.parser")
-        for node in soup.select("script, style, nav, footer, aside, template, [hidden], [aria-hidden='true']"):
-            node.decompose()
-        for node in soup.select("[style]"):
-            style = re.sub(r"\s+", "", node.get("style", "").lower())
-            if re.search(r"(?:^|;)(?:display:none|visibility:hidden)(?:!important)?(?:;|$)", style):
-                node.decompose()
-        for node in soup.find_all():
-            if not node.get_text(" ", strip=True) and not node.find(["img", "br", "hr"]):
-                node.decompose()
+        strip_hidden_content(soup)
         title_node = soup.find("h1") or soup.title
         title = title_node.get_text(" ", strip=True) if title_node else document.title
+        container = extract_main_content(soup)
+        if container is not None:
+            strip_document_noise(container)
         if soup.head:
             soup.head.decompose()
-        markdown = markdownify(str(soup), heading_style="ATX", code_language_callback=self._code_language).strip()
-        languages = [self._code_language(code) for code in soup.select("pre > code")]
+        target = container if container is not None else soup
+        markdown = markdownify(str(target), heading_style="ATX", code_language_callback=self._code_language).strip()
+        languages = [self._code_language(code) for code in target.select("pre > code")]
         language_index = 0
 
         def add_code_language(match: re.Match[str]) -> str:

@@ -29,7 +29,7 @@ def get_run(run_id: UUID, request: Request, session_id: UUID):
     run = store.get(str(run_id))
     if run is None or run.session_id != str(session_id):
         raise DomainError("SEARCH_RUN_NOT_FOUND", "搜索任务不存在", 404)
-    return {"id": run.id, "status": run.status, "errorCode": run.error_code, "results": [{"id": row.id, "rank": row.rank, "canonicalUrl": row.canonical_url, "title": row.title, "snippet": row.snippet, "content": row.content} for row in store.results(run.id)]}
+    return {"id": run.id, "status": run.status, "errorCode": run.error_code, "provider": run.provider, "results": [{"id": row.id, "rank": row.rank, "canonicalUrl": row.canonical_url, "title": row.title, "snippet": row.snippet, "content": row.content} for row in store.results(run.id)]}
 
 
 @router.post("/runs/{run_id}/import-batch", response_model=BatchImportView, status_code=status.HTTP_201_CREATED)

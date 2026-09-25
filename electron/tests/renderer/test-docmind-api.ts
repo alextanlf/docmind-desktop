@@ -25,7 +25,16 @@ export const readySettings: SettingsView = {
   hasApiKey: true,
   dataPath: "/Users/test/Library/Application Support/DocMind",
   screenshotCount: 2,
-  webSearch: { provider: "tavily", mode: "ask", maxResults: 5, hasApiKey: false },
+  webSearch: {
+    mode: "ask",
+    maxResults: 5,
+    hasApiKey: false,
+    queryRewrite: true,
+    searxngUrl: "",
+    modelSearchAvailable: false,
+    modelSearchLabel: "",
+    freeFallbackAvailable: true,
+  },
 };
 
 export const unavailableEmbedding: ModelStatus = {

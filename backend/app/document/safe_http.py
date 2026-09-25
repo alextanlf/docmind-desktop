@@ -94,7 +94,8 @@ class SafeHttpClient:
             raise DomainError("CRAWL_SCOPE_REJECTED", "网页地址不在允许范围内", 400)
 
     async def get(self, url: str, *, max_bytes: int, redirect_limit: int = 5,
-                  scope_origin: str | None = None, scope_prefix: str | None = None) -> HttpSnapshot:
+                  scope_origin: str | None = None, scope_prefix: str | None = None,
+                  headers: dict[str, str] | None = None) -> HttpSnapshot:
         current = canonicalize_url(url)
         for hops in range(redirect_limit + 1):
             await self._check_host(current)
@@ -102,7 +103,7 @@ class SafeHttpClient:
                 async with httpx.AsyncClient(
                     transport=self.transport, follow_redirects=False
                 ) as client:
-                    response = await client.get(current)
+                    response = await client.get(current, headers=headers)
             except httpx.HTTPError:
                 raise DomainError("CRAWL_FETCH_FAILED", "网页抓取失败", 502, True) from None
             if response.status_code in {301, 302, 303, 307, 308}:

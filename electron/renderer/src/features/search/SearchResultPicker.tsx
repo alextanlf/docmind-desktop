@@ -18,6 +18,7 @@ export function SearchResultPicker({
   if (!run.data) return <p>正在读取搜索结果…</p>;
   return (
     <section aria-label="搜索结果">
+      <p>来源：{providerLabel(run.data.provider)}</p>
       <ul>
         {run.data.results.map((result) => (
           <li key={result.id}>
@@ -53,4 +54,12 @@ export function SearchResultPicker({
       </button>
     </section>
   );
+}
+
+function providerLabel(provider: string | null | undefined): string {
+  if (!provider) return "联网搜索";
+  if (provider.startsWith("model")) return "模型内置联网";
+  if (provider === "tavily") return "Tavily";
+  if (provider === "duckduckgo") return "免费兜底（DuckDuckGo）";
+  return "联网搜索";
 }

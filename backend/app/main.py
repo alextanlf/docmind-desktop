@@ -63,6 +63,15 @@ from app.memory.persistence import LocalKnowledgeStore
 from app.memory.retriever import MemoryRetriever
 from app.memory.summary import SummaryScheduler, SummaryService
 from app.schemas.common import HealthResponse
+from app.schemas.web_search import SearchConnectionResult
+from app.search.bing import BingProvider
+from app.search.duckduckgo import DuckDuckGoProvider
+from app.search.enrichment import ContentEnricher
+from app.search.fallback import FallbackSearchProvider
+from app.search.model_native import ModelSearchProvider
+from app.search.provider import SearchProviderError
+from app.search.query_planner import LLMQueryPlanner
+from app.search.searxng import SearxngProvider
 from app.search.service import SearchService
 from app.search.tavily import TavilyProvider
 from app.storage.database import Database
@@ -91,7 +100,6 @@ from app.sync.scheduler import SyncScheduler
 from app.sync.service import IncrementalSyncService
 from app.yuque.discovery import YuqueDiscovery, read_remote_snapshot
 from app.yuque.gateway import PlaywrightYuqueGateway, YuqueGateway
-
 
 class _RuntimeLLMProvider:
     def __init__(
@@ -219,8 +227,11 @@ def create_app(
             async def resolve(self, host: str):
                 infos = await asyncio.to_thread(socket.getaddrinfo, host, None, type=socket.SOCK_STREAM)
                 return list({info[4][0] for info in infos})
+        safe_http_client = SafeHttpClient(
+            resolver=_SystemResolver(), transport=httpx.AsyncHTTPTransport()
+        )
         web_discovery = WebDiscovery(
-            SafeHttpClient(resolver=_SystemResolver(), transport=httpx.AsyncHTTPTransport()),
+            safe_http_client,
             runtime_settings.staging_dir,
             frontier=CrawlEntryStore(database),
         )
@@ -239,16 +250,89 @@ def create_app(
             yuque_discovery=yuque_discovery,
         )
         app.state.batch_service.recover_on_startup()
+        def _read_secret(name: str) -> str | None:
+            try:
+                return runtime_secret_store.get(name)
+            except (DomainError, OSError):
+                return None
+
+        def _model_credentials() -> tuple[ModelConfig, str | None]:
+            try:
+                routing_mode = app.state.settings_service.runtime().routing.mode
+            except DomainError:
+                routing_mode = "cloud_only"
+            if routing_mode == "local_only":
+                return app.state.settings_service.model(), None
+            return app.state.settings_service.model(), _read_secret("model-api-key")
+
         class _LazyTavily:
+            name = "tavily"
+
+            def available(self) -> bool:
+                return bool(_read_secret("web-search:tavily"))
+
             async def search(self, req):
-                try:
-                    key = runtime_secret_store.get("web-search:tavily")
-                except (DomainError, OSError):
-                    key = None
+                key = _read_secret("web-search:tavily")
                 if not key:
-                    raise RuntimeError("search key unavailable")
+                    raise SearchProviderError(
+                        "SEARCH_AUTH_FAILED", "未配置 Tavily API Key", retryable=False
+                    )
                 return await TavilyProvider(key).search(req)
-        app.state.search_service = SearchService(_LazyTavily(), WebSearchRunStore(database), runtime_secret_store)
+
+            async def test_connection(self):
+                key = _read_secret("web-search:tavily")
+                if not key:
+                    return SearchConnectionResult(
+                        ok=False, provider=self.name, message="未配置 Tavily API Key"
+                    )
+                return await TavilyProvider(key).test_connection()
+
+        class _LazySearxng:
+            name = "searxng"
+
+            def available(self) -> bool:
+                return bool(app.state.settings_service.web_search().searxng_url)
+
+            async def search(self, req):
+                instance = app.state.settings_service.web_search().searxng_url
+                if not instance:
+                    raise SearchProviderError(
+                        "SEARCH_AUTH_FAILED", "未配置 SearXNG 实例", retryable=False
+                    )
+                return await SearxngProvider(instance).search(req)
+
+            async def test_connection(self):
+                instance = app.state.settings_service.web_search().searxng_url
+                if not instance:
+                    return SearchConnectionResult(
+                        ok=False, provider=self.name, message="未配置 SearXNG 实例"
+                    )
+                return await SearxngProvider(instance).test_connection()
+
+        class _LazyBing:
+            name = "bing"
+
+            def available(self) -> bool:
+                return True
+
+            async def search(self, req):
+                return await BingProvider().search(req)
+
+            async def test_connection(self):
+                return await BingProvider().test_connection()
+
+        class _LazyDuckDuckGo:
+            name = "duckduckgo"
+
+            def available(self) -> bool:
+                return True
+
+            async def search(self, req):
+                return await DuckDuckGoProvider().search(req)
+
+            async def test_connection(self):
+                return await DuckDuckGoProvider().test_connection()
+
         cloud_llm_provider = fake_llm_provider or _RuntimeLLMProvider(
             app.state.settings_service,
             runtime_secret_store,
@@ -265,6 +349,21 @@ def create_app(
                 app.state.settings_service.model().model,
                 local_service=app.state.ollama_service,
             ))
+        search_enricher = ContentEnricher(safe_http_client)
+        app.state.search_service = SearchService(
+            FallbackSearchProvider(
+                [
+                    ModelSearchProvider(_model_credentials),
+                    _LazyTavily(),
+                    _LazySearxng(),
+                    _LazyBing(),
+                    _LazyDuckDuckGo(),
+                ]
+            ),
+            WebSearchRunStore(database),
+            query_planner=LLMQueryPlanner(runtime_llm_provider),
+            enricher=search_enricher,
+        )
         app.state.repository_store = repository_store
         app.state.document_store = document_store
         app.state.import_job_store = ImportJobStore(database)

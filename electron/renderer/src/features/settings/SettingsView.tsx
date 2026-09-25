@@ -76,7 +76,7 @@ export function SettingsView() {
           <Globe aria-hidden="true" size={18} />
           <div>
             <h2 id="web-search-settings-title">联网搜索</h2>
-            <p>本地证据不足时控制是否访问 Tavily</p>
+            <p>本地证据不足时按模型内置联网、Tavily、免费兜底的顺序搜索</p>
           </div>
         </div>
         <WebSearchSettings settings={settings.data} />
