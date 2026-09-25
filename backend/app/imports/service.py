@@ -81,7 +81,7 @@ class ImportService:
 
     async def create(self, request: ImportCreateRequest) -> ImportJobView:
         repository = self.repository_store.get(request.repository_id)
-        if repository is None or not repository.yuque_id:
+        if repository is None:
             raise DomainError("REPOSITORY_NOT_FOUND", "目标知识库不存在", 404)
         preview = await self.inspect(request.source)
         if preview.fingerprint != request.fingerprint:
@@ -435,8 +435,10 @@ class ImportService:
             self._persist_parsed_document(job_id, downloaded, parsed)
         if await self._cancel_if_requested(job_id):
             return False
+        repository = self.repository_store.get(job.repository_id or "")
+        target_message = "准备写入语雀" if repository and repository.yuque_id else "准备建立本地索引"
         await self._transition(
-            job_id, {ImportStatus.PARSING}, ImportStatus.UPLOADING, 45, "准备写入语雀"
+            job_id, {ImportStatus.PARSING}, ImportStatus.UPLOADING, 45, target_message
         )
         return True
 
@@ -456,9 +458,19 @@ class ImportService:
                     await self._fail(job_id, "UPLOAD_FAILED", "待上传文档不存在", True)
                     return False
             repository = self.repository_store.get(job.repository_id or "")
-            if repository is None or not repository.yuque_id:
+            if repository is None:
                 await self._fail(job_id, "UPLOAD_FAILED", "目标知识库不可用", True)
                 return False
+            if not repository.yuque_id:
+                if await self._cancel_if_requested(job_id):
+                    return False
+                self.document_store.mark_local(document.id)
+                if job.document_id is None:
+                    self.job_store.attach_document(job_id, document.id)
+                await self._transition(
+                    job_id, {ImportStatus.UPLOADING}, ImportStatus.INDEXING, 70, "正在建立本地索引"
+                )
+                return True
             try:
                 markdown = Path(document.markdown_path or "").read_text(encoding="utf-8")
                 if metadata.get("attach_remote"):

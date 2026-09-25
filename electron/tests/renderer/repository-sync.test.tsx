@@ -30,4 +30,21 @@ describe("repository sync", () => {
     fireEvent.click(screen.getByRole("button", { name: "立即同步" }));
     await waitFor(() => expect(api.sync.trigger).toHaveBeenCalledWith(repository.id));
   });
+
+  it("keeps a local knowledge base free of Yuque sync controls", async () => {
+    const localRepository = { ...repository, yuqueId: null, yuqueUrl: null };
+    installDocMindApi({
+      repositories: { list: vi.fn().mockResolvedValue([localRepository]) },
+      documents: { list: vi.fn().mockResolvedValue([]) },
+    });
+
+    render(
+      <QueryClientProvider client={appQueryClient}>
+        <RepositoryTree />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("本地 · 1")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "立即同步" })).not.toBeInTheDocument();
+  });
 });

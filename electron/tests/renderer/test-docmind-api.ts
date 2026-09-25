@@ -35,6 +35,17 @@ export const readySettings: SettingsView = {
     modelSearchLabel: "",
     freeFallbackAvailable: true,
   },
+  yuqueApi: {
+    configured: false,
+    verified: false,
+    label: null,
+    active: false,
+  },
+  feishu: {
+    configured: false,
+    verified: false,
+    label: null,
+  },
 };
 
 export const unavailableEmbedding: ModelStatus = {
@@ -187,6 +198,18 @@ export function installDocMindApi(overrides?: {
       testModel: vi.fn().mockResolvedValue({ connected: true, latencyMs: 86 }),
       clearDiagnostics: vi.fn().mockResolvedValue(undefined),
       saveWebSearch: vi.fn().mockResolvedValue(readySettings),
+      saveYuqueApi: vi.fn().mockResolvedValue(readySettings),
+      testYuqueApi: vi.fn().mockResolvedValue({
+        connected: true,
+        message: "语雀 API 已连接，后续语雀读写将优先使用 API",
+        label: "t***t",
+      }),
+      saveFeishu: vi.fn().mockResolvedValue(readySettings),
+      testFeishu: vi.fn().mockResolvedValue({
+        connected: true,
+        message: "飞书绑定成功，测试消息已发送",
+        label: "飞书机器人",
+      }),
       ...overrides?.settings,
     },
     embedding: {

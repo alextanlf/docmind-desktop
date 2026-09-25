@@ -15,6 +15,8 @@ import {
   DocumentInputSchema,
   DocumentSummarySchema,
   ErrorEnvelopeSchema,
+  ConnectionTestResultSchema,
+  FeishuBindingInputSchema,
   GraphEdgeSchema,
   GraphNodeSchema,
   ImportJobSchema,
@@ -53,6 +55,7 @@ import {
   OllamaPullInputSchema,
   OllamaPullSchema,
   RuntimeSettingsInputSchema,
+  YuqueApiSettingsInputSchema,
 } from "../shared/contracts";
 
 const require = createRequire(import.meta.url);
@@ -179,6 +182,30 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         "/api/settings/runtime",
         jsonInit("POST", parse(RuntimeSettingsInputSchema, input)),
         SettingsViewSchema,
+      ),
+    [IPC_CHANNELS.settingsSaveYuqueApi]: (_event, input) =>
+      proxy.requestJson(
+        "/api/settings/connections/yuque-api",
+        jsonInit("PUT", parse(YuqueApiSettingsInputSchema, input)),
+        SettingsViewSchema,
+      ),
+    [IPC_CHANNELS.settingsTestYuqueApi]: () =>
+      proxy.requestJson(
+        "/api/settings/connections/yuque-api/test",
+        jsonInit("POST"),
+        ConnectionTestResultSchema,
+      ),
+    [IPC_CHANNELS.settingsSaveFeishu]: (_event, input) =>
+      proxy.requestJson(
+        "/api/settings/connections/feishu",
+        jsonInit("PUT", parse(FeishuBindingInputSchema, input)),
+        SettingsViewSchema,
+      ),
+    [IPC_CHANNELS.settingsTestFeishu]: () =>
+      proxy.requestJson(
+        "/api/settings/connections/feishu/test",
+        jsonInit("POST"),
+        ConnectionTestResultSchema,
       ),
     [IPC_CHANNELS.embeddingStatus]: () =>
       proxy.requestJson("/api/embedding/status", {}, ModelStatusSchema),

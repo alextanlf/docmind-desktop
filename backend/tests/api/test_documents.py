@@ -54,6 +54,43 @@ def _vector_store(client) -> RecordingVectorStore:  # type: ignore[no-untyped-de
     return vector_store
 
 
+def test_local_document_crud_never_calls_yuque(client, auth_headers) -> None:
+    repository = client.app.state.repository_store.create_local(name="Local knowledge")
+    gateway = FakeYuqueGateway()
+    client.app.state.yuque_gateway = gateway
+    client.app.state.embedding_provider = FakeEmbeddingProvider(
+        client.app.state.settings.embedding_settings
+    )
+    vectors = _vector_store(client)
+
+    created = client.post(
+        f"/api/repositories/{repository.id}/documents",
+        headers=auth_headers,
+        json={"title": "Local note", "content": "# Local note\n\nBody"},
+    )
+    document_id = created.json()["id"]
+    updated = client.put(
+        f"/api/documents/{document_id}",
+        headers=auth_headers,
+        json={"title": "Updated note", "content": "# Updated note\n\nNew body"},
+    )
+    deleted = client.request(
+        "DELETE",
+        f"/api/documents/{document_id}",
+        headers=auth_headers,
+        json={"confirm": True},
+    )
+
+    assert created.status_code == 201
+    assert created.json()["yuqueId"] is None
+    assert updated.status_code == 200
+    assert updated.json()["title"] == "Updated note"
+    assert deleted.status_code == 204
+    assert client.app.state.document_store.get(document_id) is None
+    assert vectors.ids == set()
+    assert gateway.write_calls == []
+
+
 def test_document_create_read_and_update_keep_local_index_in_sync(client, auth_headers) -> None:
     """Catches Markdown mutations that do not persist readable content and chunks."""
     repository_id, _ = _seed_repository(client)
