@@ -1,7 +1,13 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 let electronShell: { openExternal: (url: string) => Promise<void> } | undefined;
+/** 「折页星火」应用图标：开发态取仓库内的 PNG，打包态取随渲染层进入 asar 的副本。 */
+const ICON_CANDIDATES = [
+  join(__dirname, "../../build/icons/png/docmind-icon-256.png"),
+  join(__dirname, "../renderer/icon-256.png"),
+];
 let BrowserWindowCtor: any;
 try {
   const electron = require("electron");
@@ -10,6 +16,15 @@ try {
 } catch {
   /* tests may run without Electron binary */
 }
+export function resolveIconPath(): string | undefined {
+  return ICON_CANDIDATES.find((candidate) => existsSync(candidate));
+}
+
+/** macOS 的 Dock 图标来自应用包内的 .icns；Windows / Linux 才需要窗口图标。 */
+export function resolveWindowIcon(platform: string = process.platform): string | undefined {
+  return platform === "darwin" ? undefined : resolveIconPath();
+}
+
 export function buildWindowOptions(
   preload = join(__dirname, "../preload/index.js"),
 ): Electron.BrowserWindowConstructorOptions {
@@ -19,6 +34,7 @@ export function buildWindowOptions(
     minWidth: 960,
     minHeight: 640,
     show: false,
+    icon: resolveWindowIcon(),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,

@@ -17,6 +17,7 @@ if (!root || !isAbsolute(root)) {
     ["main", "out/main/index.js"],
     ["preload", "out/preload/index.js"],
     ["renderer", "out/renderer/index.html"],
+    ["图标", "out/renderer/icon-256.png"],
   ];
   const missing = required.find(([, relative]) => !existsSync(join(root, relative)));
   if (missing) {

@@ -177,7 +177,7 @@ export function Workspace() {
       >
         <div className="brand-row">
           <span className="brand-mark" aria-hidden="true">
-            D
+            <img alt="" height="28" src="./icon.svg" width="28" />
           </span>
           <strong>DocMind</strong>
           {forcedIconRail ? null : (

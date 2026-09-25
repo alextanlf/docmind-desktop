@@ -19,7 +19,8 @@
     "format:check": "prettier --check .",
     "test": "npm run desktop:test",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "icons:generate": "node scripts/generate-icons.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.66.0",

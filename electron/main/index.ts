@@ -6,6 +6,7 @@ import { StagedFileService } from "./staged-files";
 import {
   attachRendererLoadDiagnostics,
   createWindow,
+  resolveIconPath,
   showAfterDidFinishLoad,
 } from "./window-manager";
 import { logger } from "./logger";
@@ -74,8 +75,16 @@ function parsePackagedArgs(value: string | undefined) {
   }
 }
 const packagedArgs = parsePackagedArgs(process.env.DOCMIND_BACKEND_ARGS);
+/** 开发态沿用 Electron 应用包时 Dock 会显示 Electron 图标，这里换成 DocMind 自己的图标。 */
+function applyDevelopmentDockIcon() {
+  if (app.isPackaged) return;
+  const iconPath = resolveIconPath();
+  if (iconPath) app.dock?.setIcon(iconPath);
+}
+
 app.whenReady().then(async () => {
   try {
+    applyDevelopmentDockIcon();
     if (app.isPackaged && !packagedArgs.valid) throw new BackendStartError();
     backend = new BackendManager({
       dataDir: app.getPath("userData"),

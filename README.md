@@ -106,3 +106,9 @@ API Key 只保存在 macOS Keychain 中，不会写入 SQLite、诊断信息或�
 ```bash
 npm run verify
 ```
+
+应用图标「折页星火」的几何与色板固化在 `scripts/generate-icons.mjs`。调整图标后重新生成 SVG、16–1024 PNG、`.icns`、`.ico` 与渲染层图标资源：
+
+```bash
+npm run icons:generate
+```
