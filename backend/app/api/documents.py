@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 from base64 import b64decode, b64encode
 from contextlib import suppress
 from hashlib import sha256
@@ -21,7 +22,7 @@ from app.schemas.imports import DownloadedDocument
 from app.schemas.sync import ConflictResolution
 from app.schemas.versioning import DocumentVersion
 from app.schemas.yuque import CreateYuqueDocumentRequest, UpdateYuqueDocumentRequest, YuqueDocument
-from app.storage.models import DocumentChunkRecord, DocumentRecord
+from app.storage.models import DocumentChunkRecord, DocumentRecord, RepositoryRecord
 from app.storage.repositories import (
     DocumentMutationStore,
     DocumentStore,
@@ -359,34 +360,109 @@ def _persist_content(
     document: DocumentRecord,
     content: str,
     *,
-    mutation_id: str,
+    mutation_id: str | None,
 ) -> None:
     directory = request.app.state.settings.documents_dir / document.id
     markdown_path = directory / "document.md"
-    staged_path = directory / f".document.{mutation_id}.stage"
-    _update_intent(
-        request,
-        mutation_id,
-        phase="file_staging",
-        staged_path=str(staged_path),
-        target_path=str(markdown_path),
-    )
+    staged_path = directory / f".document.{mutation_id or uuid4()}.stage"
+    if mutation_id is not None:
+        _update_intent(
+            request,
+            mutation_id,
+            phase="file_staging",
+            staged_path=str(staged_path),
+            target_path=str(markdown_path),
+        )
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     with staged_path.open("wb") as handle:
         handle.write(content.encode("utf-8"))
         handle.flush()
         os.fsync(handle.fileno())
-    _update_intent(request, mutation_id, phase="file_replace_pending")
+    if mutation_id is not None:
+        _update_intent(request, mutation_id, phase="file_replace_pending")
     os.replace(staged_path, markdown_path)
-    _update_intent(request, mutation_id, phase="file_metadata_pending")
+    if mutation_id is not None:
+        _update_intent(request, mutation_id, phase="file_metadata_pending")
     _document_store(request).update_editor(
         document.id,
         title=document.title,
         yuque_id=document.yuque_id,
         yuque_url=document.yuque_url,
         markdown_path=str(markdown_path),
-        source_url=document.yuque_url,
+        source_url=document.yuque_url if document.yuque_id else document.source_url,
     )
+
+
+async def _create_local_document(
+    request: Request, repository: RepositoryRecord, body: DocumentInput
+) -> DocumentDetail:
+    document = _document_store(request).create(
+        DocumentRecord(
+            id=str(uuid4()),
+            repository_id=repository.id,
+            title=body.title,
+            source_type="local",
+            status="pending",
+        )
+    )
+    try:
+        indexed = await _index(
+            request, document, body.content, old_snapshot=None, mutation_id=None
+        )
+        _persist_content(request, indexed, body.content, mutation_id=None)
+    except BaseException:
+        vector_ids = _document_store(request).vector_ids(document.id)
+        if vector_ids:
+            try:
+                await _vector_call(
+                    _vector_store(request).delete, document.repository_id, vector_ids
+                )
+            except Exception:  # noqa: BLE001 - preserve cleanup for the next startup
+                _cleanup_store(request).create(
+                    document.repository_id, document.id, vector_ids
+                )
+        _document_store(request).delete_local(document.id)
+        _remove_local_files(request, document.id)
+        raise
+    persisted = _document_store(request).get(document.id)
+    if persisted is None:  # pragma: no cover - document was just persisted
+        raise _not_found()
+    return _detail(persisted)
+
+
+async def _update_local_document(
+    request: Request, document: DocumentRecord, body: DocumentInput
+) -> DocumentDetail:
+    old_snapshot = _document_snapshot(request, document)
+    request.app.state.version_store.snapshot(
+        document.id, document.title, str(old_snapshot.get("content", ""))
+    )
+    document.title = body.title
+    try:
+        _persist_content(request, document, body.content, mutation_id=None)
+        indexed = await _index(
+            request, document, body.content, old_snapshot=old_snapshot, mutation_id=None
+        )
+    except BaseException:
+        _document_store(request).restore_snapshot(
+            old_snapshot, _snapshot_chunks(old_snapshot)
+        )
+        _restore_file(old_snapshot)
+        raise
+    persisted = _document_store(request).get(indexed.id)
+    if persisted is None:  # pragma: no cover - document was just persisted
+        raise _not_found()
+    return _detail(persisted)
+
+
+def _remove_local_files(request: Request, document_id: str) -> None:
+    directory = request.app.state.settings.documents_dir / document_id
+    if directory.is_symlink():
+        with suppress(FileNotFoundError):
+            directory.unlink()
+    elif directory.exists():
+        with suppress(OSError):
+            shutil.rmtree(directory)
 
 
 def _remote_failure(error: Exception) -> DomainError:
@@ -708,8 +784,10 @@ async def list_documents(request: Request, repository_id: str) -> list[DocumentS
 async def create_document(request: Request, repository_id: str, body: DocumentInput) -> DocumentDetail:
     await _recover_for_request(request)
     repository = _repository_store(request).get(repository_id)
-    if repository is None or not repository.yuque_id:
+    if repository is None:
         raise _not_found()
+    if not repository.yuque_id:
+        return await _create_local_document(request, repository, body)
     mutation_id = str(uuid4())
     marker = f"docmind-mutation:{mutation_id}"
     intent = _mutation_store(request).create(
@@ -883,8 +961,10 @@ async def read_document(request: Request, document_id: str) -> DocumentDetail:
 async def update_document(request: Request, document_id: str, body: DocumentInput) -> DocumentDetail:
     await _recover_for_request(request)
     document = _document_store(request).get(document_id)
-    if document is None or not document.yuque_id:
+    if document is None:
         raise _not_found()
+    if not document.yuque_id:
+        return await _update_local_document(request, document, body)
     old_snapshot = _document_snapshot(request, document)
     request.app.state.version_store.snapshot(
         document.id, document.title, str(old_snapshot.get("content", ""))
@@ -988,7 +1068,20 @@ async def delete_document(request: Request, document_id: str, body: DocumentDele
     if not body.confirm:
         raise DomainError("CONFIRMATION_REQUIRED", "请确认删除文档", 400)
     if not document.yuque_id:
-        raise _not_found()
+        vector_ids = _document_store(request).vector_ids(document.id)
+        _document_store(request).delete_local(document.id)
+        _remove_local_files(request, document.id)
+        deletable_ids = _unowned_vector_ids(request, vector_ids)
+        if deletable_ids:
+            try:
+                await _vector_call(
+                    _vector_store(request).delete, document.repository_id, deletable_ids
+                )
+            except Exception:  # noqa: BLE001 - local cleanup remains retryable
+                _cleanup_store(request).create(
+                    document.repository_id, document.id, deletable_ids
+                )
+        return
     repository = _repository_store(request).get(document.repository_id)
     if repository is None or not repository.yuque_id:
         raise _not_found()

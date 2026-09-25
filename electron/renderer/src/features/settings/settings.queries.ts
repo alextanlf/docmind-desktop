@@ -1,6 +1,11 @@
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { RuntimeSettingsInput, WebSearchSettingsInput } from "../../../../shared/contracts";
+import type {
+  FeishuBindingInput,
+  RuntimeSettingsInput,
+  WebSearchSettingsInput,
+  YuqueApiSettingsInput,
+} from "../../../../shared/contracts";
 import { isRetryable } from "./ollama-errors";
 
 export { clientErrorMessage, errorAction, isRetryable } from "./ollama-errors";
@@ -125,5 +130,37 @@ export function useSaveWebSearchMutation() {
   return useMutation({
     mutationFn: (input: WebSearchSettingsInput) => window.docmind.settings.saveWebSearch(input),
     onSuccess: (settings) => client.setQueryData(settingsKeys.root, settings),
+  });
+}
+
+export function useSaveYuqueApiMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: YuqueApiSettingsInput) => window.docmind.settings.saveYuqueApi(input),
+    onSuccess: (settings) => client.setQueryData(settingsKeys.root, settings),
+  });
+}
+
+export function useTestYuqueApiMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => window.docmind.settings.testYuqueApi(),
+    onSuccess: () => client.invalidateQueries({ queryKey: settingsKeys.root }),
+  });
+}
+
+export function useSaveFeishuMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: FeishuBindingInput) => window.docmind.settings.saveFeishu(input),
+    onSuccess: (settings) => client.setQueryData(settingsKeys.root, settings),
+  });
+}
+
+export function useTestFeishuMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => window.docmind.settings.testFeishu(),
+    onSuccess: () => client.invalidateQueries({ queryKey: settingsKeys.root }),
   });
 }

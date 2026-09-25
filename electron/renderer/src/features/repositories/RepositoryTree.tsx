@@ -165,16 +165,18 @@ export function RepositoryTree({ onOpenDocument }: RepositoryTreeProps) {
                   <ChevronRight aria-hidden="true" size={15} />
                 )}
                 <span>{repository.name}</span>
-                <small>{repository.documentCount}</small>
+                <small>
+                  {repository.yuqueId ? "语雀" : "本地"} · {repository.documentCount}
+                </small>
               </button>
-              <RepositorySyncButton repositoryId={repository.id} />
+              {repository.yuqueId ? <RepositorySyncButton repositoryId={repository.id} /> : null}
               {expanded ? (
                 <>
                   <RepositoryDocuments
                     onOpenDocument={onOpenDocument}
                     repositoryId={repository.id}
                   />
-                  <ConflictList repositoryId={repository.id} />
+                  {repository.yuqueId ? <ConflictList repositoryId={repository.id} /> : null}
                 </>
               ) : null}
             </li>

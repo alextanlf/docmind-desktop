@@ -102,6 +102,36 @@ describe("设置", () => {
     expect(api.yuque.login).toHaveBeenCalledTimes(1);
   });
 
+  it("shows independent Yuque web, Yuque API, and Feishu binding cards", async () => {
+    const api = installDocMindApi({
+      yuque: { status: vi.fn().mockResolvedValue(loggedOutYuque) },
+    });
+    renderSettings();
+
+    expect(await screen.findByRole("heading", { name: "语雀网页" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "语雀 API" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "飞书绑定" })).toBeVisible();
+    expect(screen.getAllByText("未绑定")).toHaveLength(2);
+
+    fireEvent.change(screen.getByLabelText("语雀 API Token"), {
+      target: { value: "yuque-token" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存并验证" }));
+    await screen.findByText("语雀 API 已连接，后续语雀读写将优先使用 API");
+    expect(api.settings.saveYuqueApi).toHaveBeenCalledWith({ token: "yuque-token" });
+    expect(api.settings.testYuqueApi).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(screen.getByLabelText("飞书 Webhook"), {
+      target: { value: "https://open.feishu.cn/open-apis/bot/v2/hook/test-token" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存并绑定" }));
+    await screen.findByText("飞书绑定成功，测试消息已发送");
+    expect(api.settings.saveFeishu).toHaveBeenCalledWith({
+      webhookUrl: "https://open.feishu.cn/open-apis/bot/v2/hook/test-token",
+    });
+    expect(api.settings.testFeishu).toHaveBeenCalledTimes(1);
+  });
+
   it("installs the Yuque browser when login reports a missing browser", async () => {
     const api = installDocMindApi({
       yuque: {

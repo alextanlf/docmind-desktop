@@ -12,9 +12,6 @@ export async function completeFakeOnboarding(page: Page): Promise<void> {
   await page.getByLabel("API Key").fill("fake-key");
   await page.getByRole("button", { name: "保存设置" }).click();
   await page.getByRole("button", { name: "测试模型连接" }).click();
-  await page.getByRole("button", { name: "下一步" }).click();
-  await page.getByRole("button", { name: "打开语雀登录" }).click();
-  await expect(page.getByText("已登录", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "进入工作台" }).click();
   await expect(page.getByLabel("工作台")).toBeVisible();
 }

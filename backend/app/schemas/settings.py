@@ -25,6 +25,30 @@ class ModelSettingsView(ModelConfig):
     pass
 
 
+class ConnectionBindingView(WireModel):
+    configured: bool = False
+    verified: bool = False
+    label: str | None = None
+
+
+class YuqueApiBindingView(ConnectionBindingView):
+    active: bool = False
+
+
+class ConnectionTestResult(WireModel):
+    connected: bool
+    message: str
+    label: str | None = None
+
+
+class YuqueApiSettingsUpdate(WireModel):
+    token: str | None = Field(default=None, max_length=2_000)
+
+
+class FeishuBindingUpdate(WireModel):
+    webhook_url: str | None = Field(default=None, max_length=2_000)
+
+
 class SettingsView(WireModel):
     model: ModelSettingsView
     has_api_key: bool
@@ -32,6 +56,8 @@ class SettingsView(WireModel):
     screenshot_count: int
     web_search: WebSearchSettings
     runtime: RuntimeSettingsInput | None = None
+    yuque_api: YuqueApiBindingView = Field(default_factory=YuqueApiBindingView)
+    feishu: ConnectionBindingView = Field(default_factory=ConnectionBindingView)
 
 
 class WebSearchSettingsUpdate(WireModel):
@@ -44,10 +70,15 @@ class WebSearchSettingsUpdate(WireModel):
 
 __all__ = [
     "MODEL_PRESETS",
+    "ConnectionBindingView",
+    "ConnectionTestResult",
+    "FeishuBindingUpdate",
     "ModelConfig",
     "ModelConnectionResult",
     "ModelSettingsUpdate",
     "ModelSettingsView",
     "SettingsView",
     "WebSearchSettingsUpdate",
+    "YuqueApiBindingView",
+    "YuqueApiSettingsUpdate",
 ]

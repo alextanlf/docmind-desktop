@@ -98,6 +98,7 @@ from app.sync.conflict import SyncConflictService
 from app.sync.refresher import DocumentRefresher
 from app.sync.scheduler import SyncScheduler
 from app.sync.service import IncrementalSyncService
+from app.yuque.api_gateway import RoutingYuqueGateway, YuqueApiGateway
 from app.yuque.discovery import YuqueDiscovery, read_remote_snapshot
 from app.yuque.gateway import PlaywrightYuqueGateway, YuqueGateway
 
@@ -210,6 +211,27 @@ def create_app(
                 runtime_secret_store,
                 provider_factory=lambda _config, _api_key: fake_llm_provider,
             )
+        if fake_services:
+            SettingStore(database).set("yuque-web.connected", "true")
+        yuque_web_gateway = runtime_yuque_gateway
+
+        def _yuque_api_token() -> str | None:
+            if SettingStore(database).get("yuque-api.verified") != "true":
+                return None
+            try:
+                return runtime_secret_store.get("yuque-api:token")
+            except (DomainError, OSError):
+                return None
+
+        yuque_api_gateway = YuqueApiGateway(_yuque_api_token)
+        active_yuque_gateway = RoutingYuqueGateway(
+            yuque_web_gateway,
+            yuque_api_gateway,
+            lambda: _yuque_api_token() is not None,
+        )
+        app.state.yuque_web_gateway = yuque_web_gateway
+        app.state.yuque_api_gateway = yuque_api_gateway
+        app.state.yuque_gateway = active_yuque_gateway
         repository_store = RepositoryStore(database)
         conversation_store = ConversationStore(database)
         vector_store = PersistentVectorStore(runtime_settings.vectorstore_settings)
@@ -221,7 +243,7 @@ def create_app(
             chunker=SemanticChunker(),
             embedding_provider=runtime_embedding_provider,
             vector_store=vector_store,
-            yuque_gateway=runtime_yuque_gateway,
+            yuque_gateway=active_yuque_gateway,
             repository_store=repository_store,
             document_store=document_store,
             job_store=ImportJobStore(database),
@@ -241,7 +263,7 @@ def create_app(
             frontier=CrawlEntryStore(database),
         )
         yuque_discovery = YuqueDiscovery(
-            runtime_yuque_gateway, repository_store, runtime_settings.staging_dir
+            active_yuque_gateway, repository_store, runtime_settings.staging_dir
         )
         app.state.batch_service = BatchService(
             store=app.state.batch_store,
@@ -430,7 +452,7 @@ def create_app(
             conversation_store,
             runtime_llm_provider,
             LocalKnowledgeStore(runtime_settings.data_dir),
-            yuque_gateway=runtime_yuque_gateway,
+            yuque_gateway=active_yuque_gateway,
             mutation_store=app.state.document_mutation_store,
             indexer=memory_indexer,
             document_saver=lambda **kwargs: save_distillation_document(app, **kwargs),
@@ -455,7 +477,7 @@ def create_app(
             repository = repository_store.get(repository_id)
             if repository is None or not repository.yuque_id:
                 return []
-            return await read_remote_snapshot(runtime_yuque_gateway, repository.yuque_id)
+            return await read_remote_snapshot(active_yuque_gateway, repository.yuque_id)
 
         sync_service = IncrementalSyncService(
             sync_state_store=sync_state_store,
@@ -487,7 +509,7 @@ def create_app(
             document_store=document_store,
             sync_state_store=sync_state_store,
             snapshot_reader=read_repo_snapshot,
-            gateway=runtime_yuque_gateway,
+            gateway=active_yuque_gateway,
             refresher=refresher,
             repository_store=repository_store,
         )
@@ -510,7 +532,7 @@ def create_app(
             await summary_task
             sync_scheduler.stop()
             await sync_task
-            await runtime_yuque_gateway.close()
+            await active_yuque_gateway.close()
             database.engine.dispose()
 
     app = FastAPI(dependencies=[Depends(require_runtime_token)], lifespan=lifespan)

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { IPC_CHANNELS, streamEventChannel } from "../shared/channels";
 import {
   ChatStreamInputSchema,
+  ConnectionTestResultSchema,
   ConflictResolutionSchema,
   ConflictViewSchema,
   CreateImportInputSchema,
@@ -13,6 +14,7 @@ import {
   DocumentInputSchema,
   DocumentSummarySchema,
   EventEnvelopeSchema,
+  FeishuBindingInputSchema,
   GraphEdgeSchema,
   GraphNodeSchema,
   ImportJobSchema,
@@ -52,6 +54,7 @@ import {
   OllamaPullInputSchema,
   OllamaPullSchema,
   RuntimeSettingsInputSchema,
+  YuqueApiSettingsInputSchema,
 } from "../shared/contracts";
 import type { DocMindApi, EventEnvelope } from "../shared/contracts";
 
@@ -163,6 +166,20 @@ const api: DocMindApi = {
         SettingsViewSchema,
         RuntimeSettingsInputSchema.parse(input),
       ),
+    saveYuqueApi: (input) =>
+      invoke(
+        IPC_CHANNELS.settingsSaveYuqueApi,
+        SettingsViewSchema,
+        YuqueApiSettingsInputSchema.parse(input),
+      ),
+    testYuqueApi: () => invoke(IPC_CHANNELS.settingsTestYuqueApi, ConnectionTestResultSchema),
+    saveFeishu: (input) =>
+      invoke(
+        IPC_CHANNELS.settingsSaveFeishu,
+        SettingsViewSchema,
+        FeishuBindingInputSchema.parse(input),
+      ),
+    testFeishu: () => invoke(IPC_CHANNELS.settingsTestFeishu, ConnectionTestResultSchema),
   },
   embedding: {
     status: () => invoke(IPC_CHANNELS.embeddingStatus, ModelStatusSchema),

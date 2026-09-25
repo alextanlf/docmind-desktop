@@ -1,5 +1,5 @@
 import { ExternalLink, LoaderCircle, LogIn } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { appQueryClient } from "../../app/query-client";
 import { StatusBadge } from "../../components/StatusBadge";
 import { clientErrorMessage, settingsKeys, useYuqueStatusQuery } from "./settings.queries";
@@ -12,12 +12,19 @@ export function YuqueStatus({ loginLabel }: { loginLabel?: string }) {
   const [installingBrowser, setInstallingBrowser] = useState(false);
   const [installMessage, setInstallMessage] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (query.data?.loggedIn) {
+      void appQueryClient.invalidateQueries({ queryKey: ["repositories"] });
+    }
+  }, [query.data?.loggedIn]);
+
   async function login() {
     setLoggingIn(true);
     setError(null);
     try {
       const result = await window.docmind.yuque.login();
       appQueryClient.setQueryData(settingsKeys.yuque, result);
+      await appQueryClient.invalidateQueries({ queryKey: ["repositories"] });
       setBrowserUnavailable(false);
     } catch (loginError) {
       setBrowserUnavailable((loginError as { code?: string }).code === "YUQUE_BROWSER_UNAVAILABLE");
