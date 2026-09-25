@@ -95,7 +95,9 @@ class TestAppHarness:
         pytest.fail(f"batch timed out: {final}")
 
     async def create_repository(self, name: str) -> RepositoryView:
-        response = await self.client.post("/api/repositories", json={"name": name})
+        response = await self.client.post(
+            "/api/repositories", json={"name": name, "createRemote": True}
+        )
         response.raise_for_status()
         return RepositoryView.model_validate(response.json())
 

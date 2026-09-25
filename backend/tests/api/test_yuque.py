@@ -36,6 +36,7 @@ def test_yuque_status_returns_masked_logged_in_state(client, auth_headers) -> No
         "accountLabel": "f***e",
         "requiresLogin": False,
     }
+    assert client.app.state.settings_service.setting_store.get("yuque-web.connected") == "true"
 
 
 def test_yuque_install_browser_route_uses_injected_gateway(client, auth_headers) -> None:

@@ -24,7 +24,7 @@ test("onboards, imports Markdown and answers with a citation", async ({ electron
 test("shows stable settings authentication failure copy", async ({ electronApp, page }) => {
   await completeFakeOnboarding(page);
   await electronApp.failNextModelTest();
-  await page.getByLabel("设置").click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("button", { name: "测试连接", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("API Key 无效，请更新密钥后重试");
 });

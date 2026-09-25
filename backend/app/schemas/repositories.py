@@ -9,6 +9,7 @@ from app.schemas.common import WireModel
 
 class RepositoryCreate(WireModel):
     name: str = Field(max_length=120)
+    create_remote: bool = False
 
     @field_validator("name")
     @classmethod

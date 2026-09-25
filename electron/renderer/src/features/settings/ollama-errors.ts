@@ -11,6 +11,13 @@ const messages: Record<string, string> = {
   ROUTING_CLOUD_UNAVAILABLE: "本地和云端都不可用",
   YUQUE_BROWSER_UNAVAILABLE: "本机尚未安装语雀登录浏览器，暂无法打开登录窗口",
   YUQUE_PAGE_UNAVAILABLE: "语雀页面加载超时，请检查网络后重试",
+  YUQUE_API_AUTH_FAILED: "语雀 API Token 无效或已过期",
+  YUQUE_API_UNAVAILABLE: "无法连接语雀 API，请检查网络后重试",
+  YUQUE_API_TOKEN_REQUIRED: "请先填写并保存语雀 API Token",
+  FEISHU_AUTH_FAILED: "飞书 Webhook 无效或已失效",
+  FEISHU_UNAVAILABLE: "无法连接飞书，请检查网络后重试",
+  FEISHU_WEBHOOK_INVALID: "飞书 Webhook 地址格式无效",
+  FEISHU_WEBHOOK_REQUIRED: "请先填写并保存飞书 Webhook",
 };
 
 const actions: Record<string, string> = {
@@ -24,6 +31,11 @@ const actions: Record<string, string> = {
   ROUTING_CLOUD_UNAVAILABLE: "检查设置并重试",
   YUQUE_BROWSER_UNAVAILABLE: "安装后重试",
   YUQUE_PAGE_UNAVAILABLE: "检查网络后重试",
+  YUQUE_API_AUTH_FAILED: "更新语雀 API Token",
+  YUQUE_API_UNAVAILABLE: "检查网络后重试",
+  FEISHU_AUTH_FAILED: "更新飞书 Webhook",
+  FEISHU_UNAVAILABLE: "检查网络后重试",
+  FEISHU_WEBHOOK_INVALID: "检查 Webhook 地址",
 };
 
 export function isRetryable(error: unknown): boolean {
