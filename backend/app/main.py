@@ -106,6 +106,9 @@ from app.remote.snapshot import read_remote_snapshot
 from app.storage.models import ProviderCredentialState
 from app.yuque.api_gateway import YuqueApiGateway, YuqueProvider
 from app.yuque.credentials import YUQUE_CREDENTIAL_SPEC
+from app.feishu.credentials import FEISHU_CREDENTIAL_SPEC
+from app.feishu.provider import FeishuProvider
+from app.feishu.tokens import FeishuTokenManager
 from app.yuque.gateway import PlaywrightYuqueGateway
 
 # 界面启动时会拉起语雀浏览器做"首次设置"检查；启动同步必须排在它后面，
@@ -203,6 +206,12 @@ def _assemble_production_registry(
         ),
         _yuque_configured,
         credential_spec=YUQUE_CREDENTIAL_SPEC,
+    )
+    # Feishu: availability is derived from the credential spec (app or user
+    # channel verified) by the registry's default probe.
+    registry.register(
+        FeishuProvider(FeishuTokenManager(credential_store)),
+        credential_spec=FEISHU_CREDENTIAL_SPEC,
     )
     return registry
 
