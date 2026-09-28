@@ -89,6 +89,7 @@ class FakeRepo:
     def __init__(self, remote_id: str, provider: str = "yuque") -> None:
         self.remote_id = remote_id
         self.provider = provider
+        self.remote_parent_id = None
 
 
 class FakeRepositoryStore:

@@ -156,6 +156,38 @@ describe("preload bridge", () => {
     expect(parsed.indexedDocumentCount).toBe(2);
   });
 
+  it("routes repository parent updates through the typed repository API", async () => {
+    const api = exposed.docmind as any;
+    const repositoryId = "00000000-0000-0000-0000-000000000021";
+    invoke.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        id: repositoryId,
+        provider: "feishu",
+        remoteId: "sp1",
+        name: "产品文档",
+        description: null,
+        remoteUrl: null,
+        remoteParentId: "wikParent",
+        documentCount: 0,
+        indexedDocumentCount: 0,
+        syncStatus: "unknown",
+        createdAt: "2026-08-31T00:00:00Z",
+        updatedAt: "2026-08-31T00:00:00Z",
+      },
+    });
+
+    await expect(
+      api.repositories.update(repositoryId, { remoteParentId: "wikParent" }),
+    ).resolves.toMatchObject({ remoteParentId: "wikParent" });
+    expect(invoke).toHaveBeenLastCalledWith("repositories:update", repositoryId, {
+      remoteParentId: "wikParent",
+    });
+    expect(() => api.repositories.update("not-a-uuid", { remoteParentId: null })).toThrow(
+      "INVALID_REQUEST",
+    );
+  });
+
   it("keeps one listener per import request when subscribed repeatedly", () => {
     const api = exposed.docmind as any;
     const callback = vi.fn();

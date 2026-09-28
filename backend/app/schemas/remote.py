@@ -43,6 +43,9 @@ class CreateRemoteDocumentRequest(WireModel):
     repository_id: str
     title: str
     content: str
+    # Provider-native hierarchy id (Feishu: wiki node token). Providers that
+    # do not support nested writes ignore it.
+    parent_id: str | None = None
 
 
 class UpdateRemoteDocumentRequest(WireModel):
@@ -54,6 +57,7 @@ class UpdateRemoteDocumentRequest(WireModel):
 class ProviderCapabilitiesView(WireModel):
     browser_install: bool = False
     marker_lookup: bool = False
+    parent_node_write: bool = False
 
 
 class ProviderSummaryView(WireModel):

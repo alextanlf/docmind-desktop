@@ -23,10 +23,13 @@ class ProviderCapabilities:
     browser and can install it on demand (Playwright Chromium).
     ``marker_lookup``: the provider supports ``find_document_by_marker`` as a
     write-compensation mechanism for idempotent mutations.
+    ``parent_node_write``: new documents may target a provider-native parent
+    container (Feishu: ``parent_node_token``).
     """
 
     browser_install: bool = False
     marker_lookup: bool = False
+    parent_node_write: bool = False
 
 
 @dataclass

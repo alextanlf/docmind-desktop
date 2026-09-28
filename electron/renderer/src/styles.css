@@ -346,6 +346,29 @@ button:disabled {
 .tree-create-form .tree-error {
   grid-column: 1 / -1;
 }
+.repository-parent-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px;
+  padding: 2px 4px 6px 20px;
+}
+.repository-parent-form label {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 11px;
+}
+.repository-parent-form input {
+  min-width: 0;
+  height: 28px;
+  font-size: 11px;
+}
+.repository-parent-form button {
+  height: 28px;
+  padding: 0 8px;
+}
+.repository-parent-form .tree-error {
+  grid-column: 1 / -1;
+}
 .document-editor {
   display: grid;
   min-height: 100%;

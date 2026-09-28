@@ -7,6 +7,7 @@ import {
   useRepositoriesQuery,
   useRepositorySyncQuery,
   useSyncRepositoryMutation,
+  useUpdateRepositoryMutation,
 } from "./repository.queries";
 
 type RepositoryTreeProps = {
@@ -48,6 +49,48 @@ function RepositoryDocuments({
   );
 }
 
+function RepositoryParentBinding({
+  repositoryId,
+  initialValue,
+}: {
+  repositoryId: string;
+  initialValue: string | null;
+}) {
+  const [value, setValue] = useState(initialValue ?? "");
+  const [error, setError] = useState("");
+  const update = useUpdateRepositoryMutation();
+
+  return (
+    <form
+      className="repository-parent-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        setError("");
+        update.mutate(
+          { repositoryId, remoteParentId: value.trim() || null },
+          { onError: (mutationError) => setError(clientErrorMessage(mutationError)) },
+        );
+      }}
+    >
+      <label htmlFor={`repository-parent-${repositoryId}`}>写入目录</label>
+      <input
+        id={`repository-parent-${repositoryId}`}
+        onChange={(event) => setValue(event.target.value)}
+        placeholder="父节点 Token，留空写入根目录"
+        value={value}
+      />
+      <button className="tree-retry" disabled={update.isPending} type="submit">
+        保存目录
+      </button>
+      {error ? (
+        <p className="tree-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </form>
+  );
+}
+
 function RepositorySyncButton({ repositoryId }: { repositoryId: string }) {
   const sync = useRepositorySyncQuery(repositoryId);
   const mutation = useSyncRepositoryMutation(repositoryId);
@@ -79,6 +122,8 @@ export function RepositoryTree({ onOpenDocument }: RepositoryTreeProps) {
     if (!provider) return "本地";
     return providers.data?.find((entry) => entry.name === provider)?.label ?? provider;
   };
+  const providerCapabilities = (provider: string | null | undefined) =>
+    providers.data?.find((entry) => entry.name === provider)?.capabilities;
 
   async function createRepository() {
     const trimmed = name.trim();
@@ -185,6 +230,13 @@ export function RepositoryTree({ onOpenDocument }: RepositoryTreeProps) {
                     repositoryId={repository.id}
                   />
                   {repository.provider ? <ConflictList repositoryId={repository.id} /> : null}
+                  {providerCapabilities(repository.provider)?.parentNodeWrite ? (
+                    <RepositoryParentBinding
+                      key={`${repository.id}:${repository.remoteParentId ?? ""}`}
+                      initialValue={repository.remoteParentId ?? null}
+                      repositoryId={repository.id}
+                    />
+                  ) : null}
                 </>
               ) : null}
             </li>

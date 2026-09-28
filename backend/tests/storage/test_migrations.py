@@ -185,8 +185,8 @@ def test_upgrade_creates_exact_phase_one_columns(database: Database) -> None:
     inspector = inspect(database.engine)
 
     assert {column["name"] for column in inspector.get_columns("repositories")} == {
-        "id", "provider", "remote_id", "name", "description", "remote_url", "sync_status",
-        "document_count", "created_at", "updated_at",
+        "id", "provider", "remote_id", "name", "description", "remote_url", "remote_parent_id",
+        "sync_status", "document_count", "created_at", "updated_at",
     }
     assert {column["name"] for column in inspector.get_columns("documents")} == {
         "id", "repository_id", "remote_id", "title", "source_url", "raw_path", "markdown_path",

@@ -10,20 +10,22 @@ Auth strategy: the OAuth user token (``user`` channel) is preferred, the
 self-built app's tenant token (``app`` channel) is the fallback — see
 ``app.feishu.tokens``. Content writes go through the official
 markdown → blocks convert endpoint plus descendant insertion, so no
-hand-written block model is needed. Reads use the docx ``raw_content``
-endpoint and therefore return plain text rather than markdown (a v1
-trade-off, same shape as the Yuque browser fallback).
+hand-written block model is needed. Reads list the docx blocks and rebuild
+common Markdown structures (headings, lists, code, quotes, todos and
+tables); rich blocks without a Markdown equivalent degrade to explicit
+placeholders. New documents can target a configured wiki ``parent_node_token``.
 
 Known limits: only ``docx`` nodes are listed (legacy ``doc`` and
-spreadsheet/bitable nodes are skipped); list indentation is flattened by
-the wiki tree walk.
+spreadsheet/bitable nodes are skipped).
 """
 from __future__ import annotations
 
 from app.api.errors import DomainError
 from app.feishu import client
+from app.feishu.markdown import render_document_blocks
 from app.feishu.oauth import FeishuOAuthFlow
 from app.feishu.tokens import FeishuTokenManager
+from app.remote.markers import strip_mutation_marker
 from app.remote.provider import ProviderCapabilities, ProviderIdentity
 from app.schemas.remote import (
     CreateRemoteDocumentRequest,
@@ -43,7 +45,11 @@ class FeishuProvider:
     identity = ProviderIdentity(
         name="feishu",
         label="飞书文档",
-        capabilities=ProviderCapabilities(browser_install=False, marker_lookup=True),
+        capabilities=ProviderCapabilities(
+            browser_install=False,
+            marker_lookup=True,
+            parent_node_write=True,
+        ),
     )
 
     def __init__(
@@ -124,38 +130,20 @@ class FeishuProvider:
 
     async def list_documents(self, repository_id: str) -> list[RemoteDocument]:
         token = await self._tokens.require_token()
-        documents: list[RemoteDocument] = []
-        # Iterative depth-first walk over the wiki node tree.
-        stack: list[tuple[str | None, int]] = [(None, 0)]
-        while stack:
-            parent_token, depth = stack.pop()
-            if depth > _MAX_TREE_DEPTH:
-                continue
-            nodes = await client.list_space_nodes(token, repository_id, parent_token)
-            for node in reversed(nodes):
-                if node.get("obj_type") != "docx":
-                    # Still descend: containers may hold docx children.
-                    if node.get("has_child") and node.get("node_token"):
-                        stack.append((str(node["node_token"]), depth + 1))
-                    continue
-                node_token = node.get("node_token")
-                if not node_token:
-                    continue
-                documents.append(
-                    RemoteDocument(
-                        remote_id=str(node_token),
-                        repository_id=repository_id,
-                        title=str(node.get("title") or node_token),
-                        url=f"https://feishu.cn/wiki/{node_token}",
-                    )
-                )
-                if node.get("has_child"):
-                    stack.append((str(node_token), depth + 1))
-        return documents
+        return [
+            _node_to_document(node, repository_id)
+            for node in await self._walk_nodes(token, repository_id)
+            if str(node.get("obj_type") or "") == "docx"
+        ]
 
     async def create_document(self, request: CreateRemoteDocumentRequest) -> RemoteDocument:
         token = await self._tokens.require_token()
-        node = await client.create_wiki_node(token, request.repository_id, request.title)
+        node = await client.create_wiki_node(
+            token,
+            request.repository_id,
+            request.title,
+            parent_node_token=request.parent_id,
+        )
         node_token = str(node["node_token"])
         document_id = str(node.get("obj_token") or "")
         if request.content.strip() and document_id:
@@ -170,11 +158,18 @@ class FeishuProvider:
     async def find_document_by_marker(
         self, repository_id: str, marker: str
     ) -> RemoteDocument | None:
-        for document in await self.list_documents(repository_id):
-            content = await self.read_document(document.remote_id)
-            if marker in content.content:
-                return document
-        return None
+        # Suite search requires a user token; tenant-only installations keep
+        # the correctness-preserving repository walk as a fallback.
+        user_token = await self._tokens.user_token()
+        if user_token:
+            try:
+                found = await self._find_document_by_search(user_token, repository_id, marker)
+                if found is not None:
+                    return found
+            except DomainError:
+                # Search is an optimization, never a correctness dependency.
+                pass
+        return await self._find_document_by_walk(repository_id, marker)
 
     async def document_exists(self, repository_id: str, document_id: str) -> bool:
         token = await self._tokens.require_token()
@@ -187,12 +182,20 @@ class FeishuProvider:
         return str(node.get("space_id") or "") == repository_id
 
     async def read_document(self, document_id: str) -> RemoteDocumentContent:
+        return await self._read_document(document_id, strip_marker=True)
+
+    async def _read_document(
+        self, document_id: str, *, strip_marker: bool
+    ) -> RemoteDocumentContent:
         token = await self._tokens.require_token()
         node = await client.get_wiki_node(token, document_id)
         obj_token = str(node.get("obj_token") or "")
         if not obj_token:
             raise DomainError("FEISHU_API_ERROR", "飞书节点缺少文档标识", 502, True)
-        content = await client.fetch_document_raw_content(token, obj_token)
+        blocks = await client.list_document_blocks(token, obj_token)
+        content = render_document_blocks(blocks)
+        if strip_marker:
+            content = strip_mutation_marker(content)
         title = str(node.get("title") or document_id)
         return RemoteDocumentContent(
             remote_id=document_id,
@@ -232,6 +235,83 @@ class FeishuProvider:
     async def close(self) -> None:
         return None
 
+    async def _walk_nodes(self, token: str, repository_id: str) -> list[dict[str, object]]:
+        """Walk wiki metadata without reading document bodies."""
+        nodes: list[dict[str, object]] = []
+        stack: list[tuple[str | None, int]] = [(None, 0)]
+        while stack:
+            parent_token, depth = stack.pop()
+            if depth > _MAX_TREE_DEPTH:
+                continue
+            children = await client.list_space_nodes(token, repository_id, parent_token)
+            for node in reversed(children):
+                nodes.append(node)
+                node_token = node.get("node_token")
+                if node.get("has_child") and node_token:
+                    stack.append((str(node_token), depth + 1))
+        return nodes
+
+    async def _find_document_by_search(
+        self, user_token: str, repository_id: str, marker: str
+    ) -> RemoteDocument | None:
+        offset = 0
+        scanned = 0
+        while scanned < 200:
+            page = await client.search_documents(
+                user_token,
+                marker,
+                offset=offset,
+                count=20,
+                docs_types=["wiki", "docx"],
+            )
+            entities = page["entities"]
+            if not entities:
+                break
+            for entity in entities:
+                document = await self._node_for_search_entity(
+                    user_token, repository_id, entity
+                )
+                if document is None:
+                    continue
+                content = await self._read_document(
+                    document.remote_id, strip_marker=False
+                )
+                if marker in content.content:
+                    return document
+            scanned += len(entities)
+            if not page["has_more"]:
+                break
+            offset += len(entities)
+        return None
+
+    async def _node_for_search_entity(
+        self, user_token: str, repository_id: str, entity: dict[str, object]
+    ) -> RemoteDocument | None:
+        token = str(entity.get("docs_token") or "")
+        docs_type = str(entity.get("docs_type") or "wiki")
+        if not token:
+            return None
+        try:
+            node = await client.get_wiki_node(user_token, token, obj_type=docs_type)
+        except DomainError as error:
+            if error.code == "FEISHU_API_NOT_FOUND":
+                return None
+            raise
+        if str(node.get("space_id") or "") != repository_id:
+            return None
+        if str(node.get("obj_type") or docs_type) != "docx":
+            return None
+        return _node_to_document(node, repository_id)
+
+    async def _find_document_by_walk(
+        self, repository_id: str, marker: str
+    ) -> RemoteDocument | None:
+        for document in await self.list_documents(repository_id):
+            content = await self._read_document(document.remote_id, strip_marker=False)
+            if marker in content.content:
+                return document
+        return None
+
 
 async def _replace_document_body(token: str, document_id: str, markdown: str) -> None:
     """Replace the whole page body: convert → clear → insert."""
@@ -239,6 +319,16 @@ async def _replace_document_body(token: str, document_id: str, markdown: str) ->
     children = await client.list_page_children(token, document_id)
     await client.delete_page_children(token, document_id, len(children))
     await client.insert_descendant_blocks(token, document_id, first_level_ids, descendants)
+
+
+def _node_to_document(node: dict[str, object], repository_id: str) -> RemoteDocument:
+    node_token = str(node.get("node_token") or "")
+    return RemoteDocument(
+        remote_id=node_token,
+        repository_id=repository_id,
+        title=str(node.get("title") or node_token),
+        url=f"https://feishu.cn/wiki/{node_token}",
+    )
 
 
 def _mask_account(value: str) -> str | None:

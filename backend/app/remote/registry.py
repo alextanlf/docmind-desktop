@@ -119,6 +119,7 @@ class ProviderRegistry:
                     capabilities=ProviderCapabilitiesView(
                         browser_install=capabilities.browser_install,
                         marker_lookup=capabilities.marker_lookup,
+                        parent_node_write=capabilities.parent_node_write,
                     ),
                 )
             )

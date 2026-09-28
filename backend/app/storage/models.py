@@ -151,6 +151,8 @@ class RepositoryRecord(Base):
     name: Mapped[str] = mapped_column(String(512))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     remote_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Provider-native parent/container for newly created documents.
+    remote_parent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     sync_status: Mapped[str] = mapped_column(String(64), default="unknown", server_default=text("'unknown'"))
     document_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(

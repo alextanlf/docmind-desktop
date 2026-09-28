@@ -833,6 +833,7 @@ async def create_document(request: Request, repository_id: str, body: DocumentIn
                 repository_id=repository.remote_id,
                 title=body.title,
                 content=_marked_create_content(body.content, marker),
+                parent_id=repository.remote_parent_id,
             )
         )
         _update_intent(
@@ -942,6 +943,7 @@ async def save_distillation_document(
                     repository_id=repository.remote_id,
                     title=title,
                     content=_marked_create_content(content, marker),
+                    parent_id=repository.remote_parent_id,
                 )
             )
         _update_intent(request, mutation_id, phase="remote_applied", remote_applied=True, remote_id=remote.remote_id, remote_url=remote.url)

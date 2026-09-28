@@ -4,7 +4,8 @@ Covers the exact surface the ``FeishuProvider`` needs:
 
 * app/tenant token acquisition (``auth/v3``),
 * wiki v2 spaces and nodes (repositories and the document tree),
-* docx meta / raw content / markdown conversion / block replacement.
+* docx meta / rich block listing / markdown conversion / block replacement,
+* suite document search for mutation-marker lookup (user token only).
 
 Every function takes the access token explicitly; token selection
 (user OAuth token first, tenant token fallback) lives in
@@ -181,12 +182,14 @@ async def list_space_nodes(
     return await _list_paged(token, f"/open-apis/wiki/v2/spaces/{space_id}/nodes", params=params)
 
 
-async def get_wiki_node(token: str, node_token: str) -> dict[str, Any]:
+async def get_wiki_node(
+    token: str, node_token: str, obj_type: str = "wiki"
+) -> dict[str, Any]:
     data = await _request_data(
         "GET",
         "/open-apis/wiki/v2/spaces/get_node",
         token=token,
-        params={"token": node_token, "obj_type": "wiki"},
+        params={"token": node_token, "obj_type": obj_type},
     )
     node = _extract(data, "node")
     if not isinstance(node, dict) or not node.get("node_token"):
@@ -194,12 +197,20 @@ async def get_wiki_node(token: str, node_token: str) -> dict[str, Any]:
     return node
 
 
-async def create_wiki_node(token: str, space_id: str, title: str) -> dict[str, Any]:
+async def create_wiki_node(
+    token: str,
+    space_id: str,
+    title: str,
+    parent_node_token: str | None = None,
+) -> dict[str, Any]:
+    body: dict[str, Any] = {"obj_type": "docx", "node_type": "origin", "title": title}
+    if parent_node_token:
+        body["parent_node_token"] = parent_node_token
     data = await _request_data(
         "POST",
         f"/open-apis/wiki/v2/spaces/{space_id}/nodes",
         token=token,
-        json={"obj_type": "docx", "node_type": "origin", "title": title},
+        json=body,
     )
     node = _extract(data, "node")
     if not isinstance(node, dict) or not node.get("node_token"):
@@ -235,6 +246,43 @@ async def fetch_document_raw_content(token: str, document_id: str) -> str:
     )
     content = _extract(data, "content")
     return content if isinstance(content, str) else ""
+
+
+async def list_document_blocks(token: str, document_id: str) -> list[dict[str, Any]]:
+    """Return every rich-text block in one docx document."""
+    return await _list_paged(
+        token,
+        f"/open-apis/docx/v1/documents/{document_id}/blocks",
+        params={"page_size": 500, "document_revision_id": -1},
+    )
+
+
+async def search_documents(
+    token: str,
+    search_key: str,
+    *,
+    offset: int = 0,
+    count: int = 20,
+    docs_types: list[str] | None = None,
+) -> dict[str, Any]:
+    """Search cloud documents with a user access token.
+
+    The suite search endpoint only accepts user tokens.  Callers must fall
+    back to a repository walk when the user channel is unavailable.
+    """
+    body: dict[str, Any] = {"search_key": search_key, "offset": offset, "count": count}
+    if docs_types:
+        body["docs_types"] = docs_types
+    data = await _request_data(
+        "POST",
+        "/open-apis/suite/docs-api/search/object",
+        token=token,
+        json=body,
+    )
+    if not isinstance(data, dict):
+        raise DomainError("FEISHU_API_ERROR", "飞书搜索返回的数据格式无效", 502, True)
+    entities = [item for item in (data.get("docs_entities") or []) if isinstance(item, dict)]
+    return {"entities": entities, "has_more": bool(data.get("has_more"))}
 
 
 async def convert_markdown_blocks(token: str, markdown: str) -> tuple[list[str], list[dict[str, Any]]]:
