@@ -27,7 +27,9 @@ from app.schemas.imports import (
     SourcePreview,
     SourceRef,
 )
-from app.schemas.yuque import YuqueDocument, YuqueDocumentContent
+from app.schemas.remote import RemoteDocument, RemoteDocumentContent
+from app.remote.provider import ProviderIdentity
+from app.remote.registry import ProviderRegistry
 from app.storage.models import (
     BatchImportRecord,
     BatchItemRecord,
@@ -135,11 +137,13 @@ class FakeVectorStore:
             self.on_delete()
 
 
-class FakeYuqueGateway:
+class FakeRemoteProvider:
+    identity = ProviderIdentity(name="yuque", label="语雀")
+
     def __init__(self) -> None:
         self.create_calls = 0
         self.update_calls = 0
-        self.documents: dict[str, YuqueDocumentContent] = {}
+        self.documents: dict[str, RemoteDocumentContent] = {}
         self.lose_create_responses = 0
         self.before_create: Callable[[], None] | None = None
         self.after_list: Callable[[], None] | None = None
@@ -151,8 +155,8 @@ class FakeYuqueGateway:
         if self.before_create is not None:
             self.before_create()
         document_id = f"remote-document-{self.create_calls}"
-        content = YuqueDocumentContent(
-            yuque_id=document_id,
+        content = RemoteDocumentContent(
+            remote_id=document_id,
             repository_id=request.repository_id,
             title=request.title,
             content=request.content,
@@ -162,13 +166,13 @@ class FakeYuqueGateway:
         if self.lose_create_responses:
             self.lose_create_responses -= 1
             raise ConnectionError("create response lost")
-        return YuqueDocument(**content.model_dump(exclude={"content"}))
+        return RemoteDocument(**content.model_dump(exclude={"content"}))
 
     async def update_document(self, request):  # type: ignore[no-untyped-def]
         self.update_calls += 1
         existing = self.documents.get(request.document_id)
-        content = YuqueDocumentContent(
-            yuque_id=request.document_id,
+        content = RemoteDocumentContent(
+            remote_id=request.document_id,
             repository_id=(
                 existing.repository_id if existing is not None else "remote-repository-1"
             ),
@@ -179,11 +183,11 @@ class FakeYuqueGateway:
         self.documents[request.document_id] = content
         if self.after_update is not None:
             self.after_update()
-        return YuqueDocument(**content.model_dump(exclude={"content"}))
+        return RemoteDocument(**content.model_dump(exclude={"content"}))
 
-    async def list_documents(self, repository_id: str) -> list[YuqueDocument]:
+    async def list_documents(self, repository_id: str) -> list[RemoteDocument]:
         documents = [
-            YuqueDocument(**document.model_dump(exclude={"content"}))
+            RemoteDocument(**document.model_dump(exclude={"content"}))
             for document in self.documents.values()
             if document.repository_id == repository_id
         ]
@@ -191,7 +195,7 @@ class FakeYuqueGateway:
             self.after_list()
         return documents
 
-    async def read_document(self, document_id: str) -> YuqueDocumentContent:
+    async def read_document(self, document_id: str) -> RemoteDocumentContent:
         document = self.documents[document_id]
         if self.after_read is not None:
             self.after_read()
@@ -215,20 +219,25 @@ def make_service(
     *,
     source: FakeSourceInspector | None = None,
     vector_store: FakeVectorStore | None = None,
-    gateway: FakeYuqueGateway | None = None,
+    gateway: FakeRemoteProvider | None = None,
     seed_repository: bool = True,
-) -> tuple[ImportService, FakeSourceInspector, FakeVectorStore, FakeYuqueGateway]:
+) -> tuple[ImportService, FakeSourceInspector, FakeVectorStore, FakeRemoteProvider]:
     settings = AppSettings(session_token="token", data_dir=tmp_path / "data", environment="test")
     source = source or FakeSourceInspector()
     vector_store = vector_store or FakeVectorStore()
-    gateway = gateway or FakeYuqueGateway()
+    gateway = gateway or FakeRemoteProvider()
     if seed_repository:
         with database.session() as session:
             session.add(
                 RepositoryRecord(
-                    id="repository-1", yuque_id="remote-repository-1", name="Knowledge"
+                    id="repository-1",
+                    provider="yuque",
+                    remote_id="remote-repository-1",
+                    name="Knowledge",
                 )
             )
+    registry = ProviderRegistry()
+    registry.register(gateway, always_configured=True)
     service = ImportService(
         settings=settings,
         source_inspector=source,
@@ -236,7 +245,7 @@ def make_service(
         chunker=SemanticChunker(),
         embedding_provider=FakeEmbeddingProvider(EmbeddingSettings(dimension=8)),
         vector_store=vector_store,
-        yuque_gateway=gateway,
+        remote_registry=registry,
         repository_store=RepositoryStore(database),
         document_store=DocumentStore(database),
         job_store=ImportJobStore(database),
@@ -428,8 +437,8 @@ async def test_attach_remote_binds_local_snapshot_without_gateway_writes(databas
     assert metadata["remote_binding"]["document_id"] == "remote-existing"
     document = service.document_store.get(job.document_id or "")
     assert document is not None
-    assert document.yuque_id == "remote-existing"
-    assert document.yuque_url == "https://yuque.test/remote-existing"
+    assert document.remote_id == "remote-existing"
+    assert document.remote_url == "https://yuque.test/remote-existing"
     assert gateway.create_calls == gateway.update_calls == 0
 
 
@@ -537,7 +546,7 @@ async def create_full_update_job(
     service: ImportService,
     source: FakeSourceInspector,
     vector_store: FakeVectorStore,
-    gateway: FakeYuqueGateway,
+    gateway: FakeRemoteProvider,
     tmp_path: Path,
 ) -> ImportJobRecord:
     preview = await source.inspect(SourceRef(kind="url", value=source.document.source_url))
@@ -557,8 +566,8 @@ async def create_full_update_job(
             markdown_path=str(markdown_path),
             source_type="import",
             content_hash=preview.fingerprint,
-            yuque_id="remote-existing",
-            yuque_url="https://yuque.test/remote-existing",
+            remote_id="remote-existing",
+            remote_url="https://yuque.test/remote-existing",
         )
     )
     service.document_store.replace_chunks(
@@ -576,8 +585,8 @@ async def create_full_update_job(
         ],
     )
     vector_store.ids.add("old-vector")
-    gateway.documents["remote-existing"] = YuqueDocumentContent(
-        yuque_id="remote-existing",
+    gateway.documents["remote-existing"] = RemoteDocumentContent(
+        remote_id="remote-existing",
         repository_id="remote-repository-1",
         title="Old",
         content="# Old\n\nold text",
@@ -687,7 +696,7 @@ async def test_concurrent_create_reserves_same_repository_fingerprint_once(
 async def test_create_requires_duplicate_decision_and_persists_selected_action(
     database, tmp_path
 ) -> None:
-    service, source, _, _ = make_service(database, tmp_path)
+    service, source, _, gateway = make_service(database, tmp_path)
     preview = await source.inspect(SourceRef(kind="url", value="https://example.test/imported.md"))
     service.document_store.create(
         DocumentRecord(
@@ -696,7 +705,7 @@ async def test_create_requires_duplicate_decision_and_persists_selected_action(
             title="Existing",
             source_url="https://example.test/old.md",
             content_hash=preview.fingerprint,
-            yuque_id="remote-existing",
+            remote_id="remote-existing",
         )
     )
 
@@ -709,8 +718,8 @@ async def test_create_requires_duplicate_decision_and_persists_selected_action(
 
     persisted = service.job_store.get(job.id)
     assert persisted.document_id == "existing-document"  # type: ignore[union-attr]
-    assert service.yuque_gateway.update_calls == 1
-    assert service.yuque_gateway.create_calls == 0
+    assert gateway.update_calls == 1
+    assert gateway.create_calls == 0
 
 
 async def test_run_completes_full_import_with_exact_progress(database, tmp_path) -> None:
@@ -729,7 +738,7 @@ async def test_run_completes_full_import_with_exact_progress(database, tmp_path)
     assert gateway.create_calls == 1
     assert len(vector_store.upserts) == 1
     document = service.document_store.get(completed.document_id)  # type: ignore[union-attr]
-    assert document.yuque_id == "remote-document-1"  # type: ignore[union-attr]
+    assert document.remote_id == "remote-document-1"  # type: ignore[union-attr]
     assert Path(document.raw_path).read_bytes() == source.document.raw_bytes  # type: ignore[arg-type,union-attr]
     assert Path(document.markdown_path).read_text() == "# Imported\n\nUseful text"  # type: ignore[arg-type,union-attr]
 
@@ -749,7 +758,7 @@ async def test_local_repository_import_skips_yuque_but_indexes_content(
     assert completed.state == ImportStatus.COMPLETED  # type: ignore[union-attr]
     document = service.document_store.get(completed.document_id)  # type: ignore[union-attr]
     assert document is not None
-    assert document.yuque_id is None
+    assert document.remote_id is None
     assert Path(document.markdown_path).read_text() == "# Imported\n\nUseful text"  # type: ignore[arg-type]
     assert len(vector_store.upserts) == 1
     assert gateway.create_calls == gateway.update_calls == 0
@@ -758,7 +767,7 @@ async def test_local_repository_import_skips_yuque_but_indexes_content(
 async def test_retry_reconciles_remote_marker_after_lost_create_response(
     database, tmp_path
 ) -> None:
-    gateway = FakeYuqueGateway()
+    gateway = FakeRemoteProvider()
     gateway.lose_create_responses = 1
     service, source, _, _ = make_service(database, tmp_path, gateway=gateway)
     job = await create_job(service, source)
@@ -792,12 +801,12 @@ async def test_retry_reconciles_after_remote_create_before_local_update(
     original = service.document_store.update_remote
     failures = 1
 
-    def fail_once(document_id: str, *, yuque_id: str, yuque_url: str | None):
+    def fail_once(document_id: str, *, remote_id: str, remote_url: str | None):
         nonlocal failures
         if failures:
             failures -= 1
             raise OSError("local database unavailable")
-        return original(document_id, yuque_id=yuque_id, yuque_url=yuque_url)
+        return original(document_id, remote_id=remote_id, remote_url=remote_url)
 
     monkeypatch.setattr(service.document_store, "update_remote", fail_once)
 
@@ -1026,8 +1035,8 @@ async def test_cancel_during_remote_list_prevents_create(database, tmp_path) -> 
 
 async def test_cancel_during_remote_read_prevents_create(database, tmp_path) -> None:
     service, source, _, gateway = make_service(database, tmp_path)
-    gateway.documents["unrelated"] = YuqueDocumentContent(
-        yuque_id="unrelated",
+    gateway.documents["unrelated"] = RemoteDocumentContent(
+        remote_id="unrelated",
         repository_id="remote-repository-1",
         title="Unrelated",
         content="# No import marker",
@@ -1059,7 +1068,7 @@ async def test_retry_resumes_indexing_without_creating_second_remote_document(
         ImportStatus.INDEXING.value,
         "INDEX_FAILED",
     )
-    assert document.yuque_id == "remote-document-1"  # type: ignore[union-attr]
+    assert document.remote_id == "remote-document-1"  # type: ignore[union-attr]
 
     retried = await service.retry(job.id)
     await service.run(retried.id)
@@ -1078,7 +1087,7 @@ async def test_cancel_after_skip_progress_does_not_complete(database, tmp_path, 
             repository_id="repository-1",
             title="Existing",
             content_hash=preview.fingerprint,
-            yuque_id="remote-existing",
+            remote_id="remote-existing",
         )
     )
     job = await create_job(service, source, "skip")
@@ -1626,7 +1635,7 @@ async def test_upload_storage_error_becomes_stable_failure(database, tmp_path) -
                     SourceRef(kind="url", value="https://example.test/imported.md")
                 )
             ).fingerprint,
-            yuque_id="remote-existing",
+            remote_id="remote-existing",
         )
     )
     service.job_store.transition(

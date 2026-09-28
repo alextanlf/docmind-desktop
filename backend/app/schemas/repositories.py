@@ -9,7 +9,9 @@ from app.schemas.common import WireModel
 
 class RepositoryCreate(WireModel):
     name: str = Field(max_length=120)
-    create_remote: bool = False
+    # ``None`` creates a local knowledge base (the default). A provider name
+    # such as "yuque" creates the repository on that remote provider instead.
+    provider: str | None = Field(default=None, max_length=32)
 
     @field_validator("name")
     @classmethod
@@ -22,10 +24,11 @@ class RepositoryCreate(WireModel):
 
 class RepositoryView(WireModel):
     id: str
-    yuque_id: str | None
+    provider: str | None
+    remote_id: str | None
     name: str
     description: str | None
-    yuque_url: str | None
+    remote_url: str | None
     document_count: int
     indexed_document_count: int
     sync_status: str

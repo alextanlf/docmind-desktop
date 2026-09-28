@@ -16,7 +16,7 @@ def test_fake_services_are_selected_only_for_nonproduction_opt_in(
     monkeypatch.setenv("DOCMIND_FAKE_SERVICES", "1")
     from app.core.embedding import FakeEmbeddingProvider
     from app.main import create_app
-    from app.testing.fakes import FakeLLMProvider, FakeYuqueGateway
+    from app.testing.fakes import FakeLLMProvider, FakeRemoteProvider
 
     app = create_app(
         AppSettings(
@@ -28,7 +28,8 @@ def test_fake_services_are_selected_only_for_nonproduction_opt_in(
 
     assert type(app.state.secret_store).__name__ == "MemorySecretStore"
     assert isinstance(app.state.embedding_provider, FakeEmbeddingProvider)
-    assert isinstance(app.state.yuque_gateway, FakeYuqueGateway)
+    with TestClient(app):
+        assert isinstance(app.state.remote_registry.get("yuque"), FakeRemoteProvider)
     assert isinstance(app.state.fake_llm_provider, FakeLLMProvider)
 
 

@@ -1,34 +1,24 @@
+"""Provider-specific behaviour of the yuque remote provider API surface."""
 from __future__ import annotations
 
 import asyncio
 
-from app.yuque.gateway import FakeYuqueGateway
+from app.remote.fake import FakeRemoteProvider
 
 
-def test_yuque_status_route_requires_runtime_token(client) -> None:
-    response = client.get("/api/yuque/status")
+def test_remote_routes_require_runtime_token(client) -> None:
+    response = client.get("/api/remote/providers")
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "AUTH_REQUIRED"
 
 
-def test_yuque_login_route_uses_injected_gateway(client, auth_headers) -> None:
-    fake_yuque = FakeYuqueGateway()
-    client.app.state.yuque_gateway = fake_yuque
+def test_status_returns_masked_logged_in_state(
+    client, auth_headers, remote_provider: FakeRemoteProvider
+) -> None:
+    asyncio.run(remote_provider.begin_login())
 
-    response = client.post("/api/yuque/login", headers=auth_headers)
-
-    assert response.status_code == 200
-    assert response.json()["loggedIn"] is True
-    assert response.json()["requiresLogin"] is False
-
-
-def test_yuque_status_returns_masked_logged_in_state(client, auth_headers) -> None:
-    fake_yuque = FakeYuqueGateway()
-    asyncio.run(fake_yuque.begin_login())
-    client.app.state.yuque_gateway = fake_yuque
-
-    response = client.get("/api/yuque/status", headers=auth_headers)
+    response = client.get("/api/remote/providers/yuque/status", headers=auth_headers)
 
     assert response.status_code == 200
     assert response.json() == {
@@ -39,11 +29,29 @@ def test_yuque_status_returns_masked_logged_in_state(client, auth_headers) -> No
     assert client.app.state.settings_service.setting_store.get("yuque-web.connected") == "true"
 
 
-def test_yuque_install_browser_route_uses_injected_gateway(client, auth_headers) -> None:
-    fake_yuque = FakeYuqueGateway()
-    client.app.state.yuque_gateway = fake_yuque
+def test_status_records_a_disconnected_web_session(client, auth_headers) -> None:
+    response = client.get("/api/remote/providers/yuque/status", headers=auth_headers)
 
-    response = client.post("/api/yuque/browser/install", headers=auth_headers)
+    assert response.status_code == 200
+    assert response.json()["requiresLogin"] is True
+    assert client.app.state.settings_service.setting_store.get("yuque-web.connected") == "false"
+
+
+def test_login_route_logs_in_and_records_the_session(client, auth_headers) -> None:
+    response = client.post("/api/remote/providers/yuque/login", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["loggedIn"] is True
+    assert response.json()["requiresLogin"] is False
+    assert client.app.state.settings_service.setting_store.get("yuque-web.connected") == "true"
+
+
+def test_install_browser_route_uses_the_provider(
+    client, auth_headers, remote_provider: FakeRemoteProvider
+) -> None:
+    response = client.post(
+        "/api/remote/providers/yuque/browser/install", headers=auth_headers
+    )
 
     assert response.status_code == 200
     assert response.json()["installed"] is True

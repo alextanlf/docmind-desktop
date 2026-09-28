@@ -27,10 +27,10 @@ from app.schemas.imports import (
     SourcePreview,
     SourceRef,
 )
-from app.schemas.yuque import (
-    CreateYuqueDocumentRequest,
-    UpdateYuqueDocumentRequest,
-    YuqueDocument,
+from app.schemas.remote import (
+    CreateRemoteDocumentRequest,
+    UpdateRemoteDocumentRequest,
+    RemoteDocument,
 )
 from app.storage.models import (
     BatchItemDecision,
@@ -39,10 +39,12 @@ from app.storage.models import (
     DocumentRecord,
     ImportJobRecord,
     ImportStatus,
+    RepositoryRecord,
 )
 from app.storage.repositories import DocumentStore, ImportJobStore, RepositoryStore
 from app.storage.vectorstore import PersistentVectorStore
-from app.yuque.gateway import YuqueGateway
+from app.remote.provider import RemoteProvider
+from app.remote.registry import ProviderRegistry
 
 
 class ImportService:
@@ -55,7 +57,7 @@ class ImportService:
         chunker: SemanticChunker,
         embedding_provider: EmbeddingProvider,
         vector_store: PersistentVectorStore,
-        yuque_gateway: YuqueGateway,
+        remote_registry: ProviderRegistry,
         repository_store: RepositoryStore,
         document_store: DocumentStore,
         job_store: ImportJobStore,
@@ -67,7 +69,7 @@ class ImportService:
         self.chunker = chunker
         self.embedding_provider = embedding_provider
         self.vector_store = vector_store
-        self.yuque_gateway = yuque_gateway
+        self.remote_registry = remote_registry
         self.repository_store = repository_store
         self.document_store = document_store
         self.job_store = job_store
@@ -245,7 +247,7 @@ class ImportService:
         collection_id = (
             descriptor.get("collectionId") if isinstance(descriptor, dict) else None
         )
-        if not isinstance(collection_id, str) and getattr(batch, "source_kind", None) in {"web", "yuque_repository", "search_results"}:
+        if not isinstance(collection_id, str) and getattr(batch, "source_kind", None) in {"web", "remote_repository", "search_results"}:
             return f"remote/{batch.id}"
         if not isinstance(collection_id, str):
             raise DomainError("BATCH_SOURCE_CHANGED", "暂存集合标识无效", 409, False)
@@ -436,7 +438,7 @@ class ImportService:
         if await self._cancel_if_requested(job_id):
             return False
         repository = self.repository_store.get(job.repository_id or "")
-        target_message = "准备写入语雀" if repository and repository.yuque_id else "准备建立本地索引"
+        target_message = "准备写入语雀" if repository and repository.remote_id else "准备建立本地索引"
         await self._transition(
             job_id, {ImportStatus.PARSING}, ImportStatus.UPLOADING, 45, target_message
         )
@@ -461,7 +463,7 @@ class ImportService:
             if repository is None:
                 await self._fail(job_id, "UPLOAD_FAILED", "目标知识库不可用", True)
                 return False
-            if not repository.yuque_id:
+            if not repository.remote_id:
                 if await self._cancel_if_requested(job_id):
                     return False
                 self.document_store.mark_local(document.id)
@@ -481,15 +483,15 @@ class ImportService:
                         binding.get("document_url")
                         or binding.get("documentUrl")
                         or binding.get("url")
-                        or binding.get("yuque_url")
-                        or binding.get("yuqueUrl")
+                        or binding.get("remote_url")
+                        or binding.get("remoteUrl")
                     )
                     if not isinstance(remote_id, str) or not remote_id:
                         raise DomainError("UPLOAD_FAILED", "远端绑定缺少文档标识", 409, False)
-                    if remote_repository and remote_repository != repository.yuque_id:
+                    if remote_repository and remote_repository != repository.remote_id:
                         raise DomainError("UPLOAD_FAILED", "远端绑定知识库不匹配", 409, False)
                     self.document_store.update_remote(
-                        document.id, yuque_id=remote_id, yuque_url=remote_url
+                        document.id, remote_id=remote_id, remote_url=remote_url
                     )
                     if job.document_id is None:
                         self.job_store.attach_document(job_id, document.id)
@@ -497,19 +499,20 @@ class ImportService:
                 else:
                     remote = None
                 remote_markdown = f"{markdown.rstrip()}\n\n<!-- {metadata['marker']} -->\n"
+                provider = self._provider(repository)
                 if metadata.get("attach_remote"):
                     pass
-                elif document.yuque_id:
-                    remote = await self.yuque_gateway.update_document(
-                        UpdateYuqueDocumentRequest(
-                            document_id=document.yuque_id,
+                elif document.remote_id:
+                    remote = await provider.update_document(
+                        UpdateRemoteDocumentRequest(
+                            document_id=document.remote_id,
                             title=document.title,
                             content=remote_markdown,
                         )
                     )
                 else:
                     remote = await self._reconcile_remote_document(
-                        job_id, repository.yuque_id, metadata["marker"]
+                        job_id, provider, repository.remote_id, metadata["marker"]
                     )
                     if await self._cancel_if_requested(job_id):
                         return False
@@ -523,16 +526,16 @@ class ImportService:
                             )
                         if await self._cancel_if_requested(job_id):
                             return False
-                        remote = await self.yuque_gateway.create_document(
-                            CreateYuqueDocumentRequest(
-                                repository_id=repository.yuque_id,
+                        remote = await provider.create_document(
+                            CreateRemoteDocumentRequest(
+                                repository_id=repository.remote_id,
                                 title=document.title,
                                 content=remote_markdown,
                             )
                         )
                 if not metadata.get("attach_remote"):
                     self.document_store.update_remote(
-                        document.id, yuque_id=remote.yuque_id, yuque_url=remote.url
+                        document.id, remote_id=remote.remote_id, remote_url=remote.url
                     )
                     if job.document_id is None:
                         self.job_store.attach_document(job_id, document.id)
@@ -655,15 +658,20 @@ class ImportService:
             {"progress": 100, "state": completed.state.value, "message": completed.message},
         )
 
+    def _provider(self, repository: RepositoryRecord) -> RemoteProvider:
+        if not repository.provider:
+            raise DomainError("REMOTE_NOT_BOUND", "知识库未绑定远程来源", 409, False)
+        return self.remote_registry.get(repository.provider)
+
     async def _reconcile_remote_document(
-        self, job_id: str, repository_id: str, marker: str
-    ) -> YuqueDocument | None:
+        self, job_id: str, provider: RemoteProvider, repository_id: str, marker: str
+    ) -> RemoteDocument | None:
         marker_comment = f"<!-- {marker} -->"
-        candidates = await self.yuque_gateway.list_documents(repository_id)
+        candidates = await provider.list_documents(repository_id)
         if self._job(job_id).cancel_requested:
             return None
         for candidate in candidates:
-            content = await self.yuque_gateway.read_document(candidate.yuque_id)
+            content = await provider.read_document(candidate.remote_id)
             if self._job(job_id).cancel_requested:
                 return None
             if marker_comment in content.content:

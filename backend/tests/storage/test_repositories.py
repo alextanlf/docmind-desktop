@@ -62,16 +62,25 @@ def test_crawl_frontier_upsert_returns_existing_row(database: Database) -> None:
 def test_repository_upsert_updates_remote_record_without_duplicate(database: Database) -> None:
     store = RepositoryStore(database)
     first = store.upsert_remote(
-        yuque_id="yuque-1", name="SwiftUI", description="first", yuque_url="https://yuque/1"
+        provider="yuque",
+        remote_id="yuque-1",
+        name="SwiftUI",
+        description="first",
+        remote_url="https://yuque/1",
     )
     second = store.upsert_remote(
-        yuque_id="yuque-1", name="SwiftUI updated", description=None, yuque_url=None
+        provider="yuque",
+        remote_id="yuque-1",
+        name="SwiftUI updated",
+        description=None,
+        remote_url=None,
     )
 
     assert second.id == first.id
-    assert [(record.yuque_id, record.name, record.description, record.yuque_url) for record in store.list()] == [
-        ("yuque-1", "SwiftUI updated", None, None)
-    ]
+    assert [
+        (record.provider, record.remote_id, record.name, record.description, record.remote_url)
+        for record in store.list()
+    ] == [("yuque", "yuque-1", "SwiftUI updated", None, None)]
     assert store.get(first.id).id == first.id  # type: ignore[union-attr]
 
 
@@ -416,7 +425,7 @@ def test_app_lifespan_recovers_terminal_vector_cleanup(
         session.add(
             RepositoryRecord(
                 id="repository-1",
-                yuque_id="remote-repository-1",
+                remote_id="remote-repository-1",
                 name="Knowledge",
             )
         )

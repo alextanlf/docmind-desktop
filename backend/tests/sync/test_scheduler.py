@@ -8,9 +8,9 @@ from app.sync.scheduler import SyncScheduler
 
 
 class FakeRepo:
-    def __init__(self, repository_id: str, yuque_id: str | None) -> None:
+    def __init__(self, repository_id: str, remote_id: str | None) -> None:
         self.id = repository_id
-        self.yuque_id = yuque_id
+        self.remote_id = remote_id
 
 
 class FakeRepoStore:

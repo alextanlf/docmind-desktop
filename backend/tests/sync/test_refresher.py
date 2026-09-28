@@ -25,7 +25,11 @@ class RecordingVectorStore:
 
 def _refresher(database: Database) -> tuple[DocumentRefresher, str]:
     repository = RepositoryStore(database).upsert_remote(
-        yuque_id="yuque-1", name="SwiftUI", description=None, yuque_url=None
+        provider="yuque",
+        remote_id="yuque-1",
+        name="SwiftUI",
+        description=None,
+        remote_url=None,
     )
     refresher = DocumentRefresher(
         document_store=DocumentStore(database),
@@ -49,7 +53,7 @@ async def test_refresher_upserts_and_indexes_remote_document(database: Database)
 
     document = DocumentStore(database).get(local_id)
     assert document is not None
-    assert document.yuque_id == "doc-1"
+    assert document.remote_id == "doc-1"
     assert document.title == "State"
     assert document.content_hash is not None
     assert DocumentStore(database).list_chunks(local_id)

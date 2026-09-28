@@ -17,11 +17,12 @@ from app.config import AppSettings
 from app.core.embedding import FakeEmbeddingProvider
 from app.core.secrets import MemorySecretStore
 from app.main import create_app
-from app.schemas.yuque import CreateYuqueDocumentRequest
+from app.schemas.remote import CreateRemoteDocumentRequest
 from app.storage.database import Database
 from app.storage.models import DocumentChunkRecord, DocumentRecord
 from app.storage.repositories import DocumentMutationStore, RepositoryStore
-from app.yuque.gateway import FakeYuqueGateway
+from app.remote.fake import FakeRemoteProvider
+from tests.conftest import install_remote_provider
 
 
 class RecordingVectorStore:
@@ -40,16 +41,17 @@ class RecordingVectorStore:
         self.ids.difference_update(ids)
 
 
-def _install_gateway(client, gateway: FakeYuqueGateway | None = None):  # type: ignore[no-untyped-def]
-    gateway = gateway or FakeYuqueGateway()
+def _install_gateway(client, gateway: FakeRemoteProvider | None = None):  # type: ignore[no-untyped-def]
+    gateway = gateway or FakeRemoteProvider()
     remote = gateway.seed_repository("repo-remote", "SwiftUI")
     repository = client.app.state.repository_store.upsert_remote(
-        yuque_id=remote.yuque_id,
+        provider="yuque",
+        remote_id=remote.remote_id,
         name=remote.name,
         description=None,
-        yuque_url=remote.url,
+        remote_url=remote.url,
     )
-    client.app.state.yuque_gateway = gateway
+    install_remote_provider(client.app, gateway)
     client.app.state.embedding_provider = FakeEmbeddingProvider(
         client.app.state.settings.embedding_settings
     )
@@ -62,7 +64,7 @@ def _install_vector_store(client) -> RecordingVectorStore:  # type: ignore[no-un
     return vector_store
 
 
-def _recreated_client(client, gateway: FakeYuqueGateway) -> TestClient:  # type: ignore[no-untyped-def]
+def _recreated_client(client, gateway: FakeRemoteProvider) -> TestClient:  # type: ignore[no-untyped-def]
     settings = AppSettings(
         session_token=client.app.state.settings.session_token,
         data_dir=client.app.state.settings.data_dir,
@@ -72,7 +74,7 @@ def _recreated_client(client, gateway: FakeYuqueGateway) -> TestClient:  # type:
         create_app(
             settings,
             secret_store=MemorySecretStore(),
-            yuque_gateway=gateway,
+            providers={"yuque": gateway},
             embedding_provider=FakeEmbeddingProvider(settings.embedding_settings),
         )
     )
@@ -157,7 +159,7 @@ def test_successful_update_preserves_stale_vector_owned_by_another_document(
     assert shared_id in vector_store.ids
 
 
-class LostCreateResponseGateway(FakeYuqueGateway):
+class LostCreateResponseGateway(FakeRemoteProvider):
     def __init__(self) -> None:
         super().__init__()
         self.create_calls = 0
@@ -254,7 +256,7 @@ def test_create_discovery_intent_survives_a_successful_but_not_yet_visible_looku
     assert asyncio.run(gateway.list_documents("repo-remote")) == []
 
 
-class LostDeleteAcknowledgementGateway(FakeYuqueGateway):
+class LostDeleteAcknowledgementGateway(FakeRemoteProvider):
     def __init__(self) -> None:
         super().__init__()
         self.delete_calls = 0
@@ -449,7 +451,7 @@ def test_unreadable_snapshot_aborts_before_remote_update(
     assert client.app.state.document_mutation_store.list() == []
 
 
-class RollbackBlockedGateway(FakeYuqueGateway):
+class RollbackBlockedGateway(FakeRemoteProvider):
     def __init__(self) -> None:
         super().__init__()
         self.update_calls = 0
@@ -501,7 +503,7 @@ def test_restart_removes_abandoned_stage_only_after_compensation_converges(
     assert asyncio.run(gateway.read_document("doc-1")).content == "# Original"
 
 
-class BlockingMutationGateway(FakeYuqueGateway):
+class BlockingMutationGateway(FakeRemoteProvider):
     def __init__(self) -> None:
         super().__init__()
         self.block_create = False
@@ -590,7 +592,7 @@ def test_concurrent_get_does_not_steal_live_update_intent(client, auth_headers) 
     assert client.app.state.document_mutation_store.list() == []
 
 
-class BlockingDeleteGateway(FakeYuqueGateway):
+class BlockingDeleteGateway(FakeRemoteProvider):
     def __init__(self) -> None:
         super().__init__()
         self.delete_started = asyncio.Event()
@@ -604,7 +606,7 @@ class BlockingDeleteGateway(FakeYuqueGateway):
 
 async def _seed_pending_remote_create(app, gateway: BlockingDeleteGateway, repository_id: str):  # type: ignore[no-untyped-def]
     remote = await gateway.create_document(
-        CreateYuqueDocumentRequest(
+        CreateRemoteDocumentRequest(
             repository_id="repo-remote",
             title="Pending",
             content="# Pending\n\n<!-- docmind-mutation:pending -->",
@@ -617,7 +619,7 @@ async def _seed_pending_remote_create(app, gateway: BlockingDeleteGateway, repos
         payload={
             "phase": "rollback",
             "remote_applied": True,
-            "remote_id": remote.yuque_id,
+            "remote_id": remote.remote_id,
             "remote_repository_id": "repo-remote",
             "marker": "docmind-mutation:pending",
             "requested_title": "Pending",
@@ -630,7 +632,6 @@ def test_request_time_recovery_propagates_cancellation_after_cleanup(client) -> 
     """Cancellation of on-demand recovery is re-raised after its compensation finishes."""
     gateway = BlockingDeleteGateway()
     repository, _ = _install_gateway(client, gateway)
-    client.app.state.yuque_gateway = gateway
     request = Request({"type": "http", "app": client.app})
 
     async def scenario() -> None:
@@ -661,22 +662,23 @@ def test_startup_recovery_propagates_cancellation_after_cleanup(tmp_path) -> Non
     remote_gateway = BlockingDeleteGateway()
     remote_repository = remote_gateway.seed_repository("repo-remote", "SwiftUI")
     repository = RepositoryStore(database).upsert_remote(
-        yuque_id=remote_repository.yuque_id,
+        provider="yuque",
+        remote_id=remote_repository.remote_id,
         name=remote_repository.name,
         description=None,
-        yuque_url=remote_repository.url,
+        remote_url=remote_repository.url,
     )
     database.engine.dispose()
     app = create_app(
         settings,
         secret_store=MemorySecretStore(),
-        yuque_gateway=remote_gateway,
+        providers={"yuque": remote_gateway},
         embedding_provider=FakeEmbeddingProvider(settings.embedding_settings),
     )
 
     async def scenario() -> None:
         remote = await remote_gateway.create_document(
-            CreateYuqueDocumentRequest(
+            CreateRemoteDocumentRequest(
                 repository_id="repo-remote",
                 title="Pending",
                 content="# Pending\n\n<!-- docmind-mutation:startup -->",
@@ -690,7 +692,7 @@ def test_startup_recovery_propagates_cancellation_after_cleanup(tmp_path) -> Non
             payload={
                 "phase": "rollback",
                 "remote_applied": True,
-                "remote_id": remote.yuque_id,
+                "remote_id": remote.remote_id,
                 "remote_repository_id": "repo-remote",
                 "marker": "docmind-mutation:startup",
                 "requested_title": "Pending",

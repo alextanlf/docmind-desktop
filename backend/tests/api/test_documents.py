@@ -11,7 +11,7 @@ from app.api.documents import update_document
 from app.api.errors import DomainError
 from app.core.embedding import FakeEmbeddingProvider
 from app.schemas.documents import DocumentInput
-from app.yuque.gateway import FakeYuqueGateway
+from app.remote.fake import FakeRemoteProvider
 
 
 class RecordingVectorStore:
@@ -35,13 +35,16 @@ class RecordingVectorStore:
         self.ids.difference_update(ids)
 
 
-def _seed_repository(client) -> tuple[str, FakeYuqueGateway]:  # type: ignore[no-untyped-def]
-    gateway = FakeYuqueGateway()
+def _seed_repository(client) -> tuple[str, FakeRemoteProvider]:  # type: ignore[no-untyped-def]
+    gateway = client.app.state.remote_registry.get("yuque")
     remote = gateway.seed_repository("repo-remote", "SwiftUI")
     repository = client.app.state.repository_store.upsert_remote(
-        yuque_id=remote.yuque_id, name=remote.name, description=None, yuque_url=remote.url
+        provider="yuque",
+        remote_id=remote.remote_id,
+        name=remote.name,
+        description=None,
+        remote_url=remote.url,
     )
-    client.app.state.yuque_gateway = gateway
     client.app.state.embedding_provider = FakeEmbeddingProvider(
         client.app.state.settings.embedding_settings
     )
@@ -56,8 +59,7 @@ def _vector_store(client) -> RecordingVectorStore:  # type: ignore[no-untyped-de
 
 def test_local_document_crud_never_calls_yuque(client, auth_headers) -> None:
     repository = client.app.state.repository_store.create_local(name="Local knowledge")
-    gateway = FakeYuqueGateway()
-    client.app.state.yuque_gateway = gateway
+    gateway = client.app.state.remote_registry.get("yuque")
     client.app.state.embedding_provider = FakeEmbeddingProvider(
         client.app.state.settings.embedding_settings
     )
@@ -82,7 +84,7 @@ def test_local_document_crud_never_calls_yuque(client, auth_headers) -> None:
     )
 
     assert created.status_code == 201
-    assert created.json()["yuqueId"] is None
+    assert created.json()["remoteId"] is None
     assert updated.status_code == 200
     assert updated.json()["title"] == "Updated note"
     assert deleted.status_code == 204
@@ -193,7 +195,7 @@ def test_confirmed_delete_keeps_local_state_when_remote_delete_fails(client, aut
     )
 
     assert response.status_code == 503
-    assert response.json()["error"]["code"] == "YUQUE_OPERATION_FAILED"
+    assert response.json()["error"]["code"] == "REMOTE_OPERATION_FAILED"
     assert client.app.state.import_service.document_store.get(document_id) is not None
 
 
@@ -305,7 +307,7 @@ def test_delete_vector_failure_still_removes_local_and_retry_cleans_pending(clie
     assert second.status_code == 204
     assert vector_store.ids == set()
     assert client.app.state.document_store.get(document_id) is None
-    assert document_id not in {item.yuque_id for item in asyncio.run(gateway.list_documents("repo-remote"))}
+    assert document_id not in {item.remote_id for item in asyncio.run(gateway.list_documents("repo-remote"))}
 
 
 def test_document_create_response_contains_submitted_markdown(client, auth_headers) -> None:
@@ -532,7 +534,7 @@ def test_remote_rollback_failure_is_retried_during_app_recreation(client, auth_h
         create_app(
             settings,
             secret_store=MemorySecretStore(),
-            yuque_gateway=gateway,
+            providers={"yuque": gateway},
             embedding_provider=FakeEmbeddingProvider(settings.embedding_settings),
         )
     ):

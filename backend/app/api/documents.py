@@ -21,7 +21,7 @@ from app.schemas.documents import DocumentDelete, DocumentDetail, DocumentInput,
 from app.schemas.imports import DownloadedDocument
 from app.schemas.sync import ConflictResolution
 from app.schemas.versioning import DocumentVersion
-from app.schemas.yuque import CreateYuqueDocumentRequest, UpdateYuqueDocumentRequest, YuqueDocument
+from app.schemas.remote import CreateRemoteDocumentRequest, UpdateRemoteDocumentRequest, RemoteDocument
 from app.storage.models import DocumentChunkRecord, DocumentRecord, RepositoryRecord
 from app.storage.repositories import (
     DocumentMutationStore,
@@ -30,13 +30,28 @@ from app.storage.repositories import (
     VectorCleanupStore,
 )
 from app.storage.vectorstore import PersistentVectorStore
-from app.yuque.gateway import YuqueGateway
+from app.remote.provider import RemoteProvider
+from app.remote.registry import ProviderRegistry
 
 router = APIRouter(tags=["documents"])
 
 
-def _gateway(request: Request) -> YuqueGateway:
-    return cast(YuqueGateway, request.app.state.yuque_gateway)
+def _registry(request: Request) -> ProviderRegistry:
+    return cast(ProviderRegistry, request.app.state.remote_registry)
+
+
+def _provider(request: Request, repository: RepositoryRecord) -> RemoteProvider:
+    """Resolve the remote provider a repository is bound to."""
+    if not repository.provider:
+        raise DomainError("REMOTE_NOT_BOUND", "知识库未绑定远程来源", 409, False)
+    return _registry(request).get(repository.provider)
+
+
+def _provider_for_id(request: Request, repository_id: str) -> RemoteProvider:
+    repository = _repository_store(request).get(repository_id)
+    if repository is None or not repository.provider:
+        raise DomainError("REMOTE_NOT_BOUND", "知识库未绑定远程来源", 409, False)
+    return _registry(request).get(repository.provider)
 
 
 def _repository_store(request: Request) -> RepositoryStore:
@@ -71,13 +86,13 @@ def _not_found() -> DomainError:
     return DomainError("NOT_FOUND", "资源不存在", 404)
 
 
-def _summary(document: DocumentRecord, remote: YuqueDocument | None = None) -> DocumentSummary:
+def _summary(document: DocumentRecord, remote: RemoteDocument | None = None) -> DocumentSummary:
     return DocumentSummary(
         id=document.id,
         repository_id=document.repository_id,
-        yuque_id=document.yuque_id,
+        remote_id=document.remote_id,
         title=remote.title if remote is not None else document.title,
-        yuque_url=remote.url if remote is not None else document.yuque_url,
+        remote_url=remote.url if remote is not None else document.remote_url,
         chunk_count=document.chunk_count,
         status=document.status,
         remote_deleted=document.remote_deleted,
@@ -154,7 +169,7 @@ def _document_snapshot(request: Request, document: DocumentRecord) -> dict[str, 
     return {
         "id": document.id,
         "repository_id": document.repository_id,
-        "yuque_id": document.yuque_id,
+        "remote_id": document.remote_id,
         "title": document.title,
         "source_url": document.source_url,
         "raw_path": document.raw_path,
@@ -163,7 +178,7 @@ def _document_snapshot(request: Request, document: DocumentRecord) -> dict[str, 
         "content_hash": document.content_hash,
         "chunk_count": document.chunk_count,
         "status": document.status,
-        "yuque_url": document.yuque_url,
+        "remote_url": document.remote_url,
         "created_at": document.created_at.isoformat() if document.created_at else None,
         "updated_at": document.updated_at.isoformat() if document.updated_at else None,
         "content": content,
@@ -245,7 +260,7 @@ async def _restore_index(request: Request, snapshot: dict[str, object], current_
                         "section_path": chunk.section_path,
                         "source_url": chunk.source_url,
                         "chunk_index": chunk.chunk_index,
-                        "source_type": snapshot.get("source_type", "yuque"),
+                        "source_type": snapshot.get("source_type", "remote"),
                         "page_number": chunk.page_number,
                     }
                     for chunk in old_chunks
@@ -269,7 +284,7 @@ async def _index(
     parsed = _parser(request).parse(
         DownloadedDocument(
             title=document.title,
-            source_url=document.yuque_url or document.source_url or "",
+            source_url=document.remote_url or document.source_url or "",
             media_type="text/markdown",
             raw_bytes=content.encode("utf-8"),
         )
@@ -386,10 +401,10 @@ def _persist_content(
     _document_store(request).update_editor(
         document.id,
         title=document.title,
-        yuque_id=document.yuque_id,
-        yuque_url=document.yuque_url,
+        remote_id=document.remote_id,
+        remote_url=document.remote_url,
         markdown_path=str(markdown_path),
-        source_url=document.yuque_url if document.yuque_id else document.source_url,
+        source_url=document.remote_url if document.remote_id else document.source_url,
     )
 
 
@@ -466,10 +481,15 @@ def _remove_local_files(request: Request, document_id: str) -> None:
 
 
 def _remote_failure(error: Exception) -> DomainError:
-    if isinstance(error, DomainError) and error.code == "YUQUE_LOGIN_REQUIRED":
+    if isinstance(error, DomainError) and error.code in {
+        "REMOTE_LOGIN_REQUIRED",
+        "YUQUE_LOGIN_REQUIRED",
+    }:
         return error
     status_code = error.status_code if isinstance(error, DomainError) else 503
-    return DomainError("YUQUE_OPERATION_FAILED", "语雀文档操作失败", status_code, True, "重试语雀操作")
+    return DomainError(
+        "REMOTE_OPERATION_FAILED", "远程文档操作失败", status_code, True, "重试远程操作"
+    )
 
 
 async def _await_shielded(awaitable):  # type: ignore[no-untyped-def]
@@ -505,21 +525,20 @@ def _marked_create_content(content: str, marker: str) -> str:
 
 
 async def _delete_remote_idempotently(
-    request: Request,
+    provider: RemoteProvider,
     *,
     repository_id: str,
     document_id: str,
 ) -> None:
     """Delete once, accepting NOT_FOUND only after a separate absence check."""
-    gateway = _gateway(request)
     try:
-        await gateway.delete_document(document_id, repository_id)
+        await provider.delete_document(document_id, repository_id)
     except asyncio.CancelledError:
         raise
     except DomainError as error:
         if error.status_code != 404:
             raise
-        if await gateway.document_exists(repository_id, document_id):
+        if await provider.document_exists(repository_id, document_id):
             raise
 
 
@@ -565,6 +584,7 @@ async def _compensate_mutation_unshielded(request: Request, mutation_id: str) ->
     payload["phase"] = "rollback"
     _mutation_store(request).update(mutation_id, payload=payload)
     complete = True
+    provider = _provider_for_id(request, record.repository_id)
     remote_applied = bool(payload.get("remote_applied"))
     remote_id = payload.get("remote_id")
     remote_repository_id = payload.get("remote_repository_id")
@@ -573,9 +593,7 @@ async def _compensate_mutation_unshielded(request: Request, mutation_id: str) ->
         if isinstance(remote_repository_id, str) and isinstance(marker, str):
             try:
                 discovered = await _await_shielded(
-                    _gateway(request).find_document_by_marker(
-                        remote_repository_id, marker
-                    )
+                    provider.find_document_by_marker(remote_repository_id, marker)
                 )
             except asyncio.CancelledError:
                 raise
@@ -585,7 +603,7 @@ async def _compensate_mutation_unshielded(request: Request, mutation_id: str) ->
                 if discovered is None:
                     complete = False
                 else:
-                    remote_id = discovered.yuque_id
+                    remote_id = discovered.remote_id
                     remote_applied = True
                     payload.update(
                         remote_id=remote_id,
@@ -603,7 +621,7 @@ async def _compensate_mutation_unshielded(request: Request, mutation_id: str) ->
                 else:
                     await _await_shielded(
                         _delete_remote_idempotently(
-                            request,
+                            provider,
                             repository_id=remote_repository_id,
                             document_id=remote_id,
                         )
@@ -614,7 +632,7 @@ async def _compensate_mutation_unshielded(request: Request, mutation_id: str) ->
                 restore_remote = True
                 try:
                     current = await _await_shielded(
-                        _gateway(request).read_document(remote_id)
+                        provider.read_document(remote_id)
                     )
                     restore_remote = current.content != old_content
                 except asyncio.CancelledError:
@@ -623,8 +641,8 @@ async def _compensate_mutation_unshielded(request: Request, mutation_id: str) ->
                     complete = False
                 if restore_remote:
                     await _await_shielded(
-                        _gateway(request).update_document(
-                            UpdateYuqueDocumentRequest(
+                        provider.update_document(
+                            UpdateRemoteDocumentRequest(
                                 document_id=remote_id,
                                 title=str(old.get("remote_title", old.get("title", ""))),
                                 content=old_content,
@@ -764,14 +782,16 @@ async def list_documents(request: Request, repository_id: str) -> list[DocumentS
     repository = _repository_store(request).get(repository_id)
     if repository is None:
         raise _not_found()
-    remote_documents: dict[str, YuqueDocument] = {}
-    if repository.yuque_id:
+    remote_documents: dict[str, RemoteDocument] = {}
+    if repository.remote_id:
         remote_documents = {
-            document.yuque_id: document
-            for document in await _gateway(request).list_documents(repository.yuque_id)
+            document.remote_id: document
+            for document in await _provider(request, repository).list_documents(
+                repository.remote_id
+            )
         }
     return [
-        _summary(document, remote_documents.get(document.yuque_id or ""))
+        _summary(document, remote_documents.get(document.remote_id or ""))
         for document in _document_store(request).list_for_repository(repository_id)
     ]
 
@@ -786,8 +806,9 @@ async def create_document(request: Request, repository_id: str, body: DocumentIn
     repository = _repository_store(request).get(repository_id)
     if repository is None:
         raise _not_found()
-    if not repository.yuque_id:
+    if not repository.remote_id:
         return await _create_local_document(request, repository, body)
+    provider = _provider(request, repository)
     mutation_id = str(uuid4())
     marker = f"docmind-mutation:{mutation_id}"
     intent = _mutation_store(request).create(
@@ -798,7 +819,7 @@ async def create_document(request: Request, repository_id: str, body: DocumentIn
         payload={
             "phase": "remote_pending",
             "remote_applied": False,
-            "remote_repository_id": repository.yuque_id,
+            "remote_repository_id": repository.remote_id,
             "requested_title": body.title,
             "requested_content": body.content,
             "marker": marker,
@@ -807,9 +828,9 @@ async def create_document(request: Request, repository_id: str, body: DocumentIn
     if not _claim_mutation(request.app, intent.id):  # pragma: no cover - UUID collision
         raise DomainError("MUTATION_CONFLICT", "文档变更正在进行", 409)
     try:
-        remote = await _gateway(request).create_document(
-            CreateYuqueDocumentRequest(
-                repository_id=repository.yuque_id,
+        remote = await provider.create_document(
+            CreateRemoteDocumentRequest(
+                repository_id=repository.remote_id,
                 title=body.title,
                 content=_marked_create_content(body.content, marker),
             )
@@ -819,7 +840,7 @@ async def create_document(request: Request, repository_id: str, body: DocumentIn
             intent.id,
             phase="remote_applied",
             remote_applied=True,
-            remote_id=remote.yuque_id,
+            remote_id=remote.remote_id,
             remote_url=remote.url,
             new_title=remote.title,
         )
@@ -827,12 +848,12 @@ async def create_document(request: Request, repository_id: str, body: DocumentIn
             DocumentRecord(
                 id=str(uuid4()),
                 repository_id=repository.id,
-                yuque_id=remote.yuque_id,
+                remote_id=remote.remote_id,
                 title=remote.title,
                 source_url=remote.url,
-                source_type="yuque",
+                source_type=repository.provider or "remote",
                 status="uploaded",
-                yuque_url=remote.url,
+                remote_url=remote.url,
             )
         )
         _mutation_store(request).update(intent.id, document_id=document.id)
@@ -874,19 +895,20 @@ async def save_distillation_document(
     title: str,
     content: str,
 ) -> DocumentDetail:
-    """Persist a Yuque distillation through the normal document/index workflow."""
+    """Persist a remote distillation through the normal document/index workflow."""
     request = Request({"type": "http", "app": app})
     repository = _repository_store(request).get(repository_id)
-    if repository is None or not repository.yuque_id:
+    if repository is None or not repository.remote_id:
         raise _not_found()
+    provider = _provider(request, repository)
     marker = f"docmind-distillation:{distillation_id}"
-    remote = await _gateway(request).find_document_by_marker(repository.yuque_id, marker)
+    remote = await provider.find_document_by_marker(repository.remote_id, marker)
     existing = next(
         (
             document
             for document in _document_store(request).list_for_repository(repository_id)
             if document.source_identity == f"distillation:{distillation_id}"
-            or (remote is not None and document.yuque_id == remote.yuque_id)
+            or (remote is not None and document.remote_id == remote.remote_id)
         ),
         None,
     )
@@ -903,11 +925,11 @@ async def save_distillation_document(
             payload={
                 "phase": "remote_pending",
                 "remote_applied": remote is not None,
-                "remote_repository_id": repository.yuque_id,
+                "remote_repository_id": repository.remote_id,
                 "requested_title": title,
                 "requested_content": content,
                 "marker": marker,
-                "remote_id": remote.yuque_id if remote else None,
+                "remote_id": remote.remote_id if remote else None,
                 "remote_url": remote.url if remote else None,
             },
         )
@@ -915,19 +937,19 @@ async def save_distillation_document(
         raise DomainError("MUTATION_CONFLICT", "文档变更正在进行", 409)
     try:
         if remote is None:
-            remote = await _gateway(request).create_document(
-                CreateYuqueDocumentRequest(
-                    repository_id=repository.yuque_id,
+            remote = await provider.create_document(
+                CreateRemoteDocumentRequest(
+                    repository_id=repository.remote_id,
                     title=title,
                     content=_marked_create_content(content, marker),
                 )
             )
-        _update_intent(request, mutation_id, phase="remote_applied", remote_applied=True, remote_id=remote.yuque_id, remote_url=remote.url)
+        _update_intent(request, mutation_id, phase="remote_applied", remote_applied=True, remote_id=remote.remote_id, remote_url=remote.url)
         document = existing or _document_store(request).create(
             DocumentRecord(
-                id=str(uuid4()), repository_id=repository_id, yuque_id=remote.yuque_id,
-                title=remote.title, source_url=remote.url, source_type="yuque",
-                status="uploaded", yuque_url=remote.url,
+                id=str(uuid4()), repository_id=repository_id, remote_id=remote.remote_id,
+                title=remote.title, source_url=remote.url, source_type=repository.provider or "remote",
+                status="uploaded", remote_url=remote.url,
                 source_identity=f"distillation:{distillation_id}",
             )
         )
@@ -963,14 +985,15 @@ async def update_document(request: Request, document_id: str, body: DocumentInpu
     document = _document_store(request).get(document_id)
     if document is None:
         raise _not_found()
-    if not document.yuque_id:
+    if not document.remote_id:
         return await _update_local_document(request, document, body)
+    provider = _provider_for_id(request, document.repository_id)
     old_snapshot = _document_snapshot(request, document)
     request.app.state.version_store.snapshot(
         document.id, document.title, str(old_snapshot.get("content", ""))
     )
     try:
-        old_remote = await _gateway(request).read_document(document.yuque_id)
+        old_remote = await provider.read_document(document.remote_id)
     except asyncio.CancelledError:
         raise
     except Exception as error:  # noqa: BLE001 - gateway failures map to a stable API error
@@ -987,7 +1010,7 @@ async def update_document(request: Request, document_id: str, body: DocumentInpu
         payload={
             "phase": "remote_pending",
             "remote_applied": False,
-            "remote_id": document.yuque_id,
+            "remote_id": document.remote_id,
             "old_snapshot": old_snapshot,
             "new_title": body.title,
             "new_content": body.content,
@@ -997,9 +1020,9 @@ async def update_document(request: Request, document_id: str, body: DocumentInpu
     if not _claim_mutation(request.app, intent.id):  # pragma: no cover - UUID collision
         raise DomainError("MUTATION_CONFLICT", "文档变更正在进行", 409)
     try:
-        remote = await _gateway(request).update_document(
-            UpdateYuqueDocumentRequest(
-                document_id=document.yuque_id,
+        remote = await provider.update_document(
+            UpdateRemoteDocumentRequest(
+                document_id=document.remote_id,
                 title=body.title,
                 content=_marked_create_content(body.content, marker),
             )
@@ -1009,11 +1032,11 @@ async def update_document(request: Request, document_id: str, body: DocumentInpu
             intent.id,
             phase="remote_applied",
             remote_applied=True,
-            remote_id=remote.yuque_id,
+            remote_id=remote.remote_id,
             remote_url=remote.url,
         )
         document.title = remote.title
-        document.yuque_url = remote.url
+        document.remote_url = remote.url
         indexed = await _index(
             request,
             document,
@@ -1067,7 +1090,7 @@ async def delete_document(request: Request, document_id: str, body: DocumentDele
         raise _not_found()
     if not body.confirm:
         raise DomainError("CONFIRMATION_REQUIRED", "请确认删除文档", 400)
-    if not document.yuque_id:
+    if not document.remote_id:
         vector_ids = _document_store(request).vector_ids(document.id)
         _document_store(request).delete_local(document.id)
         _remove_local_files(request, document.id)
@@ -1083,10 +1106,12 @@ async def delete_document(request: Request, document_id: str, body: DocumentDele
                 )
         return
     repository = _repository_store(request).get(document.repository_id)
-    if repository is None or not repository.yuque_id:
+    if repository is None or not repository.remote_id:
         raise _not_found()
     try:
-        await _gateway(request).delete_document(document.yuque_id, repository.yuque_id)
+        await _provider(request, repository).delete_document(
+            document.remote_id, repository.remote_id
+        )
     except Exception as error:  # noqa: BLE001 - gateway boundary maps all failures
         raise _remote_failure(error) from None
     vector_ids = _document_store(request).vector_ids(document.id)

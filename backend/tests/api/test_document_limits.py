@@ -9,7 +9,7 @@ from app.core.embedding import FakeEmbeddingProvider
 from app.core.secrets import MemorySecretStore
 from app.main import create_app
 from app.schemas.documents import DocumentInput
-from app.yuque.gateway import FakeYuqueGateway
+from app.remote.fake import FakeRemoteProvider
 
 
 def test_document_content_preserves_whitespace_at_the_character_boundary() -> None:
@@ -47,7 +47,7 @@ def test_request_body_limit_returns_fixed_error_without_reflecting_content(tmp_p
         settings,
         secret_store=MemorySecretStore(),
         embedding_provider=FakeEmbeddingProvider(settings.embedding_settings),
-        yuque_gateway=FakeYuqueGateway(),
+        providers={"yuque": FakeRemoteProvider()},
     )
 
     with TestClient(app) as client:

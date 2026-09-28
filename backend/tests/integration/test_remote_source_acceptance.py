@@ -13,7 +13,7 @@ from sqlalchemy import select
 from app.document.safe_http import SafeHttpClient
 from app.main import create_app
 from app.schemas.batches import DiscoveryRequest
-from app.schemas.yuque import CreateYuqueDocumentRequest
+from app.schemas.remote import CreateRemoteDocumentRequest
 from app.storage.models import CrawlEntryRecord, CrawlEntryState
 
 
@@ -176,7 +176,10 @@ async def test_web_200_page_limit_preserves_pending_frontier_on_restart(test_app
     assert len((await test_app.all_batch_items(batch["id"])).items) == 200
     assert test_app.app.state.import_job_store.list() == []
     assert test_app.app.state.document_store.list_for_repository(repository.id) == []
-    restarted = create_app(test_app.app.state.settings, yuque_gateway=test_app.app.state.yuque_gateway)
+    restarted = create_app(
+        test_app.app.state.settings,
+        providers={"yuque": test_app.remote_provider},
+    )
     async with restarted.router.lifespan_context(restarted):
         assert {(row.id, row.state) for row in frontier_rows(restarted, batch["id"])} == {
             (row.id, row.state) for row in rows
@@ -187,18 +190,18 @@ async def test_web_200_page_limit_preserves_pending_frontier_on_restart(test_app
 @pytest.mark.asyncio
 async def test_yuque_manual_pull_attach_indexes_and_restart_never_writes(test_app):
     repository = await test_app.create_repository("语雀只读验收")
-    gateway = test_app.app.state.yuque_gateway
+    gateway = test_app.remote_provider
     local = test_app.app.state.repository_store.get(repository.id)
-    remote = await gateway.create_document(CreateYuqueDocumentRequest(
-        repository_id=local.yuque_id, title="状态指南",
+    remote = await gateway.create_document(CreateRemoteDocumentRequest(
+        repository_id=local.remote_id, title="状态指南",
         content="# 状态指南\n\n@State 管理视图拥有的状态。\n<!-- docmind fixture -->"
     ))
-    unselected_remote = await gateway.create_document(CreateYuqueDocumentRequest(
-        repository_id=local.yuque_id, title="不选择", content="# 不选择\n\n不得导入。"
+    unselected_remote = await gateway.create_document(CreateRemoteDocumentRequest(
+        repository_id=local.remote_id, title="不选择", content="# 不选择\n\n不得导入。"
     ))
     gateway.write_calls.clear()
     gateway.read_calls.clear()
-    batch = await discover(test_app, {"kind": "yuque_repository", "repositoryId": repository.id})
+    batch = await discover(test_app, {"kind": "remote_repository", "repositoryId": repository.id})
     assert gateway.write_calls == []
     assert gateway.read_calls.count("list_documents") == 1
     assert gateway.read_calls.count("read_document") == 2
@@ -206,7 +209,7 @@ async def test_yuque_manual_pull_attach_indexes_and_restart_never_writes(test_ap
     assert test_app.app.state.import_job_store.list() == []
     assert_snapshots(test_app.app, batch["id"])
     records = test_app.app.state.batch_store.list_item_records(batch["id"])
-    assert all(json.loads(item.remote_binding_json)["repositoryId"] == local.yuque_id
+    assert all(json.loads(item.remote_binding_json)["repositoryId"] == local.remote_id
                for item in records)
     page = await test_app.all_batch_items(batch["id"])
     assert len(page.items) == 2
@@ -220,11 +223,13 @@ async def test_yuque_manual_pull_attach_indexes_and_restart_never_writes(test_ap
     assert len(jobs) == 1
     assert json.loads(jobs[0].source_value)["attach_remote"] is True
     document = test_app.app.state.document_store.get(jobs[0].document_id)
-    assert document.yuque_id == remote.yuque_id
+    assert document.remote_id == remote.remote_id
     assert "docmind fixture" not in Path(document.markdown_path).read_text()
     await assert_index_and_citations(test_app, repository.id, {document.id})
     assert gateway.write_calls == []
-    restarted = create_app(test_app.app.state.settings, yuque_gateway=gateway)
+    restarted = create_app(
+        test_app.app.state.settings, providers={"yuque": gateway}
+    )
     async with restarted.router.lifespan_context(restarted), httpx.AsyncClient(
         transport=httpx.ASGITransport(app=restarted), base_url="http://docmind.test",
         headers=dict(test_app.client.headers)
@@ -236,15 +241,15 @@ async def test_yuque_manual_pull_attach_indexes_and_restart_never_writes(test_ap
         synced_documents: list = []
         for _ in range(80):
             synced_documents = restarted.state.document_store.list_for_repository(repository.id)
-            if {item.yuque_id for item in synced_documents} == {
-                remote.yuque_id,
-                unselected_remote.yuque_id,
+            if {item.remote_id for item in synced_documents} == {
+                remote.remote_id,
+                unselected_remote.remote_id,
             } and all(item.markdown_path for item in synced_documents):
                 break
             await asyncio.sleep(0.05)
-        assert {item.yuque_id for item in synced_documents} == {
-            remote.yuque_id,
-            unselected_remote.yuque_id,
+        assert {item.remote_id for item in synced_documents} == {
+            remote.remote_id,
+            unselected_remote.remote_id,
         }
         await assert_index_and_citations(
             harness, repository.id, {item.id for item in synced_documents}
@@ -292,20 +297,20 @@ async def test_remote_snapshot_change_rejects_confirm_without_child_or_document(
 @pytest.mark.asyncio
 async def test_yuque_discovery_resolves_local_repository_binding(test_app):
     repository = await test_app.create_repository("本地到远端绑定")
-    gateway = test_app.app.state.yuque_gateway
+    gateway = test_app.remote_provider
     local = test_app.app.state.repository_store.get(repository.id)
-    remote = await gateway.create_document(CreateYuqueDocumentRequest(
-        repository_id=local.yuque_id, title="绑定", content="# 绑定\n\n只读快照"
+    remote = await gateway.create_document(CreateRemoteDocumentRequest(
+        repository_id=local.remote_id, title="绑定", content="# 绑定\n\n只读快照"
     ))
     gateway.write_calls.clear()
     async def emit(event):
         return None
 
-    result = await test_app.app.state.batch_service.yuque_discovery.discover(DiscoveryRequest(
-        batch_id=uuid4(), source_kind="yuque_repository",
-        repository_id=UUID(repository.id), source_descriptor={"repositoryId": repository.id}
+    result = await test_app.app.state.batch_service.remote_discovery.discover(DiscoveryRequest(
+        batch_id=uuid4(), source_kind="remote_repository",
+        repository_id=UUID(repository.id), source_descriptor={"provider": "yuque", "repositoryId": repository.id}
     ), emit)
     assert len(result.sources) == 1
-    assert result.sources[0].remote_binding.repository_id == local.yuque_id
-    assert result.sources[0].remote_binding.document_id == remote.yuque_id
+    assert result.sources[0].remote_binding.repository_id == local.remote_id
+    assert result.sources[0].remote_binding.document_id == remote.remote_id
     assert gateway.write_calls == []

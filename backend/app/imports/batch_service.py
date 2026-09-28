@@ -18,9 +18,9 @@ from app.schemas.batches import (
     DiscoveryRequest,
     StagedDirectoryBatchRequest,
 )
+from app.remote.discovery import RemoteDiscovery
 from app.storage.models import BatchImportRecord, BatchItemState, BatchState
 from app.storage.repositories import BatchImportStore
-from app.yuque.discovery import YuqueDiscovery
 
 MAX_BATCH_CONCURRENCY = 3
 
@@ -40,7 +40,7 @@ class BatchService:
         manifest_max_bytes: int = 2 * 1024 * 1024,
         batch_max_items: int = 1000,
         web_discovery: WebDiscovery | None = None,
-        yuque_discovery: YuqueDiscovery | None = None,
+        remote_discovery: RemoteDiscovery | None = None,
     ) -> None:
         if max_concurrency != MAX_BATCH_CONCURRENCY:
             raise ValueError("batch concurrency is fixed at three")
@@ -52,7 +52,7 @@ class BatchService:
         self.manifest_max_bytes = manifest_max_bytes
         self.batch_max_items = batch_max_items
         self.web_discovery = web_discovery
-        self.yuque_discovery = yuque_discovery
+        self.remote_discovery = remote_discovery
         self._semaphores: dict[str, asyncio.Semaphore] = {}
         self._batch_locks: dict[str, asyncio.Lock] = {}
         self._batch_tasks: dict[str, dict[str, asyncio.Task[None]]] = {}
@@ -79,7 +79,7 @@ class BatchService:
 
     def create_batch(self, body: CreateBatchRequest) -> BatchImportRecord:
         if not isinstance(body, StagedDirectoryBatchRequest):
-            if body.kind not in {"web", "yuque_repository"}:
+            if body.kind not in {"web", "remote_repository"}:
                 raise DomainError("INVALID_REQUEST", "来源类型无效", 422)
             descriptor = body.model_dump(by_alias=True, mode="json")
             source_kind = body.kind
@@ -108,8 +108,8 @@ class BatchService:
                 discovery = DirectoryDiscovery(self.staging_root, self.manifest_max_bytes)
             elif batch.source_kind == "web":
                 discovery = self.web_discovery
-            elif batch.source_kind == "yuque_repository":
-                discovery = self.yuque_discovery
+            elif batch.source_kind == "remote_repository":
+                discovery = self.remote_discovery
             else:
                 discovery = None
             if discovery is None:

@@ -56,7 +56,7 @@ async def test_api_starts_slow_batch_and_replays_new_epoch(database, operation, 
     with database.session() as session:
         parent = session.get(BatchImportRecord, batch.id)
         repository_id = str(uuid4())
-        session.add(RepositoryRecord(id=repository_id, yuque_id="slow-api", name="Slow"))
+        session.add(RepositoryRecord(id=repository_id, remote_id="slow-api", name="Slow"))
         session.flush()
         parent.repository_id = repository_id
         parent.state = BatchState.COMPLETED_WITH_ERRORS if operation == "retry" else BatchState.PAUSED
@@ -187,7 +187,7 @@ async def test_terminal_snapshot_cannot_close_a_concurrent_retry(database):
 def make_batch(store: BatchImportStore, *, state: BatchState = BatchState.AWAITING_CONFIRMATION, count: int = 4) -> BatchImportRecord:
     with store.database.session() as session:
         if session.get(RepositoryRecord, "repository-1") is None:
-            session.add(RepositoryRecord(id="repository-1", yuque_id="remote-1", name="Repo"))
+            session.add(RepositoryRecord(id="repository-1", remote_id="remote-1", name="Repo"))
     batch = store.create_batch(
         BatchImportRecord(
             id=str(uuid4()),
@@ -410,7 +410,7 @@ async def test_discover_batch_persists_candidates_and_allowed_actions(tmp_path: 
     store = BatchImportStore(database)
     repository_id = "00000000-0000-0000-0000-000000000001"
     with database.session() as session:
-        session.add(RepositoryRecord(id=repository_id, yuque_id="remote-1", name="Repo"))
+        session.add(RepositoryRecord(id=repository_id, remote_id="remote-1", name="Repo"))
     broker = InMemoryEventBroker()
     service = BatchService(
         store=store,
@@ -967,7 +967,7 @@ def test_confirmation_rejects_raw_session_from_another_database_without_orphan(d
     other_database.upgrade()
     try:
         with other_database.session() as session:
-            session.add(RepositoryRecord(id="repository-1", yuque_id="remote-1", name="Repo"))
+            session.add(RepositoryRecord(id="repository-1", remote_id="remote-1", name="Repo"))
 
         def reserve(item, **kwargs):
             del item, kwargs

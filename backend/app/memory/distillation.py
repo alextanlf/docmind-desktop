@@ -27,7 +27,6 @@ class DistillationService:
         llm: LLMProvider,
         local_store: LocalKnowledgeStore | None = None,
         *,
-        yuque_gateway=None,
         mutation_store: DocumentMutationStore | None = None,
         indexer=None,
         document_saver=None,
@@ -36,7 +35,6 @@ class DistillationService:
         self.store = store
         self.llm = llm
         self.local_store = local_store
-        self.yuque_gateway = yuque_gateway
         self.mutation_store = mutation_store
         self.indexer = indexer
         self.document_saver = document_saver
@@ -176,8 +174,8 @@ class DistillationService:
         current = self.get(distillation_id)
         requested_repository_id = str(target.repository_id) if target.repository_id else None
         current_scopes = json.loads(current.repository_ids_json or "[]")
-        if target.target == "yuque" and requested_repository_id not in current_scopes:
-            raise DomainError("MEMORY_SCOPE_INVALID", "语雀知识库不在当前范围", 403)
+        if target.target == "remote" and requested_repository_id not in current_scopes:
+            raise DomainError("MEMORY_SCOPE_INVALID", "远程知识库不在当前范围", 403)
         if current.state == "saved_unindexed" and current.target == target.target and current.target_repository_id == requested_repository_id:
             if self.indexer is not None:
                 if self.event_broker is not None:
@@ -196,8 +194,8 @@ class DistillationService:
             if not scopes:
                 raise DomainError("MEMORY_SCOPE_INVALID", "知识库范围不能为空", 400)
             target_repository_id = str(target.repository_id) if target.repository_id else None
-            if target.target == "yuque" and target_repository_id not in scopes:
-                raise DomainError("MEMORY_SCOPE_INVALID", "语雀知识库不在当前范围", 403)
+            if target.target == "remote" and target_repository_id not in scopes:
+                raise DomainError("MEMORY_SCOPE_INVALID", "远程知识库不在当前范围", 403)
             if record.state in {"saved", "saved_unindexed"}:
                 if record.target == target.target and record.target_repository_id == target_repository_id:
                     return record
@@ -207,8 +205,8 @@ class DistillationService:
             if target.target == "local" and self.local_store is None:
                 raise DomainError("DISTILLATION_TARGET_UNAVAILABLE", "本地保存尚未配置", 503, True)
             repository = db.get(RepositoryRecord, target_repository_id) if target_repository_id else None
-            if target.target == "yuque" and (repository is None or not repository.yuque_id or self.document_saver is None):
-                raise DomainError("DISTILLATION_TARGET_UNAVAILABLE", "语雀知识库尚未绑定", 409)
+            if target.target == "remote" and (repository is None or not repository.remote_id or self.document_saver is None):
+                raise DomainError("DISTILLATION_TARGET_UNAVAILABLE", "远程知识库尚未绑定", 409)
             record.state = "saving"
             identifier, title, content = record.id, record.title, record.content
             saving = record
@@ -219,7 +217,7 @@ class DistillationService:
                 local_path, content_hash = self.local_store.save(identifier, title, content)
             else:
                 document = await self.document_saver(repository_id=target_repository_id, distillation_id=identifier, title=title, content=content)
-                document_id, remote_id, remote_url = document.id, document.yuque_id, document.yuque_url
+                document_id, remote_id, remote_url = document.id, document.remote_id, document.remote_url
             with self.store.database.session() as db:
                 record = db.get(DistillationRecord, identifier)
                 record.target = target.target

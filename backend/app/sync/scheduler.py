@@ -35,7 +35,7 @@ class SyncScheduler:
             for repository in self.repository_store.list():
                 if self._stopped.is_set():
                     return
-                if not repository.yuque_id:
+                if not repository.remote_id:
                     continue
                 try:
                     await self.service.sync_repository(repository.id)
