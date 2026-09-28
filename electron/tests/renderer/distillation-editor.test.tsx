@@ -316,7 +316,7 @@ const draft = {
   storageTarget: null,
   localPath: null,
   documentId: null,
-  yuqueUrl: null,
+  remoteUrl: null,
   errorCode: null,
   retryable: false,
   createdAt: "2026-01-01T00:00:00Z",

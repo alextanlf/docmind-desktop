@@ -100,7 +100,7 @@ describe("批量导入", () => {
       </AppProviders>,
     );
     await fireEvent.click(screen.getByRole("radio", { name: "批量" }));
-    await screen.findByRole("option", { name: repository.name });
+    await screen.findByRole("option", { name: `${repository.name}（语雀）` });
     await waitFor(() =>
       expect(screen.getByRole("combobox", { name: "目标知识库" })).toHaveValue(repository.id),
     );
@@ -165,7 +165,7 @@ describe("批量导入", () => {
       </AppProviders>,
     );
     await fireEvent.click(screen.getByRole("radio", { name: "批量" }));
-    await screen.findByRole("option", { name: repository.name });
+    await screen.findByRole("option", { name: `${repository.name}（语雀）` });
     await waitFor(() =>
       expect(screen.getByRole("combobox", { name: "目标知识库" })).toHaveValue(repository.id),
     );
@@ -210,7 +210,7 @@ describe("批量导入", () => {
     expect(api.batches.create).not.toHaveBeenCalled();
 
     await act(async () => resolveRepositories([repository]));
-    await screen.findByRole("option", { name: repository.name });
+    await screen.findByRole("option", { name: `${repository.name}（语雀）` });
     await waitFor(() =>
       expect(screen.getByRole("combobox", { name: "目标知识库" })).toHaveValue(repository.id),
     );

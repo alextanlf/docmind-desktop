@@ -187,7 +187,7 @@ describe("Workspace", () => {
     const secondDocument = {
       ...document,
       id: "00000000-0000-0000-0000-000000000023",
-      yuqueId: "navigation",
+      remoteId: "navigation",
       title: "Navigation",
       content: "# Navigation\n\nSecond document content",
     };

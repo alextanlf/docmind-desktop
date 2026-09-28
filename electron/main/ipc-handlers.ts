@@ -33,7 +33,11 @@ import {
   SourceRefSchema,
   StagedSourceSchema,
   StagedCollectionSchema,
-  YuqueStatusSchema,
+  RemoteStatusSchema,
+  RemoteProviderSummarySchema,
+  RemoteCredentialChannelSchema,
+  RemoteCredentialTestResultSchema,
+  SaveRemoteCredentialInputSchema,
   BatchImportSchema,
   BatchItemPageSchema,
   BrowserInstallResultSchema,
@@ -98,6 +102,12 @@ export interface IpcDependencies {
 export type IpcHandlerMap = Record<string, Handler>;
 
 const UUID = z.string().uuid();
+const REMOTE_PROVIDER = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9_-]+$/);
 const parse = <T>(schema: z.ZodType<T>, value: unknown): T => {
   const result = schema.safeParse(value);
   if (!result.success) throw new DocMindClientError("INVALID_REQUEST", "请求参数无效");
@@ -211,11 +221,64 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
       proxy.requestJson("/api/embedding/status", {}, ModelStatusSchema),
     [IPC_CHANNELS.embeddingPrepare]: () =>
       proxy.requestJson("/api/embedding/prepare", jsonInit("POST"), ModelStatusSchema),
-    [IPC_CHANNELS.yuqueStatus]: () => proxy.requestJson("/api/yuque/status", {}, YuqueStatusSchema),
-    [IPC_CHANNELS.yuqueLogin]: () =>
-      proxy.requestJson("/api/yuque/login", jsonInit("POST"), YuqueStatusSchema),
-    [IPC_CHANNELS.yuqueInstallBrowser]: () =>
-      proxy.requestJson("/api/yuque/browser/install", jsonInit("POST"), BrowserInstallResultSchema),
+    [IPC_CHANNELS.remoteStatus]: (_event, provider) =>
+      proxy.requestJson(
+        `/api/remote/providers/${encodeURIComponent(parse(REMOTE_PROVIDER, provider))}/status`,
+        {},
+        RemoteStatusSchema,
+      ),
+    [IPC_CHANNELS.remoteLogin]: (_event, provider) =>
+      proxy.requestJson(
+        `/api/remote/providers/${encodeURIComponent(parse(REMOTE_PROVIDER, provider))}/login`,
+        jsonInit("POST"),
+        RemoteStatusSchema,
+      ),
+    [IPC_CHANNELS.remoteInstallBrowser]: (_event, provider) =>
+      proxy.requestJson(
+        `/api/remote/providers/${encodeURIComponent(
+          parse(REMOTE_PROVIDER, provider),
+        )}/browser/install`,
+        jsonInit("POST"),
+        BrowserInstallResultSchema,
+      ),
+    [IPC_CHANNELS.remoteListProviders]: () =>
+      proxy.requestJson(
+        "/api/remote/providers",
+        {},
+        z.array(RemoteProviderSummarySchema),
+      ),
+    [IPC_CHANNELS.remoteListCredentials]: (_event, provider) =>
+      proxy.requestJson(
+        `/api/remote/providers/${encodeURIComponent(
+          parse(REMOTE_PROVIDER, provider),
+        )}/credentials`,
+        {},
+        z.array(RemoteCredentialChannelSchema),
+      ),
+    [IPC_CHANNELS.remoteSaveCredential]: (_event, provider, channel, input) =>
+      proxy.requestJson(
+        `/api/remote/providers/${encodeURIComponent(
+          parse(REMOTE_PROVIDER, provider),
+        )}/credentials/${encodeURIComponent(parse(REMOTE_PROVIDER, channel))}`,
+        jsonInit("PUT", parse(SaveRemoteCredentialInputSchema, input)),
+        RemoteCredentialChannelSchema,
+      ),
+    [IPC_CHANNELS.remoteTestCredential]: (_event, provider, channel) =>
+      proxy.requestJson(
+        `/api/remote/providers/${encodeURIComponent(
+          parse(REMOTE_PROVIDER, provider),
+        )}/credentials/${encodeURIComponent(parse(REMOTE_PROVIDER, channel))}/test`,
+        jsonInit("POST"),
+        RemoteCredentialTestResultSchema,
+      ),
+    [IPC_CHANNELS.remoteDeleteCredential]: (_event, provider, channel) =>
+      proxy.requestJson(
+        `/api/remote/providers/${encodeURIComponent(
+          parse(REMOTE_PROVIDER, provider),
+        )}/credentials/${encodeURIComponent(parse(REMOTE_PROVIDER, channel))}`,
+        jsonInit("DELETE"),
+        RemoteCredentialChannelSchema,
+      ),
     [IPC_CHANNELS.repositoriesList]: () =>
       proxy.requestJson("/api/repositories", {}, z.array(RepositorySchema)),
     [IPC_CHANNELS.repositoriesCreate]: (_event, input) =>

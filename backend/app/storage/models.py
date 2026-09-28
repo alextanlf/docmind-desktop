@@ -612,6 +612,41 @@ class GraphEdgeRecord(Base):
     relation: Mapped[str] = mapped_column(String(32), nullable=False)
 
 
+class ProviderCredentialState(StrEnum):
+    VERIFIED = "verified"
+    UNVERIFIED = "unverified"
+    DISCONNECTED = "disconnected"
+
+
+class ProviderCredentialRecord(Base):
+    """Non-secret credential state for a remote provider channel.
+
+    Secrets themselves stay in the platform keychain (``SecretStore``); this
+    table only records *that* a credential exists, whether it was verified,
+    and which keychain entry backs it (``secret_ref``).
+    """
+
+    __tablename__ = "provider_credentials"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('verified','unverified','disconnected')",
+            name="ck_provider_credentials_state",
+        ),
+    )
+
+    provider: Mapped[str] = mapped_column(String(32), primary_key=True)
+    channel: Mapped[str] = mapped_column(String(32), primary_key=True)
+    state: Mapped[str] = mapped_column(
+        String(16), default=ProviderCredentialState.UNVERIFIED.value,
+        server_default=text("'unverified'"),
+    )
+    account_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    secret_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
+    )
+
+
 class EmbeddingRebuildRecord(Base):
     __tablename__ = "embedding_rebuild"
 

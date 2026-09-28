@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../../renderer/src/App";
 import { appQueryClient } from "../../renderer/src/app/query-client";
-import { installDocMindApi, loggedOutYuque, readySettings } from "./test-docmind-api";
+import { installDocMindApi, loggedOutRemote, readySettings } from "./test-docmind-api";
 
 describe("首次设置", () => {
   beforeEach(() => appQueryClient.clear());
@@ -12,7 +12,7 @@ describe("首次设置", () => {
       settings: {
         get: vi.fn().mockResolvedValue({ ...readySettings, hasApiKey: false }),
       },
-      yuque: { status: vi.fn().mockResolvedValue(loggedOutYuque) },
+      remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
     });
 
     render(<App />);
@@ -22,7 +22,7 @@ describe("首次设置", () => {
     expect(steps).toHaveLength(1);
     expect(steps[0]).toHaveTextContent("1配置模型");
     expect(screen.getByRole("button", { name: "测试模型连接" })).toBeDisabled();
-    expect(api.yuque.status).not.toHaveBeenCalled();
+    expect(api.remote.status).not.toHaveBeenCalled();
   });
 
   it("enters the workspace after the model test without requiring Yuque", async () => {
@@ -30,7 +30,7 @@ describe("首次设置", () => {
       settings: {
         get: vi.fn().mockResolvedValue({ ...readySettings, hasApiKey: false }),
       },
-      yuque: { status: vi.fn().mockResolvedValue(loggedOutYuque) },
+      remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
     });
     render(<App />);
 
@@ -48,7 +48,7 @@ describe("首次设置", () => {
     expect(await screen.findByText("连接成功，延迟 86 毫秒")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "进入工作台" }));
     expect(await screen.findByLabelText("工作台")).toBeVisible();
-    expect(api.yuque.login).not.toHaveBeenCalled();
+    expect(api.remote.login).not.toHaveBeenCalled();
   });
 
   it("invalidates a successful model test after edits, saves, or key clearing", async () => {
@@ -56,7 +56,7 @@ describe("首次设置", () => {
       settings: {
         get: vi.fn().mockResolvedValue({ ...readySettings, hasApiKey: false }),
       },
-      yuque: { status: vi.fn().mockResolvedValue(loggedOutYuque) },
+      remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
     });
     render(<App />);
 
@@ -89,7 +89,7 @@ describe("首次设置", () => {
       settings: {
         get: vi.fn().mockResolvedValue({ ...readySettings, hasApiKey: false }),
       },
-      yuque: { status: vi.fn().mockResolvedValue(loggedOutYuque) },
+      remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
     });
     render(<App />);
 
@@ -116,14 +116,14 @@ describe("首次设置", () => {
 
   it("skips onboarding when the model key is ready, regardless of Yuque", async () => {
     const api = installDocMindApi({
-      yuque: { status: vi.fn().mockResolvedValue(loggedOutYuque) },
+      remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
     });
 
     render(<App />);
 
     expect(await screen.findByLabelText("工作台")).toBeVisible();
     expect(screen.queryByRole("dialog", { name: "开始使用 DocMind" })).not.toBeInTheDocument();
-    expect(api.yuque.status).not.toHaveBeenCalled();
+    expect(api.remote.status).not.toHaveBeenCalled();
   });
 
   it("keeps a recovery action visible when initial settings cannot be read", async () => {

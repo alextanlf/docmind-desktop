@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from app.api.errors import DomainError
+from app.remote.credentials import CredentialStore, ProviderCredentialSpec
 from app.remote.provider import ProviderCapabilities, ProviderIdentity, RemoteProvider
 from app.schemas.remote import ProviderCapabilitiesView, ProviderSummaryView
 
@@ -18,6 +19,7 @@ class ProviderRegistration:
     # Fake/test providers are always considered configured so that request
     # layers never fall back to "no remote binding" during tests and e2e runs.
     always_configured: bool = False
+    credential_spec: ProviderCredentialSpec | None = None
 
 
 class ProviderRegistry:
@@ -26,10 +28,15 @@ class ProviderRegistry:
     Replaces the former ``isinstance(gateway, RoutingYuqueGateway)`` probing:
     consumers ask the registry which providers are configured instead of
     sniffing concrete implementation types.
+
+    When a ``CredentialStore`` is attached and a provider registers with a
+    ``credential_spec`` but no explicit probe, the default probe is simply
+    "any declared channel verified" — no hand-written per-provider closures.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, credential_store: CredentialStore | None = None) -> None:
         self._registrations: dict[str, ProviderRegistration] = {}
+        self._credential_store = credential_store
 
     def register(
         self,
@@ -37,16 +44,26 @@ class ProviderRegistry:
         is_configured: Callable[[], bool] | None = None,
         *,
         always_configured: bool = False,
+        credential_spec: ProviderCredentialSpec | None = None,
     ) -> None:
         name = _provider_name(provider)
         if name in self._registrations:
             raise ValueError(f"remote provider already registered: {name}")
         if is_configured is None and not always_configured:
-            is_configured = lambda: False  # noqa: E731
+            if credential_spec is not None and self._credential_store is not None:
+                store = self._credential_store
+                channels = tuple(channel.name for channel in credential_spec.channels)
+                # Only channels the provider itself declares count — e.g. a
+                # Feishu *webhook* binding must not make the Feishu
+                # knowledge-base provider look configured.
+                is_configured = lambda: store.any_verified(name, channels)  # noqa: E731
+            else:
+                is_configured = lambda: False  # noqa: E731
         self._registrations[name] = ProviderRegistration(
             provider=provider,
             is_configured=is_configured,
             always_configured=always_configured,
+            credential_spec=credential_spec,
         )
 
     def get(self, name: str) -> RemoteProvider:
@@ -61,6 +78,10 @@ class ProviderRegistry:
                 False,
                 f"可用的来源：{known}",
             ) from None
+
+    def credential_spec(self, name: str) -> ProviderCredentialSpec | None:
+        registration = self._registrations.get(name)
+        return registration.credential_spec if registration else None
 
     def names(self) -> list[str]:
         return sorted(self._registrations)

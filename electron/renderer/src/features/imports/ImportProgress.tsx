@@ -142,7 +142,7 @@ export function ImportProgress({ job, onOpenDocument }: ImportProgressProps) {
             type="button"
           >
             <CheckCircle2 aria-hidden="true" size={15} />
-            查看语雀文档
+            查看文档
           </button>
         ) : null}
         {activeJob.state === "cancelled" ? (

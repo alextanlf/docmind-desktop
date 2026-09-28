@@ -1,6 +1,6 @@
 import { FolderOpen } from "lucide-react";
 import { useEffect, useState } from "react";
-import { clientErrorMessage } from "../settings/settings.queries";
+import { clientErrorMessage, useRemoteProvidersQuery } from "../settings/settings.queries";
 import type { Repository } from "../../../../shared/contracts";
 import { useCreateBatchMutation } from "./batch-import.queries";
 
@@ -11,7 +11,7 @@ export function BatchSourceStep({
   repositories: Repository[];
   onCreated: (batchId: string, discoveryVersion: number) => void;
 }) {
-  const [kind, setKind] = useState<"staged_directory" | "web" | "yuque_repository">(
+  const [kind, setKind] = useState<"staged_directory" | "web" | "remote_repository">(
     "staged_directory",
   );
   const [entryUrl, setEntryUrl] = useState("");
@@ -20,6 +20,16 @@ export function BatchSourceStep({
   const [useSitemap, setUseSitemap] = useState(true);
   const [repositoryId, setRepositoryId] = useState(repositories[0]?.id ?? "");
   const [error, setError] = useState("");
+  const providers = useRemoteProvidersQuery();
+  // Remote pulls can only target provider-bound repositories; the option
+  // label carries the provider so simultaneous multi-provider bindings stay
+  // distinguishable.
+  const remoteRepositories = repositories.filter((r) => r.provider);
+  const providerLabel = (provider: string | null | undefined) => {
+    if (!provider) return "本地";
+    return providers.data?.find((entry) => entry.name === provider)?.label ?? provider;
+  };
+  const selectableRepositories = kind === "remote_repository" ? remoteRepositories : repositories;
   useEffect(() => {
     if (!repositoryId && repositories[0]) setRepositoryId(repositories[0].id);
   }, [repositoryId, repositories]);
@@ -66,7 +76,7 @@ export function BatchSourceStep({
               maxPages: Math.min(200, Math.max(1, maxPages)),
               useSitemap,
             }
-          : { kind: "yuque_repository" as const, repositoryId: selectedRepositoryId };
+          : { kind: "remote_repository" as const, repositoryId: selectedRepositoryId };
       const batch = await createBatch.mutateAsync(input as never);
       onCreated(batch.id, batch.discoveryVersion);
     } catch (cause) {
@@ -80,7 +90,7 @@ export function BatchSourceStep({
           [
             ["staged_directory", "本地目录"],
             ["web", "网站"],
-            ["yuque_repository", "语雀"],
+            ["remote_repository", "远程知识库"],
           ] as const
         ).map(([value, label]) => (
           <button
@@ -106,9 +116,9 @@ export function BatchSourceStep({
           onChange={(e) => setRepositoryId(e.target.value)}
         >
           <option value="">请选择</option>
-          {repositories.map((r) => (
+          {selectableRepositories.map((r) => (
             <option key={r.id} value={r.id}>
-              {r.name}
+              {r.provider ? `${r.name}（${providerLabel(r.provider)}）` : r.name}
             </option>
           ))}
         </select>
@@ -174,17 +184,21 @@ export function BatchSourceStep({
           </button>
         </div>
       ) : null}
-      {kind === "yuque_repository" ? (
+      {kind === "remote_repository" ? (
         <div className="remote-source-form">
-          <p role="note">仅拉取，不会修改语雀</p>
-          <button
-            className="button button-primary"
-            disabled={createBatch.isPending}
-            onClick={() => void createRemote()}
-            type="button"
-          >
-            开始拉取
-          </button>
+          <p role="note">仅拉取，不会修改远程知识库</p>
+          {remoteRepositories.length === 0 ? (
+            <p role="note">暂无已绑定的远程知识库，请先在设置中连接远程来源</p>
+          ) : (
+            <button
+              className="button button-primary"
+              disabled={createBatch.isPending}
+              onClick={() => void createRemote()}
+              type="button"
+            >
+              开始拉取
+            </button>
+          )}
         </div>
       ) : null}
       {error ? (

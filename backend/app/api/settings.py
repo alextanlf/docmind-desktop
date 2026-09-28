@@ -14,6 +14,8 @@ from app.config import AppSettings
 from app.core.llm import LLMProvider, ModelConfig, OpenAICompatibleProvider
 from app.core.ollama_validation import normalize_loopback_base_url
 from app.core.secrets import SecretStore
+from app.remote.credentials import CredentialStore
+from app.storage.models import ProviderCredentialState
 from app.schemas.ollama import OllamaConfig, RoutingSettings, RuntimeSettingsInput
 from app.schemas.settings import (
     MODEL_PRESETS,
@@ -34,6 +36,7 @@ from app.search.searxng import SearxngProvider
 from app.search.tavily import TavilyProvider
 from app.storage.repositories import SettingStore
 from app.yuque.api_gateway import YuqueApiGateway
+from app.yuque.credentials import YUQUE_CREDENTIAL_SPEC
 
 MODEL_CONFIG_KEY = "model.config"
 MODEL_KEY_REFERENCE = "model.api_key_ref"
@@ -59,11 +62,13 @@ class SettingsService:
         secret_store: SecretStore,
         provider_factory: ProviderFactory = OpenAICompatibleProvider,
         resolver=None,
+        credential_store: CredentialStore | None = None,
     ) -> None:
         self.setting_store = setting_store
         self.secret_store = secret_store
         self.provider_factory = provider_factory
         self.resolver = resolver or _SettingsResolver()
+        self.credential_store = credential_store
 
     def model(self) -> ModelSettingsView:
         raw = self.setting_store.get(MODEL_CONFIG_KEY)
@@ -130,6 +135,16 @@ class SettingsService:
         )
 
     def yuque_api_binding(self) -> YuqueApiBindingView:
+        state = self._yuque_api_state()
+        if state is not None:
+            return YuqueApiBindingView(
+                configured=state.configured,
+                verified=state.verified,
+                label=state.account_label if state.verified else None,
+                active=state.verified,
+            )
+        # Legacy fallback: services constructed without a credential store
+        # (unit tests) keep reading the old settings keys.
         configured = bool(self.secret_store.get(YUQUE_API_TOKEN_NAME))
         verified = configured and self.setting_store.get(YUQUE_API_VERIFIED_KEY) == "true"
         label = self.setting_store.get(YUQUE_API_LABEL_KEY) if verified else None
@@ -140,7 +155,22 @@ class SettingsService:
             active=verified,
         )
 
+    def _yuque_api_state(self):
+        if self.credential_store is None:
+            return None
+        spec = YUQUE_CREDENTIAL_SPEC.channel("api")
+        return self.credential_store.channel_state("yuque", "api", spec)
+
     def feishu_binding(self) -> ConnectionBindingView:
+        if self.credential_store is not None:
+            record = self.credential_store.get("feishu", "webhook")
+            if record is not None:
+                configured = bool(self.credential_store.secret_for("feishu", "webhook"))
+                return ConnectionBindingView(
+                    configured=configured,
+                    verified=configured
+                    and record.state == ProviderCredentialState.VERIFIED.value,
+                )
         configured = bool(self.secret_store.get(FEISHU_WEBHOOK_NAME))
         verified = configured and self.setting_store.get(FEISHU_VERIFIED_KEY) == "true"
         return ConnectionBindingView(configured=configured, verified=verified)
@@ -149,6 +179,16 @@ class SettingsService:
         if update.token is None:
             return self.yuque_api_binding()
         token = update.token.strip()
+        if self.credential_store is not None:
+            # Unified path: keychain write + state row reset, rolled back
+            # together on failure inside the store.
+            self.credential_store.save_secret("yuque", "api", token, YUQUE_API_TOKEN_NAME)
+            # Legacy mirror so transition-window probes never treat an
+            # unverified rotated token as active.
+            self.setting_store.set_many(
+                {YUQUE_API_VERIFIED_KEY: "false", YUQUE_API_LABEL_KEY: ""}
+            )
+            return self.yuque_api_binding()
         previous = self.secret_store.get(YUQUE_API_TOKEN_NAME)
         if token:
             self.secret_store.set(YUQUE_API_TOKEN_NAME, token)
@@ -166,7 +206,10 @@ class SettingsService:
         return self.yuque_api_binding()
 
     async def test_yuque_api(self) -> ConnectionTestResult:
-        token = self.secret_store.get(YUQUE_API_TOKEN_NAME)
+        if self.credential_store is not None:
+            token = self.credential_store.secret_for("yuque", "api")
+        else:
+            token = self.secret_store.get(YUQUE_API_TOKEN_NAME)
         if not token:
             raise DomainError(
                 "YUQUE_API_TOKEN_REQUIRED",
@@ -175,7 +218,19 @@ class SettingsService:
                 False,
                 "保存 Token 后重试",
             )
-        result = await YuqueApiGateway(lambda: token).begin_login()
+        try:
+            result = await YuqueApiGateway(lambda: token).begin_login()
+        except DomainError:
+            if self.credential_store is not None:
+                self.credential_store.mark_state(
+                    "yuque", "api", ProviderCredentialState.UNVERIFIED.value
+                )
+            raise
+        if self.credential_store is not None:
+            self.credential_store.mark_state(
+                "yuque", "api", ProviderCredentialState.VERIFIED.value,
+                account_label=result.account_label,
+            )
         self.setting_store.set_many(
             {
                 YUQUE_API_VERIFIED_KEY: "true",
@@ -192,6 +247,9 @@ class SettingsService:
         if update.webhook_url is None:
             return self.feishu_binding()
         webhook_url = _normalize_feishu_webhook(update.webhook_url)
+        if self.credential_store is not None:
+            self.credential_store.save_secret("feishu", "webhook", webhook_url, FEISHU_WEBHOOK_NAME)
+            return self.feishu_binding()
         previous = self.secret_store.get(FEISHU_WEBHOOK_NAME)
         if webhook_url:
             self.secret_store.set(FEISHU_WEBHOOK_NAME, webhook_url)
@@ -208,7 +266,10 @@ class SettingsService:
         return self.feishu_binding()
 
     async def test_feishu(self) -> ConnectionTestResult:
-        webhook_url = self.secret_store.get(FEISHU_WEBHOOK_NAME)
+        if self.credential_store is not None:
+            webhook_url = self.credential_store.secret_for("feishu", "webhook")
+        else:
+            webhook_url = self.secret_store.get(FEISHU_WEBHOOK_NAME)
         if not webhook_url:
             raise DomainError(
                 "FEISHU_WEBHOOK_REQUIRED",
@@ -217,7 +278,14 @@ class SettingsService:
                 False,
                 "保存 Webhook 后重试",
             )
-        await _probe_feishu_webhook(webhook_url)
+        try:
+            await _probe_feishu_webhook(webhook_url)
+        except DomainError:
+            if self.credential_store is not None:
+                self.credential_store.mark_state("feishu", "webhook", "unverified")
+            raise
+        if self.credential_store is not None:
+            self.credential_store.mark_state("feishu", "webhook", "verified")
         self.setting_store.set_many({FEISHU_VERIFIED_KEY: "true"})
         return ConnectionTestResult(
             connected=True,

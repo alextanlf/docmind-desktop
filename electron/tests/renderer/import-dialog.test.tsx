@@ -114,7 +114,8 @@ describe("单文档导入", () => {
     const createdRepository = {
       ...repository,
       id: "00000000-0000-0000-0000-000000000031",
-      yuqueId: "new-repository",
+      provider: "yuque",
+      remoteId: "new-repository",
       name: "新知识库",
     };
     const api = installDocMindApi({

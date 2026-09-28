@@ -64,7 +64,8 @@ export function DiagnosticsSection({ settings }: { settings: SettingsView }) {
             />
           </div>
           <p>
-            将删除 {settings.screenshotCount} 张语雀失败诊断截图，不影响文档、索引或其他本地数据。
+            将删除 {settings.screenshotCount}{" "}
+            张远程知识库失败诊断截图，不影响文档、索引或其他本地数据。
           </p>
           {error ? (
             <p className="error-copy" role="alert">

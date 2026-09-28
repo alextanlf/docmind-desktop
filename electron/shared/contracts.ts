@@ -178,7 +178,7 @@ export const ModelStatusSchema = z.object({
   message: z.string(),
   progress: z.number().int().min(0).max(100).nullable().optional(),
 });
-export const YuqueStatusSchema = z.object({
+export const RemoteStatusSchema = z.object({
   loggedIn: z.boolean(),
   accountLabel: z.string().nullable().optional(),
   requiresLogin: z.boolean(),
@@ -187,13 +187,41 @@ export const BrowserInstallResultSchema = z.object({
   installed: z.boolean(),
   message: z.string(),
 });
+export const RemoteProviderCapabilitiesSchema = z.object({
+  browserInstall: z.boolean(),
+  markerLookup: z.boolean(),
+});
+export const RemoteProviderSummarySchema = z.object({
+  name: z.string(),
+  label: z.string(),
+  configured: z.boolean(),
+  capabilities: RemoteProviderCapabilitiesSchema,
+});
+export const RemoteCredentialChannelSchema = z.object({
+  provider: z.string(),
+  channel: z.string(),
+  label: z.string(),
+  configured: z.boolean(),
+  state: z.enum(["verified", "unverified", "disconnected"]),
+  accountLabel: z.string().nullable().optional(),
+  hasSecret: z.boolean(),
+});
+export const RemoteCredentialTestResultSchema = z.object({
+  connected: z.boolean(),
+  message: z.string(),
+  label: z.string().nullable().optional(),
+});
+export const SaveRemoteCredentialInputSchema = z.object({
+  secret: z.string().max(4_000),
+});
 
 export const RepositorySchema = z.object({
   id,
-  yuqueId: z.string().nullable().optional(),
+  provider: z.string().max(32).nullable().optional(),
+  remoteId: z.string().nullable().optional(),
   name: text(120),
   description: nullableText(2_000),
-  yuqueUrl: z.string().max(4_000).nullable().optional(),
+  remoteUrl: z.string().max(4_000).nullable().optional(),
   documentCount: z.number().int().nonnegative(),
   indexedDocumentCount: z.number().int().nonnegative(),
   syncStatus: z.string(),
@@ -202,7 +230,8 @@ export const RepositorySchema = z.object({
 });
 export const CreateRepositoryInputSchema = z.object({
   name: text(120),
-  createRemote: z.boolean().optional(),
+  // Omitted or null creates a local knowledge base (the default).
+  provider: z.string().max(32).nullable().optional(),
 });
 
 export const DocumentInputSchema = z.object({
@@ -212,9 +241,9 @@ export const DocumentInputSchema = z.object({
 export const DocumentSummarySchema = z.object({
   id,
   repositoryId: id,
-  yuqueId: z.string().nullable().optional(),
+  remoteId: z.string().nullable().optional(),
   title: text(240),
-  yuqueUrl: z.string().max(4_000).nullable().optional(),
+  remoteUrl: z.string().max(4_000).nullable().optional(),
   chunkCount: z.number().int().nonnegative(),
   status: z.string(),
   remoteDeleted: z.boolean(),
@@ -426,7 +455,7 @@ export const StagedCollectionSchema = z.object({
 });
 export const BatchImportSchema = z.object({
   id,
-  sourceKind: z.enum(["staged_directory", "web", "yuque_repository", "search_results"]),
+  sourceKind: z.enum(["staged_directory", "web", "remote_repository", "search_results"]),
   repositoryId: id,
   state: z.enum([
     "discovering",
@@ -579,7 +608,7 @@ export const DistillationEditSchema = z.object({
 });
 export const DistillationTargetSchema = z.discriminatedUnion("target", [
   z.object({ target: z.literal("local") }),
-  z.object({ target: z.literal("yuque"), repositoryId: id }),
+  z.object({ target: z.literal("remote"), repositoryId: id }),
 ]);
 export const DistillationViewSchema = z.object({
   id,
@@ -590,10 +619,10 @@ export const DistillationViewSchema = z.object({
   sources: z.array(z.record(z.unknown())).max(500),
   repositoryIds: z.array(id).max(100),
   state: z.enum(["generating", "draft", "saving", "saved", "saved_unindexed", "failed"]),
-  storageTarget: z.enum(["local", "yuque"]).nullable(),
+  storageTarget: z.enum(["local", "remote"]).nullable(),
   localPath: relativePath.nullable(),
   documentId: id.nullable(),
-  yuqueUrl: z.string().url().max(4_000).nullable(),
+  remoteUrl: z.string().url().max(4_000).nullable(),
   errorCode: z.string().max(128).nullable(),
   retryable: z.boolean(),
   createdAt: timestamp,
@@ -628,8 +657,13 @@ export type FeishuBindingInput = z.infer<typeof FeishuBindingInputSchema>;
 export type ConnectionTestResult = z.infer<typeof ConnectionTestResultSchema>;
 export type ModelConnectionResult = z.infer<typeof ModelConnectionResultSchema>;
 export type ModelStatus = z.infer<typeof ModelStatusSchema>;
-export type YuqueStatus = z.infer<typeof YuqueStatusSchema>;
+export type RemoteStatus = z.infer<typeof RemoteStatusSchema>;
 export type BrowserInstallResult = z.infer<typeof BrowserInstallResultSchema>;
+export type RemoteProviderCapabilities = z.infer<typeof RemoteProviderCapabilitiesSchema>;
+export type RemoteProviderSummary = z.infer<typeof RemoteProviderSummarySchema>;
+export type RemoteCredentialChannel = z.infer<typeof RemoteCredentialChannelSchema>;
+export type RemoteCredentialTestResult = z.infer<typeof RemoteCredentialTestResultSchema>;
+export type SaveRemoteCredentialInput = z.infer<typeof SaveRemoteCredentialInputSchema>;
 export type Repository = z.infer<typeof RepositorySchema>;
 export type CreateRepositoryInput = z.infer<typeof CreateRepositoryInputSchema>;
 export type SyncOutcome = z.infer<typeof SyncOutcomeSchema>;
@@ -733,10 +767,19 @@ export interface DocMindApi {
     status(): Promise<ModelStatus>;
     prepare(): Promise<ModelStatus>;
   };
-  yuque: {
-    status(): Promise<YuqueStatus>;
-    login(): Promise<YuqueStatus>;
-    installBrowser(): Promise<BrowserInstallResult>;
+  remote: {
+    status(provider: string): Promise<RemoteStatus>;
+    login(provider: string): Promise<RemoteStatus>;
+    installBrowser(provider: string): Promise<BrowserInstallResult>;
+    listProviders(): Promise<RemoteProviderSummary[]>;
+    listCredentials(provider: string): Promise<RemoteCredentialChannel[]>;
+    saveCredential(
+      provider: string,
+      channel: string,
+      input: SaveRemoteCredentialInput,
+    ): Promise<RemoteCredentialChannel>;
+    testCredential(provider: string, channel: string): Promise<RemoteCredentialTestResult>;
+    deleteCredential(provider: string, channel: string): Promise<RemoteCredentialChannel>;
   };
   repositories: {
     list(): Promise<Repository[]>;
@@ -829,8 +872,12 @@ export const schemas = {
   FeishuBindingInputSchema,
   ModelConnectionResultSchema,
   ModelStatusSchema,
-  YuqueStatusSchema,
+  RemoteStatusSchema,
   BrowserInstallResultSchema,
+  RemoteProviderSummarySchema,
+  RemoteCredentialChannelSchema,
+  RemoteCredentialTestResultSchema,
+  SaveRemoteCredentialInputSchema,
   RepositorySchema,
   DocumentSummarySchema,
   DocumentDetailSchema,
