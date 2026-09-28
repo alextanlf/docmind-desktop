@@ -39,9 +39,9 @@ class DocumentDelete(WireModel):
 class DocumentSummary(WireModel):
     id: str
     repository_id: str
-    yuque_id: str | None
+    remote_id: str | None
     title: str
-    yuque_url: str | None
+    remote_url: str | None
     chunk_count: int
     status: str
     remote_deleted: bool

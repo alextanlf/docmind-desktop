@@ -5,7 +5,7 @@ import pytest
 import respx
 
 from app.api.errors import DomainError
-from app.schemas.yuque import CreateYuqueDocumentRequest, UpdateYuqueDocumentRequest
+from app.schemas.remote import CreateRemoteDocumentRequest, UpdateRemoteDocumentRequest
 from app.yuque.api_gateway import YuqueApiGateway
 
 
@@ -49,10 +49,10 @@ async def test_lists_repositories_and_documents_with_stable_ids() -> None:
     documents = await gateway().list_documents("tan/product")
 
     assert len(repositories) == 1
-    assert repositories[0].yuque_id == "tan/product"
+    assert repositories[0].remote_id == "tan/product"
     assert repositories[0].name == "产品文档"
     assert repositories[0].url == "https://www.yuque.com/tan/product"
-    assert documents[0].yuque_id == "tan/product/requirements"
+    assert documents[0].remote_id == "tan/product/requirements"
     assert documents[0].url == "https://www.yuque.com/tan/product/requirements"
 
 
@@ -90,7 +90,7 @@ async def test_reads_and_updates_document_content_via_api() -> None:
 
     content = await document.read_document("tan/product/requirements")
     updated = await document.update_document(
-        UpdateYuqueDocumentRequest(
+        UpdateRemoteDocumentRequest(
             document_id="tan/product/requirements",
             title="新版需求",
             content="# 新版需求",
@@ -123,14 +123,14 @@ async def test_creates_document_in_requested_repository() -> None:
     )
 
     created = await gateway().create_document(
-        CreateYuqueDocumentRequest(
+        CreateRemoteDocumentRequest(
             repository_id="tan/product",
             title="发布说明",
             content="# v1",
         )
     )
 
-    assert created.yuque_id == "tan/product/release-notes"
+    assert created.remote_id == "tan/product/release-notes"
     assert created.repository_id == "tan/product"
     assert route.called
 

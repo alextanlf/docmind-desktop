@@ -7,8 +7,8 @@ from app.sync.service import IncrementalSyncService
 
 
 class FakeDoc:
-    def __init__(self, yuque_id: str | None, markdown_path: str | None = "") -> None:
-        self.yuque_id = yuque_id
+    def __init__(self, remote_id: str | None, markdown_path: str | None = "") -> None:
+        self.remote_id = remote_id
         self.markdown_path = markdown_path
 
 

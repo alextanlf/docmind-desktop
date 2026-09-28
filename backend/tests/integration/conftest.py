@@ -18,7 +18,7 @@ from app.schemas.batches import BatchImportView, BatchItemPage
 from app.schemas.imports import ImportJobView, SourcePreview
 from app.schemas.repositories import RepositoryView
 from app.schemas.sessions import SessionSummary
-from app.yuque.gateway import FakeYuqueGateway
+from app.remote.fake import FakeRemoteProvider
 
 RUNTIME_TOKEN = "integration-runtime-token"
 
@@ -94,12 +94,16 @@ class TestAppHarness:
             await asyncio.sleep(0.01)
         pytest.fail(f"batch timed out: {final}")
 
-    async def create_repository(self, name: str) -> RepositoryView:
+    async def create_repository(self, name: str, *, provider: str | None = "yuque") -> RepositoryView:
         response = await self.client.post(
-            "/api/repositories", json={"name": name, "createRemote": True}
+            "/api/repositories", json={"name": name, "provider": provider}
         )
         response.raise_for_status()
         return RepositoryView.model_validate(response.json())
+
+    @property
+    def remote_provider(self):
+        return self.app.state.remote_registry.get("yuque")
 
     async def inspect_staged(self, staged_id: str) -> SourcePreview:
         response = await self.client.post(
@@ -181,7 +185,7 @@ async def test_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AsyncIter
     )
     from app.main import create_app
 
-    app = create_app(settings, yuque_gateway=FakeYuqueGateway())
+    app = create_app(settings, providers={"yuque": FakeRemoteProvider()})
     transport = httpx.ASGITransport(app=app)
     async with app.router.lifespan_context(app), httpx.AsyncClient(
         transport=transport,

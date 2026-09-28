@@ -17,7 +17,7 @@ from app.core.llm import ChatDelta
 from app.core.secrets import MemorySecretStore
 from app.main import create_app
 from app.storage.models import DistillationRecord, MemoryChunkRecord, SessionRecord
-from app.yuque.gateway import FakeYuqueGateway
+from app.remote.fake import FakeRemoteProvider
 from tests.integration.conftest import TestAppHarness
 
 TOKEN = "memory-acceptance-token"
@@ -92,7 +92,7 @@ async def running(settings):
         secret_store=MemorySecretStore(),
         embedding_provider=embedding,
         llm_provider=llm,
-        yuque_gateway=FakeYuqueGateway(),
+        providers={"yuque": FakeRemoteProvider()},
     )
     async with app.router.lifespan_context(app):
         app.state.summary_scheduler.stop()

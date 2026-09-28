@@ -117,7 +117,7 @@ class CrawlEntryRecord(Base):
 class BatchSourceKind(StrEnum):
     STAGED_DIRECTORY = "staged_directory"
     WEB = "web"
-    YUQUE_REPOSITORY = "yuque_repository"
+    REMOTE_REPOSITORY = "remote_repository"
     SEARCH_RESULTS = "search_results"
 
 
@@ -140,12 +140,17 @@ def string_enum(enum: type[StrEnum], length: int) -> Enum:
 
 class RepositoryRecord(Base):
     __tablename__ = "repositories"
+    __table_args__ = (UniqueConstraint("provider", "remote_id", name="uq_repositories_provider_remote_id"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    yuque_id: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
+    # Remote identity is scoped by provider: the pair (provider, remote_id) is
+    # what makes a repository remotely bound; local-only repositories keep both
+    # remote columns NULL.
+    provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    remote_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     name: Mapped[str] = mapped_column(String(512))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    yuque_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    remote_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     sync_status: Mapped[str] = mapped_column(String(64), default="unknown", server_default=text("'unknown'"))
     document_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(
@@ -165,7 +170,7 @@ class DocumentRecord(Base):
     repository_id: Mapped[str] = mapped_column(
         ForeignKey("repositories.id", ondelete="CASCADE"), index=True
     )
-    yuque_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    remote_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     title: Mapped[str] = mapped_column(String(1024))
     source_url: Mapped[str | None] = mapped_column(Text, index=True, nullable=True)
     raw_path: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -174,7 +179,7 @@ class DocumentRecord(Base):
     content_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     status: Mapped[str] = mapped_column(String(64), default="pending", server_default=text("'pending'"))
-    yuque_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    remote_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_identity: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
     remote_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
@@ -250,7 +255,7 @@ class BatchImportRecord(Base):
     __tablename__ = "batch_imports"
     __table_args__ = (
         CheckConstraint(
-            "source_kind IN ('staged_directory', 'web', 'yuque_repository', 'search_results')",
+            "source_kind IN ('staged_directory', 'web', 'remote_repository', 'search_results')",
             name="ck_batch_imports_source_kind",
         ),
         CheckConstraint(
@@ -390,7 +395,7 @@ class DistillationRecord(Base):
     __tablename__ = "distillations"
     __table_args__ = (
         CheckConstraint("state IN ('generating','draft','saving','saved','saved_unindexed','failed')", name="ck_distillations_state"),
-        CheckConstraint("target IS NULL OR target IN ('local','yuque')", name="ck_distillations_target"),
+        CheckConstraint("target IS NULL OR target IN ('local','remote')", name="ck_distillations_target"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     session_id: Mapped[str | None] = mapped_column(ForeignKey("sessions.id", ondelete="SET NULL"))

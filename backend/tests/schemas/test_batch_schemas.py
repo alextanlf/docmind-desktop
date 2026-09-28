@@ -64,11 +64,11 @@ def test_create_batch_request_accepts_all_frozen_wire_variants() -> None:
     result_id = "00000000-0000-0000-0000-000000000004"
     staged = adapter.validate_python({"kind": "staged_directory", "sourceId": source_id, "repositoryId": repository_id})
     web = adapter.validate_python({"kind": "web", "entryUrl": "https://example.test/", "repositoryId": repository_id, "maxDepth": 5, "maxPages": 200, "useSitemap": True})
-    yuque = adapter.validate_python({"kind": "yuque_repository", "repositoryId": repository_id})
+    yuque = adapter.validate_python({"kind": "remote_repository", "repositoryId": repository_id})
     search = adapter.validate_python({"kind": "search_results", "searchRunId": search_run_id, "resultIds": [result_id], "repositoryId": repository_id})
     assert staged.kind == "staged_directory" and str(staged.source_id) == source_id
     assert web.kind == "web" and str(web.entry_url) == "https://example.test/"
-    assert yuque.kind == "yuque_repository" and str(yuque.repository_id) == repository_id
+    assert yuque.kind == "remote_repository" and str(yuque.repository_id) == repository_id
     assert search.kind == "search_results" and [str(value) for value in search.result_ids] == [result_id]
 
 
@@ -77,7 +77,7 @@ def test_create_batch_request_accepts_all_frozen_wire_variants() -> None:
     [
         {"kind": "staged_directory", "sourceId": "not-a-uuid", "repositoryId": "00000000-0000-0000-0000-000000000001"},
         {"kind": "web", "entryUrl": "ftp://example.test", "repositoryId": "00000000-0000-0000-0000-000000000001", "maxDepth": 5, "maxPages": 200, "useSitemap": True},
-        {"kind": "yuque_repository", "sourceId": "00000000-0000-0000-0000-000000000002", "repositoryId": "00000000-0000-0000-0000-000000000001"},
+        {"kind": "remote_repository", "sourceId": "00000000-0000-0000-0000-000000000002", "repositoryId": "00000000-0000-0000-0000-000000000001"},
         {"kind": "search_results", "searchRunId": "not-a-uuid", "resultIds": [], "repositoryId": "00000000-0000-0000-0000-000000000001"},
     ],
 )

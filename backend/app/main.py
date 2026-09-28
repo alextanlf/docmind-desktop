@@ -32,7 +32,7 @@ from app.api.settings import SettingsService
 from app.api.settings import router as settings_router
 from app.api.sync import router as sync_router
 from app.api.web_search import router as web_search_router
-from app.api.yuque import router as yuque_router
+from app.api.remote import router as remote_router
 from app.chat.service import ChatService
 from app.config import AppSettings, get_settings
 from app.core.embedding import EmbeddingProvider, FakeEmbeddingProvider, create_embedding_provider
@@ -98,9 +98,12 @@ from app.sync.conflict import SyncConflictService
 from app.sync.refresher import DocumentRefresher
 from app.sync.scheduler import SyncScheduler
 from app.sync.service import IncrementalSyncService
-from app.yuque.api_gateway import RoutingYuqueGateway, YuqueApiGateway
-from app.yuque.discovery import YuqueDiscovery, read_remote_snapshot
-from app.yuque.gateway import PlaywrightYuqueGateway, YuqueGateway
+from app.remote.discovery import RemoteDiscovery
+from app.remote.provider import RemoteProvider
+from app.remote.registry import ProviderRegistry
+from app.remote.snapshot import read_remote_snapshot
+from app.yuque.api_gateway import YuqueApiGateway, YuqueProvider
+from app.yuque.gateway import PlaywrightYuqueGateway
 
 # 界面启动时会拉起语雀浏览器做"首次设置"检查；启动同步必须排在它后面，
 # 否则用户会看到几十秒的转圈。
@@ -147,11 +150,72 @@ class _RoutedLLMProvider:
         async for delta in routed.deltas: yield delta
 
 
+def _assemble_production_registry(
+    registry: ProviderRegistry,
+    database: Database,
+    repository_store: RepositoryStore,
+    secret_store: SecretStore,
+    runtime_settings: AppSettings,
+) -> ProviderRegistry:
+    """Register the real remote providers with their configuration probes."""
+
+    setting_store = SettingStore(database)
+
+    def _yuque_api_token() -> str | None:
+        if setting_store.get("yuque-api.verified") != "true":
+            return None
+        try:
+            return secret_store.get("yuque-api:token")
+        except (DomainError, OSError):
+            return None
+
+    def _yuque_configured() -> bool:
+        if setting_store.get("yuque-api.verified") == "true":
+            return True
+        web_state = setting_store.get("yuque-web.connected")
+        if web_state is not None:
+            return web_state == "true"
+        # Upgrade compatibility: installations that already synced remote data
+        # keep refreshing it, while a fresh install never launches a browser
+        # session implicitly.
+        return any(
+            record.provider == "yuque" and record.remote_id
+            for record in repository_store.list()
+        )
+
+    registry.register(
+        YuqueProvider(
+            PlaywrightYuqueGateway(runtime_settings),
+            YuqueApiGateway(_yuque_api_token),
+            lambda: _yuque_api_token() is not None,
+        ),
+        _yuque_configured,
+    )
+    return registry
+
+
+def _injected_registry(
+    providers: dict[str, RemoteProvider] | None,
+) -> ProviderRegistry | None:
+    """Build a registry from explicitly injected providers, if any.
+
+    Tests and harnesses inject their own providers; production and fake-services
+    mode assemble the registry inside the lifespan where the database-backed
+    configuration probe exists.
+    """
+    if providers is None:
+        return None
+    registry = ProviderRegistry()
+    for provider in providers.values():
+        registry.register(provider, always_configured=True)
+    return registry
+
+
 def create_app(
     settings: AppSettings | None = None,
     secret_store: SecretStore | None = None,
     embedding_provider: EmbeddingProvider | None = None,
-    yuque_gateway: YuqueGateway | None = None,
+    providers: dict[str, RemoteProvider] | None = None,
     llm_provider: LLMProvider | None = None,
 ) -> FastAPI:
     runtime_settings = settings or get_settings()
@@ -163,7 +227,7 @@ def create_app(
             E2EControl,
             E2EControlledFakeEmbeddingProvider,
             FakeLLMProvider,
-            FakeYuqueGateway,
+            FakeRemoteProvider,
         )
 
         e2e_control = E2EControl(runtime_settings.data_dir) if os.getenv("DOCMIND_E2E") == "1" else None
@@ -175,14 +239,12 @@ def create_app(
             if e2e_control is not None
             else FakeEmbeddingProvider(runtime_settings.embedding_settings)
         )
-        runtime_yuque_gateway = yuque_gateway or FakeYuqueGateway(runtime_settings.data_dir)
         fake_llm_provider: LLMProvider | None = llm_provider or FakeLLMProvider(control=e2e_control)
     else:
         runtime_secret_store = secret_store or KeyringSecretStore()
         runtime_embedding_provider = embedding_provider or create_embedding_provider(
             runtime_settings.embedding_settings
         )
-        runtime_yuque_gateway = yuque_gateway or PlaywrightYuqueGateway(runtime_settings)
         fake_llm_provider = None
 
     @asynccontextmanager
@@ -203,7 +265,7 @@ def create_app(
         app.state.database = database
         if fake_llm_provider is None:
             app.state.settings_service = SettingsService(
-                SettingStore(database), runtime_secret_store
+                SettingStore(database), runtime_secret_store,
             )
         else:
             app.state.settings_service = SettingsService(
@@ -213,26 +275,19 @@ def create_app(
             )
         if fake_services:
             SettingStore(database).set("yuque-web.connected", "true")
-        yuque_web_gateway = runtime_yuque_gateway
-
-        def _yuque_api_token() -> str | None:
-            if SettingStore(database).get("yuque-api.verified") != "true":
-                return None
-            try:
-                return runtime_secret_store.get("yuque-api:token")
-            except (DomainError, OSError):
-                return None
-
-        yuque_api_gateway = YuqueApiGateway(_yuque_api_token)
-        active_yuque_gateway = RoutingYuqueGateway(
-            yuque_web_gateway,
-            yuque_api_gateway,
-            lambda: _yuque_api_token() is not None,
-        )
-        app.state.yuque_web_gateway = yuque_web_gateway
-        app.state.yuque_api_gateway = yuque_api_gateway
-        app.state.yuque_gateway = active_yuque_gateway
         repository_store = RepositoryStore(database)
+        registry = app.state.remote_registry
+        if registry is None:
+            registry = ProviderRegistry()
+            if fake_services:
+                registry.register(
+                    FakeRemoteProvider(runtime_settings.data_dir), always_configured=True
+                )
+            else:
+                registry = _assemble_production_registry(
+                    registry, database, repository_store, runtime_secret_store, runtime_settings
+                )
+            app.state.remote_registry = registry
         conversation_store = ConversationStore(database)
         vector_store = PersistentVectorStore(runtime_settings.vectorstore_settings)
         document_store = DocumentStore(database)
@@ -243,7 +298,7 @@ def create_app(
             chunker=SemanticChunker(),
             embedding_provider=runtime_embedding_provider,
             vector_store=vector_store,
-            yuque_gateway=active_yuque_gateway,
+            remote_registry=registry,
             repository_store=repository_store,
             document_store=document_store,
             job_store=ImportJobStore(database),
@@ -262,8 +317,8 @@ def create_app(
             runtime_settings.staging_dir,
             frontier=CrawlEntryStore(database),
         )
-        yuque_discovery = YuqueDiscovery(
-            active_yuque_gateway, repository_store, runtime_settings.staging_dir
+        remote_discovery = RemoteDiscovery(
+            registry, repository_store, runtime_settings.staging_dir
         )
         app.state.batch_service = BatchService(
             store=app.state.batch_store,
@@ -274,7 +329,7 @@ def create_app(
             manifest_max_bytes=runtime_settings.staging_manifest_max_bytes,
             batch_max_items=runtime_settings.batch_max_items,
             web_discovery=web_discovery,
-            yuque_discovery=yuque_discovery,
+            remote_discovery=remote_discovery,
         )
         app.state.batch_service.recover_on_startup()
         def _read_secret(name: str) -> str | None:
@@ -452,7 +507,6 @@ def create_app(
             conversation_store,
             runtime_llm_provider,
             LocalKnowledgeStore(runtime_settings.data_dir),
-            yuque_gateway=active_yuque_gateway,
             mutation_store=app.state.document_mutation_store,
             indexer=memory_indexer,
             document_saver=lambda **kwargs: save_distillation_document(app, **kwargs),
@@ -475,9 +529,11 @@ def create_app(
 
         async def read_repo_snapshot(repository_id: str):
             repository = repository_store.get(repository_id)
-            if repository is None or not repository.yuque_id:
+            if repository is None or not repository.remote_id or not repository.provider:
                 return []
-            return await read_remote_snapshot(active_yuque_gateway, repository.yuque_id)
+            return await read_remote_snapshot(
+                registry.get(repository.provider), repository.remote_id
+            )
 
         sync_service = IncrementalSyncService(
             sync_state_store=sync_state_store,
@@ -509,7 +565,7 @@ def create_app(
             document_store=document_store,
             sync_state_store=sync_state_store,
             snapshot_reader=read_repo_snapshot,
-            gateway=active_yuque_gateway,
+            registry=registry,
             refresher=refresher,
             repository_store=repository_store,
         )
@@ -532,7 +588,7 @@ def create_app(
             await summary_task
             sync_scheduler.stop()
             await sync_task
-            await active_yuque_gateway.close()
+            await registry.close_all()
             database.engine.dispose()
 
     app = FastAPI(dependencies=[Depends(require_runtime_token)], lifespan=lifespan)
@@ -543,9 +599,9 @@ def create_app(
     app.dependency_overrides[get_settings] = lambda: runtime_settings
     app.state.settings = runtime_settings
     app.state.secret_store = runtime_secret_store
+    app.state.remote_registry = _injected_registry(providers)
     app.state.embedding_provider = runtime_embedding_provider
     app.state.embedding_prepare_task = None
-    app.state.yuque_gateway = runtime_yuque_gateway
     app.state.fake_llm_provider = fake_llm_provider
     app.state.import_tasks = set()
     app.state.active_document_mutations = set()
@@ -554,7 +610,7 @@ def create_app(
     app.add_exception_handler(RequestValidationError, request_validation_handler)
     app.include_router(settings_router)
     app.include_router(embedding_router)
-    app.include_router(yuque_router)
+    app.include_router(remote_router)
     app.include_router(imports_router)
     app.include_router(import_batches_router)
     app.include_router(repositories_router)

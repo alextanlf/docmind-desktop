@@ -8,7 +8,7 @@ from pydantic import ConfigDict, Field, HttpUrl, model_validator
 
 from app.schemas.common import WireModel
 
-BatchSourceKind = Literal["staged_directory", "web", "yuque_repository", "search_results"]
+BatchSourceKind = Literal["staged_directory", "web", "remote_repository", "search_results"]
 BatchStateValue = Literal[
     "discovering",
     "awaiting_confirmation",
@@ -39,6 +39,8 @@ class CachedSourceRef(WireModel):
 
 
 class RemoteBinding(WireModel):
+    # Default keeps historical persisted bindings (all Yuque) loadable.
+    provider: str = "yuque"
     repository_id: str
     document_id: str
     document_url: str | None = None
@@ -162,13 +164,13 @@ class CrawlDiagnostic(WireModel):
     message: str
 
 
-class YuqueRepositoryBatchRequest(WireModel):
+class RemoteRepositoryBatchRequest(WireModel):
     model_config = ConfigDict(extra="forbid")
-    kind: Literal["yuque_repository"]
+    kind: Literal["remote_repository"]
     repository_id: UUID = Field(alias="repositoryId")
 
 WebBatchInput = WebBatchRequest
-YuqueBatchInput = YuqueRepositoryBatchRequest
+RemoteRepositoryBatchInput = RemoteRepositoryBatchRequest
 
 
 class SearchResultsBatchRequest(WireModel):
@@ -182,7 +184,7 @@ class SearchResultsBatchRequest(WireModel):
 CreateBatchRequest = Annotated[
     StagedDirectoryBatchRequest
     | WebBatchRequest
-    | YuqueRepositoryBatchRequest
+    | RemoteRepositoryBatchRequest
     | SearchResultsBatchRequest,
     Field(discriminator="kind"),
 ]

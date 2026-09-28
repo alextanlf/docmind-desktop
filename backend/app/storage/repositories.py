@@ -238,8 +238,9 @@ class RepositoryStore:
             record = RepositoryRecord(
                 name=name,
                 description=description,
-                yuque_id=None,
-                yuque_url=None,
+                provider=None,
+                remote_id=None,
+                remote_url=None,
                 sync_status="local",
             )
             session.add(record)
@@ -254,22 +255,36 @@ class RepositoryStore:
                 record.updated_at = utc_now()
 
     def upsert_remote(
-        self, *, yuque_id: str, name: str, description: str | None, yuque_url: str | None
+        self,
+        *,
+        provider: str,
+        remote_id: str,
+        name: str,
+        description: str | None,
+        remote_url: str | None,
     ) -> RepositoryRecord:
         with self.database.session() as session:
             record = session.scalar(
-                select(RepositoryRecord).where(RepositoryRecord.yuque_id == yuque_id)
+                select(RepositoryRecord).where(
+                    RepositoryRecord.provider == provider,
+                    RepositoryRecord.remote_id == remote_id,
+                )
             )
             if record is None:
                 record = RepositoryRecord(
-                    yuque_id=yuque_id, name=name, description=description, yuque_url=yuque_url
+                    provider=provider,
+                    remote_id=remote_id,
+                    name=name,
+                    description=description,
+                    remote_url=remote_url,
                 )
                 session.add(record)
             else:
-                record.name, record.description, record.yuque_url, record.updated_at = (
+                record.provider, record.name, record.description, record.remote_url, record.updated_at = (
+                    provider,
                     name,
                     description,
-                    yuque_url,
+                    remote_url,
                     utc_now(),
                 )
             session.flush()
@@ -420,11 +435,11 @@ class DocumentStore:
             )
             return session.scalar(statement)
 
-    def find_by_yuque_id(self, repository_id: str, yuque_id: str) -> DocumentRecord | None:
+    def find_by_remote_id(self, repository_id: str, remote_id: str) -> DocumentRecord | None:
         with self.database.session() as session:
             statement = select(DocumentRecord).where(
                 DocumentRecord.repository_id == repository_id,
-                DocumentRecord.yuque_id == yuque_id,
+                DocumentRecord.remote_id == remote_id,
             )
             return session.scalar(statement)
 
@@ -515,14 +530,14 @@ class DocumentStore:
             return document
 
     def update_remote(
-        self, document_id: str, *, yuque_id: str, yuque_url: str | None
+        self, document_id: str, *, remote_id: str, remote_url: str | None
     ) -> DocumentRecord:
         with self.database.session() as session:
             document = session.get(DocumentRecord, document_id)
             if document is None:
                 raise DomainError("IMPORT_STATE_CONFLICT", "导入文档不存在", 409)
-            document.yuque_id = yuque_id
-            document.yuque_url = yuque_url
+            document.remote_id = remote_id
+            document.remote_url = remote_url
             document.status = "uploaded"
             document.updated_at = utc_now()
             session.flush()
@@ -533,8 +548,8 @@ class DocumentStore:
         document_id: str,
         *,
         title: str,
-        yuque_id: str | None,
-        yuque_url: str | None,
+        remote_id: str | None,
+        remote_url: str | None,
         markdown_path: str,
         source_url: str | None,
     ) -> DocumentRecord:
@@ -543,8 +558,8 @@ class DocumentStore:
             if document is None:
                 raise DomainError("NOT_FOUND", "资源不存在", 404)
             document.title = title
-            document.yuque_id = yuque_id
-            document.yuque_url = yuque_url
+            document.remote_id = remote_id
+            document.remote_url = remote_url
             document.markdown_path = markdown_path
             document.source_url = source_url
             document.updated_at = utc_now()
@@ -635,7 +650,7 @@ class DocumentStore:
                 session.add(record)
             for field in (
                 "repository_id",
-                "yuque_id",
+                "remote_id",
                 "title",
                 "source_url",
                 "raw_path",
@@ -644,7 +659,7 @@ class DocumentStore:
                 "content_hash",
                 "chunk_count",
                 "status",
-                "yuque_url",
+                "remote_url",
                 "source_identity",
                 "source_revision",
             ):
@@ -1220,7 +1235,7 @@ class BatchImportStore:
             if batch.repository_id is not None
             else None
         )
-        if repository is None or not repository.yuque_id:
+        if repository is None or not repository.remote_id:
             raise _stale_confirmation("目标知识库已变化，请重新确认")
         items = list(
             session.scalars(

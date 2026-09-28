@@ -1,12 +1,28 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 
 from app.storage.database import Database
-from app.storage.models import DocumentChunkRecord, DocumentRecord, RepositoryRecord
+from app.storage.models import (
+    DocumentChunkRecord,
+    DocumentRecord,
+    RepositoryRecord,
+)
 from app.storage.repositories import DocumentStore
+
+
+def _alembic_config(database: Database) -> Config:
+    backend_dir = Path(__file__).resolve().parents[2]
+    config = Config(str(backend_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_dir / "migrations"))
+    config.set_main_option("sqlalchemy.url", database.url)
+    return config
 
 
 def test_upgrade_creates_all_phase_one_and_phase_two_tables() -> None:
@@ -38,6 +54,79 @@ def test_upgrade_creates_all_phase_one_and_phase_two_tables() -> None:
     database.engine.dispose()
 
 
+def test_remote_provider_decoupling_backfills_and_scopes_uniqueness(tmp_path: Path) -> None:
+    database = Database(f"sqlite+pysqlite:///{tmp_path / 'decouple.sqlite'}")
+    config = _alembic_config(database)
+    with database.engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.upgrade(config, "0015_phase4e_embedding_dimension")
+    with database.session() as session:
+        session.execute(
+            text(
+                "INSERT INTO repositories (id, yuque_id, yuque_url, name) "
+                "VALUES ('repo-remote', 'docs/one', 'https://yuque.com/docs/one', 'One')"
+            )
+        )
+        session.execute(text("INSERT INTO repositories (id, name) VALUES ('repo-local', 'Local')"))
+        session.execute(
+            text(
+                "INSERT INTO batch_imports (id, source_kind, source_descriptor_json, state) "
+                "VALUES ('batch-1', 'yuque_repository', '{}', 'awaiting_confirmation')"
+            )
+        )
+        session.execute(
+            text(
+                "INSERT INTO distillations (id, title, content, state, target) "
+                "VALUES ('distill-1', 'T', 'C', 'draft', 'yuque')"
+            )
+        )
+
+    database.upgrade()
+
+    assert {column["name"] for column in inspect(database.engine).get_columns("repositories")} >= {
+        "provider",
+        "remote_id",
+        "remote_url",
+    }
+    with database.session() as session:
+        remote = session.execute(
+            text("SELECT provider, remote_id, remote_url FROM repositories WHERE id = 'repo-remote'")
+        ).one()
+        local = session.execute(
+            text("SELECT provider, remote_id FROM repositories WHERE id = 'repo-local'")
+        ).one()
+        batch = session.execute(
+            text("SELECT source_kind FROM batch_imports WHERE id = 'batch-1'")
+        ).scalar()
+        distillation = session.execute(
+            text("SELECT target FROM distillations WHERE id = 'distill-1'")
+        ).scalar()
+
+    assert remote == ("yuque", "docs/one", "https://yuque.com/docs/one")
+    assert local == (None, None)
+    assert batch == "remote_repository"
+    assert distillation == "remote"
+
+    # (provider, remote_id) is unique: a second Yuque binding collides, while a
+    # different provider may reuse the same remote identifier.
+    with pytest.raises(IntegrityError), database.session() as session:
+        session.execute(
+            text(
+                "INSERT INTO repositories (id, provider, remote_id, name) "
+                "VALUES ('dup', 'yuque', 'docs/one', 'Dup')"
+            )
+        )
+    with database.session() as session:
+        session.execute(
+            text(
+                "INSERT INTO repositories (id, provider, remote_id, name) "
+                "VALUES ('feishu-copy', 'feishu', 'docs/one', 'Feishu copy')"
+            )
+        )
+
+    database.engine.dispose()
+
+
 def test_upgrade_is_idempotent(database: Database) -> None:
     database.upgrade()
 
@@ -48,12 +137,12 @@ def test_upgrade_creates_exact_phase_one_columns(database: Database) -> None:
     inspector = inspect(database.engine)
 
     assert {column["name"] for column in inspector.get_columns("repositories")} == {
-        "id", "yuque_id", "name", "description", "yuque_url", "sync_status", "document_count",
-        "created_at", "updated_at",
+        "id", "provider", "remote_id", "name", "description", "remote_url", "sync_status",
+        "document_count", "created_at", "updated_at",
     }
     assert {column["name"] for column in inspector.get_columns("documents")} == {
-        "id", "repository_id", "yuque_id", "title", "source_url", "raw_path", "markdown_path",
-        "source_type", "content_hash", "chunk_count", "status", "yuque_url", "source_identity",
+        "id", "repository_id", "remote_id", "title", "source_url", "raw_path", "markdown_path",
+        "source_type", "content_hash", "chunk_count", "status", "remote_url", "source_identity",
         "source_revision", "remote_deleted", "sync_state", "local_dirty", "created_at", "updated_at",
     }
     assert {column["name"] for column in inspector.get_columns("document_chunks")} == {

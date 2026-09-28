@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.schemas.sync import ConflictResolution, RemoteDocumentState
+from app.remote.registry import ProviderRegistry
 from app.sync.conflict import SyncConflictService
 
 
@@ -12,14 +13,14 @@ class FakeDoc:
         *,
         document_id: str,
         repository_id: str,
-        yuque_id: str,
+        remote_id: str,
         title: str,
         local_dirty: bool,
         markdown_path: str | None,
     ) -> None:
         self.id = document_id
         self.repository_id = repository_id
-        self.yuque_id = yuque_id
+        self.remote_id = remote_id
         self.title = title
         self.local_dirty = local_dirty
         self.markdown_path = markdown_path
@@ -52,6 +53,8 @@ class FakeSyncStateStore:
 
 
 class FakeGateway:
+    name = "yuque"
+
     def __init__(self) -> None:
         self.updated: list[str] = []
         self.created = 0
@@ -83,8 +86,9 @@ class FakeRefresher:
 
 
 class FakeRepo:
-    def __init__(self, yuque_id: str) -> None:
-        self.yuque_id = yuque_id
+    def __init__(self, remote_id: str, provider: str = "yuque") -> None:
+        self.remote_id = remote_id
+        self.provider = provider
 
 
 class FakeRepositoryStore:
@@ -92,12 +96,18 @@ class FakeRepositoryStore:
         return FakeRepo("yuque-1")
 
 
+def _registry(gateway: FakeGateway) -> ProviderRegistry:
+    registry = ProviderRegistry()
+    registry.register(gateway, always_configured=True)
+    return registry
+
+
 @pytest.mark.asyncio
 async def test_detect_conflict_requires_dirty_and_remote_change() -> None:
     doc = FakeDoc(
         document_id="local-1",
         repository_id="repo-1",
-        yuque_id="doc-1",
+        remote_id="doc-1",
         title="State",
         local_dirty=True,
         markdown_path=None,
@@ -112,7 +122,7 @@ async def test_detect_conflict_requires_dirty_and_remote_change() -> None:
         document_store=store,
         sync_state_store=store_for_service,
         snapshot_reader=reader,
-        gateway=FakeGateway(),
+        registry=_registry(FakeGateway()),
         refresher=FakeRefresher(),
         repository_store=FakeRepositoryStore(),
     )
@@ -126,7 +136,7 @@ async def test_resolve_keep_local_pushes_and_clears_dirty() -> None:
     doc = FakeDoc(
         document_id="local-1",
         repository_id="repo-1",
-        yuque_id="doc-1",
+        remote_id="doc-1",
         title="State",
         local_dirty=True,
         markdown_path=None,
@@ -137,7 +147,7 @@ async def test_resolve_keep_local_pushes_and_clears_dirty() -> None:
         document_store=store,
         sync_state_store=FakeSyncStateStore({}),
         snapshot_reader=async_reader([]),
-        gateway=gateway,
+        registry=_registry(gateway),
         refresher=FakeRefresher(),
         repository_store=FakeRepositoryStore(),
     )
@@ -154,7 +164,7 @@ async def test_resolve_keep_remote_reimports() -> None:
     doc = FakeDoc(
         document_id="local-1",
         repository_id="repo-1",
-        yuque_id="doc-1",
+        remote_id="doc-1",
         title="State",
         local_dirty=True,
         markdown_path=None,
@@ -164,7 +174,7 @@ async def test_resolve_keep_remote_reimports() -> None:
         document_store=FakeDocumentStore([doc]),
         sync_state_store=FakeSyncStateStore({}),
         snapshot_reader=async_reader([]),
-        gateway=FakeGateway(),
+        registry=_registry(FakeGateway()),
         refresher=refresher,
         repository_store=FakeRepositoryStore(),
     )
@@ -179,7 +189,7 @@ async def test_resolve_keep_both_creates_copy_and_pushes() -> None:
     doc = FakeDoc(
         document_id="local-1",
         repository_id="repo-1",
-        yuque_id="doc-1",
+        remote_id="doc-1",
         title="State",
         local_dirty=True,
         markdown_path=None,
@@ -189,7 +199,7 @@ async def test_resolve_keep_both_creates_copy_and_pushes() -> None:
         document_store=FakeDocumentStore([doc]),
         sync_state_store=FakeSyncStateStore({}),
         snapshot_reader=async_reader([]),
-        gateway=gateway,
+        registry=_registry(gateway),
         refresher=FakeRefresher(),
         repository_store=FakeRepositoryStore(),
     )

@@ -10,7 +10,7 @@ from app.api.errors import DomainError
 from app.config import EmbeddingSettings
 from app.core.embedding import FakeEmbeddingProvider
 from app.core.llm import ChatDelta, ChatRequest, ModelConnectionResult
-from app.yuque.gateway import FakeYuqueGateway
+from app.remote.fake import FakeRemoteProvider
 
 
 class E2EControl:
@@ -116,5 +116,5 @@ __all__ = [
     "E2EControl",
     "E2EControlledFakeEmbeddingProvider",
     "FakeLLMProvider",
-    "FakeYuqueGateway",
+    "FakeRemoteProvider",
 ]

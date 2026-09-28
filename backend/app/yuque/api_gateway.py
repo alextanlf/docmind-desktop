@@ -9,17 +9,18 @@ import httpx
 
 from app.api.errors import DomainError
 from app.document.parser import DocumentParser
+from app.remote.provider import ProviderCapabilities, ProviderIdentity
 from app.schemas.imports import DownloadedDocument
-from app.schemas.yuque import (
+from app.schemas.remote import (
     BrowserInstallResult,
-    CreateRepositoryRequest,
-    CreateYuqueDocumentRequest,
+    CreateRemoteRepositoryRequest,
+    CreateRemoteDocumentRequest,
     LoginResult,
     LoginStatus,
-    UpdateYuqueDocumentRequest,
-    YuqueDocument,
-    YuqueDocumentContent,
-    YuqueRepository,
+    UpdateRemoteDocumentRequest,
+    RemoteDocument,
+    RemoteDocumentContent,
+    RemoteRepository,
 )
 
 YUQUE_API_BASE_URL = "https://www.yuque.com/api/v2"
@@ -72,7 +73,7 @@ class YuqueApiGateway:
     async def install_browser(self) -> BrowserInstallResult:
         return BrowserInstallResult(installed=True, message="API 模式无需安装浏览器")
 
-    async def list_repositories(self) -> list[YuqueRepository]:
+    async def list_repositories(self) -> list[RemoteRepository]:
         self.read_calls.append("list_repositories")
         token = self._token_required()
         user = await _fetch_user(token)
@@ -82,7 +83,7 @@ class YuqueApiGateway:
         rows = await _list_all(token, f"/users/{login}/repos")
         return [_repository_from_api(row) for row in rows]
 
-    async def create_repository(self, request: CreateRepositoryRequest) -> YuqueRepository:
+    async def create_repository(self, request: CreateRemoteRepositoryRequest) -> RemoteRepository:
         self.write_calls.append("create_repository")
         token = self._token_required()
         user = await _fetch_user(token)
@@ -99,13 +100,13 @@ class YuqueApiGateway:
             raise DomainError("YUQUE_API_ERROR", "语雀 API 返回的知识库数据无效", 502, True)
         return _repository_from_api(data)
 
-    async def list_documents(self, repository_id: str) -> list[YuqueDocument]:
+    async def list_documents(self, repository_id: str) -> list[RemoteDocument]:
         self.read_calls.append("list_documents")
         token = self._token_required()
         rows = await _list_all(token, f"/repos/{_quote_path(repository_id)}/docs")
         return [_document_from_api(repository_id, row) for row in rows]
 
-    async def create_document(self, request: CreateYuqueDocumentRequest) -> YuqueDocument:
+    async def create_document(self, request: CreateRemoteDocumentRequest) -> RemoteDocument:
         self.write_calls.append("create_document")
         token = self._token_required()
         data = await _request_data(
@@ -120,9 +121,9 @@ class YuqueApiGateway:
 
     async def find_document_by_marker(
         self, repository_id: str, marker: str
-    ) -> YuqueDocument | None:
+    ) -> RemoteDocument | None:
         for document in await self.list_documents(repository_id):
-            content = await self.read_document(document.yuque_id)
+            content = await self.read_document(document.remote_id)
             if marker in content.content:
                 return document
         return None
@@ -136,7 +137,7 @@ class YuqueApiGateway:
             raise
         return _document_repository_id(document_id) == repository_id.strip("/")
 
-    async def read_document(self, document_id: str) -> YuqueDocumentContent:
+    async def read_document(self, document_id: str) -> RemoteDocumentContent:
         self.read_calls.append("read_document")
         token = self._token_required()
         repository_id, slug = _parse_document_id(document_id)
@@ -147,15 +148,15 @@ class YuqueApiGateway:
             raise DomainError("YUQUE_API_ERROR", "语雀 API 返回的文档数据无效", 502, True)
         title = str(data.get("title") or slug)
         url = _document_url(data, repository_id, slug)
-        return YuqueDocumentContent(
-            yuque_id=document_id,
+        return RemoteDocumentContent(
+            remote_id=document_id,
             repository_id=repository_id,
             title=title,
             content=_document_content(data, title, url),
             url=url,
         )
 
-    async def update_document(self, request: UpdateYuqueDocumentRequest) -> YuqueDocument:
+    async def update_document(self, request: UpdateRemoteDocumentRequest) -> RemoteDocument:
         self.write_calls.append("update_document")
         token = self._token_required()
         repository_id, _ = _parse_document_id(request.document_id)
@@ -210,8 +211,21 @@ class YuqueApiGateway:
         return token
 
 
-class RoutingYuqueGateway:
-    """Use a verified API token when available and fall back to the web session."""
+class YuqueProvider:
+    """The yuque remote provider: API token first, browser session fallback.
+
+    Document operations route to the verified open API when a token is
+    available and fall back to the Playwright-driven web session. Login
+    surface (status/login/browser install) always reflects the web session,
+    matching the former /api/yuque behaviour, because the account binding
+    card tracks the browser login state.
+    """
+
+    identity = ProviderIdentity(
+        name="yuque",
+        label="语雀",
+        capabilities=ProviderCapabilities(browser_install=True, marker_lookup=True),
+    )
 
     def __init__(
         self,
@@ -233,7 +247,7 @@ class RoutingYuqueGateway:
         return getattr(self._active(), name)
 
     async def login_status(self) -> LoginStatus:
-        return await self._active().login_status()
+        return await self.web_gateway.login_status()
 
     async def begin_login(self) -> LoginResult:
         return await self.web_gateway.begin_login()
@@ -241,30 +255,30 @@ class RoutingYuqueGateway:
     async def install_browser(self) -> BrowserInstallResult:
         return await self.web_gateway.install_browser()
 
-    async def list_repositories(self) -> list[YuqueRepository]:
+    async def list_repositories(self) -> list[RemoteRepository]:
         return await self._active().list_repositories()
 
-    async def create_repository(self, request: CreateRepositoryRequest) -> YuqueRepository:
+    async def create_repository(self, request: CreateRemoteRepositoryRequest) -> RemoteRepository:
         return await self._active().create_repository(request)
 
-    async def list_documents(self, repository_id: str) -> list[YuqueDocument]:
+    async def list_documents(self, repository_id: str) -> list[RemoteDocument]:
         return await self._active().list_documents(repository_id)
 
-    async def create_document(self, request: CreateYuqueDocumentRequest) -> YuqueDocument:
+    async def create_document(self, request: CreateRemoteDocumentRequest) -> RemoteDocument:
         return await self._active().create_document(request)
 
     async def find_document_by_marker(
         self, repository_id: str, marker: str
-    ) -> YuqueDocument | None:
+    ) -> RemoteDocument | None:
         return await self._active().find_document_by_marker(repository_id, marker)
 
     async def document_exists(self, repository_id: str, document_id: str) -> bool:
         return await self._active().document_exists(repository_id, document_id)
 
-    async def read_document(self, document_id: str) -> YuqueDocumentContent:
+    async def read_document(self, document_id: str) -> RemoteDocumentContent:
         return await self._active().read_document(document_id)
 
-    async def update_document(self, request: UpdateYuqueDocumentRequest) -> YuqueDocument:
+    async def update_document(self, request: UpdateRemoteDocumentRequest) -> RemoteDocument:
         return await self._active().update_document(request)
 
     async def delete_document(self, document_id: str, repository_id: str) -> None:
@@ -343,14 +357,14 @@ async def _request_data(
     return payload.get("data")
 
 
-def _repository_from_api(row: dict[str, Any]) -> YuqueRepository:
+def _repository_from_api(row: dict[str, Any]) -> RemoteRepository:
     namespace = str(row.get("namespace") or "").strip("/")
     slug = str(row.get("slug") or "").strip("/")
     if not namespace or not slug:
         raise DomainError("YUQUE_API_ERROR", "语雀 API 返回的知识库标识无效", 502, True)
     repository_id = f"{namespace}/{slug}"
-    return YuqueRepository(
-        yuque_id=repository_id,
+    return RemoteRepository(
+        remote_id=repository_id,
         name=str(row.get("name") or slug),
         url=f"https://www.yuque.com/{repository_id}",
     )
@@ -358,20 +372,20 @@ def _repository_from_api(row: dict[str, Any]) -> YuqueRepository:
 
 def _document_from_api(
     repository_id: str, row: dict[str, Any], fallback_id: str | None = None
-) -> YuqueDocument:
+) -> RemoteDocument:
     slug = str(row.get("slug") or "").strip("/")
     if not slug:
         if fallback_id:
-            return YuqueDocument(
-                yuque_id=fallback_id,
+            return RemoteDocument(
+                remote_id=fallback_id,
                 repository_id=repository_id,
                 title=str(row.get("title") or fallback_id),
                 url=f"https://www.yuque.com/{fallback_id}",
             )
         raise DomainError("YUQUE_API_ERROR", "语雀 API 返回的文档标识无效", 502, True)
     document_id = f"{repository_id.strip('/')}/{slug}"
-    return YuqueDocument(
-        yuque_id=document_id,
+    return RemoteDocument(
+        remote_id=document_id,
         repository_id=repository_id,
         title=str(row.get("title") or slug),
         url=_document_url(row, repository_id, slug),

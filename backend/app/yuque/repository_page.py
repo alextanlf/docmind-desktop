@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.schemas.yuque import YuqueDocument
+from app.schemas.remote import RemoteDocument
 from app.yuque.base_page import BasePage, maybe_await
 
 
@@ -12,12 +12,12 @@ class RepositoryPage(BasePage):
         "text=文档",
     )
 
-    async def list_documents(self, repository_id: str) -> list[YuqueDocument]:
+    async def list_documents(self, repository_id: str) -> list[RemoteDocument]:
         if hasattr(self.page, "bring_to_front"):
             return await self._list_from_catalog(repository_id)
         locator = await self.wait_for_any(self._document_selectors)
         locators = await maybe_await(locator.all())
-        documents: list[YuqueDocument] = []
+        documents: list[RemoteDocument] = []
         for index, item in enumerate(locators, start=1):
             link = item.locator("a").first if hasattr(item, "locator") else item
             title = (await link.inner_text()).strip() or (await item.inner_text()).strip()
@@ -25,8 +25,8 @@ class RepositoryPage(BasePage):
                 continue
             url = await link.get_attribute("href") or await item.get_attribute("href")
             documents.append(
-                YuqueDocument(
-                    yuque_id=url or f"document-{index}",
+                RemoteDocument(
+                    remote_id=url or f"document-{index}",
                     repository_id=repository_id,
                     title=title,
                     url=url,
@@ -34,10 +34,10 @@ class RepositoryPage(BasePage):
             )
         return documents
 
-    async def _list_from_catalog(self, repository_id: str) -> list[YuqueDocument]:
+    async def _list_from_catalog(self, repository_id: str) -> list[RemoteDocument]:
         locator = self.page.locator(f"a[href*='{repository_id}/']")
         await locator.first.wait_for(state="visible", timeout=5_000)
-        documents: list[YuqueDocument] = []
+        documents: list[RemoteDocument] = []
         seen: set[str] = set()
         for item in await maybe_await(locator.all()):
             title = (await item.inner_text()).split("\n")[0].strip()
@@ -49,8 +49,8 @@ class RepositoryPage(BasePage):
                 continue
             seen.add(key)
             documents.append(
-                YuqueDocument(
-                    yuque_id=url or title,
+                RemoteDocument(
+                    remote_id=url or title,
                     repository_id=repository_id,
                     title=title,
                     url=url,

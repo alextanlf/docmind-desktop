@@ -47,9 +47,9 @@ class IncrementalSyncService:
         remote = await self.snapshot_reader(repository_id)
         remote_by_id = {state.document_id: (state, content) for state, content in remote}
         local_by_id = {
-            document.yuque_id: document
+            document.remote_id: document
             for document in self.document_store.list_for_repository(repository_id)
-            if document.yuque_id
+            if document.remote_id
         }
 
         added = changed = deleted = unchanged = failed = 0

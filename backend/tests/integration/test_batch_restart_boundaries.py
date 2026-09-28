@@ -142,7 +142,7 @@ async def test_restart_pauses_running_parent_and_continues_without_duplicate_chi
     )
     test_app.app.state.import_job_store.create(synthetic_job)
     completed_job_count = len(test_app.app.state.import_job_store.list())
-    remote_document_count = len(test_app.app.state.yuque_gateway._documents)  # type: ignore[attr-defined]
+    remote_document_count = len(test_app.remote_provider._documents)  # type: ignore[attr-defined]
     synthetic = BatchItemRecord(
         batch_id=parent.id,
         source_identity=completed_item.source_identity,
@@ -165,7 +165,7 @@ async def test_restart_pauses_running_parent_and_continues_without_duplicate_chi
     settings = AppSettings(session_token=SecretStr(RUNTIME_TOKEN), data_dir=test_app.app.state.settings.data_dir, environment="test")
     from app.main import create_app
 
-    restarted = create_app(settings, yuque_gateway=test_app.app.state.yuque_gateway)
+    restarted = create_app(settings, providers={"yuque": test_app.remote_provider})
     async with restarted.router.lifespan_context(restarted), httpx.AsyncClient(
         transport=httpx.ASGITransport(app=restarted), base_url="http://docmind.test", headers={"X-DocMind-Token": RUNTIME_TOKEN}
     ) as client:
@@ -177,5 +177,5 @@ async def test_restart_pauses_running_parent_and_continues_without_duplicate_chi
         final = await harness.wait_for_batch(parent.id)
         assert final.state == "completed"
         assert len(restarted.state.import_job_store.list()) == completed_job_count
-        assert len(restarted.state.yuque_gateway._documents) == remote_document_count  # type: ignore[attr-defined]
+        assert len(restarted.state.remote_registry.get("yuque")._documents) == remote_document_count  # type: ignore[attr-defined]
         assert restarted.state.batch_store.list_item_records(parent.id)[0].state is BatchItemState.COMPLETED

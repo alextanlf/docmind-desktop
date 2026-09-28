@@ -51,7 +51,11 @@ def test_sync_last_synced_at_roundtrip(database: Database) -> None:
 
 def _seed_repository(database: Database) -> str:
     return RepositoryStore(database).upsert_remote(
-        yuque_id="yuque-1", name="SwiftUI", description=None, yuque_url=None
+        provider="yuque",
+        remote_id="yuque-1",
+        name="SwiftUI",
+        description=None,
+        remote_url=None,
     ).id
 
 

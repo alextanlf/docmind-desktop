@@ -3,10 +3,38 @@ from __future__ import annotations
 import json
 
 import httpx
+import pytest
 import respx
+from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
+from app.config import AppSettings
 from app.core.secrets import MemorySecretStore
 from app.storage.models import SettingRecord
+from tests.conftest import RUNTIME_TOKEN
+
+
+@pytest.fixture
+def production_client(monkeypatch: pytest.MonkeyPatch, tmp_path) -> TestClient:
+    """A client whose remote registry is assembled by production wiring.
+
+    The shared ``client`` fixture injects a fake provider; the yuque API/web
+    routing assertions below need the real ``YuqueProvider`` composition.
+    """
+    monkeypatch.setenv("DOCMIND_SESSION_TOKEN", RUNTIME_TOKEN)
+    monkeypatch.setenv("DOCMIND_DATA_DIR", str(tmp_path / "production-data"))
+    monkeypatch.setenv("DOCMIND_ENVIRONMENT", "test")
+    settings = AppSettings(
+        session_token=SecretStr(RUNTIME_TOKEN),
+        data_dir=tmp_path / "production-data",
+        environment="test",
+    )
+    from app.main import create_app
+
+    with TestClient(
+        create_app(settings, secret_store=MemorySecretStore())
+    ) as test_client:
+        yield test_client
 
 
 def test_connection_mutations_require_runtime_token(client) -> None:
@@ -22,8 +50,9 @@ def test_connection_mutations_require_runtime_token(client) -> None:
 
 @respx.mock
 def test_yuque_api_token_is_private_verified_and_becomes_the_active_gateway(
-    client, auth_headers, app_secret_store: MemorySecretStore
+    production_client: TestClient, auth_headers
 ) -> None:
+    app_secret_store: MemorySecretStore = production_client.app.state.secret_store
     user_route = respx.get("https://www.yuque.com/api/v2/user").mock(
         return_value=httpx.Response(
             200,
@@ -31,7 +60,7 @@ def test_yuque_api_token_is_private_verified_and_becomes_the_active_gateway(
         )
     )
 
-    response = client.put(
+    response = production_client.put(
         "/api/settings/connections/yuque-api",
         headers=auth_headers,
         json={"token": "yuque-private-token"},
@@ -47,7 +76,7 @@ def test_yuque_api_token_is_private_verified_and_becomes_the_active_gateway(
     assert "yuque-private-token" not in response.text
     assert app_secret_store.get("yuque-api:token") == "yuque-private-token"
 
-    response = client.post(
+    response = production_client.post(
         "/api/settings/connections/yuque-api/test", headers=auth_headers
     )
 
@@ -58,37 +87,42 @@ def test_yuque_api_token_is_private_verified_and_becomes_the_active_gateway(
         "label": "谭***峰",
     }
     assert user_route.called
-    assert client.get("/api/settings", headers=auth_headers).json()["yuqueApi"] == {
+    assert production_client.get("/api/settings", headers=auth_headers).json()["yuqueApi"] == {
         "configured": True,
         "verified": True,
         "label": "谭***峰",
         "active": True,
     }
-    assert client.app.state.yuque_gateway._active() is client.app.state.yuque_api_gateway
-    with client.app.state.database.session() as session:
+    provider = production_client.app.state.remote_registry.get("yuque")
+    assert provider._active() is provider.api_gateway
+    with production_client.app.state.database.session() as session:
         values = [record.value for record in session.query(SettingRecord).all()]
     assert "yuque-private-token" not in json.dumps(values)
 
 
 @respx.mock
-def test_invalid_yuque_api_token_stays_inactive(client, auth_headers) -> None:
+def test_invalid_yuque_api_token_stays_inactive(production_client: TestClient, auth_headers) -> None:
     respx.get("https://www.yuque.com/api/v2/user").mock(
         return_value=httpx.Response(401, json={"message": "unauthorized"})
     )
-    client.put(
+    production_client.put(
         "/api/settings/connections/yuque-api",
         headers=auth_headers,
         json={"token": "bad-token"},
     )
 
-    response = client.post(
+    response = production_client.post(
         "/api/settings/connections/yuque-api/test", headers=auth_headers
     )
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "YUQUE_API_AUTH_FAILED"
-    assert client.get("/api/settings", headers=auth_headers).json()["yuqueApi"]["active"] is False
-    assert client.app.state.yuque_gateway._active() is client.app.state.yuque_web_gateway
+    assert (
+        production_client.get("/api/settings", headers=auth_headers).json()["yuqueApi"]["active"]
+        is False
+    )
+    provider = production_client.app.state.remote_registry.get("yuque")
+    assert provider._active() is provider.web_gateway
 
 
 @respx.mock

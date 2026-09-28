@@ -38,12 +38,12 @@ class DocumentRefresher:
     async def upsert_from_remote(
         self, repository_id: str, document_id: str, title: str, content: str
     ) -> str:
-        document = self.document_store.find_by_yuque_id(repository_id, document_id)
+        document = self.document_store.find_by_remote_id(repository_id, document_id)
         if document is None:
             document = self.document_store.create(
                 DocumentRecord(
                     repository_id=repository_id,
-                    yuque_id=document_id,
+                    remote_id=document_id,
                     title=title,
                     source_type="remote",
                     status="uploaded",
@@ -125,7 +125,7 @@ class DocumentRefresher:
         self.version_store.snapshot(document.id, document.title, previous_content)
 
     async def mark_remote_deleted(self, repository_id: str, document_id: str) -> None:
-        document = self.document_store.find_by_yuque_id(repository_id, document_id)
+        document = self.document_store.find_by_remote_id(repository_id, document_id)
         if document is not None:
             self.document_store.mark_remote_deleted(document.id)
 

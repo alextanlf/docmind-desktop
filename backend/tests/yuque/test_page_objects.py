@@ -13,12 +13,12 @@ from pydantic import SecretStr
 
 from app.api.errors import DomainError
 from app.config import AppSettings
-from app.schemas.yuque import (
-    CreateRepositoryRequest,
-    CreateYuqueDocumentRequest,
-    UpdateYuqueDocumentRequest,
-    YuqueDocument,
-    YuqueDocumentContent,
+from app.schemas.remote import (
+    CreateRemoteRepositoryRequest,
+    CreateRemoteDocumentRequest,
+    UpdateRemoteDocumentRequest,
+    RemoteDocument,
+    RemoteDocumentContent,
 )
 from app.yuque.base_page import BasePage
 from app.yuque.dashboard_page import DashboardPage
@@ -640,7 +640,7 @@ async def test_real_gateway_read_and_update_return_document_metadata(tmp_path: P
 
     read = await gateway.read_document("swiftui/state")
     updated = await gateway.update_document(
-        UpdateYuqueDocumentRequest(document_id="swiftui/state", title="State 2", content="# State 2")
+        UpdateRemoteDocumentRequest(document_id="swiftui/state", title="State 2", content="# State 2")
     )
 
     assert (read.repository_id, read.title) == ("swiftui", "State")
@@ -674,7 +674,7 @@ async def test_create_missing_document_and_delete_confirmation_are_retryable(tmp
 
     with pytest.raises(DomainError) as error:
         await gateway.create_document(
-            CreateYuqueDocumentRequest(repository_id="swiftui", title="State", content="# State")
+            CreateRemoteDocumentRequest(repository_id="swiftui", title="State", content="# State")
         )
     await gateway.delete_document("swiftui/state", "swiftui")
 
@@ -756,7 +756,7 @@ async def test_repository_creation_retries_visibility_without_submitting_twice(
 
     gateway._new_page = fake_new_page  # type: ignore[method-assign]
 
-    created = await gateway.create_repository(CreateRepositoryRequest(name="SwiftUI"))
+    created = await gateway.create_repository(CreateRemoteRepositoryRequest(name="SwiftUI"))
 
     assert created.name == "SwiftUI"
     assert page.repository_list_calls == 2
@@ -811,7 +811,7 @@ async def test_repository_creation_submit_error_is_not_replayed(
     gateway._new_page = fake_new_page  # type: ignore[method-assign]
 
     with pytest.raises(DomainError) as error:
-        await gateway.create_repository(CreateRepositoryRequest(name="SwiftUI"))
+        await gateway.create_repository(CreateRemoteRepositoryRequest(name="SwiftUI"))
 
     public_error = {
         "code": error.value.code,
@@ -859,7 +859,7 @@ async def test_gateway_uses_a_distinct_screenshot_id_for_each_operation(tmp_path
 
     for _ in range(2):
         with pytest.raises(DomainError):
-            await gateway.create_repository(CreateRepositoryRequest(name="SwiftUI"))
+            await gateway.create_repository(CreateRemoteRepositoryRequest(name="SwiftUI"))
 
     filenames = [path.name for path in page.screenshots]
     assert len(filenames) == 2
@@ -894,10 +894,10 @@ async def test_document_creation_uses_current_editor_identity_when_titles_duplic
     gateway._new_page = fake_new_page  # type: ignore[method-assign]
 
     created = await gateway.create_document(
-        CreateYuqueDocumentRequest(repository_id="swiftui", title="State", content="# State")
+        CreateRemoteDocumentRequest(repository_id="swiftui", title="State", content="# State")
     )
 
-    assert created.yuque_id == "swiftui/new-state"
+    assert created.remote_id == "swiftui/new-state"
     assert created.url == "https://www.yuque.com/swiftui/new-state"
     assert page.document_list_calls == 0
     assert page.clicked.count("[data-testid=editor-save]") == 1
@@ -947,7 +947,7 @@ async def test_document_creation_rejects_editor_url_outside_requested_yuque_repo
 
     with pytest.raises(DomainError) as error:
         await gateway.create_document(
-            CreateYuqueDocumentRequest(repository_id="swiftui", title="State", content="# State")
+            CreateRemoteDocumentRequest(repository_id="swiftui", title="State", content="# State")
         )
 
     assert error.value.code == "YUQUE_PAGE_CHANGED"
@@ -989,7 +989,7 @@ async def test_document_creation_confirms_current_editor_title(
 
     with pytest.raises(DomainError) as error:
         await gateway.create_document(
-            CreateYuqueDocumentRequest(repository_id="swiftui", title="State", content="# State")
+            CreateRemoteDocumentRequest(repository_id="swiftui", title="State", content="# State")
         )
 
     assert error.value.code == "YUQUE_PAGE_CHANGED"
@@ -1033,7 +1033,7 @@ async def test_document_recovery_lookup_reads_marker_without_submitting(
 
     found = await gateway.find_document_by_marker("swiftui", "docmind-mutation:recovery")
 
-    assert found is not None and found.yuque_id == "/swiftui/state"
+    assert found is not None and found.remote_id == "/swiftui/state"
     assert await gateway.document_exists("swiftui", "/swiftui/state") is True
     assert page.document_list_calls == 3
     assert page.clicked == []
@@ -1087,7 +1087,7 @@ async def test_document_creation_save_error_is_not_replayed(
 
     with pytest.raises(DomainError) as error:
         await gateway.create_document(
-            CreateYuqueDocumentRequest(repository_id="swiftui", title="State", content="# State")
+            CreateRemoteDocumentRequest(repository_id="swiftui", title="State", content="# State")
         )
 
     public_error = {
@@ -1184,10 +1184,10 @@ async def test_create_reads_back_when_save_confirmation_is_lost(
 
     gateway._new_page = fake_new_page  # type: ignore[method-assign]
 
-    async def fake_find(repository_id: str, marker: str) -> YuqueDocument:
+    async def fake_find(repository_id: str, marker: str) -> RemoteDocument:
         assert marker == "docmind-mutation:create-1"
-        return YuqueDocument(
-            yuque_id="swiftui/new-state",
+        return RemoteDocument(
+            remote_id="swiftui/new-state",
             repository_id=repository_id,
             title="State",
             url="https://www.yuque.com/swiftui/new-state",
@@ -1196,13 +1196,13 @@ async def test_create_reads_back_when_save_confirmation_is_lost(
     gateway.find_document_by_marker = fake_find  # type: ignore[method-assign]
 
     created = await gateway.create_document(
-        CreateYuqueDocumentRequest(
+        CreateRemoteDocumentRequest(
             repository_id="swiftui",
             title="State",
             content="# State\n\n<!-- docmind-mutation:create-1 -->",
         )
     )
-    assert created.yuque_id == "swiftui/new-state"
+    assert created.remote_id == "swiftui/new-state"
     assert page.clicked.count("[data-testid=editor-save]") == 1
 
 
@@ -1231,10 +1231,10 @@ async def test_update_reads_back_by_marker_when_confirmation_is_lost(
 
     gateway._new_page = fake_new_page  # type: ignore[method-assign]
 
-    async def fake_read(document_id: str, *, strip_mutation_marker: bool) -> YuqueDocumentContent:
+    async def fake_read(document_id: str, *, strip_mutation_marker: bool) -> RemoteDocumentContent:
         del strip_mutation_marker
-        return YuqueDocumentContent(
-            yuque_id=document_id,
+        return RemoteDocumentContent(
+            remote_id=document_id,
             repository_id="swiftui",
             title="State",
             content="# State\n\n<!-- docmind-mutation:update-1 -->",
@@ -1244,13 +1244,13 @@ async def test_update_reads_back_by_marker_when_confirmation_is_lost(
     gateway._read_document = fake_read  # type: ignore[method-assign]
 
     updated = await gateway.update_document(
-        UpdateYuqueDocumentRequest(
+        UpdateRemoteDocumentRequest(
             document_id="swiftui/state",
             title="State",
             content="# State\n\n<!-- docmind-mutation:update-1 -->",
         )
     )
-    assert updated.yuque_id == "swiftui/state"
+    assert updated.remote_id == "swiftui/state"
 
 
 async def test_delete_treats_already_gone_as_success(

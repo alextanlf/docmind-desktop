@@ -8,9 +8,47 @@ from pydantic import SecretStr
 
 from app.config import AppSettings
 from app.core.secrets import MemorySecretStore
+from app.remote.fake import FakeRemoteProvider
 from app.storage.database import Database
 
 RUNTIME_TOKEN = "test-runtime-token"
+
+
+def build_app(settings: AppSettings, *, providers=None, secret_store=None, **kwargs):
+    """Create an app for tests, defaulting to an in-memory secret store."""
+    from app.main import create_app
+
+    return create_app(
+        settings,
+        secret_store=secret_store or MemorySecretStore(),
+        providers=providers,
+        **kwargs,
+    )
+
+
+def install_remote_provider(app, provider=None, *, configured: bool = True):
+    """Swap the app's remote registry for one exposing ``provider``.
+
+    API handlers resolve providers through ``app.state.remote_registry`` at
+    request time, so a test can install its own provider after startup.
+    """
+    from app.remote.registry import ProviderRegistry
+
+    provider = provider or FakeRemoteProvider()
+    registry = ProviderRegistry()
+    if configured:
+        registry.register(provider, always_configured=True)
+    else:
+        registry.register(provider, lambda: False)
+    app.state.remote_registry = registry
+    return provider
+
+
+@pytest.fixture
+def remote_provider(client: TestClient) -> FakeRemoteProvider:
+    provider = client.app.state.remote_registry.get("yuque")
+    assert isinstance(provider, FakeRemoteProvider)
+    return provider
 
 
 @pytest.fixture
@@ -19,12 +57,12 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[TestClient]:
     monkeypatch.setenv("DOCMIND_DATA_DIR", str(tmp_path / "docmind-data"))
     monkeypatch.setenv("DOCMIND_ENVIRONMENT", "test")
 
-    from app.main import create_app
-
     settings = AppSettings(
         session_token=SecretStr(RUNTIME_TOKEN), data_dir=tmp_path / "docmind-data", environment="test"
     )
-    with TestClient(create_app(settings, secret_store=MemorySecretStore())) as test_client:
+    with TestClient(
+        build_app(settings, providers={"yuque": FakeRemoteProvider()})
+    ) as test_client:
         yield test_client
 
 
