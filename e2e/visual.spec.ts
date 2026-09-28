@@ -20,6 +20,24 @@ for (const viewport of [
     await expectFullyInViewport(page.getByLabel("发送消息"));
     await expectFullyInViewport(page.getByLabel("导入文档"));
     await expectPhysicalReferenceLayout(page, viewport.reference);
+    await page.getByRole("button", { name: "关闭引用资料" }).click();
+    const reopenReference = page.getByRole("button", { name: "打开引用资料" });
+    const deleteSession = page.getByRole("button", { name: "删除会话" });
+    await expect(reopenReference).toBeVisible();
+    await expect
+      .poll(async () => {
+        const reopenBounds = await reopenReference.boundingBox();
+        const removeBounds = await deleteSession.boundingBox();
+        if (!reopenBounds || !removeBounds) return true;
+        return (
+          reopenBounds.x < removeBounds.x + removeBounds.width &&
+          reopenBounds.x + reopenBounds.width > removeBounds.x &&
+          reopenBounds.y < removeBounds.y + removeBounds.height &&
+          reopenBounds.y + reopenBounds.height > removeBounds.y
+        );
+      })
+      .toBe(false);
+    await expectFullyInViewport(reopenReference);
     await expect
       .poll(() =>
         page.locator("*").evaluateAll((elements) => {

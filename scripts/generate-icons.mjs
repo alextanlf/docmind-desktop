@@ -7,11 +7,14 @@
  *   · 页身 26 × 34，标准几何线宽 2.8 / 星火外径 6.6
  *   · ≤ 24px 使用小尺寸修正几何：线宽 3.4 / 星火外径 8.0，省略折角线
  *   · 靛蓝单色 #4f46e5，实心版为 Dock / 任务栏 / 安装包主版本
+ *   · macOS 画布：1024 画布内页身只占 824，四周各留 100 透明边距（Apple 图标网格），
+ *     否则 Dock / 启动台里会比邻居应用大一截
  *
  * 产物：
- *   build/icons/svg/*.svg            矢量主文件（实心 / 浅色 / 深色 / 透明 / 修正 / 自适应）
+ *   build/icons/svg/*.svg            矢量主文件（实心 / 浅色 / 深色 / 透明 / 修正 / 自适应 / macOS 画布）
  *   build/icons/png/*.png            16–1024 像素阶梯（≤24px 自动切换修正几何）
- *   build/icons/DocMind.icns         macOS 应用图标
+ *   build/icons/png/docmind-icon-mac-512.png  macOS 画布版，供 Dock 与应用包使用
+ *   build/icons/DocMind.icns         macOS 应用图标（macOS 画布）
  *   build/icons/DocMind.ico          Windows 应用图标
  *   electron/renderer/public/*       窗口图标、favicon 与 PWA 图标
  *
@@ -70,6 +73,12 @@ function geometryFor(size) {
   return size <= 24 ? "compact" : "full";
 }
 
+/**
+ * macOS 图标网格：1024 画布内实体只占 824（≈80.5%），四周各留 100 透明边距。
+ * macOS 自带应用（Finder、Safari 等）都按这个网格绘制，画满画布的图标放进 Dock 会明显偏大。
+ */
+const MAC_CANVAS_SCALE = 824 / 1024;
+
 function glyph(geometry, color, transform = "") {
   const body = GEOMETRY[geometry].split("currentColor").join(color);
   return transform ? `<g transform="${transform}">${body}</g>` : body;
@@ -77,8 +86,15 @@ function glyph(geometry, color, transform = "") {
 
 /**
  * 生成独立 SVG。自适应版本铺满底色（交给启动器裁切），标记收进 66/108 安全区。
+ * canvas: "full" 铺满画布；"mac" 收进 Apple 图标网格，四周留透明边距。
  */
-function buildSvg({ variant = "solid", geometry = "full", size = 1024, maskable = false } = {}) {
+function buildSvg({
+  variant = "solid",
+  geometry = "full",
+  size = 1024,
+  maskable = false,
+  canvas = "full",
+} = {}) {
   const theme = THEMES[variant];
   const layers = [];
   if (theme.bg) {
@@ -93,9 +109,14 @@ function buildSvg({ variant = "solid", geometry = "full", size = 1024, maskable 
   layers.push(
     glyph(geometry, theme.fg, maskable ? "translate(24 24) scale(0.72) translate(-24 -24)" : ""),
   );
+  const artwork = layers.join("");
+  const scaled =
+    canvas === "mac"
+      ? `<g transform="translate(24 24) scale(${MAC_CANVAS_SCALE}) translate(-24 -24)">${artwork}</g>`
+      : artwork;
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="${size}" height="${size}" role="img" aria-label="DocMind">`,
-    layers.join(""),
+    scaled,
     `</svg>`,
   ].join("");
 }
@@ -190,6 +211,7 @@ async function main() {
     "docmind-icon-transparent.svg": buildSvg({ variant: "transparent", geometry: "full" }),
     "docmind-icon-compact.svg": buildSvg({ variant: "solid", geometry: "compact" }),
     "docmind-icon-maskable.svg": buildSvg({ variant: "solid", geometry: "full", maskable: true }),
+    "docmind-icon-mac.svg": buildSvg({ variant: "solid", geometry: "full", canvas: "mac" }),
   };
   for (const [name, markup] of Object.entries(sources)) {
     await writeFile(join(svgDir, name), `${markup}\n`, "utf8");
@@ -198,13 +220,24 @@ async function main() {
   const browser = await chromium.launch();
   const page = await browser.newPage({ deviceScaleFactor: 1 });
   const png = new Map();
+  const macPng = new Map();
   const dib = new Map();
   const ladder = [16, 20, 24, 32, 40, 48, 64, 80, 96, 128, 160, 256, 384, 512, 1024];
+  const macSizes = [16, 32, 64, 128, 256, 512, 1024];
   for (const size of ladder) {
     const markup = buildSvg({ variant: "solid", geometry: geometryFor(size), size });
     const rendered = await rasterize(page, markup, size);
     png.set(size, Buffer.from(rendered.png));
     if (rendered.pixels) dib.set(size, buildDib(rendered.pixels, size));
+  }
+  for (const size of macSizes) {
+    const markup = buildSvg({
+      variant: "solid",
+      geometry: geometryFor(size),
+      size,
+      canvas: "mac",
+    });
+    macPng.set(size, Buffer.from((await rasterize(page, markup, size)).png));
   }
   const maskable = await rasterize(
     page,
@@ -217,6 +250,7 @@ async function main() {
     await writeFile(join(pngDir, `docmind-icon-${size}.png`), png.get(size));
   }
   await writeFile(join(pngDir, "docmind-icon-maskable-512.png"), Buffer.from(maskable.png));
+  await writeFile(join(pngDir, "docmind-icon-mac-512.png"), macPng.get(512));
 
   const ico = buildIco(
     [16, 24, 32, 48, 64]
@@ -258,7 +292,7 @@ async function main() {
     ["icon_512x512@2x.png", 1024],
   ];
   for (const [name, size] of iconsetFiles) {
-    await writeFile(join(iconset, name), png.get(size));
+    await writeFile(join(iconset, name), macPng.get(size));
   }
   if (process.platform === "darwin" && existsSync("/usr/bin/iconutil")) {
     await run("/usr/bin/iconutil", [
@@ -277,8 +311,8 @@ async function main() {
   console.log(
     [
       "图标资源已生成：",
-      `  ${relative(svgDir)}/ · 6 个矢量主文件`,
-      `  ${relative(pngDir)}/ · ${ladder.length + 1} 个 PNG`,
+      `  ${relative(svgDir)}/ · ${Object.keys(sources).length} 个矢量主文件`,
+      `  ${relative(pngDir)}/ · ${ladder.length + 2} 个 PNG（含 macOS 画布版）`,
       `  ${relative(join(iconDir, "DocMind.icns"))}`,
       `  ${relative(join(iconDir, "DocMind.ico"))}`,
       `  ${relative(publicDir)}/ · icon.svg · favicon.ico · apple-touch-icon.png`,

@@ -8,6 +8,11 @@ const ICON_CANDIDATES = [
   join(__dirname, "../../build/icons/png/docmind-icon-256.png"),
   join(__dirname, "../renderer/icon-256.png"),
 ];
+/** Dock 用 macOS 画布版（四周留透明边距），否则 App 图标会比 Dock 里的邻居大一截。 */
+const DOCK_ICON_CANDIDATES = [
+  join(__dirname, "../../build/icons/png/docmind-icon-mac-512.png"),
+  ...ICON_CANDIDATES,
+];
 let BrowserWindowCtor: any;
 try {
   const electron = require("electron");
@@ -16,13 +21,14 @@ try {
 } catch {
   /* tests may run without Electron binary */
 }
-export function resolveIconPath(): string | undefined {
-  return ICON_CANDIDATES.find((candidate) => existsSync(candidate));
+export function resolveIconPath(platform: string = process.platform): string | undefined {
+  const candidates = platform === "darwin" ? DOCK_ICON_CANDIDATES : ICON_CANDIDATES;
+  return candidates.find((candidate) => existsSync(candidate));
 }
 
 /** macOS 的 Dock 图标来自应用包内的 .icns；Windows / Linux 才需要窗口图标。 */
 export function resolveWindowIcon(platform: string = process.platform): string | undefined {
-  return platform === "darwin" ? undefined : resolveIconPath();
+  return platform === "darwin" ? undefined : resolveIconPath(platform);
 }
 
 export function buildWindowOptions(

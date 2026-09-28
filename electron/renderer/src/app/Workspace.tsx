@@ -181,9 +181,6 @@ export function Workspace() {
         className={clsx("workspace-sidebar w-[248px]", sidebarCollapsed && "is-collapsed")}
       >
         <div className="brand-row">
-          <span className="brand-mark" aria-hidden="true">
-            <img alt="" height="28" src="./icon.svg" width="28" />
-          </span>
           <strong>DocMind</strong>
           {forcedIconRail ? null : (
             <IconButton

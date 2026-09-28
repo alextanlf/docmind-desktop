@@ -120,3 +120,5 @@ npm run verify
 ```bash
 npm run icons:generate
 ```
+
+Dock 与应用包用「macOS 画布版」（`build/icons/png/docmind-icon-mac-512.png`、`DocMind.icns`）：1024 画布内实体只占 824，四周各留 100 透明边距，和系统自带图标的占位一致。窗口图标、favicon 等仍用铺满画布的版本（应用内侧边栏只保留 DocMind 文字，不再显示图标）。
