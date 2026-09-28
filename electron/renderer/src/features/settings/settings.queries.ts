@@ -3,8 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   FeishuBindingInput,
   RuntimeSettingsInput,
+  SaveRemoteCredentialInput,
   WebSearchSettingsInput,
-  YuqueApiSettingsInput,
 } from "../../../../shared/contracts";
 import { isRetryable } from "./ollama-errors";
 
@@ -13,7 +13,9 @@ export { clientErrorMessage, errorAction, isRetryable } from "./ollama-errors";
 export const settingsKeys = {
   root: ["settings"] as const,
   embedding: ["embedding", "status"] as const,
-  yuque: ["yuque", "status"] as const,
+  remote: (provider: string) => ["remote", "status", provider] as const,
+  remoteProviders: ["remote", "providers"] as const,
+  remoteCredentials: (provider: string) => ["remote", "credentials", provider] as const,
   runtime: ["settings", "runtime"] as const,
 };
 export const ollamaKeys = {
@@ -34,8 +36,61 @@ export function useEmbeddingStatusQuery() {
   });
 }
 
-export function useYuqueStatusQuery() {
-  return useQuery({ queryKey: settingsKeys.yuque, queryFn: () => window.docmind.yuque.status() });
+export function useRemoteStatusQuery(provider: string) {
+  return useQuery({
+    queryKey: settingsKeys.remote(provider),
+    queryFn: () => window.docmind.remote.status(provider),
+  });
+}
+
+export function useRemoteProvidersQuery() {
+  return useQuery({
+    queryKey: settingsKeys.remoteProviders,
+    queryFn: () => window.docmind.remote.listProviders(),
+  });
+}
+
+export function useRemoteCredentialsQuery(provider: string) {
+  return useQuery({
+    queryKey: settingsKeys.remoteCredentials(provider),
+    queryFn: () => window.docmind.remote.listCredentials(provider),
+  });
+}
+
+export function useSaveRemoteCredentialMutation(provider: string, channel: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: SaveRemoteCredentialInput) =>
+      window.docmind.remote.saveCredential(provider, channel, input),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: settingsKeys.remoteCredentials(provider) });
+      void client.invalidateQueries({ queryKey: settingsKeys.remoteProviders });
+    },
+  });
+}
+
+export function useTestRemoteCredentialMutation(provider: string, channel: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => window.docmind.remote.testCredential(provider, channel),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: settingsKeys.remoteCredentials(provider) });
+      void client.invalidateQueries({ queryKey: settingsKeys.remoteProviders });
+      void client.invalidateQueries({ queryKey: settingsKeys.remote(provider) });
+    },
+  });
+}
+
+export function useDeleteRemoteCredentialMutation(provider: string, channel: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => window.docmind.remote.deleteCredential(provider, channel),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: settingsKeys.remoteCredentials(provider) });
+      void client.invalidateQueries({ queryKey: settingsKeys.remoteProviders });
+      void client.invalidateQueries({ queryKey: settingsKeys.remote(provider) });
+    },
+  });
 }
 
 export function useRuntimeSettingsQuery(enabled = true) {
@@ -130,22 +185,6 @@ export function useSaveWebSearchMutation() {
   return useMutation({
     mutationFn: (input: WebSearchSettingsInput) => window.docmind.settings.saveWebSearch(input),
     onSuccess: (settings) => client.setQueryData(settingsKeys.root, settings),
-  });
-}
-
-export function useSaveYuqueApiMutation() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (input: YuqueApiSettingsInput) => window.docmind.settings.saveYuqueApi(input),
-    onSuccess: (settings) => client.setQueryData(settingsKeys.root, settings),
-  });
-}
-
-export function useTestYuqueApiMutation() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: () => window.docmind.settings.testYuqueApi(),
-    onSuccess: () => client.invalidateQueries({ queryKey: settingsKeys.root }),
   });
 }
 

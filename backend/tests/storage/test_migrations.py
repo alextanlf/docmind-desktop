@@ -12,6 +12,7 @@ from app.storage.database import Database
 from app.storage.models import (
     DocumentChunkRecord,
     DocumentRecord,
+    ProviderCredentialRecord,
     RepositoryRecord,
 )
 from app.storage.repositories import DocumentStore
@@ -121,6 +122,53 @@ def test_remote_provider_decoupling_backfills_and_scopes_uniqueness(tmp_path: Pa
             text(
                 "INSERT INTO repositories (id, provider, remote_id, name) "
                 "VALUES ('feishu-copy', 'feishu', 'docs/one', 'Feishu copy')"
+            )
+        )
+
+    database.engine.dispose()
+
+
+def test_provider_credentials_backfill_from_legacy_settings_keys(tmp_path: Path) -> None:
+    database = Database(f"sqlite+pysqlite:///{tmp_path / 'credentials.sqlite'}")
+    config = _alembic_config(database)
+    with database.engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.upgrade(config, "0016_remote_provider_decoupling")
+    with database.session() as session:
+        session.execute(
+            text("INSERT INTO settings (key, value) VALUES ('yuque-api.verified', 'true')")
+        )
+        session.execute(
+            text("INSERT INTO settings (key, value) VALUES ('yuque-api.account-label', '谭***峰')")
+        )
+        session.execute(
+            text("INSERT INTO settings (key, value) VALUES ('yuque-web.connected', 'false')")
+        )
+        session.execute(
+            text("INSERT INTO settings (key, value) VALUES ('feishu.verified', 'true')")
+        )
+
+    database.upgrade()
+
+    assert {column["name"] for column in inspect(database.engine).get_columns("provider_credentials")} == {
+        "provider", "channel", "state", "account_label", "secret_ref", "updated_at",
+    }
+    with database.session() as session:
+        rows = {
+            (row.provider, row.channel): (row.state, row.account_label, row.secret_ref)
+            for row in session.query(ProviderCredentialRecord)
+        }
+
+    assert rows[("yuque", "api")] == ("verified", "谭***峰", "yuque-api:token")
+    assert rows[("yuque", "web")] == ("disconnected", None, None)
+    assert rows[("feishu", "webhook")] == ("verified", None, "feishu:webhook")
+
+    # The state CHECK rejects anything outside the declared enum.
+    with pytest.raises(IntegrityError), database.session() as session:
+        session.execute(
+            text(
+                "INSERT INTO provider_credentials (provider, channel, state) "
+                "VALUES ('acme', 'api', 'maybe')"
             )
         )
 

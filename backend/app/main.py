@@ -98,11 +98,14 @@ from app.sync.conflict import SyncConflictService
 from app.sync.refresher import DocumentRefresher
 from app.sync.scheduler import SyncScheduler
 from app.sync.service import IncrementalSyncService
+from app.remote.credentials import CredentialStore
 from app.remote.discovery import RemoteDiscovery
 from app.remote.provider import RemoteProvider
 from app.remote.registry import ProviderRegistry
 from app.remote.snapshot import read_remote_snapshot
+from app.storage.models import ProviderCredentialState
 from app.yuque.api_gateway import YuqueApiGateway, YuqueProvider
+from app.yuque.credentials import YUQUE_CREDENTIAL_SPEC
 from app.yuque.gateway import PlaywrightYuqueGateway
 
 # 界面启动时会拉起语雀浏览器做"首次设置"检查；启动同步必须排在它后面，
@@ -154,22 +157,31 @@ def _assemble_production_registry(
     registry: ProviderRegistry,
     database: Database,
     repository_store: RepositoryStore,
-    secret_store: SecretStore,
+    credential_store: CredentialStore,
     runtime_settings: AppSettings,
 ) -> ProviderRegistry:
     """Register the real remote providers with their configuration probes."""
 
-    setting_store = SettingStore(database)
-
     def _yuque_api_token() -> str | None:
-        if setting_store.get("yuque-api.verified") != "true":
+        record = credential_store.get("yuque", "api")
+        if record is not None and record.state == ProviderCredentialState.VERIFIED.value:
+            token = credential_store.secret_for("yuque", "api")
+            if token:
+                return token
+        # Legacy fallback for pre-0017 state and tests seeding the old keys.
+        if SettingStore(database).get("yuque-api.verified") != "true":
             return None
         try:
-            return secret_store.get("yuque-api:token")
+            return credential_store.secret_store.get("yuque-api:token")
         except (DomainError, OSError):
             return None
 
+    setting_store = SettingStore(database)
+
     def _yuque_configured() -> bool:
+        if credential_store.any_verified("yuque", ("web", "api")):
+            return True
+        # Legacy keys, kept readable during the transition window.
         if setting_store.get("yuque-api.verified") == "true":
             return True
         web_state = setting_store.get("yuque-web.connected")
@@ -190,6 +202,7 @@ def _assemble_production_registry(
             lambda: _yuque_api_token() is not None,
         ),
         _yuque_configured,
+        credential_spec=YUQUE_CREDENTIAL_SPEC,
     )
     return registry
 
@@ -263,29 +276,33 @@ def create_app(
         )
         ImportJobStore(database).recover_interrupted()
         app.state.database = database
+        credential_store = CredentialStore(database, runtime_secret_store)
+        app.state.credential_store = credential_store
         if fake_llm_provider is None:
             app.state.settings_service = SettingsService(
                 SettingStore(database), runtime_secret_store,
+                credential_store=credential_store,
             )
         else:
             app.state.settings_service = SettingsService(
                 SettingStore(database),
                 runtime_secret_store,
                 provider_factory=lambda _config, _api_key: fake_llm_provider,
+                credential_store=credential_store,
             )
         if fake_services:
             SettingStore(database).set("yuque-web.connected", "true")
         repository_store = RepositoryStore(database)
         registry = app.state.remote_registry
         if registry is None:
-            registry = ProviderRegistry()
+            registry = ProviderRegistry(credential_store)
             if fake_services:
                 registry.register(
                     FakeRemoteProvider(runtime_settings.data_dir), always_configured=True
                 )
             else:
                 registry = _assemble_production_registry(
-                    registry, database, repository_store, runtime_secret_store, runtime_settings
+                    registry, database, repository_store, credential_store, runtime_settings
                 )
             app.state.remote_registry = registry
         conversation_store = ConversationStore(database)

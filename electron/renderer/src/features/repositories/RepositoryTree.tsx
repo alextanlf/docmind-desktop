@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronRight, FilePlus2, FolderPlus, RefreshCw } from "lucide-react";
 import { useState } from "react";
-import { clientErrorMessage } from "../settings/settings.queries";
+import { clientErrorMessage, useRemoteProvidersQuery } from "../settings/settings.queries";
 import { ConflictList } from "./ConflictList";
 import {
   useDocumentsQuery,
@@ -67,10 +67,18 @@ function RepositorySyncButton({ repositoryId }: { repositoryId: string }) {
 
 export function RepositoryTree({ onOpenDocument }: RepositoryTreeProps) {
   const repositories = useRepositoriesQuery();
+  const providers = useRemoteProvidersQuery();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [createError, setCreateError] = useState("");
+
+  // Provider display names come from the registry summary; unknown providers
+  // fall back to their raw name, local repositories show 本地.
+  const providerLabel = (provider: string | null | undefined) => {
+    if (!provider) return "本地";
+    return providers.data?.find((entry) => entry.name === provider)?.label ?? provider;
+  };
 
   async function createRepository() {
     const trimmed = name.trim();
@@ -166,17 +174,17 @@ export function RepositoryTree({ onOpenDocument }: RepositoryTreeProps) {
                 )}
                 <span>{repository.name}</span>
                 <small>
-                  {repository.yuqueId ? "语雀" : "本地"} · {repository.documentCount}
+                  {providerLabel(repository.provider)} · {repository.documentCount}
                 </small>
               </button>
-              {repository.yuqueId ? <RepositorySyncButton repositoryId={repository.id} /> : null}
+              {repository.provider ? <RepositorySyncButton repositoryId={repository.id} /> : null}
               {expanded ? (
                 <>
                   <RepositoryDocuments
                     onOpenDocument={onOpenDocument}
                     repositoryId={repository.id}
                   />
-                  {repository.yuqueId ? <ConflictList repositoryId={repository.id} /> : null}
+                  {repository.provider ? <ConflictList repositoryId={repository.id} /> : null}
                 </>
               ) : null}
             </li>

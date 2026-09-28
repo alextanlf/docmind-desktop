@@ -2,6 +2,7 @@ import { RefreshCw, Save } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { DistillationTarget } from "../../../../shared/contracts";
 import { useRepositoriesQuery } from "../repositories/repository.queries";
+import { useRemoteProvidersQuery } from "../settings/settings.queries";
 import { useDistillationMutations, useDistillationQuery } from "./memory.queries";
 import { distillationCoordinator } from "./distillation-coordinator";
 
@@ -14,10 +15,15 @@ function DistillationEditorDraft({ distillationId }: { distillationId: string })
   const { refetch } = query;
   const actions = useDistillationMutations(distillationId);
   const repositories = useRepositoriesQuery();
+  const providers = useRemoteProvidersQuery();
+  const providerLabel = (provider: string | null | undefined) => {
+    if (!provider) return "本地";
+    return providers.data?.find((entry) => entry.name === provider)?.label ?? provider;
+  };
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [keyPoints, setKeyPoints] = useState<string[]>([]);
-  const [target, setTarget] = useState<"local" | "yuque" | null>(null);
+  const [target, setTarget] = useState<"local" | "remote" | null>(null);
   const [repositoryId, setRepositoryId] = useState("");
   const updateQueue = useRef<Promise<unknown>>(Promise.resolve());
   const revision = useRef(0);
@@ -164,25 +170,25 @@ function DistillationEditorDraft({ distillationId }: { distillationId: string })
         </label>
         <label>
           <input
-            checked={target === "yuque"}
+            checked={target === "remote"}
             name="target"
-            onChange={() => setTarget("yuque")}
+            onChange={() => setTarget("remote")}
             type="radio"
           />
-          语雀
+          远程知识库
         </label>
-        {target === "yuque" ? (
+        {target === "remote" ? (
           <select
-            aria-label="语雀知识库"
+            aria-label="远程知识库"
             onChange={(event) => setRepositoryId(event.target.value)}
             value={repositoryId}
           >
             <option value="">选择知识库</option>
             {repositories.data
-              ?.filter((item) => item.yuqueId)
+              ?.filter((item) => item.remoteId)
               .map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.name}
+                  {item.provider ? `${item.name}（${providerLabel(item.provider)}）` : item.name}
                 </option>
               ))}
           </select>
@@ -203,7 +209,7 @@ function DistillationEditorDraft({ distillationId }: { distillationId: string })
           className="button button-primary"
           disabled={
             !target ||
-            (target === "yuque" && !repositoryId) ||
+            (target === "remote" && !repositoryId) ||
             busy ||
             ["generating", "saving"].includes(query.data.state)
           }

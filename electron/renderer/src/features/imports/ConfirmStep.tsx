@@ -43,7 +43,7 @@ export function ConfirmStep({
         </div>
         <div>
           <dt>预期阶段</dt>
-          <dd>{repository.yuqueId ? "解析、上传、索引" : "解析、索引"}</dd>
+          <dd>{repository.provider ? "解析、上传、索引" : "解析、索引"}</dd>
         </div>
       </dl>
       {!ready ? (

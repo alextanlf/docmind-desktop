@@ -6,7 +6,7 @@ import { SettingsView } from "../../renderer/src/features/settings/SettingsView"
 import { clientErrorMessage } from "../../renderer/src/features/settings/settings.queries";
 import {
   installDocMindApi,
-  loggedOutYuque,
+  loggedOutRemote,
   readySettings,
   unavailableEmbedding,
 } from "./test-docmind-api";
@@ -102,9 +102,9 @@ describe("设置", () => {
     ).toHaveFocus();
   });
 
-  it("shows embedding download details, progress, retry, and Yuque login controls", async () => {
+  it("shows embedding download details, progress, retry, and remote login controls", async () => {
     const api = installDocMindApi({
-      yuque: { status: vi.fn().mockResolvedValue(loggedOutYuque) },
+      remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
     });
     renderSettings();
 
@@ -116,27 +116,52 @@ describe("设置", () => {
       "12",
     );
     fireEvent.click(screen.getByRole("button", { name: "登录语雀" }));
-    expect(api.yuque.login).toHaveBeenCalledTimes(1);
+    expect(api.remote.login).toHaveBeenCalledWith("yuque");
   });
 
-  it("shows independent Yuque web, Yuque API, and Feishu binding cards", async () => {
+  it("shows data-driven provider cards plus the Feishu webhook card", async () => {
     const api = installDocMindApi({
-      yuque: { status: vi.fn().mockResolvedValue(loggedOutYuque) },
+      remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
     });
     renderSettings();
 
-    expect(await screen.findByRole("heading", { name: "语雀网页" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "语雀 API" })).toBeVisible();
+    // One card per registered provider (from remote.listProviders), one for
+    // the notification-only Feishu webhook.
+    expect(await screen.findByRole("heading", { name: "语雀" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "飞书文档" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "飞书绑定" })).toBeVisible();
-    expect(screen.getAllByText("未绑定")).toHaveLength(2);
+    expect(api.remote.listProviders).toHaveBeenCalledTimes(1);
+    expect(api.remote.listCredentials).toHaveBeenCalledWith("yuque");
+    expect(api.remote.listCredentials).toHaveBeenCalledWith("feishu");
+    // Wait for the credential channel forms before counting badges.
+    expect(await screen.findByLabelText("语雀 API Token")).toBeVisible();
+    expect(await screen.findByLabelText("飞书自建应用 Token")).toBeVisible();
+    // 语雀 API、飞书自建应用、飞书 webhook 三张表单初始均为未绑定。
+    expect(screen.getAllByText("未绑定")).toHaveLength(3);
+    // 飞书 user 通道是 OAuth 授权入口，无安装浏览器按钮。
+    expect(screen.getByRole("button", { name: "登录飞书文档" })).toBeVisible();
+
+    // 飞书自建应用通道（第二张“保存并验证”按钮属于飞书卡片）。
+    fireEvent.change(screen.getByLabelText("飞书自建应用 Token"), {
+      target: { value: "cli_a1b2:s3cret" },
+    });
+    fireEvent.click(screen.getAllByRole("button", { name: "保存并验证" })[1]);
+    await screen.findByText("语雀 API 已连接");
+    expect(api.remote.saveCredential).toHaveBeenCalledWith("feishu", "app", {
+      secret: "cli_a1b2:s3cret",
+    });
+    expect(api.remote.testCredential).toHaveBeenCalledWith("feishu", "app");
 
     fireEvent.change(screen.getByLabelText("语雀 API Token"), {
       target: { value: "yuque-token" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存并验证" }));
-    await screen.findByText("语雀 API 已连接，后续语雀读写将优先使用 API");
-    expect(api.settings.saveYuqueApi).toHaveBeenCalledWith({ token: "yuque-token" });
-    expect(api.settings.testYuqueApi).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getAllByRole("button", { name: "保存并验证" })[0]);
+    await waitFor(() =>
+      expect(api.remote.saveCredential).toHaveBeenCalledWith("yuque", "api", {
+        secret: "yuque-token",
+      }),
+    );
+    expect(api.remote.testCredential).toHaveBeenCalledWith("yuque", "api");
 
     fireEvent.change(screen.getByLabelText("飞书 Webhook"), {
       target: { value: "https://open.feishu.cn/open-apis/bot/v2/hook/test-token" },
@@ -151,8 +176,8 @@ describe("设置", () => {
 
   it("installs the Yuque browser when login reports a missing browser", async () => {
     const api = installDocMindApi({
-      yuque: {
-        status: vi.fn().mockResolvedValue(loggedOutYuque),
+      remote: {
+        status: vi.fn().mockResolvedValue(loggedOutRemote),
         login: vi.fn().mockRejectedValue({
           code: "YUQUE_BROWSER_UNAVAILABLE",
           message: "本机尚未安装语雀登录浏览器",
@@ -166,7 +191,7 @@ describe("设置", () => {
     fireEvent.click(await screen.findByRole("button", { name: "安装浏览器" }));
 
     expect(await screen.findByText("语雀浏览器已安装")).toBeVisible();
-    expect(api.yuque.installBrowser).toHaveBeenCalledTimes(1);
+    expect(api.remote.installBrowser).toHaveBeenCalledWith("yuque");
   });
 
   it("offers retry after an embedding failure", async () => {
@@ -230,6 +255,7 @@ describe("设置", () => {
     for (const code of [
       "MODEL_AUTH_FAILED",
       "MODEL_PRESET_INVALID",
+      "REMOTE_LOGIN_REQUIRED",
       "YUQUE_LOGIN_REQUIRED",
       "VALIDATION_ERROR",
       "DESTRUCTIVE_OPERATION",

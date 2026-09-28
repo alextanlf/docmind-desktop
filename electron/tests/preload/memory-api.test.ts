@@ -41,7 +41,7 @@ describe("memory preload API", () => {
         storageTarget: "local",
         localPath: "/Users/private/x.md",
         documentId: null,
-        yuqueUrl: null,
+        remoteUrl: null,
         errorCode: null,
         retryable: false,
         createdAt: "2026-01-01T00:00:00Z",

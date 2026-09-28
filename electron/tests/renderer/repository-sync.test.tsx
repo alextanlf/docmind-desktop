@@ -32,7 +32,7 @@ describe("repository sync", () => {
   });
 
   it("keeps a local knowledge base free of Yuque sync controls", async () => {
-    const localRepository = { ...repository, yuqueId: null, yuqueUrl: null };
+    const localRepository = { ...repository, provider: null, remoteId: null, remoteUrl: null };
     installDocMindApi({
       repositories: { list: vi.fn().mockResolvedValue([localRepository]) },
       documents: { list: vi.fn().mockResolvedValue([]) },

@@ -32,7 +32,11 @@ import {
   SourceRefSchema,
   StagedCollectionSchema,
   StagedSourceSchema,
-  YuqueStatusSchema,
+  RemoteStatusSchema,
+  RemoteProviderSummarySchema,
+  RemoteCredentialChannelSchema,
+  RemoteCredentialTestResultSchema,
+  SaveRemoteCredentialInputSchema,
   BatchImportSchema,
   BatchItemPageSchema,
   BrowserInstallResultSchema,
@@ -63,6 +67,12 @@ const uuid = (value: unknown): string => {
     typeof value !== "string" ||
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
   )
+    throw new Error("INVALID_REQUEST");
+  return value;
+};
+
+const providerName = (value: unknown): string => {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(value))
     throw new Error("INVALID_REQUEST");
   return value;
 };
@@ -185,10 +195,43 @@ const api: DocMindApi = {
     status: () => invoke(IPC_CHANNELS.embeddingStatus, ModelStatusSchema),
     prepare: () => invoke(IPC_CHANNELS.embeddingPrepare, ModelStatusSchema),
   },
-  yuque: {
-    status: () => invoke(IPC_CHANNELS.yuqueStatus, YuqueStatusSchema),
-    login: () => invoke(IPC_CHANNELS.yuqueLogin, YuqueStatusSchema),
-    installBrowser: () => invoke(IPC_CHANNELS.yuqueInstallBrowser, BrowserInstallResultSchema),
+  remote: {
+    status: (provider) =>
+      invoke(IPC_CHANNELS.remoteStatus, RemoteStatusSchema, providerName(provider)),
+    login: (provider) =>
+      invoke(IPC_CHANNELS.remoteLogin, RemoteStatusSchema, providerName(provider)),
+    installBrowser: (provider) =>
+      invoke(IPC_CHANNELS.remoteInstallBrowser, BrowserInstallResultSchema, providerName(provider)),
+    listProviders: () =>
+      invoke(IPC_CHANNELS.remoteListProviders, RemoteProviderSummarySchema.array()),
+    listCredentials: (provider) =>
+      invoke(
+        IPC_CHANNELS.remoteListCredentials,
+        RemoteCredentialChannelSchema.array(),
+        providerName(provider),
+      ),
+    saveCredential: (provider, channel, input) =>
+      invoke(
+        IPC_CHANNELS.remoteSaveCredential,
+        RemoteCredentialChannelSchema,
+        providerName(provider),
+        providerName(channel),
+        SaveRemoteCredentialInputSchema.parse(input),
+      ),
+    testCredential: (provider, channel) =>
+      invoke(
+        IPC_CHANNELS.remoteTestCredential,
+        RemoteCredentialTestResultSchema,
+        providerName(provider),
+        providerName(channel),
+      ),
+    deleteCredential: (provider, channel) =>
+      invoke(
+        IPC_CHANNELS.remoteDeleteCredential,
+        RemoteCredentialChannelSchema,
+        providerName(provider),
+        providerName(channel),
+      ),
   },
   repositories: {
     list: () => invoke(IPC_CHANNELS.repositoriesList, RepositorySchema.array()),

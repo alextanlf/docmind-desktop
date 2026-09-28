@@ -36,6 +36,60 @@ describe("preload bridge", () => {
     expect(api.imports.subscribe).toBeTypeOf("function");
   });
 
+  it("routes remote provider calls through the provider-parameterized channels", async () => {
+    const api = exposed.docmind as any;
+    const status = { loggedIn: false, accountLabel: null, requiresLogin: true };
+    invoke.mockResolvedValueOnce({ ok: true, value: status });
+    await expect(api.remote.status("yuque")).resolves.toEqual(status);
+    expect(invoke).toHaveBeenLastCalledWith("remote:status", "yuque");
+    invoke.mockResolvedValueOnce({ ok: true, value: status });
+    await api.remote.login("yuque");
+    expect(invoke).toHaveBeenLastCalledWith("remote:login", "yuque");
+    invoke.mockResolvedValueOnce({ ok: true, value: { installed: true, message: "已安装" } });
+    await api.remote.installBrowser("yuque");
+    expect(invoke).toHaveBeenLastCalledWith("remote:installBrowser", "yuque");
+    expect(() => api.remote.status("../admin")).toThrow("INVALID_REQUEST");
+  });
+
+  it("routes credential calls through the provider-parameterized channels", async () => {
+    const api = exposed.docmind as any;
+    const channel = {
+      provider: "yuque",
+      channel: "api",
+      label: "语雀 API",
+      configured: true,
+      state: "unverified",
+      accountLabel: null,
+      hasSecret: true,
+    };
+    invoke.mockResolvedValueOnce({ ok: true, value: [] });
+    await expect(api.remote.listProviders()).resolves.toEqual([]);
+    expect(invoke).toHaveBeenLastCalledWith("remote:listProviders");
+
+    invoke.mockResolvedValueOnce({ ok: true, value: [channel] });
+    await expect(api.remote.listCredentials("yuque")).resolves.toEqual([channel]);
+    expect(invoke).toHaveBeenLastCalledWith("remote:listCredentials", "yuque");
+
+    invoke.mockResolvedValueOnce({ ok: true, value: channel });
+    await api.remote.saveCredential("yuque", "api", { secret: "token" });
+    expect(invoke).toHaveBeenLastCalledWith("remote:saveCredential", "yuque", "api", {
+      secret: "token",
+    });
+
+    invoke.mockResolvedValueOnce({
+      ok: true,
+      value: { connected: true, message: "已连接", label: "t***t" },
+    });
+    await api.remote.testCredential("yuque", "api");
+    expect(invoke).toHaveBeenLastCalledWith("remote:testCredential", "yuque", "api");
+
+    invoke.mockResolvedValueOnce({ ok: true, value: { ...channel, state: "disconnected" } });
+    await api.remote.deleteCredential("yuque", "api");
+    expect(invoke).toHaveBeenLastCalledWith("remote:deleteCredential", "yuque", "api");
+
+    expect(() => api.remote.listCredentials("../admin")).toThrow("INVALID_REQUEST");
+  });
+
   it("removes a request-specific event listener exactly once on cancellation", async () => {
     const api = exposed.docmind as any;
     const callback = vi.fn();
@@ -87,10 +141,11 @@ describe("preload bridge", () => {
   it("requires a backend-reported indexed document count", () => {
     const parsed = RepositorySchema.parse({
       id: "00000000-0000-0000-0000-000000000016",
-      yuqueId: null,
+      provider: null,
+      remoteId: null,
       name: "SwiftUI",
       description: null,
-      yuqueUrl: null,
+      remoteUrl: null,
       documentCount: 3,
       indexedDocumentCount: 2,
       syncStatus: "已同步",

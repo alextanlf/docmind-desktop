@@ -63,3 +63,25 @@ class ProviderSummaryView(WireModel):
     label: str
     configured: bool
     capabilities: ProviderCapabilitiesView = ProviderCapabilitiesView()
+
+
+class CredentialChannelView(WireModel):
+    """Secret-free view of one provider credential channel."""
+
+    provider: str
+    channel: str
+    label: str
+    configured: bool
+    state: str  # 'verified' | 'unverified' | 'disconnected'
+    account_label: str | None = None
+    has_secret: bool = False
+
+
+class SaveCredentialRequest(WireModel):
+    secret: str
+
+
+class CredentialTestResult(WireModel):
+    connected: bool
+    message: str
+    label: str | None = None

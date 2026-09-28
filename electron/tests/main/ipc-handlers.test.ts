@@ -39,6 +39,75 @@ describe("IPC handlers", () => {
     expect(deps.proxy.requestJson).not.toHaveBeenCalled();
   });
 
+  it("proxies remote provider calls to the parameterized backend route", async () => {
+    const deps = dependencies();
+    const handlers = registerIpcHandlers(deps);
+    await handlers["remote:status"]({} as any, "yuque");
+    expect(deps.proxy.requestJson).toHaveBeenCalledWith(
+      "/api/remote/providers/yuque/status",
+      {},
+      expect.anything(),
+    );
+    await handlers["remote:login"]({} as any, "yuque");
+    expect(deps.proxy.requestJson).toHaveBeenLastCalledWith(
+      "/api/remote/providers/yuque/login",
+      expect.objectContaining({ method: "POST" }),
+      expect.anything(),
+    );
+    await handlers["remote:installBrowser"]({} as any, "yuque");
+    expect(deps.proxy.requestJson).toHaveBeenLastCalledWith(
+      "/api/remote/providers/yuque/browser/install",
+      expect.objectContaining({ method: "POST" }),
+      expect.anything(),
+    );
+  });
+
+  it("rejects malformed remote provider names before interpolation", () => {
+    const deps = dependencies();
+    const handlers = registerIpcHandlers(deps);
+    expect(() => handlers["remote:status"]({} as any, "../admin")).toThrow(/请求参数无效/);
+    expect(() => handlers["remote:login"]({} as any, "")).toThrow(/请求参数无效/);
+    expect(deps.proxy.requestJson).not.toHaveBeenCalled();
+  });
+
+  it("proxies credential calls to the parameterized backend routes", async () => {
+    const deps = dependencies();
+    const handlers = registerIpcHandlers(deps);
+    await handlers["remote:listProviders"]({} as any);
+    expect(deps.proxy.requestJson).toHaveBeenLastCalledWith(
+      "/api/remote/providers",
+      {},
+      expect.anything(),
+    );
+    await handlers["remote:listCredentials"]({} as any, "yuque");
+    expect(deps.proxy.requestJson).toHaveBeenLastCalledWith(
+      "/api/remote/providers/yuque/credentials",
+      {},
+      expect.anything(),
+    );
+    await handlers["remote:saveCredential"]({} as any, "yuque", "api", { secret: "t" });
+    expect(deps.proxy.requestJson).toHaveBeenLastCalledWith(
+      "/api/remote/providers/yuque/credentials/api",
+      expect.objectContaining({ method: "PUT" }),
+      expect.anything(),
+    );
+    await handlers["remote:testCredential"]({} as any, "yuque", "api");
+    expect(deps.proxy.requestJson).toHaveBeenLastCalledWith(
+      "/api/remote/providers/yuque/credentials/api/test",
+      expect.objectContaining({ method: "POST" }),
+      expect.anything(),
+    );
+    await handlers["remote:deleteCredential"]({} as any, "yuque", "api");
+    expect(deps.proxy.requestJson).toHaveBeenLastCalledWith(
+      "/api/remote/providers/yuque/credentials/api",
+      expect.objectContaining({ method: "DELETE" }),
+      expect.anything(),
+    );
+    expect(() => handlers["remote:saveCredential"]({} as any, "yuque", "../x", { secret: "t" })).toThrow(
+      /请求参数无效/,
+    );
+  });
+
   it("cleans up stream listeners on renderer destruction", () => {
     const deps = dependencies();
     const destroyed = { on: vi.fn() };

@@ -6,12 +6,14 @@ import type {
   ImportJob,
   Message,
   ModelStatus,
+  RemoteCredentialChannel,
+  RemoteProviderSummary,
   Repository,
   SessionSummary,
   SettingsView,
+  RemoteStatus,
   SourcePreview,
   StagedSource,
-  YuqueStatus,
 } from "../../shared/contracts";
 import { vi } from "vitest";
 
@@ -56,18 +58,82 @@ export const unavailableEmbedding: ModelStatus = {
   progress: 0,
 };
 
-export const loggedOutYuque: YuqueStatus = {
+export const loggedOutRemote: RemoteStatus = {
   loggedIn: false,
   accountLabel: null,
   requiresLogin: true,
 };
 
+export const yuqueProviderSummaries: RemoteProviderSummary[] = [
+  {
+    name: "yuque",
+    label: "语雀",
+    configured: false,
+    capabilities: { browserInstall: true, markerLookup: true },
+  },
+];
+
+export const feishuProviderSummary: RemoteProviderSummary = {
+  name: "feishu",
+  label: "飞书文档",
+  configured: false,
+  capabilities: { browserInstall: false, markerLookup: true },
+};
+
+export const allProviderSummaries: RemoteProviderSummary[] = [
+  ...yuqueProviderSummaries,
+  feishuProviderSummary,
+];
+
+export const yuqueCredentialChannels: RemoteCredentialChannel[] = [
+  {
+    provider: "yuque",
+    channel: "web",
+    label: "语雀网页",
+    configured: false,
+    state: "disconnected",
+    accountLabel: null,
+    hasSecret: false,
+  },
+  {
+    provider: "yuque",
+    channel: "api",
+    label: "语雀 API",
+    configured: false,
+    state: "disconnected",
+    accountLabel: null,
+    hasSecret: true,
+  },
+];
+
+export const feishuCredentialChannels: RemoteCredentialChannel[] = [
+  {
+    provider: "feishu",
+    channel: "app",
+    label: "飞书自建应用",
+    configured: false,
+    state: "disconnected",
+    accountLabel: null,
+    hasSecret: true,
+  },
+  {
+    provider: "feishu",
+    channel: "user",
+    label: "飞书账号授权",
+    configured: false,
+    state: "disconnected",
+    accountLabel: null,
+    hasSecret: false,
+  },
+];
+
 export const repository: Repository = {
   id: "00000000-0000-0000-0000-000000000021",
-  yuqueId: "swiftui",
+  provider: "yuque",
+  remoteId: "swiftui",
   name: "SwiftUI",
   description: "SwiftUI 知识库",
-  yuqueUrl: "https://www.yuque.com/test/swiftui",
+  remoteUrl: "https://www.yuque.com/test/swiftui",
   documentCount: 1,
   indexedDocumentCount: 1,
   syncStatus: "已同步",
@@ -78,9 +144,9 @@ export const repository: Repository = {
 export const document: DocumentDetail = {
   id: "00000000-0000-0000-0000-000000000022",
   repositoryId: repository.id,
-  yuqueId: "state-management",
+  remoteId: "state-management",
   title: "State 管理",
-  yuqueUrl: "https://www.yuque.com/test/swiftui/state",
+  remoteUrl: "https://www.yuque.com/test/swiftui/state",
   chunkCount: 3,
   status: "已同步",
   remoteDeleted: false,
@@ -150,7 +216,7 @@ export function installDocMindApi(overrides?: {
   ollama?: Partial<DocMindApi["ollama"]>;
   settings?: Partial<typeof window.docmind.settings>;
   embedding?: Partial<typeof window.docmind.embedding>;
-  yuque?: Partial<typeof window.docmind.yuque>;
+  remote?: Partial<typeof window.docmind.remote>;
   repositories?: Partial<DocMindApi["repositories"]>;
   sync?: Partial<DocMindApi["sync"]>;
   conflicts?: Partial<DocMindApi["conflicts"]>;
@@ -222,8 +288,8 @@ export function installDocMindApi(overrides?: {
       }),
       ...overrides?.embedding,
     },
-    yuque: {
-      status: vi.fn().mockResolvedValue(loggedOutYuque),
+    remote: {
+      status: vi.fn().mockResolvedValue(loggedOutRemote),
       login: vi.fn().mockResolvedValue({
         loggedIn: true,
         accountLabel: "DocMind 测试账号",
@@ -233,7 +299,30 @@ export function installDocMindApi(overrides?: {
         installed: true,
         message: "语雀浏览器已安装",
       }),
-      ...overrides?.yuque,
+      listProviders: vi.fn().mockResolvedValue(allProviderSummaries),
+      listCredentials: vi
+        .fn()
+        .mockImplementation((provider: string) =>
+          Promise.resolve(
+            provider === "feishu" ? feishuCredentialChannels : yuqueCredentialChannels,
+          ),
+        ),
+      saveCredential: vi.fn().mockResolvedValue({
+        ...yuqueCredentialChannels[1],
+        configured: true,
+        state: "unverified",
+      }),
+      testCredential: vi.fn().mockResolvedValue({
+        connected: true,
+        message: "语雀 API 已连接",
+        label: "t***t",
+      }),
+      deleteCredential: vi.fn().mockResolvedValue({
+        ...yuqueCredentialChannels[1],
+        configured: false,
+        state: "disconnected",
+      }),
+      ...overrides?.remote,
     },
     repositories: {
       list: vi.fn().mockResolvedValue([repository]),
