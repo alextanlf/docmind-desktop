@@ -37,6 +37,22 @@ export function useRepositorySyncQuery(repositoryId: string | null) {
   });
 }
 
+export function useUpdateRepositoryMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      repositoryId,
+      remoteParentId,
+    }: {
+      repositoryId: string;
+      remoteParentId: string | null;
+    }) => window.docmind.repositories.update(repositoryId, { remoteParentId }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: repositoryKeys.root });
+    },
+  });
+}
+
 export function useSyncRepositoryMutation(repositoryId: string | null) {
   const queryClient = useQueryClient();
   return useMutation({

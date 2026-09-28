@@ -129,7 +129,7 @@ async def test_walks_wiki_tree_and_flattens_docx_nodes(provider: FeishuProvider)
 async def test_create_document_writes_markdown_via_convert_and_descendant(
     provider: FeishuProvider,
 ) -> None:
-    respx.post(f"{BASE}/wiki/v2/spaces/sp1/nodes").mock(
+    create_route = respx.post(f"{BASE}/wiki/v2/spaces/sp1/nodes").mock(
         return_value=httpx.Response(
             200,
             json={
@@ -160,16 +160,26 @@ async def test_create_document_writes_markdown_via_convert_and_descendant(
     ).mock(return_value=httpx.Response(200, json={"code": 0, "data": {}}))
 
     document = await provider.create_document(
-        CreateRemoteDocumentRequest(repository_id="sp1", title="新文档", content="正文")
+        CreateRemoteDocumentRequest(
+            repository_id="sp1",
+            title="新文档",
+            content="正文",
+            parent_id="wikParent",
+        )
     )
 
     assert document.remote_id == "wikNew"
     assert document.url == "https://feishu.cn/wiki/wikNew"
     assert insert_route.called
+    import json as _json
+
+    assert _json.loads(create_route.calls[0].request.content)["parent_node_token"] == "wikParent"
 
 
 @respx.mock
-async def test_read_document_resolves_node_then_raw_content(provider: FeishuProvider) -> None:
+async def test_read_document_reconstructs_markdown_and_strips_mutation_marker(
+    provider: FeishuProvider,
+) -> None:
     respx.get(f"{BASE}/wiki/v2/spaces/get_node").mock(
         return_value=httpx.Response(
             200,
@@ -187,15 +197,187 @@ async def test_read_document_resolves_node_then_raw_content(provider: FeishuProv
             },
         )
     )
-    respx.get(f"{BASE}/docx/v1/documents/docx1/raw_content").mock(
-        return_value=httpx.Response(200, json={"code": 0, "data": {"content": "正文文本"}})
+    respx.get(f"{BASE}/docx/v1/documents/docx1/blocks").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "items": [
+                        {"block_id": "page", "block_type": 1, "children": ["h1", "p"]},
+                        {
+                            "block_id": "h1",
+                            "parent_id": "page",
+                            "block_type": 3,
+                            "heading1": {"elements": [{"text_run": {"content": "标题"}}]},
+                        },
+                        {
+                            "block_id": "p",
+                            "parent_id": "page",
+                            "block_type": 2,
+                            "text": {
+                                "elements": [
+                                    {"text_run": {"content": "正文文本\n\n<!-- docmind-mutation:m1 -->"}}
+                                ]
+                            },
+                        },
+                    ],
+                    "has_more": False,
+                },
+            },
+        )
     )
 
     content = await provider.read_document("wik1")
 
     assert content.title == "指南"
     assert content.repository_id == "sp1"
-    assert content.content == "正文文本"
+    assert content.content == "# 标题\n\n正文文本"
+
+
+@respx.mock
+async def test_find_document_by_marker_uses_user_search_before_walking(
+    provider: FeishuProvider,
+) -> None:
+    search_route = respx.post(f"{BASE}/suite/docs-api/search/object").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "docs_entities": [
+                        {"docs_token": "docx1", "docs_type": "docx", "title": "Guide"}
+                    ],
+                    "has_more": False,
+                },
+            },
+        )
+    )
+    respx.get(f"{BASE}/wiki/v2/spaces/get_node").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "node": {
+                        "node_token": "wik1",
+                        "obj_token": "docx1",
+                        "obj_type": "docx",
+                        "space_id": "sp1",
+                        "title": "指南",
+                    }
+                },
+            },
+        )
+    )
+    respx.get(f"{BASE}/docx/v1/documents/docx1/blocks").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "items": [
+                        {
+                            "block_id": "p",
+                            "block_type": 2,
+                            "text": {
+                                "elements": [
+                                    {"text_run": {"content": "<!-- docmind-mutation:abc -->"}}
+                                ]
+                            },
+                        }
+                    ],
+                    "has_more": False,
+                },
+            },
+        )
+    )
+    walk_route = respx.get(f"{BASE}/wiki/v2/spaces/sp1/nodes").mock(
+        return_value=httpx.Response(500)
+    )
+
+    found = await provider.find_document_by_marker("sp1", "docmind-mutation:abc")
+
+    assert found is not None
+    assert found.remote_id == "wik1"
+    assert search_route.called
+    assert not walk_route.called
+
+
+@respx.mock
+async def test_find_document_by_marker_falls_back_to_walk_when_search_misses(
+    provider: FeishuProvider,
+) -> None:
+    respx.post(f"{BASE}/suite/docs-api/search/object").mock(
+        return_value=httpx.Response(
+            200,
+            json={"code": 0, "data": {"docs_entities": [], "has_more": False}},
+        )
+    )
+    respx.get(f"{BASE}/wiki/v2/spaces/sp1/nodes").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "items": [
+                        {
+                            "node_token": "wik1",
+                            "obj_token": "docx1",
+                            "obj_type": "docx",
+                            "title": "指南",
+                            "has_child": False,
+                        }
+                    ],
+                    "has_more": False,
+                },
+            },
+        )
+    )
+    respx.get(f"{BASE}/wiki/v2/spaces/get_node").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "node": {
+                        "node_token": "wik1",
+                        "obj_token": "docx1",
+                        "obj_type": "docx",
+                        "space_id": "sp1",
+                        "title": "指南",
+                    }
+                },
+            },
+        )
+    )
+    respx.get(f"{BASE}/docx/v1/documents/docx1/blocks").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "items": [
+                        {
+                            "block_id": "p",
+                            "block_type": 2,
+                            "text": {
+                                "elements": [
+                                    {"text_run": {"content": "<!-- docmind-mutation:abc -->"}}
+                                ]
+                            },
+                        }
+                    ],
+                    "has_more": False,
+                },
+            },
+        )
+    )
+
+    found = await provider.find_document_by_marker("sp1", "docmind-mutation:abc")
+
+    assert found is not None
+    assert found.remote_id == "wik1"
 
 
 @respx.mock

@@ -4,9 +4,11 @@ from typing import cast
 
 from fastapi import APIRouter, Request, status
 
+from app.api.errors import DomainError
+
 from app.remote.registry import ProviderRegistry
 from app.schemas.remote import CreateRemoteRepositoryRequest, RemoteRepository
-from app.schemas.repositories import RepositoryCreate, RepositoryView
+from app.schemas.repositories import RepositoryCreate, RepositoryUpdate, RepositoryView
 from app.storage.models import RepositoryRecord
 from app.storage.repositories import RepositoryStore
 
@@ -29,6 +31,7 @@ def _view(record: RepositoryRecord, indexed_document_count: int = 0) -> Reposito
         name=record.name,
         description=record.description,
         remote_url=record.remote_url,
+        remote_parent_id=record.remote_parent_id,
         document_count=record.document_count,
         indexed_document_count=indexed_document_count,
         sync_status=record.sync_status,
@@ -85,3 +88,27 @@ async def create_repository(request: Request, body: RepositoryCreate) -> Reposit
         )
         return _upsert(_store(request), body.provider, remote)
     return _view(_store(request).create_local(name=body.name))
+
+
+@router.patch("/{repository_id}", response_model=RepositoryView)
+async def update_repository(
+    request: Request, repository_id: str, body: RepositoryUpdate
+) -> RepositoryView:
+    store = _store(request)
+    record = store.get(repository_id)
+    if record is None:
+        raise DomainError("NOT_FOUND", "资源不存在", 404)
+    if "remote_parent_id" in body.model_fields_set:
+        if not record.provider:
+            raise DomainError("REMOTE_NOT_BOUND", "知识库未绑定远程来源", 409, False)
+        provider = _registry(request).get(record.provider)
+        if not provider.identity.capabilities.parent_node_write:
+            raise DomainError(
+                "REMOTE_CAPABILITY_UNSUPPORTED",
+                "该远程来源不支持指定父目录",
+                400,
+                False,
+            )
+        parent_id = body.remote_parent_id.strip() if body.remote_parent_id else None
+        record = store.set_remote_parent(repository_id, parent_id or None)
+    return _view(record)

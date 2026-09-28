@@ -28,6 +28,7 @@ export const IPC_CHANNELS = {
   remoteDeleteCredential: "remote:deleteCredential",
   repositoriesList: "repositories:list",
   repositoriesCreate: "repositories:create",
+  repositoriesUpdate: "repositories:update",
   syncGet: "sync:get",
   syncTrigger: "sync:trigger",
   conflictsList: "conflicts:list",

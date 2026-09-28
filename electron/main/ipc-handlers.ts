@@ -9,6 +9,7 @@ import {
   ConflictViewSchema,
   CreateImportInputSchema,
   CreateRepositoryInputSchema,
+  UpdateRepositoryInputSchema,
   CreateSessionInputSchema,
   DocumentDetailSchema,
   DocumentVersionSchema,
@@ -285,6 +286,12 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
       proxy.requestJson(
         "/api/repositories",
         jsonInit("POST", parse(CreateRepositoryInputSchema, input)),
+        RepositorySchema,
+      ),
+    [IPC_CHANNELS.repositoriesUpdate]: (_event, repositoryId, input) =>
+      proxy.requestJson(
+        `/api/repositories/${parse(UUID, repositoryId)}`,
+        jsonInit("PATCH", parse(UpdateRepositoryInputSchema, input)),
         RepositorySchema,
       ),
     [IPC_CHANNELS.syncGet]: (_event, repositoryId) =>

@@ -254,6 +254,17 @@ class RepositoryStore:
                 record.document_count = count
                 record.updated_at = utc_now()
 
+    def set_remote_parent(self, repository_id: str, parent_id: str | None) -> RepositoryRecord:
+        with self.database.session() as session:
+            record = session.get(RepositoryRecord, repository_id)
+            if record is None:
+                raise DomainError("NOT_FOUND", "资源不存在", 404)
+            record.remote_parent_id = parent_id
+            record.updated_at = utc_now()
+            session.flush()
+            session.expunge(record)
+            return record
+
     def upsert_remote(
         self,
         *,

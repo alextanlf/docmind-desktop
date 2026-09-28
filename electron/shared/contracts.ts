@@ -190,6 +190,7 @@ export const BrowserInstallResultSchema = z.object({
 export const RemoteProviderCapabilitiesSchema = z.object({
   browserInstall: z.boolean(),
   markerLookup: z.boolean(),
+  parentNodeWrite: z.boolean(),
 });
 export const RemoteProviderSummarySchema = z.object({
   name: z.string(),
@@ -222,6 +223,7 @@ export const RepositorySchema = z.object({
   name: text(120),
   description: nullableText(2_000),
   remoteUrl: z.string().max(4_000).nullable().optional(),
+  remoteParentId: z.string().max(255).nullable().optional(),
   documentCount: z.number().int().nonnegative(),
   indexedDocumentCount: z.number().int().nonnegative(),
   syncStatus: z.string(),
@@ -232,6 +234,9 @@ export const CreateRepositoryInputSchema = z.object({
   name: text(120),
   // Omitted or null creates a local knowledge base (the default).
   provider: z.string().max(32).nullable().optional(),
+});
+export const UpdateRepositoryInputSchema = z.object({
+  remoteParentId: z.string().max(255).nullable(),
 });
 
 export const DocumentInputSchema = z.object({
@@ -666,6 +671,7 @@ export type RemoteCredentialTestResult = z.infer<typeof RemoteCredentialTestResu
 export type SaveRemoteCredentialInput = z.infer<typeof SaveRemoteCredentialInputSchema>;
 export type Repository = z.infer<typeof RepositorySchema>;
 export type CreateRepositoryInput = z.infer<typeof CreateRepositoryInputSchema>;
+export type UpdateRepositoryInput = z.infer<typeof UpdateRepositoryInputSchema>;
 export type SyncOutcome = z.infer<typeof SyncOutcomeSchema>;
 export type SyncStatus = z.infer<typeof SyncStatusSchema>;
 export type ConflictView = z.infer<typeof ConflictViewSchema>;
@@ -784,6 +790,7 @@ export interface DocMindApi {
   repositories: {
     list(): Promise<Repository[]>;
     create(input: CreateRepositoryInput): Promise<Repository>;
+    update(repositoryId: string, input: UpdateRepositoryInput): Promise<Repository>;
   };
   sync: {
     get(repositoryId: string): Promise<SyncStatus>;
@@ -879,6 +886,7 @@ export const schemas = {
   RemoteCredentialTestResultSchema,
   SaveRemoteCredentialInputSchema,
   RepositorySchema,
+  UpdateRepositoryInputSchema,
   DocumentSummarySchema,
   DocumentDetailSchema,
   SourcePreviewSchema,

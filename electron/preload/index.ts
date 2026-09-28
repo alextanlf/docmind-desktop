@@ -8,6 +8,7 @@ import {
   ConflictViewSchema,
   CreateImportInputSchema,
   CreateRepositoryInputSchema,
+  UpdateRepositoryInputSchema,
   CreateSessionInputSchema,
   DocumentDetailSchema,
   DocumentVersionSchema,
@@ -240,6 +241,13 @@ const api: DocMindApi = {
         IPC_CHANNELS.repositoriesCreate,
         RepositorySchema,
         CreateRepositoryInputSchema.parse(input),
+      ),
+    update: (repositoryId, input) =>
+      invoke(
+        IPC_CHANNELS.repositoriesUpdate,
+        RepositorySchema,
+        uuid(repositoryId),
+        UpdateRepositoryInputSchema.parse(input),
       ),
   },
   sync: {

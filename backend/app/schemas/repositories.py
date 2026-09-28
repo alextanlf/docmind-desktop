@@ -22,6 +22,12 @@ class RepositoryCreate(WireModel):
         return value
 
 
+class RepositoryUpdate(WireModel):
+    # Feishu maps this to ``parent_node_token``.  Providers without the
+    # ``parent_node_write`` capability reject the update.
+    remote_parent_id: str | None = Field(default=None, max_length=255)
+
+
 class RepositoryView(WireModel):
     id: str
     provider: str | None
@@ -29,6 +35,7 @@ class RepositoryView(WireModel):
     name: str
     description: str | None
     remote_url: str | None
+    remote_parent_id: str | None = None
     document_count: int
     indexed_document_count: int
     sync_status: str

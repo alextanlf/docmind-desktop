@@ -531,6 +531,7 @@ class ImportService:
                                 repository_id=repository.remote_id,
                                 title=document.title,
                                 content=remote_markdown,
+                                parent_id=repository.remote_parent_id,
                             )
                         )
                 if not metadata.get("attach_remote"):

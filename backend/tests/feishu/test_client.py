@@ -187,6 +187,95 @@ async def test_delete_page_children_skips_empty_documents() -> None:
 
 
 @respx.mock
+async def test_create_wiki_node_passes_parent_node_token() -> None:
+    route = respx.post("https://open.feishu.cn/open-apis/wiki/v2/spaces/s1/nodes").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "node": {"node_token": "child", "obj_token": "docx-child", "obj_type": "docx"}
+                },
+            },
+        )
+    )
+
+    node = await client.create_wiki_node(
+        "t-ok", "s1", "Child", parent_node_token="wikParent"
+    )
+
+    assert node["node_token"] == "child"
+    import json as _json
+
+    assert _json.loads(route.calls[0].request.content)["parent_node_token"] == "wikParent"
+
+
+@respx.mock
+async def test_list_document_blocks_uses_current_revision_and_rich_blocks() -> None:
+    route = respx.get("https://open.feishu.cn/open-apis/docx/v1/documents/doc1/blocks").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "items": [
+                        {
+                            "block_id": "b1",
+                            "block_type": 3,
+                            "heading1": {"elements": [{"text_run": {"content": "标题"}}]},
+                        }
+                    ],
+                    "has_more": False,
+                },
+            },
+        )
+    )
+
+    blocks = await client.list_document_blocks("t-ok", "doc1")
+
+    assert blocks[0]["block_id"] == "b1"
+    assert route.calls[0].request.url.params["document_revision_id"] == "-1"
+    assert route.calls[0].request.url.params["page_size"] == "500"
+
+
+@respx.mock
+async def test_search_documents_posts_user_access_token_body() -> None:
+    route = respx.post("https://open.feishu.cn/open-apis/suite/docs-api/search/object").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "docs_entities": [
+                        {
+                            "docs_token": "docx1",
+                            "docs_type": "docx",
+                            "title": "Guide",
+                        }
+                    ],
+                    "has_more": False,
+                },
+            },
+        )
+    )
+
+    result = await client.search_documents(
+        "u-token", "docmind-mutation:abc", docs_types=["wiki", "docx"]
+    )
+
+    assert result["entities"][0]["docs_token"] == "docx1"
+    import json as _json
+
+    assert _json.loads(route.calls[0].request.content) == {
+        "search_key": "docmind-mutation:abc",
+        "offset": 0,
+        "count": 20,
+        "docs_types": ["wiki", "docx"],
+    }
+    assert route.calls[0].request.headers["Authorization"] == "Bearer u-token"
+
+
+@respx.mock
 async def test_network_errors_map_to_unavailable() -> None:
     respx.get("https://open.feishu.cn/open-apis/wiki/v2/spaces").mock(
         side_effect=httpx.ConnectError("boom")

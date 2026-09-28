@@ -108,6 +108,27 @@ describe("IPC handlers", () => {
     );
   });
 
+  it("proxies repository parent updates through the repository route", async () => {
+    const deps = dependencies();
+    const handlers = registerIpcHandlers(deps);
+    const repositoryId = "00000000-0000-0000-0000-000000000021";
+
+    await handlers["repositories:update"](
+      {} as any,
+      repositoryId,
+      { remoteParentId: "wikParent" },
+    );
+
+    expect(deps.proxy.requestJson).toHaveBeenLastCalledWith(
+      `/api/repositories/${repositoryId}`,
+      expect.objectContaining({ method: "PATCH" }),
+      expect.anything(),
+    );
+    expect(() =>
+      handlers["repositories:update"]({} as any, "not-a-uuid", { remoteParentId: null }),
+    ).toThrow(/请求参数无效/);
+  });
+
   it("cleans up stream listeners on renderer destruction", () => {
     const deps = dependencies();
     const destroyed = { on: vi.fn() };

@@ -23,7 +23,7 @@ def test_provider_list_reports_configured_capabilities(client, auth_headers) -> 
             "name": "yuque",
             "label": "语雀",
             "configured": True,
-            "capabilities": {"browserInstall": True, "markerLookup": True},
+            "capabilities": {"browserInstall": True, "markerLookup": True, "parentNodeWrite": False},
         }
     ]
 
@@ -52,4 +52,8 @@ def test_capabilities_are_reflected_in_the_provider_summary(client, auth_headers
     response = client.get("/api/remote/providers", headers=auth_headers)
 
     assert response.status_code == 200
-    assert response.json()[0]["capabilities"] == {"browserInstall": False, "markerLookup": False}
+    assert response.json()[0]["capabilities"] == {
+        "browserInstall": False,
+        "markerLookup": False,
+        "parentNodeWrite": False,
+    }

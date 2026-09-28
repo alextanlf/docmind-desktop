@@ -69,7 +69,7 @@ export const yuqueProviderSummaries: RemoteProviderSummary[] = [
     name: "yuque",
     label: "语雀",
     configured: false,
-    capabilities: { browserInstall: true, markerLookup: true },
+    capabilities: { browserInstall: true, markerLookup: true, parentNodeWrite: false },
   },
 ];
 
@@ -77,7 +77,7 @@ export const feishuProviderSummary: RemoteProviderSummary = {
   name: "feishu",
   label: "飞书文档",
   configured: false,
-  capabilities: { browserInstall: false, markerLookup: true },
+  capabilities: { browserInstall: false, markerLookup: true, parentNodeWrite: true },
 };
 
 export const allProviderSummaries: RemoteProviderSummary[] = [
@@ -134,6 +134,7 @@ export const repository: Repository = {
   name: "SwiftUI",
   description: "SwiftUI 知识库",
   remoteUrl: "https://www.yuque.com/test/swiftui",
+  remoteParentId: null,
   documentCount: 1,
   indexedDocumentCount: 1,
   syncStatus: "已同步",
@@ -327,6 +328,7 @@ export function installDocMindApi(overrides?: {
     repositories: {
       list: vi.fn().mockResolvedValue([repository]),
       create: vi.fn().mockResolvedValue(repository),
+      update: vi.fn().mockResolvedValue(repository),
       ...overrides?.repositories,
     },
     sync: {

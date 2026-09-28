@@ -101,6 +101,7 @@ class SyncConflictService:
                     repository_id=repository.remote_id,
                     title=f"{remote.title}（远端副本）",
                     content=remote.content,
+                    parent_id=repository.remote_parent_id,
                 )
             )
             await provider.update_document(
