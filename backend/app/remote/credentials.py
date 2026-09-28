@@ -11,8 +11,8 @@ Design rules:
 * Each provider *declares* its channels via ``ProviderCredentialSpec`` at
   registration time; the registry's default ``is_configured`` probe is then
   "any channel verified" and never hand-written per provider.
-* Legacy settings keys are only read as a fallback during the transition
-  window (migration 0017 backfills them into the table).
+* Legacy settings keys are consumed only by migration 0017's one-time
+  backfill; runtime code never reads or mirrors them.
 """
 from __future__ import annotations
 
