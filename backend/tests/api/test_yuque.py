@@ -26,7 +26,7 @@ def test_status_returns_masked_logged_in_state(
         "accountLabel": "f***e",
         "requiresLogin": False,
     }
-    assert client.app.state.settings_service.setting_store.get("yuque-web.connected") == "true"
+    assert client.app.state.settings_service.setting_store.get("yuque-web.connected") is None
 
 
 def test_status_records_a_disconnected_web_session(client, auth_headers) -> None:
@@ -34,7 +34,7 @@ def test_status_records_a_disconnected_web_session(client, auth_headers) -> None
 
     assert response.status_code == 200
     assert response.json()["requiresLogin"] is True
-    assert client.app.state.settings_service.setting_store.get("yuque-web.connected") == "false"
+    assert client.app.state.settings_service.setting_store.get("yuque-web.connected") is None
 
 
 def test_login_route_logs_in_and_records_the_session(client, auth_headers) -> None:
@@ -43,7 +43,7 @@ def test_login_route_logs_in_and_records_the_session(client, auth_headers) -> No
     assert response.status_code == 200
     assert response.json()["loggedIn"] is True
     assert response.json()["requiresLogin"] is False
-    assert client.app.state.settings_service.setting_store.get("yuque-web.connected") == "true"
+    assert client.app.state.settings_service.setting_store.get("yuque-web.connected") is None
 
 
 def test_install_browser_route_uses_the_provider(

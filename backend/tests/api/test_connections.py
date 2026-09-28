@@ -10,7 +10,9 @@ from pydantic import SecretStr
 
 from app.config import AppSettings
 from app.core.secrets import MemorySecretStore
+from app.storage.database import Database
 from app.storage.models import SettingRecord
+from app.storage.repositories import SettingStore
 from tests.conftest import RUNTIME_TOKEN
 
 
@@ -35,6 +37,37 @@ def production_client(monkeypatch: pytest.MonkeyPatch, tmp_path) -> TestClient:
         create_app(settings, secret_store=MemorySecretStore())
     ) as test_client:
         yield test_client
+
+
+def test_legacy_settings_keys_no_longer_configure_yuque(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("DOCMIND_SESSION_TOKEN", RUNTIME_TOKEN)
+    monkeypatch.setenv("DOCMIND_DATA_DIR", str(tmp_path / "legacy-data"))
+    monkeypatch.setenv("DOCMIND_ENVIRONMENT", "test")
+    settings = AppSettings(
+        session_token=SecretStr(RUNTIME_TOKEN),
+        data_dir=tmp_path / "legacy-data",
+        environment="test",
+    )
+    database_dir = settings.data_dir / "database"
+    database_dir.mkdir(parents=True, exist_ok=True)
+    database = Database(f"sqlite+pysqlite:///{database_dir / 'docmind.sqlite3'}")
+    database.upgrade()
+    setting_store = SettingStore(database)
+    setting_store.set("yuque-api.verified", "true")
+    setting_store.set("yuque-web.connected", "true")
+    database.engine.dispose()
+
+    from app.main import create_app
+
+    with TestClient(create_app(settings, secret_store=MemorySecretStore())) as test_client:
+        providers = test_client.get(
+            "/api/remote/providers", headers={"X-DocMind-Token": RUNTIME_TOKEN}
+        ).json()
+
+    yuque = next(provider for provider in providers if provider["name"] == "yuque")
+    assert yuque["configured"] is False
 
 
 def test_connection_mutations_require_runtime_token(client) -> None:
@@ -95,6 +128,11 @@ def test_yuque_api_token_is_private_verified_and_becomes_the_active_gateway(
     }
     provider = production_client.app.state.remote_registry.get("yuque")
     assert provider._active() is provider.api_gateway
+    setting_store = production_client.app.state.settings_service.setting_store
+    assert setting_store.get("yuque-api.verified") is None
+    assert setting_store.get("yuque-api.account-label") is None
+    credential = production_client.app.state.credential_store.get("yuque", "api")
+    assert credential is not None and credential.state == "verified"
     with production_client.app.state.database.session() as session:
         values = [record.value for record in session.query(SettingRecord).all()]
     assert "yuque-private-token" not in json.dumps(values)
@@ -159,6 +197,9 @@ def test_feishu_webhook_is_private_and_binding_sends_a_verification_message(
         "verified": True,
         "label": None,
     }
+    assert client.app.state.settings_service.setting_store.get("feishu.verified") is None
+    credential = client.app.state.credential_store.get("feishu", "webhook")
+    assert credential is not None and credential.state == "verified"
 
 
 def test_connection_bindings_can_be_removed(client, auth_headers) -> None:

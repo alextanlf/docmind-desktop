@@ -158,8 +158,6 @@ class _RoutedLLMProvider:
 
 def _assemble_production_registry(
     registry: ProviderRegistry,
-    database: Database,
-    repository_store: RepositoryStore,
     credential_store: CredentialStore,
     runtime_settings: AppSettings,
 ) -> ProviderRegistry:
@@ -167,36 +165,12 @@ def _assemble_production_registry(
 
     def _yuque_api_token() -> str | None:
         record = credential_store.get("yuque", "api")
-        if record is not None and record.state == ProviderCredentialState.VERIFIED.value:
-            token = credential_store.secret_for("yuque", "api")
-            if token:
-                return token
-        # Legacy fallback for pre-0017 state and tests seeding the old keys.
-        if SettingStore(database).get("yuque-api.verified") != "true":
+        if record is None or record.state != ProviderCredentialState.VERIFIED.value:
             return None
-        try:
-            return credential_store.secret_store.get("yuque-api:token")
-        except (DomainError, OSError):
-            return None
-
-    setting_store = SettingStore(database)
+        return credential_store.secret_for("yuque", "api")
 
     def _yuque_configured() -> bool:
-        if credential_store.any_verified("yuque", ("web", "api")):
-            return True
-        # Legacy keys, kept readable during the transition window.
-        if setting_store.get("yuque-api.verified") == "true":
-            return True
-        web_state = setting_store.get("yuque-web.connected")
-        if web_state is not None:
-            return web_state == "true"
-        # Upgrade compatibility: installations that already synced remote data
-        # keep refreshing it, while a fresh install never launches a browser
-        # session implicitly.
-        return any(
-            record.provider == "yuque" and record.remote_id
-            for record in repository_store.list()
-        )
+        return credential_store.any_verified("yuque", ("web", "api"))
 
     registry.register(
         YuqueProvider(
@@ -299,8 +273,6 @@ def create_app(
                 provider_factory=lambda _config, _api_key: fake_llm_provider,
                 credential_store=credential_store,
             )
-        if fake_services:
-            SettingStore(database).set("yuque-web.connected", "true")
         repository_store = RepositoryStore(database)
         registry = app.state.remote_registry
         if registry is None:
@@ -311,7 +283,7 @@ def create_app(
                 )
             else:
                 registry = _assemble_production_registry(
-                    registry, database, repository_store, credential_store, runtime_settings
+                    registry, credential_store, runtime_settings
                 )
             app.state.remote_registry = registry
         conversation_store = ConversationStore(database)

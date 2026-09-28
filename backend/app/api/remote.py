@@ -183,13 +183,6 @@ async def delete_credential(request: Request, provider: str, channel: str) -> Cr
 
 
 def _remember_web_connection(request: Request, provider: str, connected: bool) -> None:
-    settings_service = getattr(request.app.state, "settings_service", None)
-    if settings_service is not None:
-        # Legacy mirror kept for the transition window (read by older probes
-        # and asserted by existing e2e/API tests).
-        settings_service.setting_store.set(
-            f"{provider}-web.connected", "true" if connected else "false"
-        )
     registry = _registry(request)
     spec = registry.credential_spec(provider)
     if spec is None or spec.channel(spec.login_channel) is None:
