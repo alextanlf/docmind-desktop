@@ -20,7 +20,7 @@ def test_chunker_preserves_heading_path_code_block_and_stable_metadata() -> None
             )
         ],
     )
-    chunks = SemanticChunker().chunk(document)
+    chunks = SemanticChunker(include_overview=False).chunk(document)
     assert len(chunks) == 1
     assert chunks[0].text.startswith("```swift")
     assert chunks[0].section_path == "状态管理 > @State"
@@ -35,7 +35,7 @@ def test_chunker_splits_oversized_single_unit_with_100_token_overlap_and_keeps_o
         markdown=words,
         sections=[ParsedSection(heading_path=["Long"], markdown=words, page_number=4), ParsedSection(heading_path=["Empty"], markdown="")],
     )
-    chunks = SemanticChunker().chunk(document)
+    chunks = SemanticChunker(include_overview=False).chunk(document)
     assert len(chunks) == 2
     assert [chunk.chunk_index for chunk in chunks] == [0, 1]
     assert [chunk.page_number for chunk in chunks] == [4, 4]
@@ -53,7 +53,7 @@ def test_chunker_keeps_a_fenced_code_block_intact_when_nearby_prose_requires_a_b
         markdown=f"{prose}\n\n{code}",
         sections=[ParsedSection(heading_path=["Code"], markdown=f"{prose}\n\n{code}")],
     )
-    chunks = SemanticChunker().chunk(document)
+    chunks = SemanticChunker(include_overview=False).chunk(document)
     assert len(chunks) == 2
     assert chunks[1].text.endswith(code)
     assert chunks[0].text.split()[-100:] == chunks[1].text.split()[:100]
@@ -69,7 +69,7 @@ def test_chunker_limits_a_multi_unit_chunk_after_adding_overlap() -> None:
         markdown=f"{first}\n\n{second}",
         sections=[ParsedSection(heading_path=["Paragraphs"], markdown=f"{first}\n\n{second}")],
     )
-    chunks = SemanticChunker().chunk(document)
+    chunks = SemanticChunker(include_overview=False).chunk(document)
     assert all(chunk.token_count <= 800 for chunk in chunks)
     assert chunks[0].text.split()[-50:] == chunks[1].text.split()[:50]
 
@@ -83,7 +83,7 @@ def test_chunker_splits_oversized_fenced_code_into_valid_indented_fences() -> No
         markdown=code,
         sections=[ParsedSection(heading_path=["Code"], markdown=code)],
     )
-    chunks = SemanticChunker().chunk(document)
+    chunks = SemanticChunker(include_overview=False).chunk(document)
     assert len(chunks) > 1
     assert all(chunk.text.startswith("```python\n") and chunk.text.endswith("\n```") for chunk in chunks)
     assert all(line.startswith("    ") for chunk in chunks for line in chunk.text.splitlines()[1:-1])
@@ -101,7 +101,7 @@ def test_chunker_keeps_fences_and_indentation_when_one_code_line_is_oversized() 
         sections=[ParsedSection(heading_path=["Code"], markdown=code)],
     )
 
-    chunks = SemanticChunker(max_tokens=24, overlap_tokens=4).chunk(document)
+    chunks = SemanticChunker(max_tokens=24, overlap_tokens=4, include_overview=False).chunk(document)
 
     assert len(chunks) > 1
     assert all(chunk.text.startswith("```python\n") and chunk.text.endswith("\n```") for chunk in chunks)
@@ -113,4 +113,67 @@ def test_chunker_drops_empty_sections() -> None:
     document = ParsedDocument(
         title="Empty", source_url="x", markdown="", sections=[ParsedSection(heading_path=[], markdown="\n\t ")]
     )
-    assert SemanticChunker().chunk(document) == []
+    assert SemanticChunker(include_overview=False).chunk(document) == []
+
+
+def test_chunker_prepends_overview_chunk_for_long_documents() -> None:
+    body = "\n\n".join(f"段落 {index}。" * 20 for index in range(30))
+    document = ParsedDocument(
+        title="Radar-APLANC 论文",
+        source_url="https://docs.test/paper",
+        markdown=f"标题\n\n{body}",
+        sections=[ParsedSection(heading_path=[], markdown=f"标题\n\n{body}")],
+    )
+    chunks = SemanticChunker().chunk(document)
+
+    overview = chunks[0]
+    assert overview.section_path == "文档概览"
+    assert overview.chunk_index == -1
+    assert "Radar-APLANC 论文" in overview.text
+    assert [chunk.chunk_index for chunk in chunks[1:]] == list(range(len(chunks) - 1))
+    assert all(chunk.section_path != "文档概览" for chunk in chunks[1:])
+
+
+def test_chunker_skips_overview_for_short_documents() -> None:
+    document = ParsedDocument(
+        title="短文",
+        source_url="https://docs.test/short",
+        markdown="很短的内容。",
+        sections=[ParsedSection(heading_path=["短文"], markdown="很短的内容。")],
+    )
+    chunks = SemanticChunker().chunk(document)
+
+    assert [chunk.section_path for chunk in chunks] == ["短文"]
+
+
+def test_chunker_prefers_explicit_abstract_section() -> None:
+    filler = "\n\n".join(f"Filler paragraph {index}." * 8 for index in range(30))
+    document = ParsedDocument(
+        title="Guide",
+        source_url="https://docs.test/guide",
+        markdown=f"{filler}\n\n## Abstract\n\nWe propose a method.",
+        sections=[
+            ParsedSection(heading_path=["Body"], markdown=filler),
+            ParsedSection(heading_path=["Abstract"], markdown="We propose a method."),
+        ],
+    )
+    chunks = SemanticChunker().chunk(document)
+
+    assert chunks[0].section_path == "文档概览"
+    assert "We propose a method." in chunks[0].text
+    assert "Filler paragraph 0." not in chunks[0].text
+
+
+def test_chunker_truncates_overview_to_configured_cap() -> None:
+    long_abstract = " ".join(f"token{index}" for index in range(2000))
+    filler = "\n\n".join(f"Filler paragraph {index}." * 8 for index in range(30))
+    document = ParsedDocument(
+        title="Cap",
+        source_url="https://docs.test/cap",
+        markdown=f"## Abstract\n\n{long_abstract}\n\n{filler}",
+        sections=[ParsedSection(heading_path=["Abstract"], markdown=long_abstract)],
+    )
+    chunks = SemanticChunker(overview_max_chars=300).chunk(document)
+
+    assert chunks[0].section_path == "文档概览"
+    assert len(chunks[0].text) <= 300 + len("标题：Cap\n")

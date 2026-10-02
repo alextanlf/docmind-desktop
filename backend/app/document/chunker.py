@@ -12,10 +12,39 @@ class ApproxTokenCounter:
         return cjk + non_cjk_words
 
 
+# 概览块在 section_path 上的固定标记。检索命中后前端与 prompt 都能据此识别它是「文档级概览」
+# 而不是正文片段，从而理解它天然适合回答总结性/全局性提问。
+OVERVIEW_SECTION_PATH = "文档概览"
+
+# 概览块用的 chunk_index。用负数让它排在所有正文块之前，且可被稳定识别。
+OVERVIEW_CHUNK_INDEX = -1
+
+_ABSTRACT_HEADING_RE = re.compile(r"^(?:abstract|summary|摘要|概要|概述)\b", re.IGNORECASE)
+
+
 class SemanticChunker:
-    def __init__(self, max_tokens: int = 800, overlap_tokens: int = 100) -> None:
+    """按语义单元切块，并额外产出一个「文档概览块」。
+
+    概览块解决的是**全局型提问**（「这篇论文提出了什么方法」「主要贡献是什么」）：
+    这类问题的答案分散在标题/摘要/引言里，而相似度检索只会命中「话题最相关」的正文块，
+    实测会把致谢与参考文献顶到前面、把标题+摘要挤出 top-k。概览块把标题与摘要
+    浓缩成一段短文本并单独参与索引，让全局型提问有可命中的对象。
+    """
+
+    def __init__(
+        self,
+        max_tokens: int = 800,
+        overlap_tokens: int = 100,
+        *,
+        include_overview: bool = True,
+        overview_max_chars: int = 1200,
+        overview_min_chars: int = 400,
+    ) -> None:
         self.max_tokens = max_tokens
         self.overlap_tokens = overlap_tokens
+        self.include_overview = include_overview
+        self.overview_max_chars = overview_max_chars
+        self.overview_min_chars = overview_min_chars
         self.counter = ApproxTokenCounter()
 
     def chunk(self, document: ParsedDocument) -> list[DocumentChunkDraft]:
@@ -34,7 +63,53 @@ class SemanticChunker:
                         source_url=document.source_url,
                     )
                 )
+        if not self.include_overview:
+            return chunks
+        overview = self._overview_draft(document)
+        if overview is not None:
+            chunks.insert(0, overview)
         return chunks
+
+    def _overview_draft(self, document: ParsedDocument) -> DocumentChunkDraft | None:
+        text = self._overview_text(document)
+        if not text:
+            return None
+        return DocumentChunkDraft(
+            text=text,
+            section_path=OVERVIEW_SECTION_PATH,
+            page_number=None,
+            chunk_index=OVERVIEW_CHUNK_INDEX,
+            token_count=self.counter.count(text),
+            source_url=document.source_url,
+        )
+
+    def _overview_text(self, document: ParsedDocument) -> str:
+        body = document.markdown.strip()
+        # 短文整体就是一个概览，再造一块只会重复索引同样内容。
+        if len(body) <= self.overview_min_chars:
+            return ""
+        parts: list[str] = []
+        title = document.title.strip()
+        if title:
+            parts.append(f"标题：{title}")
+        abstract = self._abstract_text(document)
+        if abstract:
+            parts.append(" ".join(abstract.split())[: self.overview_max_chars])
+        return "\n".join(part for part in parts if part.strip())
+
+    def _abstract_text(self, document: ParsedDocument) -> str:
+        for section in document.sections:
+            heading = " > ".join(section.heading_path).strip()
+            if heading and _ABSTRACT_HEADING_RE.match(heading):
+                return section.markdown.strip()
+            stripped = section.markdown.strip()
+            if stripped and _ABSTRACT_HEADING_RE.match(stripped):
+                return stripped
+        # 没有显式摘要（常见于 PDF 直接抽取的扁平结构）：退化为文档开头，
+        # 实测开头一段已包含方法与贡献的表述。
+        if document.sections:
+            return document.sections[0].markdown.strip()
+        return document.markdown.strip()
 
     def _split_section(self, section: ParsedSection) -> list[str]:
         text = section.markdown.strip()

@@ -10,14 +10,21 @@ dependencies = [
   "httpx>=0.28,<1",
   "keyring>=25.6,<26",
   "markdownify>=1.2,<2",
+  "onnxruntime>=1.20,<2",
   "pydantic-settings>=2.10,<3",
   "pymupdf>=1.26,<2",
   "playwright>=1.55,<2",
   "rank-bm25>=0.2.2,<1",
-  "sentence-transformers>=5.1,<6",
   "sqlalchemy>=2.0.40,<3",
   "uvicorn>=0.35,<1",
 ]
+
+# fp32 回退路径的可选依赖：仅当本机既没有内置 ONNX 模型、也没在用户目录准备过
+# model.onnx 时才会走到SentenceTransformer（app/core/embedding.py::_build_model）。
+# 它会拖入 torch（约 500MB），而打包态必然内置 int8 ONNX 模型，所以默认不安装；
+# 需要开发态调试 fp32 路径时用 `uv sync --extra fp32` 临时装上。
+[project.optional-dependencies]
+fp32 = ["sentence-transformers>=5.1,<6"]
 
 [dependency-groups]
 dev = [

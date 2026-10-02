@@ -17,8 +17,8 @@ def _hit(index: int) -> RetrievalHit:
     )
 
 
-def test_prompt_bounds_answer_to_five_labeled_sources_with_metadata() -> None:
-    prompt = build_rag_prompt("@State 是什么？", [_hit(index) for index in range(1, 7)])
+def test_prompt_bounds_answer_to_a_safe_cap_of_labeled_sources_with_metadata() -> None:
+    prompt = build_rag_prompt("@State 是什么？", [_hit(index) for index in range(1, 12)])
 
     assert "仅依据提供的文档片段" in prompt
     assert "使用中文回答" in prompt
@@ -29,8 +29,9 @@ def test_prompt_bounds_answer_to_five_labeled_sources_with_metadata() -> None:
     assert "标题：文档 1" in prompt
     assert "章节：章节 > 1" in prompt
     assert "页码：1" in prompt
-    assert "[S5]" in prompt
-    assert "[S6]" not in prompt
+    assert "[S1]" in prompt
+    assert "[S10]" in prompt
+    assert "[S11]" not in prompt
 
 
 def test_prompt_marks_missing_section_and_page_explicitly() -> None:
