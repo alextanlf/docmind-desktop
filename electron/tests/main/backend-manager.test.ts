@@ -123,6 +123,42 @@ describe("BackendManager", () => {
       expect.objectContaining({ cwd: "/repo/backend" }),
     );
   });
+
+  it("forwards bundled models directory to the backend environment", async () => {
+    const process = fakeProcess();
+    const spawn = vi.fn(() => process as any);
+    const manager = new BackendManager({
+      spawn,
+      fetch: vi.fn().mockResolvedValue(new Response("{}")),
+      dataDir: "/tmp/docmind",
+      healthIntervalMs: 0,
+      bundledModelsDir: "/Applications/DocMind.app/Contents/Resources/models",
+    });
+    await manager.start();
+    expect(spawn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Array),
+      expect.objectContaining({
+        env: expect.objectContaining({
+          DOCMIND_BUNDLED_MODELS_DIR: "/Applications/DocMind.app/Contents/Resources/models",
+        }),
+      }),
+    );
+  });
+
+  it("omits bundled models directory variable when not provided", async () => {
+    const process = fakeProcess();
+    const spawn = vi.fn((..._args: unknown[]) => process as any);
+    const manager = new BackendManager({
+      spawn,
+      fetch: vi.fn().mockResolvedValue(new Response("{}")),
+      dataDir: "/tmp/docmind",
+      healthIntervalMs: 0,
+    });
+    await manager.start();
+    const options = spawn.mock.calls[0]?.[2] as { env: NodeJS.ProcessEnv } | undefined;
+    expect(options?.env.DOCMIND_BUNDLED_MODELS_DIR).toBeUndefined();
+  });
   it("fails fast when packaged backend command is not explicitly configured", async () => {
     const manager = new BackendManager({
       packaged: true,
