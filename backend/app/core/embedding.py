@@ -27,7 +27,8 @@ class BGEEmbeddingProvider:
     def __init__(self, settings: EmbeddingSettings) -> None:
         self.settings = settings
         self._model: object | None = None
-        self._cached_model = self._cache_root().is_dir()
+        self._quantized_model = self._onnx_model_path() is not None
+        self._cached_model = self._quantized_model or self._cache_root().is_dir()
         self._status = ModelStatus(
             state="unavailable",
             model_name=settings.model_name,
@@ -68,7 +69,9 @@ class BGEEmbeddingProvider:
                 state="ready",
                 model_name=self.settings.model_name,
                 dimension=self.settings.dimension,
-                message="嵌入模型已准备就绪",
+                message="嵌入模型已就绪（ONNX int8 量化版）"
+                if self._quantized_model
+                else "嵌入模型已准备就绪",
                 progress=100,
             )
             return self.status
@@ -81,8 +84,26 @@ class BGEEmbeddingProvider:
         return vectors[0]
 
     def _build_model(self) -> object:
-        # sentence-transformers is intentionally imported only after explicit preparation.
-        from sentence_transformers import SentenceTransformer
+        # 本地已有 int8 量化 ONNX 版模型时优先使用（体积约为 fp32 的 1/4，CPU 推理更快），
+        # 否则回退到 sentence-transformers 的 fp32 路径。
+        # sentence-transformers / onnxruntime 均刻意只在显式准备后才导入。
+        onnx_model_path = self._onnx_model_path()
+        if onnx_model_path is not None:
+            from app.core.onnx_embedding import ONNXEmbeddingModel
+
+            return ONNXEmbeddingModel(onnx_model_path.parent, max_seq_length=8192)
+
+        # 打包态必然内置/可下载 int8 ONNX 模型，走不到这里；sentence-transformers
+        # 只装在可选依赖 fp32 里（它会拖入约 500MB 的 torch），缺失时给出可操作提示
+        # 而不是裸 ImportError。
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as error:
+            raise ValueError(
+                "未找到 int8 ONNX 模型，且未安装 fp32 回退依赖。"
+                "请在设置中准备嵌入模型，或执行 `uv sync --extra fp32` 安装 "
+                "sentence-transformers。"
+            ) from error
 
         return SentenceTransformer(
             self.settings.model_name,
@@ -90,6 +111,17 @@ class BGEEmbeddingProvider:
             cache_folder=str(self.settings.cache_dir) if self.settings.cache_dir else None,
             local_files_only=self._cached_model,
         )
+
+    def _onnx_model_path(self) -> Path | None:
+        # 解析顺序：随应用分发的内置模型（Resources/models，只读，版本与打包应用绑定）
+        # 优先于用户数据目录中显式准备的模型（开发态 / 未内置分发的安装的兜底）。
+        for directory in (self.settings.bundled_onnx_dir, self.settings.onnx_dir):
+            if directory is None:
+                continue
+            onnx_path = directory / "model.onnx"
+            if onnx_path.is_file():
+                return onnx_path
+        return None
 
     def _cache_root(self) -> Path:
         if self.settings.cache_dir is None:

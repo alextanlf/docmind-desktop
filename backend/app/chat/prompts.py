@@ -9,6 +9,8 @@ def build_rag_prompt(query: str, hits: list[RetrievalHit]) -> str:
         "“当前文档未覆盖”。引用只能使用下方已知来源 ID，"
         "文档引用只能使用 [S#]，跨会话记忆使用 [M#]；不得添加链接或编造来源。"
     )
+    # 检索层已把结果收敛在「top-k 正文块 + 至多 N 个文档概览块」以内，
+    # 这里保留一个较宽的安全上限，不再用 5 截断——否则前置的概览块会把正文块挤出 prompt。
     source_blocks = [
         "\n".join(
             (
@@ -19,7 +21,7 @@ def build_rag_prompt(query: str, hits: list[RetrievalHit]) -> str:
                 f"内容：{hit.text}",
             )
         )
-        for index, hit in enumerate(hits[:5], start=1)
+        for index, hit in enumerate(hits[:10], start=1)
     ]
     context = "\n\n".join(source_blocks) if source_blocks else "（无可用文档片段）"
     return f"{instructions}\n\n文档片段：\n{context}\n\n问题：{query}"

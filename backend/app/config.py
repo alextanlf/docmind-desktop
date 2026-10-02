@@ -12,6 +12,9 @@ class EmbeddingSettings(BaseModel):
     model_name: str = "BAAI/bge-m3"
     device: str = "cpu"
     cache_dir: Path | None = None
+    onnx_dir: Path | None = None
+    # 随应用分发的内置模型目录（Resources/models，只读）；存在时优先于 onnx_dir。
+    bundled_onnx_dir: Path | None = None
     dimension: int = Field(default=1024, gt=0)
 
 
@@ -35,6 +38,9 @@ class AppSettings(BaseSettings):
     embedding_model_name: str = "BAAI/bge-m3"
     embedding_device: str = "cpu"
     embedding_dimension: int = Field(default=1024, gt=0)
+    # 随应用分发的内置模型根目录（Electron 打包态注入 DOCMIND_BUNDLED_MODELS_DIR），
+    # 对应 .app/Contents/Resources/models，只读。
+    bundled_models_dir: Path | None = None
     rag_similarity_threshold: float = Field(default=0.65, ge=-1.0, le=1.0)
     staging_manifest_max_bytes: int = Field(default=2 * 1024 * 1024, gt=0)
     batch_max_items: int = Field(default=1000, gt=0)
@@ -81,10 +87,17 @@ class AppSettings(BaseSettings):
 
     @property
     def embedding_settings(self) -> EmbeddingSettings:
+        model_slug = self.embedding_model_name.replace("/", "--")
         return EmbeddingSettings(
             model_name=self.embedding_model_name,
             device=self.embedding_device,
             cache_dir=self.data_dir / "models",
+            onnx_dir=self.data_dir / "models" / f"onnx--{model_slug}",
+            bundled_onnx_dir=(
+                self.bundled_models_dir / f"onnx--{model_slug}"
+                if self.bundled_models_dir is not None
+                else None
+            ),
             dimension=self.embedding_dimension,
         )
 
