@@ -23,3 +23,8 @@ blob-report/
 artifacts/
 build/electron-dist/Electron.app
 build/electron-dist/version
+build/embedding-models/
+backend/build/
+
+# vite 在沙箱/异常退出时会遗留带时间戳的临时配置文件
+electron.vite.config.*.mjs

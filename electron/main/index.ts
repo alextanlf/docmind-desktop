@@ -1,4 +1,6 @@
 import { app } from "electron";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { BackendManager, BackendStartError } from "./backend-manager";
 import { BackendProxy } from "./backend-proxy";
 import { registerIpcHandlers } from "./ipc-handlers";
@@ -82,6 +84,15 @@ function applyDevelopmentDockIcon() {
   if (iconPath) app.dock?.setIcon(iconPath);
 }
 
+/** 随应用分发的内置模型目录（打包时经 extraResources 放入 Resources/models）。
+ *  后端通过 DOCMIND_BUNDLED_MODELS_DIR 优先从这里解析 embedding 模型，
+ *  用户数据目录中显式准备的模型仅作兜底。 */
+function resolveBundledModelsDir(): string | undefined {
+  if (!app.isPackaged) return undefined;
+  const dir = join(process.resourcesPath, "models");
+  return existsSync(dir) ? dir : undefined;
+}
+
 app.whenReady().then(async () => {
   try {
     applyDevelopmentDockIcon();
@@ -93,6 +104,7 @@ app.whenReady().then(async () => {
       backendCommand: process.env.DOCMIND_BACKEND_COMMAND,
       backendArgs: packagedArgs.args,
       backendCwd: process.env.DOCMIND_BACKEND_CWD,
+      bundledModelsDir: resolveBundledModelsDir(),
     });
     await backend.start();
     proxy = new BackendProxy({

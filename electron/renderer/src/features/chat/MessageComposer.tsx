@@ -1,4 +1,5 @@
 import { Send } from "lucide-react";
+import type { KeyboardEvent } from "react";
 import { useEffect, useRef } from "react";
 import { IconButton } from "../../components/IconButton";
 
@@ -20,6 +21,18 @@ export function MessageComposer({ disabled, onChange, onSend, value }: MessageCo
   }, [value]);
 
   const sendDisabled = disabled || !value.trim();
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    // 中文等输入法正在组词时，Enter 用于确认候选词，不能当成发送
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    if (event.key !== "Enter") return;
+    // Shift + Enter 换行，交回浏览器默认行为
+    if (event.shiftKey) return;
+    if (sendDisabled) return;
+    event.preventDefault();
+    onSend();
+  };
+
   return (
     <form
       className="message-composer"
@@ -35,13 +48,8 @@ export function MessageComposer({ disabled, onChange, onSend, value }: MessageCo
         disabled={disabled}
         id="chat-composer"
         onChange={(event) => onChange(event.target.value)}
-        onKeyDown={(event) => {
-          if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !sendDisabled) {
-            event.preventDefault();
-            onSend();
-          }
-        }}
-        placeholder="输入问题，按 Cmd + Enter 发送"
+        onKeyDown={handleKeyDown}
+        placeholder="输入问题，Enter 发送，Shift + Enter 换行"
         ref={textareaRef}
         rows={1}
         value={value}

@@ -35,6 +35,7 @@ export class BackendManager {
   private readonly shutdownTimeout: number;
   private readonly runtime: BackendRuntimeContract;
   private readonly configurationError?: BackendStartError;
+  private readonly bundledModelsDir?: string;
   private lifecycleTail?: Promise<void>;
   constructor(opts: {
     spawn?: SpawnFn;
@@ -48,12 +49,14 @@ export class BackendManager {
     backendCommand?: string;
     backendArgs?: string[];
     backendCwd?: string;
+    bundledModelsDir?: string;
   }) {
     this.spawn = opts.spawn ?? (nodeSpawn as SpawnFn);
     this.fetchFn = opts.fetch ?? fetch;
     this.interval = opts.healthIntervalMs ?? 100;
     this.timeout = opts.startupTimeoutMs ?? 15000;
     this.shutdownTimeout = opts.shutdownTimeoutMs ?? 3000;
+    this.bundledModelsDir = opts.bundledModelsDir;
     const packaged = opts.packaged ?? false;
     try {
       this.runtime = resolveBackendRuntime(
@@ -69,6 +72,9 @@ export class BackendManager {
           packaged,
           repoDir: opts.repoDir ?? process.cwd(),
           dataDir: opts.dataDir ?? "",
+          // packaged 模式下 Info.plist 里的后端路径是 $RESOURCES 占位符，
+          // 用 process.resourcesPath 展开成 <app>/Contents/Resources/...。
+          resourcesPath: packaged ? process.resourcesPath : undefined,
         },
       );
     } catch {
@@ -107,6 +113,9 @@ export class BackendManager {
       DOCMIND_SESSION_TOKEN: this.token,
       DOCMIND_DATA_DIR: this.dataDir,
       DOCMIND_PORT: String(this.runtime.port),
+      ...(this.bundledModelsDir
+        ? { DOCMIND_BUNDLED_MODELS_DIR: this.bundledModelsDir }
+        : {}),
     };
     let startError: Error | undefined;
     let exited = false;
