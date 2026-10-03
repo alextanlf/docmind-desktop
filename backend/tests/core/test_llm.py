@@ -8,7 +8,14 @@ import pytest
 import respx
 
 from app.api.errors import DomainError
-from app.core.llm import ChatRequest, LLMMessage, ModelConfig, OpenAICompatibleProvider
+from app.core.llm import (
+    CONNECTION_TEST_TEMPERATURE,
+    ChatRequest,
+    LLMMessage,
+    ModelConfig,
+    OpenAICompatibleProvider,
+)
+from app.schemas.settings import MODEL_PRESETS
 
 
 @pytest.fixture
@@ -148,6 +155,91 @@ async def test_openai_compatible_provider_rejects_invalid_or_empty_sse(
     assert error.value.message == "模型服务返回了无法识别的数据"
 
 
+def _frame(delta: dict[str, object]) -> str:
+    return "data: " + json.dumps({"choices": [{"delta": delta}]}) + "\n\n"
+
+
+# Reasoning vendors (GLM thinking, Kimi, MiMo) interleave frames that carry no
+# text delta, and some close the stream without the `[DONE]` sentinel. These
+# were verified against the live endpoints before being relaxed.
+@respx.mock
+async def test_stream_skips_reasoning_and_usage_frames_from_reasoning_models(
+    config: ModelConfig, chat_request: ChatRequest
+) -> None:
+    body = (
+        _frame({"role": "assistant", "content": ""})
+        + _frame({"reasoning_content": "用户要求回复“连接成功”"})
+        + 'data: {"choices":[],"usage":{"total_tokens":9}}\n\n'
+        + _frame({"content": "连接"})
+        + _frame({"content": "成功"})
+        + 'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+        + "data: [DONE]\n\n"
+    )
+    respx.post("https://example.test/v1/chat/completions").mock(
+        return_value=httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+    )
+
+    deltas = [delta async for delta in OpenAICompatibleProvider(config, "test-key").stream_chat(chat_request)]
+
+    assert [delta.content for delta in deltas] == ["连接", "成功"]
+
+
+@respx.mock
+async def test_stream_accepts_truncated_body_without_done_sentinel(
+    config: ModelConfig, chat_request: ChatRequest
+) -> None:
+    """Vendors may close the connection without a trailing blank line or `[DONE]`."""
+    body = _frame({"content": "连接成功"}) + 'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+    respx.post("https://example.test/v1/chat/completions").mock(
+        return_value=httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+    )
+
+    deltas = [delta async for delta in OpenAICompatibleProvider(config, "test-key").stream_chat(chat_request)]
+
+    assert [delta.content for delta in deltas] == ["连接成功"]
+
+
+@respx.mock
+async def test_stream_rejects_non_string_content(
+    config: ModelConfig, chat_request: ChatRequest
+) -> None:
+    """A delta whose `content` is a number is corrupt data, not a skippable frame."""
+    body = _frame({"content": 42}) + "data: [DONE]\n\n"
+    respx.post("https://example.test/v1/chat/completions").mock(
+        return_value=httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+    )
+
+    with pytest.raises(DomainError) as error:
+        _ = [delta async for delta in OpenAICompatibleProvider(config, "test-key").stream_chat(chat_request)]
+
+    assert error.value.code == "MODEL_PROTOCOL_ERROR"
+
+
+@respx.mock
+async def test_stream_fails_when_only_reasoning_content_is_emitted(
+    config: ModelConfig, chat_request: ChatRequest
+) -> None:
+    """Reasoning-only output is still an empty answer, so it must not look successful."""
+    body = _frame({"reasoning_content": "思考中"}) + "data: [DONE]\n\n"
+    respx.post("https://example.test/v1/chat/completions").mock(
+        return_value=httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+    )
+
+    with pytest.raises(DomainError) as error:
+        _ = [delta async for delta in OpenAICompatibleProvider(config, "test-key").stream_chat(chat_request)]
+
+    assert error.value.code == "MODEL_PROTOCOL_ERROR"
+
+
+@pytest.mark.parametrize("preset", ["kimi", "glm", "mimo"])
+def test_new_vendor_presets_are_registered(preset: str) -> None:
+    base_url, model = MODEL_PRESETS[preset]
+    assert base_url.startswith("https://")
+    assert model
+    # Preset base URLs must survive the ModelConfig normalizer unchanged.
+    assert ModelConfig(preset=preset, base_url=base_url, model=model, timeout_seconds=30).base_url == base_url
+
+
 @respx.mock
 async def test_model_connection_uses_non_streaming_minimal_prompt_and_reports_latency(
     config: ModelConfig
@@ -160,10 +252,12 @@ async def test_model_connection_uses_non_streaming_minimal_prompt_and_reports_la
 
     assert result.connected is True
     assert result.latency_ms >= 0
+    # Zhipu documents temperature as (0, 1) and rejects 0, so the probe cannot use
+    # absolute zero even though DeepSeek and Qwen accept it.
     assert json.loads(route.calls[0].request.content) == {
         "model": "example-model",
         "messages": [{"role": "user", "content": "请回复“连接成功”。"}],
-        "temperature": 0,
+        "temperature": CONNECTION_TEST_TEMPERATURE,
         "stream": False,
     }
 

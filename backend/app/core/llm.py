@@ -56,6 +56,13 @@ class ModelConnectionResult(WireModel):
     latency_ms: int
 
 
+# Vendors disagree on the valid temperature range: Zhipu documents (0, 1) and
+# explicitly rejects `temperature = 0`, while DeepSeek/Qwen/Moonshot accept 0.
+# Probing the connection therefore uses the smallest value every known vendor
+# accepts instead of an absolute zero.
+CONNECTION_TEST_TEMPERATURE = 0.1
+
+
 class LLMMessage(WireModel):
     role: str
     content: str
@@ -93,7 +100,7 @@ class OpenAICompatibleProvider:
         payload = {
             "model": self.config.model,
             "messages": [{"role": "user", "content": "请回复“连接成功”。"}],
-            "temperature": 0,
+            "temperature": CONNECTION_TEST_TEMPERATURE,
             "stream": False,
         }
         started = time.perf_counter()
@@ -131,33 +138,70 @@ class OpenAICompatibleProvider:
                 emitted_content = False
                 async for event in _sse_events(response):
                     if event == "[DONE]":
-                        if not emitted_content:
-                            raise _model_error("MODEL_PROTOCOL_ERROR")
-                        return
-                    try:
-                        data = json.loads(event)
-                        choices = data["choices"]
-                        delta = choices[0]["delta"]
-                    except (IndexError, KeyError, TypeError, json.JSONDecodeError) as error:
-                        raise _model_error("MODEL_PROTOCOL_ERROR") from error
-                    content = delta.get("content") if isinstance(delta, dict) else None
-                    if content is None:
+                        break
+                    content = _delta_content(event)
+                    if content is _NO_CONTENT:
+                        # Structurally textless frame (usage-only, reasoning-only,
+                        # or a shape we do not recognize): vendors legitimately
+                        # emit all three mid-stream.
                         continue
                     if not isinstance(content, str):
+                        # `content` is present but not a string: corrupt, not a
+                        # frame we can skip over.
                         raise _model_error("MODEL_PROTOCOL_ERROR")
                     if content:
                         emitted_content = True
                         yield ChatDelta(content=content)
-                raise _model_error("MODEL_PROTOCOL_ERROR")
+                # A stream that never produced a text delta is unusable, whether or
+                # not the vendor closed it with the `[DONE]` sentinel.
+                if not emitted_content:
+                    raise _model_error("MODEL_PROTOCOL_ERROR")
         except httpx.TimeoutException as error:
             raise _model_error("MODEL_TIMEOUT") from error
         except httpx.HTTPError as error:
             raise _model_error("MODEL_UNAVAILABLE") from error
 
 
+# Marks an SSE frame that carries no text delta at all, as opposed to one that
+# carries a `content` value of an unexpected type.
+_NO_CONTENT = object()
+
+
+def _delta_content(event: str) -> object:
+    """Extract text from one SSE `data:` payload, or `_NO_CONTENT` when textless.
+
+    Reasoning models (GLM thinking, Kimi, MiMo) interleave `reasoning_content`
+    and usage-only frames into the stream, and some vendors close the connection
+    without a `[DONE]` sentinel. Those frames are textless rather than corrupt, so
+    they are reported as `_NO_CONTENT`. A `content` value that is present but not a
+    string is returned as-is so the caller can reject it as corrupt.
+    """
+    try:
+        data = json.loads(event)
+    except (json.JSONDecodeError, TypeError):
+        return _NO_CONTENT
+    if not isinstance(data, dict):
+        return _NO_CONTENT
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return _NO_CONTENT
+    first = choices[0]
+    if not isinstance(first, dict):
+        return _NO_CONTENT
+    delta = first.get("delta")
+    if not isinstance(delta, dict):
+        return _NO_CONTENT
+    content = delta.get("content")
+    if content is None or content == "":
+        # Absent, null and empty-string content are all "no text this frame".
+        return _NO_CONTENT
+    return content
+
+
 async def _sse_events(response: httpx.Response) -> AsyncIterator[str]:
     data_lines: list[str] = []
-    async for line in response.aiter_lines():
+    async for raw_line in response.aiter_lines():
+        line = raw_line.rstrip("\r")
         if not line:
             if data_lines:
                 yield "\n".join(data_lines)
@@ -166,11 +210,16 @@ async def _sse_events(response: httpx.Response) -> AsyncIterator[str]:
         if line.startswith("data:"):
             data_lines.append(line[5:].lstrip())
         elif line.startswith(("event:", "id:", "retry:", ":")):
+            # Named events, ids, retry hints and `:comment` keep-alives carry no
+            # payload for us and are legal SSE.
             continue
         else:
             raise _model_error("MODEL_PROTOCOL_ERROR")
     if data_lines:
-        raise _model_error("MODEL_PROTOCOL_ERROR")
+        # The vendor closed the connection without the trailing blank line that
+        # would have flushed the last event. Emit it rather than discarding
+        # content the model already produced.
+        yield "\n".join(data_lines)
 
 
 def _raise_for_status(response: httpx.Response) -> None:

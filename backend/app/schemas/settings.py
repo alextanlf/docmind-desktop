@@ -12,6 +12,9 @@ from app.schemas.web_search import WebSearchSettings
 MODEL_PRESETS = {
     "deepseek": ("https://api.deepseek.com/v1", "deepseek-chat"),
     "qwen": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus"),
+    "kimi": ("https://api.moonshot.cn/v1", "kimi-k2.5"),
+    "glm": ("https://open.bigmodel.cn/api/paas/v4", "glm-4.6"),
+    "mimo": ("https://api.xiaomimimo.com/v1", "mimo-v2.5-pro"),
     "openai": ("https://api.openai.com/v1", "gpt-5-mini"),
     "custom": ("", ""),
 }

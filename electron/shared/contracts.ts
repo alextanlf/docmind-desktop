@@ -20,7 +20,7 @@ export const IpcResultSchema = <T extends z.ZodTypeAny>(value: T) =>
   ]);
 
 export const ModelSettingsInputSchema = z.object({
-  preset: z.enum(["deepseek", "qwen", "openai", "custom"]),
+  preset: z.enum(["deepseek", "qwen", "kimi", "glm", "mimo", "openai", "custom"]),
   baseUrl: z.string().max(500),
   model: z.string().max(200),
   timeoutSeconds: z.number().positive().max(300),
