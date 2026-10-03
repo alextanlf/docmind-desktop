@@ -23,10 +23,17 @@ function renderModelSettings(callbacks?: {
     <ModelSettingsForm
       onConnectionInvalidated={callbacks?.onConnectionInvalidated}
       onConnectionSuccess={callbacks?.onConnectionSuccess}
-      settings={readySettings}
+      // These cases drive the free-text path on purpose: they need to set
+      // arbitrary model ids mid-operation to prove stale results are dropped.
+      settings={freeTextSettings}
     />,
   );
 }
+
+// These cases exercise the free-text path on purpose: they set arbitrary model
+// ids mid-operation to prove stale results are dropped. The real catalogue
+// would render a <select>, which cannot hold those ids.
+const freeTextSettings: SettingsView = { ...readySettings, modelPresets: {} };
 
 describe("模型设置并发", () => {
   beforeEach(() => appQueryClient.clear());
@@ -70,7 +77,7 @@ describe("模型设置并发", () => {
     expect(test).toBeDisabled();
     fireEvent.change(model, { target: { value: "newer-change" } });
 
-    await act(async () => pendingSave.resolve(readySettings));
+    await act(async () => pendingSave.resolve(freeTextSettings));
 
     expect(screen.queryByText("设置已保存")).not.toBeInTheDocument();
     expect(test).toBeDisabled();
@@ -80,7 +87,7 @@ describe("模型设置并发", () => {
   it("prevents overlapping save and test operations", async () => {
     const pendingTest = deferred<ModelConnectionResult>();
     const testModel = vi.fn(() => pendingTest.promise);
-    const saveModel = vi.fn().mockResolvedValue(readySettings);
+    const saveModel = vi.fn().mockResolvedValue(freeTextSettings);
     installDocMindApi({ settings: { saveModel, testModel } });
     const first = renderModelSettings();
 
@@ -104,7 +111,7 @@ describe("模型设置并发", () => {
 
     expect(secondSaveModel).toHaveBeenCalledTimes(1);
     expect(secondTestModel).not.toHaveBeenCalled();
-    await act(async () => pendingSave.resolve(readySettings));
+    await act(async () => pendingSave.resolve(freeTextSettings));
     await waitFor(() => expect(screen.getByRole("button", { name: "测试连接" })).toBeEnabled());
   });
 });

@@ -22,6 +22,8 @@ import {
   IpcResultSchema,
   MessageSchema,
   ModelConnectionResultSchema,
+  ModelListProbeSchema,
+  ModelListViewSchema,
   ModelSettingsInputSchema,
   ModelStatusSchema,
   RepositorySchema,
@@ -164,6 +166,8 @@ const api: DocMindApi = {
         ModelSettingsInputSchema.parse(input),
       ),
     testModel: () => invoke(IPC_CHANNELS.settingsTestModel, ModelConnectionResultSchema),
+    listModels: (input) =>
+      invoke(IPC_CHANNELS.settingsListModels, ModelListViewSchema, ModelListProbeSchema.parse(input ?? {})),
     clearDiagnostics: () => invoke(IPC_CHANNELS.settingsClearDiagnostics, z.undefined()),
     saveWebSearch: (input) =>
       invoke(

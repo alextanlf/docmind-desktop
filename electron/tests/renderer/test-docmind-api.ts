@@ -43,6 +43,16 @@ export const readySettings: SettingsView = {
     label: null,
     active: false,
   },
+  modelPresets: {
+    deepseek: [
+      { id: "deepseek-chat", label: "DeepSeek Chat" },
+      { id: "deepseek-reasoner", label: "DeepSeek Reasoner" },
+    ],
+    kimi: [
+      { id: "kimi-k2.5", label: "Kimi K2.5" },
+      { id: "kimi-k2", label: "Kimi K2" },
+    ],
+  },
   feishu: {
     configured: false,
     verified: false,
@@ -263,6 +273,7 @@ export function installDocMindApi(overrides?: {
       get: vi.fn().mockResolvedValue(readySettings),
       saveModel: vi.fn().mockResolvedValue(readySettings),
       testModel: vi.fn().mockResolvedValue({ connected: true, latencyMs: 86 }),
+      listModels: vi.fn().mockResolvedValue({ models: [] }),
       clearDiagnostics: vi.fn().mockResolvedValue(undefined),
       saveWebSearch: vi.fn().mockResolvedValue(readySettings),
       saveYuqueApi: vi.fn().mockResolvedValue(readySettings),

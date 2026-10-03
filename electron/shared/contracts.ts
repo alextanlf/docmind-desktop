@@ -51,6 +51,11 @@ export const YuqueApiSettingsInputSchema = z.object({
 export const FeishuBindingInputSchema = z.object({
   webhookUrl: z.string().max(2_000).nullable().optional(),
 });
+export const AvailableModelSchema = z.object({
+  id: z.string().min(1).max(200),
+  label: z.string().min(1).max(200),
+});
+
 export const SettingsViewSchema = z.object({
   model: ModelSettingsViewSchema,
   hasApiKey: z.boolean(),
@@ -98,6 +103,7 @@ export const SettingsViewSchema = z.object({
     verified: false,
     label: null,
   }),
+  modelPresets: z.record(z.string(), z.array(AvailableModelSchema)).default({}),
 });
 export const RuntimeSettingsInputSchema = z.object({
   ollama: z.object({
@@ -169,6 +175,16 @@ export const WebSearchSettingsInputSchema = z.object({
 export const ModelConnectionResultSchema = z.object({
   connected: z.boolean(),
   latencyMs: z.number().int().nonnegative(),
+});
+
+export const ModelListProbeSchema = z.object({
+  baseUrl: z.string().max(500).optional(),
+  model: z.string().max(200).optional(),
+  apiKey: z.string().max(2_000).optional(),
+});
+
+export const ModelListViewSchema = z.object({
+  models: z.array(AvailableModelSchema).default([]),
 });
 
 export const ModelStatusSchema = z.object({
@@ -661,6 +677,9 @@ export type YuqueApiSettingsInput = z.infer<typeof YuqueApiSettingsInputSchema>;
 export type FeishuBindingInput = z.infer<typeof FeishuBindingInputSchema>;
 export type ConnectionTestResult = z.infer<typeof ConnectionTestResultSchema>;
 export type ModelConnectionResult = z.infer<typeof ModelConnectionResultSchema>;
+export type AvailableModel = z.infer<typeof AvailableModelSchema>;
+export type ModelListProbe = z.infer<typeof ModelListProbeSchema>;
+export type ModelListView = z.infer<typeof ModelListViewSchema>;
 export type ModelStatus = z.infer<typeof ModelStatusSchema>;
 export type RemoteStatus = z.infer<typeof RemoteStatusSchema>;
 export type BrowserInstallResult = z.infer<typeof BrowserInstallResultSchema>;
@@ -761,6 +780,7 @@ export interface DocMindApi {
     get(): Promise<SettingsView>;
     saveModel(input: ModelSettingsInput): Promise<SettingsView>;
     testModel(): Promise<ModelConnectionResult>;
+    listModels(input?: ModelListProbe): Promise<ModelListView>;
     clearDiagnostics(): Promise<void>;
     saveWebSearch(input: WebSearchSettingsInput): Promise<SettingsView>;
     saveRuntime(input: z.infer<typeof RuntimeSettingsInputSchema>): Promise<SettingsView>;
@@ -878,6 +898,8 @@ export const schemas = {
   YuqueApiSettingsInputSchema,
   FeishuBindingInputSchema,
   ModelConnectionResultSchema,
+  AvailableModelSchema,
+  ModelListViewSchema,
   ModelStatusSchema,
   RemoteStatusSchema,
   BrowserInstallResultSchema,

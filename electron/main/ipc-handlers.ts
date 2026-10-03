@@ -23,6 +23,8 @@ import {
   ImportJobSchema,
   MessageSchema,
   ModelConnectionResultSchema,
+  ModelListProbeSchema,
+  ModelListViewSchema,
   ModelSettingsInputSchema,
   ModelStatusSchema,
   RepositorySchema,
@@ -180,6 +182,12 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
       ),
     [IPC_CHANNELS.settingsTestModel]: () =>
       proxy.requestJson("/api/settings/model/test", jsonInit("POST"), ModelConnectionResultSchema),
+    [IPC_CHANNELS.settingsListModels]: (_event, input) =>
+      proxy.requestJson(
+        "/api/settings/model/list",
+        jsonInit("POST", parse(ModelListProbeSchema, input ?? {})),
+        ModelListViewSchema,
+      ),
     [IPC_CHANNELS.settingsClearDiagnostics]: () =>
       proxy.requestVoid("/api/settings/diagnostics/clear", jsonInit("POST")),
     [IPC_CHANNELS.settingsSaveWebSearch]: (_event, input) =>

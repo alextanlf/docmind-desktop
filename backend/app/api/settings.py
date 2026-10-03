@@ -11,7 +11,7 @@ from fastapi import APIRouter, Request, Response
 
 from app.api.errors import DomainError
 from app.config import AppSettings
-from app.core.llm import LLMProvider, ModelConfig, OpenAICompatibleProvider
+from app.core.llm import AvailableModel, LLMProvider, ModelConfig, OpenAICompatibleProvider
 from app.core.ollama_validation import normalize_loopback_base_url
 from app.core.secrets import SecretStore
 from app.remote.credentials import CredentialStore
@@ -23,12 +23,16 @@ from app.schemas.settings import (
     ConnectionTestResult,
     FeishuBindingUpdate,
     ModelConnectionResult,
+    ModelListProbe,
+    ModelListView,
     ModelSettingsUpdate,
     ModelSettingsView,
     SettingsView,
     WebSearchSettingsUpdate,
     YuqueApiBindingView,
     YuqueApiSettingsUpdate,
+    model_label,
+    preset_models,
 )
 from app.schemas.web_search import SearchConnectionResult, WebSearchSettings
 from app.search.model_native import ModelSearchProvider, detect_native_search
@@ -119,6 +123,48 @@ class SettingsService:
             raise DomainError("MODEL_AUTH_FAILED", "请先配置 API Key", 400, False, "保存 API Key 后重试")
         return await self.provider_factory(ModelConfig(**self.model().model_dump()), api_key).test_connection()
 
+    async def list_models(self, probe: ModelListProbe | None = None) -> list[AvailableModel]:
+        """List models for the saved provider, or for an unsaved draft.
+
+        The settings form lets the user point at a different base URL before
+        saving, so draft values win when supplied; the API key still comes from
+        the secret store unless the draft carries one. Falls back to the curated
+        per-preset catalogue when the provider cannot be reached or has no
+        `/models` endpoint, so the picker always offers something.
+        """
+        saved = self.model()
+        config = ModelConfig(**saved.model_dump())
+        preset = saved.preset
+        if probe is not None:
+            if probe.base_url:
+                config = config.model_copy(update={"base_url": probe.base_url})
+            if probe.model:
+                config = config.model_copy(update={"model": probe.model})
+        api_key = self.secret_store.get(MODEL_API_KEY_NAME)
+        if probe is not None and probe.api_key:
+            api_key = probe.api_key
+        curated = preset_models(preset)
+        if not api_key:
+            return curated
+        provider = self.provider_factory(config, api_key)
+        lister = getattr(provider, "list_models", None)
+        if lister is None:
+            return curated
+        try:
+            models = await lister()
+        except DomainError:
+            # Live listing is a convenience. A provider that rejects it (no
+            # endpoint, restricted key, offline) must not block model choice.
+            return curated
+        if not models:
+            return curated
+        # Keep the curated entry for the saved model selectable even if the
+        # provider does not report it.
+        known = {model.id for model in models}
+        if saved.model and saved.model not in known:
+            models = [*models, AvailableModel(id=saved.model, label=model_label(saved.model))]
+        return models
+
     def view(self, settings: AppSettings) -> SettingsView:
         return SettingsView(
             model=self.model(),
@@ -129,6 +175,9 @@ class SettingsService:
             runtime=self.runtime(),
             yuque_api=self.yuque_api_binding(),
             feishu=self.feishu_binding(),
+            model_presets={
+                preset: preset_models(preset) for preset in MODEL_PRESETS if preset != "custom"
+            },
         )
 
     def _require_credential_store(self) -> CredentialStore:
@@ -441,6 +490,20 @@ async def save_model(update: ModelSettingsUpdate, request: Request) -> SettingsV
 @router.post("/model/test", response_model=ModelConnectionResult)
 async def test_model(request: Request) -> ModelConnectionResult:
     return await _service(request).test_model()
+
+
+@router.post("/model/list", response_model=ModelListView)
+async def list_models(request: Request) -> ModelListView:
+    # The body is optional: a request without one lists the saved provider.
+    probe: ModelListProbe | None = None
+    raw = await request.body()
+    if raw:
+        try:
+            probe = ModelListProbe.model_validate_json(raw)
+        except ValueError as error:
+            raise DomainError("INVALID_REQUEST", "请求参数无效", 422) from error
+    models = await _service(request).list_models(probe)
+    return ModelListView(models=models)
 
 @router.post("/runtime", response_model=SettingsView)
 async def save_runtime(update: RuntimeSettingsInput, request: Request) -> SettingsView:

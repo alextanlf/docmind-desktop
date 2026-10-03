@@ -241,6 +241,78 @@ def test_new_vendor_presets_are_registered(preset: str) -> None:
 
 
 @respx.mock
+async def test_list_models_reads_openai_compatible_models_endpoint(
+    config: ModelConfig,
+) -> None:
+    route = respx.get("https://example.test/v1/models").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"id": "kimi-k2.5"},
+                    {"id": "glm-4.6"},
+                    {"id": "  "},
+                    {"id": 7},
+                    "not-a-dict",
+                ]
+            },
+        )
+    )
+
+    models = await OpenAICompatibleProvider(config, "test-key").list_models()
+
+    assert [model.id for model in models] == ["kimi-k2.5", "glm-4.6"]
+    assert models[0].label == "Kimi K2.5"
+    assert dict(route.calls[0].request.headers)["authorization"] == "Bearer test-key"
+
+
+@respx.mock
+async def test_list_models_returns_empty_when_provider_has_no_models_endpoint(
+    config: ModelConfig,
+) -> None:
+    respx.get("https://example.test/v1/models").mock(return_value=httpx.Response(404))
+
+    assert await OpenAICompatibleProvider(config, "test-key").list_models() == []
+
+
+@respx.mock
+async def test_list_models_maps_auth_failure(config: ModelConfig) -> None:
+    respx.get("https://example.test/v1/models").mock(return_value=httpx.Response(401))
+
+    with pytest.raises(DomainError) as error:
+        await OpenAICompatibleProvider(config, "test-key").list_models()
+
+    assert error.value.code == "MODEL_AUTH_FAILED"
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(200, json={}),
+        httpx.Response(200, json={"data": []}),
+        httpx.Response(200, json={"data": "not-a-list"}),
+        httpx.Response(200, text="not-json"),
+    ],
+)
+async def test_list_models_rejects_malformed_payload(
+    config: ModelConfig, response: httpx.Response
+) -> None:
+    respx.get("https://example.test/v1/models").mock(return_value=response)
+
+    with pytest.raises(DomainError) as error:
+        await OpenAICompatibleProvider(config, "test-key").list_models()
+
+    assert error.value.code == "MODEL_PROTOCOL_ERROR"
+
+
+async def test_list_models_skips_request_when_base_url_is_empty() -> None:
+    empty = ModelConfig(preset="custom", base_url="", model="", timeout_seconds=12)
+
+    assert await OpenAICompatibleProvider(empty, "test-key").list_models() == []
+
+
+@respx.mock
 async def test_model_connection_uses_non_streaming_minimal_prompt_and_reports_latency(
     config: ModelConfig
 ) -> None:

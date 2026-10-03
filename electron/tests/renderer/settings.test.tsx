@@ -26,7 +26,7 @@ describe("设置", () => {
     const api = installDocMindApi();
     renderSettings();
 
-    await screen.findByDisplayValue("deepseek-chat");
+    await screen.findByRole("option", { name: /deepseek-chat/ });
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
     expect(api.settings.saveModel).toHaveBeenLastCalledWith(
       expect.objectContaining({ apiKey: undefined }),
@@ -89,7 +89,7 @@ describe("设置", () => {
     installDocMindApi();
     renderSettings();
 
-    await screen.findByDisplayValue("deepseek-chat");
+    await screen.findByRole("option", { name: /deepseek-chat/ });
     const nav = screen.getByRole("navigation", { name: "设置分区" });
     expect(within(nav).getAllByRole("button")).toHaveLength(6);
 
@@ -240,6 +240,112 @@ describe("设置", () => {
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "确认清理失败截图" })).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+  });
+
+  it("offers curated model choices per vendor and saves the picked one", async () => {
+    const api = installDocMindApi();
+    renderSettings();
+
+    const preset = await screen.findByLabelText("模型预设");
+    fireEvent.change(preset, { target: { value: "kimi" } });
+    const picker = await screen.findByLabelText("模型名称");
+    expect(picker).toHaveValue("kimi-k2.5");
+
+    fireEvent.change(picker, { target: { value: "kimi-k2" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+
+    await waitFor(() =>
+      expect(api.settings.saveModel).toHaveBeenLastCalledWith(
+        expect.objectContaining({ preset: "kimi", model: "kimi-k2" }),
+      ),
+    );
+  });
+
+  it("keeps a hand-typed model id even after the vendor list loads", async () => {
+    const api = installDocMindApi({
+      settings: {
+        listModels: vi.fn().mockResolvedValue({
+          models: [
+            { id: "kimi-k2.5", label: "Kimi K2.5" },
+            { id: "kimi-k2", label: "Kimi K2" },
+          ],
+        }),
+      },
+    });
+    renderSettings();
+
+    // Choosing "自定义…" must reveal a text field, and the typed id must
+    // survive saving even though the provider never reported it.
+    fireEvent.change(await screen.findByLabelText("模型预设"), { target: { value: "kimi" } });
+    // Pick "自定义…" from the dropdown, which swaps in a text field.
+    fireEvent.change(await screen.findByLabelText("模型名称"), {
+      target: { value: "__custom__" } });
+    fireEvent.change(screen.getByLabelText("模型名称"), {
+      target: { value: "kimi-internal-build" } });
+    fireEvent.click(screen.getByRole("button", { name: "获取模型列表" }));
+    await screen.findByText("已获取 2 个可用模型");
+
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+    await waitFor(() =>
+      expect(api.settings.saveModel).toHaveBeenLastCalledWith(
+        expect.objectContaining({ model: "kimi-internal-build" }),
+      ),
+    );
+  });
+
+  it("falls back to a free-text model field when the vendor has no catalogue", async () => {
+    const api = installDocMindApi();
+    renderSettings();
+
+    // The custom preset ships no curated models, so the picker degrades to free
+    // text and an arbitrary model id stays saveable.
+    fireEvent.change(await screen.findByLabelText("模型预设"), { target: { value: "custom" } });
+    const field = await screen.findByLabelText("模型名称");
+    expect(field.tagName).toBe("INPUT");
+    fireEvent.change(field, { target: { value: "my-own-model" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+    await waitFor(() =>
+      expect(api.settings.saveModel).toHaveBeenLastCalledWith(
+        expect.objectContaining({ preset: "custom", model: "my-own-model" }),
+      ),
+    );
+  });
+
+  it("refreshes the picker from the provider's live model list", async () => {
+    const listModels = vi.fn().mockResolvedValue({
+      models: [
+        { id: "kimi-k3", label: "Kimi K3" },
+        { id: "kimi-k2.5", label: "Kimi K2.5" },
+      ],
+    });
+    const api = installDocMindApi({ settings: { listModels } });
+    renderSettings();
+
+    fireEvent.click(await screen.findByRole("button", { name: "获取模型列表" }));
+
+    expect(await screen.findByText("已获取 2 个可用模型")).toBeVisible();
+    expect(listModels).toHaveBeenCalledWith(
+      expect.objectContaining({ baseUrl: "https://api.deepseek.com" }),
+    );
+    // The freshly fetched model becomes selectable and can be saved.
+    const picker = screen.getByLabelText("模型名称");
+    fireEvent.change(picker, { target: { value: "kimi-k3" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+    await waitFor(() =>
+      expect(api.settings.saveModel).toHaveBeenLastCalledWith(
+        expect.objectContaining({ model: "kimi-k3" }),
+      ),
+    );
+  });
+
+  it("reports a provider that returns no models instead of silently showing none", async () => {
+    installDocMindApi({ settings: { listModels: vi.fn().mockResolvedValue({ models: [] }) } });
+    renderSettings();
+
+    fireEvent.click(await screen.findByRole("button", { name: "获取模型列表" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("该服务商未返回模型列表");
   });
 
   it("retries a retryable settings query once but excludes semantic non-retryable codes", async () => {

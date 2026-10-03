@@ -83,6 +83,14 @@ class LLMProvider(Protocol):
     def stream_chat(self, request: ChatRequest) -> AsyncIterator[ChatDelta]: ...
 
 
+class AvailableModel(WireModel):
+    """One model id a provider offers, as reported by its OpenAI-compatible
+    `GET /models` endpoint."""
+
+    id: str
+    label: str
+
+
 class OpenAICompatibleProvider:
     def __init__(self, config: ModelConfig, api_key: str) -> None:
         self.config = config
@@ -95,6 +103,46 @@ class OpenAICompatibleProvider:
     @property
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+
+    async def list_models(self) -> list[AvailableModel]:
+        """List the models the configured provider offers.
+
+        Used to let the user pick a model instead of typing an id from memory.
+        A provider that has no `/models` endpoint yields an empty list rather
+        than an error, so manual entry stays available everywhere.
+        """
+        if not self.config.base_url:
+            return []
+        url = f"{self.config.base_url.rstrip('/')}/models"
+        try:
+            async with httpx.AsyncClient(timeout=self.config.timeout_seconds) as client:
+                response = await client.get(url, headers=self._headers)
+        except httpx.TimeoutException as error:
+            raise _model_error("MODEL_TIMEOUT") from error
+        except httpx.HTTPError as error:
+            raise _model_error("MODEL_UNAVAILABLE") from error
+        # A provider without a models endpoint is a soft failure: the user can
+        # still type a model id manually.
+        if response.status_code in (404, 405):
+            return []
+        _raise_for_status(response)
+        try:
+            payload = response.json()
+            entries = payload["data"]
+        except (KeyError, TypeError, json.JSONDecodeError) as error:
+            raise _model_error("MODEL_PROTOCOL_ERROR") from error
+        if not isinstance(entries, list):
+            raise _model_error("MODEL_PROTOCOL_ERROR")
+        models: list[AvailableModel] = []
+        for entry in entries:
+            model_id = entry.get("id") if isinstance(entry, dict) else None
+            if not isinstance(model_id, str) or not model_id.strip():
+                continue
+            trimmed = model_id.strip()
+            models.append(AvailableModel(id=trimmed, label=model_label(trimmed)))
+        if not models:
+            raise _model_error("MODEL_PROTOCOL_ERROR")
+        return models
 
     async def test_connection(self) -> ModelConnectionResult:
         payload = {
@@ -196,6 +244,31 @@ def _delta_content(event: str) -> object:
         # Absent, null and empty-string content are all "no text this frame".
         return _NO_CONTENT
     return content
+
+
+def model_label(model_id: str) -> str:
+    """Humanize a model id for display, keeping the raw id as the shown value
+    when nothing better exists so the user always sees what will be sent."""
+    friendly = {
+        "kimi-k2.5": "Kimi K2.5",
+        "kimi-k2": "Kimi K2",
+        "kimi-latest": "Kimi 最新版",
+        "kimi-k3": "Kimi K3",
+        "glm-4.6": "GLM-4.6",
+        "glm-5": "GLM-5",
+        "glm-5.1": "GLM-5.1",
+        "glm-5.2": "GLM-5.2",
+        "glm-5.3": "GLM-5.3",
+        "mimo-v2.5-pro": "MiMo V2.5 Pro",
+        "mimo-v2.5": "MiMo V2.5",
+        "mimo-v2.6-pro": "MiMo V2.6 Pro",
+        "deepseek-chat": "DeepSeek Chat",
+        "deepseek-reasoner": "DeepSeek Reasoner",
+        "qwen-plus": "通义千问 Plus",
+        "qwen-max": "通义千问 Max",
+        "gpt-5-mini": "GPT-5 mini",
+    }
+    return friendly.get(model_id, model_id)
 
 
 async def _sse_events(response: httpx.Response) -> AsyncIterator[str]:

@@ -7,7 +7,7 @@ import pytest
 
 from app.api.errors import DomainError
 from app.api.settings import MODEL_CONFIG_KEY, MODEL_KEY_REFERENCE, SettingsService
-from app.core.llm import ModelConnectionResult
+from app.core.llm import AvailableModel, ModelConnectionResult
 from app.core.secrets import KeyringSecretStore, MemorySecretStore
 from app.schemas.settings import ModelSettingsUpdate
 from app.storage.models import SettingRecord
@@ -314,6 +314,111 @@ def test_presets_supply_editable_defaults(client, auth_headers) -> None:
         "model": "my-deepseek",
         "timeoutSeconds": 30,
     }
+
+
+def test_model_list_is_protected_by_runtime_token(client) -> None:
+    assert client.post("/api/settings/model/list", json={}).status_code == 401
+
+
+def test_model_list_serves_curated_choices_before_any_key_is_saved(
+    client, auth_headers
+) -> None:
+    """The picker must have options on first paint, with no API key configured."""
+    client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "kimi",
+            "baseUrl": "https://api.moonshot.cn/v1",
+            "model": "kimi-k2.5",
+            "timeoutSeconds": 30,
+        },
+    )
+
+    response = client.post("/api/settings/model/list", headers=auth_headers)
+
+    assert response.status_code == 200
+    ids = [model["id"] for model in response.json()["models"]]
+    assert "kimi-k2.5" in ids
+    assert response.json()["models"][0]["label"] == "Kimi K2.5"
+
+
+def test_model_list_uses_live_provider_models_and_keeps_saved_model(
+    client, auth_headers, app_secret_store: MemorySecretStore
+) -> None:
+    app_secret_store.set("model-api-key", "k")
+
+    class FakeProvider:
+        def __init__(self, config, api_key):
+            self.config = config
+
+        async def test_connection(self) -> ModelConnectionResult:  # pragma: no cover
+            raise NotImplementedError
+
+        async def list_models(self) -> list[AvailableModel]:
+            return [AvailableModel(id="glm-5.3", label="GLM-5.3")]
+
+    client.app.state.settings_service.provider_factory = FakeProvider
+    client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "glm",
+            "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+            "model": "glm-4.6",
+            "timeoutSeconds": 30,
+        },
+    )
+
+    response = client.post("/api/settings/model/list", json={}, headers=auth_headers)
+
+    assert response.status_code == 200
+    ids = [model["id"] for model in response.json()["models"]]
+    # Live list first, and the already-selected model stays selectable even
+    # though the provider did not report it.
+    assert ids == ["glm-5.3", "glm-4.6"]
+
+
+def test_model_list_falls_back_to_curated_when_provider_rejects_listing(
+    client, auth_headers, app_secret_store: MemorySecretStore
+) -> None:
+    app_secret_store.set("model-api-key", "k")
+
+    class FakeProvider:
+        def __init__(self, config, api_key):
+            self.config = config
+
+        async def test_connection(self) -> ModelConnectionResult:  # pragma: no cover
+            raise NotImplementedError
+
+        async def list_models(self) -> list[AvailableModel]:
+            raise DomainError("MODEL_AUTH_FAILED", "bad key", 401)
+
+    client.app.state.settings_service.provider_factory = FakeProvider
+    client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "mimo",
+            "baseUrl": "https://api.xiaomimimo.com/v1",
+            "model": "mimo-v2.5-pro",
+            "timeoutSeconds": 30,
+        },
+    )
+
+    response = client.post("/api/settings/model/list", json={}, headers=auth_headers)
+
+    assert response.status_code == 200
+    assert "mimo-v2.5-pro" in [model["id"] for model in response.json()["models"]]
+
+
+def test_settings_view_exposes_curated_models_for_every_preset(client, auth_headers) -> None:
+    response = client.get("/api/settings", headers=auth_headers)
+
+    assert response.status_code == 200
+    presets = response.json()["modelPresets"]
+    assert {"deepseek", "qwen", "kimi", "glm", "mimo", "openai"} <= set(presets)
+    assert "custom" not in presets
 
 
 def test_model_connection_returns_latency_without_real_network(

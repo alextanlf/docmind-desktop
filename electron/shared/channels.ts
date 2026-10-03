@@ -9,6 +9,7 @@ export const IPC_CHANNELS = {
   settingsGet: "settings:get",
   settingsSaveModel: "settings:saveModel",
   settingsTestModel: "settings:testModel",
+  settingsListModels: "settings:listModels",
   settingsClearDiagnostics: "settings:clearDiagnostics",
   settingsSaveWebSearch: "settings:saveWebSearch",
   settingsSaveRuntime: "settings:saveRuntime",

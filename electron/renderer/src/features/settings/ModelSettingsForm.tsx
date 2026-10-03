@@ -1,6 +1,6 @@
-import { CheckCircle2, LoaderCircle, PlugZap, Save } from "lucide-react";
+import { CheckCircle2, LoaderCircle, PlugZap, RefreshCw, Save } from "lucide-react";
 import { useRef, useState, type FormEvent } from "react";
-import type { SettingsView } from "../../../../shared/contracts";
+import type { AvailableModel, SettingsView } from "../../../../shared/contracts";
 import { appQueryClient } from "../../app/query-client";
 import { clientErrorMessage, settingsKeys } from "./settings.queries";
 
@@ -19,6 +19,8 @@ const PRESETS = {
 } as const;
 
 type Preset = keyof typeof PRESETS;
+
+const CUSTOM_MODEL_VALUE = "__custom__";
 
 type Props = {
   settings: SettingsView;
@@ -44,12 +46,42 @@ export function ModelSettingsForm({
   const [hasSavedKey, setHasSavedKey] = useState(settings.hasApiKey);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [listing, setListing] = useState(false);
+  const [liveModels, setLiveModels] = useState<AvailableModel[]>([]);
   const [needsSave, setNeedsSave] = useState(false);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const revisionRef = useRef(0);
   const activeOperationRef = useRef<{ kind: "save" | "test"; revision: number } | null>(null);
   const busy = saving || testing;
   const savedKeyPlaceholder = "••••••••";
+
+  // A picker is only useful when the provider actually offers choices. The
+  // curated catalogue (or a fetched live list) supplies them; with neither, the
+  // field stays free text so any model id remains typeable. The current value
+  // is shown alongside those choices but never becomes the sole option, which
+  // would turn an empty catalogue into a one-item dropdown.
+  const curatedModels = settings.modelPresets[preset] ?? [];
+  const knownModels = (() => {
+    const merged = [...curatedModels];
+    const seen = new Set(merged.map((item) => item.id));
+    for (const item of liveModels) {
+      if (!seen.has(item.id)) {
+        seen.add(item.id);
+        merged.push(item);
+      }
+    }
+    return merged;
+  })();
+  const hasCatalogue = knownModels.length > 0;
+  // Keep an id the user already chose selectable even if the provider does not
+  // report it, otherwise saving would silently rewrite the field.
+  const isCustomModel = !knownModels.some((item) => item.id === model);
+  const options =
+    hasCatalogue && !isCustomModel
+      ? knownModels
+      : hasCatalogue && model
+        ? [...knownModels, { id: model, label: model }]
+        : knownModels;
 
   function invalidateConnection() {
     revisionRef.current += 1;
@@ -63,7 +95,32 @@ export function ModelSettingsForm({
     setPreset(nextPreset);
     setBaseUrl(next.baseUrl);
     setModel(next.model);
+    setLiveModels([]);
     invalidateConnection();
+  }
+
+  async function refreshModels() {
+    if (listing) return;
+    setListing(true);
+    setMessage(null);
+    const submittedKey = clearKey ? "" : apiKey.trim() || undefined;
+    try {
+      const result = await window.docmind.settings.listModels({
+        baseUrl: baseUrl.trim() || undefined,
+        model: model.trim() || undefined,
+        apiKey: submittedKey,
+      });
+      setLiveModels(result.models);
+      if (result.models.length > 0) {
+        setMessage({ tone: "success", text: `已获取 ${result.models.length} 个可用模型` });
+      } else {
+        setMessage({ tone: "error", text: "该服务商未返回模型列表，请手动填写模型名称" });
+      }
+    } catch (error) {
+      setMessage({ tone: "error", text: clientErrorMessage(error) });
+    } finally {
+      setListing(false);
+    }
   }
 
   async function save(event: FormEvent) {
@@ -171,14 +228,50 @@ export function ModelSettingsForm({
         </label>
         <label>
           <span>模型名称</span>
-          <input
-            disabled={busy}
-            value={model}
-            onChange={(event) => {
-              setModel(event.target.value);
-              invalidateConnection();
-            }}
-          />
+          {hasCatalogue && !isCustomModel ? (
+            <select
+              disabled={busy}
+              value={model}
+              onChange={(event) => {
+                const next = event.target.value;
+                setModel(next === CUSTOM_MODEL_VALUE ? "" : next);
+                invalidateConnection();
+              }}
+            >
+              {options.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label === option.id ? option.id : `${option.label}（${option.id}）`}
+                </option>
+              ))}
+              <option value={CUSTOM_MODEL_VALUE}>自定义…</option>
+            </select>
+          ) : (
+            <input
+              disabled={busy}
+              value={model}
+              onChange={(event) => {
+                setModel(event.target.value);
+                invalidateConnection();
+              }}
+              placeholder="输入模型名称"
+            />
+          )}
+          {hasCatalogue && isCustomModel ? (
+            <button
+              className="button button-secondary"
+              disabled={busy}
+              onClick={() => {
+                const first = options[0];
+                if (first) {
+                  setModel(first.id);
+                  invalidateConnection();
+                }
+              }}
+              type="button"
+            >
+              从列表中选择
+            </button>
+          ) : null}
         </label>
         <label>
           <span>超时时间（秒）</span>
@@ -233,6 +326,19 @@ export function ModelSettingsForm({
         </p>
       ) : null}
       <div className="form-actions">
+        <button
+          className="button button-secondary"
+          disabled={busy || listing}
+          onClick={() => void refreshModels()}
+          type="button"
+        >
+          {listing ? (
+            <LoaderCircle aria-hidden="true" className="spin" size={16} />
+          ) : (
+            <RefreshCw aria-hidden="true" size={16} />
+          )}
+          {listing ? "获取中" : "获取模型列表"}
+        </button>
         <button className="button button-secondary" disabled={busy} type="submit">
           {saving ? (
             <LoaderCircle aria-hidden="true" className="spin" size={16} />
