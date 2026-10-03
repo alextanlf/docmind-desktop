@@ -61,6 +61,16 @@ class ModelListView(WireModel):
     models: list[AvailableModel] = Field(default_factory=list)
 
 
+class ModelSetupSkip(WireModel):
+    """Records that the user dismissed first-run model setup.
+
+    Persisted so the dialog does not reappear on every launch; configuring a
+    model later clears the flag so setup is never shown again.
+    """
+
+    skipped: bool = False
+
+
 class ModelSettingsView(ModelConfig):
     pass
 
@@ -101,6 +111,8 @@ class SettingsView(WireModel):
     # Curated per-preset catalogue so the model picker has choices on first
     # paint, before an API key is entered and before any live query.
     model_presets: dict[str, list[AvailableModel]] = Field(default_factory=dict)
+    # True once the user dismissed first-run setup, so it is not shown again.
+    model_setup_skipped: bool = False
 
 
 class WebSearchSettingsUpdate(WireModel):
@@ -124,6 +136,7 @@ __all__ = [
     "ModelListView",
     "ModelSettingsUpdate",
     "ModelSettingsView",
+    "ModelSetupSkip",
     "SettingsView",
     "WebSearchSettingsUpdate",
     "YuqueApiBindingView",

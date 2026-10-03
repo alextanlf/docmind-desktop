@@ -104,6 +104,7 @@ export const SettingsViewSchema = z.object({
     label: null,
   }),
   modelPresets: z.record(z.string(), z.array(AvailableModelSchema)).default({}),
+  modelSetupSkipped: z.boolean().default(false),
 });
 export const RuntimeSettingsInputSchema = z.object({
   ollama: z.object({
@@ -781,6 +782,7 @@ export interface DocMindApi {
     saveModel(input: ModelSettingsInput): Promise<SettingsView>;
     testModel(): Promise<ModelConnectionResult>;
     listModels(input?: ModelListProbe): Promise<ModelListView>;
+    skipModelSetup(): Promise<SettingsView>;
     clearDiagnostics(): Promise<void>;
     saveWebSearch(input: WebSearchSettingsInput): Promise<SettingsView>;
     saveRuntime(input: z.infer<typeof RuntimeSettingsInputSchema>): Promise<SettingsView>;

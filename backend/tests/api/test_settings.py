@@ -316,6 +316,41 @@ def test_presets_supply_editable_defaults(client, auth_headers) -> None:
     }
 
 
+def test_skip_model_setup_is_protected_by_runtime_token(client) -> None:
+    assert client.post("/api/settings/model/skip-setup").status_code == 401
+
+
+def test_skipping_model_setup_is_persisted_in_the_settings_view(client, auth_headers) -> None:
+    response = client.post("/api/settings/model/skip-setup", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["modelSetupSkipped"] is True
+    # A later read reports the same, so the dialog stays dismissed across restarts.
+    assert client.get("/api/settings", headers=auth_headers).json()["modelSetupSkipped"] is True
+
+
+def test_saving_model_config_clears_a_previous_skip(client, auth_headers) -> None:
+    client.post("/api/settings/model/skip-setup", headers=auth_headers)
+
+    response = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "kimi",
+            "baseUrl": "https://api.moonshot.cn/v1",
+            "model": "kimi-k2.5",
+            "timeoutSeconds": 30,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["modelSetupSkipped"] is False
+
+
+def test_model_setup_is_not_marked_skipped_by_default(client, auth_headers) -> None:
+    assert client.get("/api/settings", headers=auth_headers).json()["modelSetupSkipped"] is False
+
+
 def test_model_list_is_protected_by_runtime_token(client) -> None:
     assert client.post("/api/settings/model/list", json={}).status_code == 401
 

@@ -188,6 +188,12 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         jsonInit("POST", parse(ModelListProbeSchema, input ?? {})),
         ModelListViewSchema,
       ),
+    [IPC_CHANNELS.settingsSkipModelSetup]: () =>
+      proxy.requestJson(
+        "/api/settings/model/skip-setup",
+        jsonInit("POST"),
+        SettingsViewSchema,
+      ),
     [IPC_CHANNELS.settingsClearDiagnostics]: () =>
       proxy.requestVoid("/api/settings/diagnostics/clear", jsonInit("POST")),
     [IPC_CHANNELS.settingsSaveWebSearch]: (_event, input) =>

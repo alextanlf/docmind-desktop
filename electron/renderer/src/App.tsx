@@ -7,15 +7,19 @@ import { Modal } from "./components/Modal";
 import { OnboardingDialog } from "./features/onboarding/OnboardingDialog";
 import { useSettingsQuery } from "./features/settings/settings.queries";
 
-function ResolvedApp({ initialReady }: { initialReady: boolean }) {
-  const [requiresOnboarding] = useState(!initialReady);
-  const [onboardingCompleted, setOnboardingCompleted] = useState(false);
+function ResolvedApp({ initialReady, setupSkipped }: { initialReady: boolean; setupSkipped: boolean }) {
+  // Only the first snapshot decides whether setup is required. Re-reading
+  // settings while the dialog is open would unmount it mid-edit: saving a model
+  // flips hasApiKey to true, which would drop the dialog before the user could
+  // press "进入工作台".
+  const [requiresOnboarding] = useState(!initialReady && !setupSkipped);
+  const [dismissed, setDismissed] = useState(false);
 
   return (
     <>
       <Workspace />
-      {requiresOnboarding && !onboardingCompleted ? (
-        <OnboardingDialog onComplete={() => setOnboardingCompleted(true)} />
+      {requiresOnboarding && !dismissed ? (
+        <OnboardingDialog onComplete={() => setDismissed(true)} />
       ) : null}
     </>
   );
@@ -56,7 +60,7 @@ function AppContent() {
     );
   }
   const ready = settings.data?.hasApiKey === true;
-  return <ResolvedApp initialReady={ready} />;
+  return <ResolvedApp initialReady={ready} setupSkipped={settings.data?.modelSetupSkipped === true} />;
 }
 
 export default function App() {

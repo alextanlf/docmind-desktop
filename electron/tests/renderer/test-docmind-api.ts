@@ -43,6 +43,7 @@ export const readySettings: SettingsView = {
     label: null,
     active: false,
   },
+  modelSetupSkipped: false,
   modelPresets: {
     deepseek: [
       { id: "deepseek-chat", label: "DeepSeek Chat" },
@@ -274,6 +275,7 @@ export function installDocMindApi(overrides?: {
       saveModel: vi.fn().mockResolvedValue(readySettings),
       testModel: vi.fn().mockResolvedValue({ connected: true, latencyMs: 86 }),
       listModels: vi.fn().mockResolvedValue({ models: [] }),
+      skipModelSetup: vi.fn().mockResolvedValue(readySettings),
       clearDiagnostics: vi.fn().mockResolvedValue(undefined),
       saveWebSearch: vi.fn().mockResolvedValue(readySettings),
       saveYuqueApi: vi.fn().mockResolvedValue(readySettings),

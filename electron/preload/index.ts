@@ -168,6 +168,7 @@ const api: DocMindApi = {
     testModel: () => invoke(IPC_CHANNELS.settingsTestModel, ModelConnectionResultSchema),
     listModels: (input) =>
       invoke(IPC_CHANNELS.settingsListModels, ModelListViewSchema, ModelListProbeSchema.parse(input ?? {})),
+    skipModelSetup: () => invoke(IPC_CHANNELS.settingsSkipModelSetup, SettingsViewSchema),
     clearDiagnostics: () => invoke(IPC_CHANNELS.settingsClearDiagnostics, z.undefined()),
     saveWebSearch: (input) =>
       invoke(

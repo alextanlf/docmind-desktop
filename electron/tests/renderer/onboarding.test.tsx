@@ -95,7 +95,8 @@ describe("首次设置", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "开始使用 DocMind" });
     const first = screen.getByRole("combobox", { name: "模型预设" });
-    const last = screen.getByRole("button", { name: "保存设置" });
+    // The last focusable control is now the skip action in the footer.
+    const last = screen.getByRole("button", { name: "跳过" });
     await waitFor(() => expect(first).toHaveFocus());
 
     last.focus();
@@ -112,6 +113,78 @@ describe("首次设置", () => {
     const background = Array.from(document.body.children).find((element) => element !== modalLayer);
     expect(background).toHaveAttribute("inert");
     expect(background).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("lets the user skip model setup after confirming the consequence", async () => {
+    const api = installDocMindApi({
+      settings: {
+        get: vi.fn().mockResolvedValue({ ...readySettings, hasApiKey: false }),
+      },
+    });
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "跳过" }));
+
+    // The consequence must be spelled out before the user is let in.
+    const confirm = await screen.findByRole("dialog", { name: "跳过模型配置？" });
+    expect(confirm).toHaveTextContent("问答与摘要功能不可用");
+    expect(api.settings.skipModelSetup).not.toHaveBeenCalled();
+
+    fireEvent.click(within(confirm).getByRole("button", { name: "跳过并进入" }));
+
+    expect(await screen.findByLabelText("工作台")).toBeVisible();
+    // The dismissal is persisted so the dialog stays gone on the next launch.
+    await waitFor(() => expect(api.settings.skipModelSetup).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("dialog", { name: "开始使用 DocMind" })).not.toBeInTheDocument();
+  });
+
+  it("returns to the form when cancelling the skip confirmation", async () => {
+    installDocMindApi({
+      settings: {
+        get: vi.fn().mockResolvedValue({ ...readySettings, hasApiKey: false }),
+      },
+    });
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "跳过" }));
+    const confirm = await screen.findByRole("dialog", { name: "跳过模型配置？" });
+    fireEvent.click(within(confirm).getByRole("button", { name: "返回配置" }));
+
+    expect(await screen.findByRole("dialog", { name: "开始使用 DocMind" })).toBeVisible();
+    expect(screen.getByLabelText("API Key")).toBeVisible();
+  });
+
+  it("does not show onboarding when a previous session skipped setup", async () => {
+    const api = installDocMindApi({
+      settings: {
+        get: vi
+          .fn()
+          .mockResolvedValue({ ...readySettings, hasApiKey: false, modelSetupSkipped: true }),
+      },
+    });
+
+    render(<App />);
+
+    expect(await screen.findByLabelText("工作台")).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "开始使用 DocMind" })).not.toBeInTheDocument();
+    expect(api.settings.skipModelSetup).not.toHaveBeenCalled();
+  });
+
+  it("still enters the workspace when persisting the skip fails", async () => {
+    installDocMindApi({
+      settings: {
+        get: vi.fn().mockResolvedValue({ ...readySettings, hasApiKey: false }),
+        skipModelSetup: vi.fn().mockRejectedValue({ code: "BACKEND_UNAVAILABLE", retryable: false }),
+      },
+    });
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "跳过" }));
+    const confirm = await screen.findByRole("dialog", { name: "跳过模型配置？" });
+    fireEvent.click(within(confirm).getByRole("button", { name: "跳过并进入" }));
+
+    // A failed write must not trap the user in the dialog.
+    expect(await screen.findByLabelText("工作台")).toBeVisible();
   });
 
   it("skips onboarding when the model key is ready, regardless of Yuque", async () => {

@@ -1,12 +1,25 @@
-import { AlertTriangle, Check, LoaderCircle, RefreshCw } from "lucide-react";
+import { AlertTriangle, Check, LoaderCircle, RefreshCw, SkipForward } from "lucide-react";
 import { useState } from "react";
 import { Modal } from "../../components/Modal";
 import { ModelSettingsForm } from "../settings/ModelSettingsForm";
-import { useSettingsQuery } from "../settings/settings.queries";
+import { useSettingsQuery, useSkipModelSetupMutation } from "../settings/settings.queries";
 
 export function OnboardingDialog({ onComplete }: { onComplete: () => void }) {
   const settings = useSettingsQuery();
+  const skipModelSetup = useSkipModelSetupMutation();
   const [modelConnected, setModelConnected] = useState(false);
+  const [confirmingSkip, setConfirmingSkip] = useState(false);
+
+  async function skipSetup() {
+    try {
+      await skipModelSetup.mutateAsync();
+    } catch {
+      // Dismissing setup is a convenience: if persisting it fails, still let the
+      // user into the workspace rather than trapping them in this dialog. The
+      // dialog will reappear next launch.
+    }
+    onComplete();
+  }
 
   if (settings.isPending) {
     return (
@@ -26,6 +39,37 @@ export function OnboardingDialog({ onComplete }: { onComplete: () => void }) {
           <RefreshCw aria-hidden="true" size={16} />
           重新检查设置
         </button>
+      </Modal>
+    );
+  }
+
+  if (confirmingSkip) {
+    return (
+      <Modal labelledBy="onboarding-skip-title" className="confirm-dialog onboarding-error-dialog">
+        <AlertTriangle aria-hidden="true" size={22} />
+        <h1 id="onboarding-skip-title">跳过模型配置？</h1>
+        <p>
+          未配置模型时，问答与摘要功能不可用；文档导入、解析和本地检索仍可正常使用。
+          之后可随时在「设置 - 模型」中补上。
+        </p>
+        <div className="form-actions">
+          <button className="button button-secondary" onClick={() => setConfirmingSkip(false)} type="button">
+            返回配置
+          </button>
+          <button
+            className="button button-primary"
+            disabled={skipModelSetup.isPending}
+            onClick={() => void skipSetup()}
+            type="button"
+          >
+            {skipModelSetup.isPending ? (
+              <LoaderCircle aria-hidden="true" className="spin" size={16} />
+            ) : (
+              <SkipForward aria-hidden="true" size={16} />
+            )}
+            跳过并进入
+          </button>
+        </div>
       </Modal>
     );
   }
@@ -58,7 +102,14 @@ export function OnboardingDialog({ onComplete }: { onComplete: () => void }) {
         />
       </div>
       <footer className="onboarding-footer">
-        <span />
+        <button
+          className="button button-secondary"
+          onClick={() => setConfirmingSkip(true)}
+          type="button"
+        >
+          <SkipForward aria-hidden="true" size={16} />
+          跳过
+        </button>
         <button
           className="button button-primary"
           disabled={!modelConnected}

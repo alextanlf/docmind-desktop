@@ -203,3 +203,11 @@ export function useTestFeishuMutation() {
     onSuccess: () => client.invalidateQueries({ queryKey: settingsKeys.root }),
   });
 }
+
+export function useSkipModelSetupMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => window.docmind.settings.skipModelSetup(),
+    onSuccess: (settings) => client.setQueryData(settingsKeys.root, settings),
+  });
+}

@@ -44,6 +44,7 @@ from app.yuque.credentials import YUQUE_CREDENTIAL_SPEC
 
 MODEL_CONFIG_KEY = "model.config"
 MODEL_KEY_REFERENCE = "model.api_key_ref"
+MODEL_SETUP_SKIPPED_KEY = "model.setup_skipped"
 MODEL_API_KEY_NAME = "model-api-key"
 WEB_SEARCH_CONFIG_KEY = "web-search.config"
 WEB_SEARCH_API_KEY_NAME = "web-search:tavily"
@@ -86,13 +87,23 @@ class SettingsService:
     def has_api_key(self) -> bool:
         return bool(self.secret_store.get(MODEL_API_KEY_NAME))
 
+    def model_setup_skipped(self) -> bool:
+        return self.setting_store.get(MODEL_SETUP_SKIPPED_KEY) == "1"
+
+    def skip_model_setup(self) -> None:
+        self.setting_store.set(MODEL_SETUP_SKIPPED_KEY, "1")
+
     async def save_model(self, update: ModelSettingsUpdate) -> ModelSettingsView:
         if update.preset not in MODEL_PRESETS:
             raise DomainError("MODEL_PRESET_INVALID", "模型预设无效", 422)
         config = ModelSettingsView(**update.model_dump(exclude={"api_key"}))
         serialized_config = config.model_dump_json()
         if update.api_key is None:
-            self.setting_store.set_many({MODEL_CONFIG_KEY: serialized_config})
+            # Saving any model config means the user engaged with setup, so a
+            # previous skip no longer applies.
+            self.setting_store.set_many(
+                {MODEL_CONFIG_KEY: serialized_config, MODEL_SETUP_SKIPPED_KEY: "0"}
+            )
             return config
 
         previous_api_key = self.secret_store.get(MODEL_API_KEY_NAME)
@@ -107,6 +118,7 @@ class SettingsService:
                 {
                     MODEL_CONFIG_KEY: serialized_config,
                     MODEL_KEY_REFERENCE: key_reference,
+                    MODEL_SETUP_SKIPPED_KEY: "0",
                 }
             )
         except Exception:
@@ -178,6 +190,7 @@ class SettingsService:
             model_presets={
                 preset: preset_models(preset) for preset in MODEL_PRESETS if preset != "custom"
             },
+            model_setup_skipped=self.model_setup_skipped(),
         )
 
     def _require_credential_store(self) -> CredentialStore:
@@ -490,6 +503,12 @@ async def save_model(update: ModelSettingsUpdate, request: Request) -> SettingsV
 @router.post("/model/test", response_model=ModelConnectionResult)
 async def test_model(request: Request) -> ModelConnectionResult:
     return await _service(request).test_model()
+
+
+@router.post("/model/skip-setup", response_model=SettingsView)
+async def skip_model_setup(request: Request) -> SettingsView:
+    _service(request).skip_model_setup()
+    return _service(request).view(_settings(request))
 
 
 @router.post("/model/list", response_model=ModelListView)
