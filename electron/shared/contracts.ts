@@ -20,13 +20,25 @@ export const IpcResultSchema = <T extends z.ZodTypeAny>(value: T) =>
   ]);
 
 export const ModelSettingsInputSchema = z.object({
-  preset: z.enum(["deepseek", "qwen", "kimi", "glm", "mimo", "openai", "custom"]),
+  preset: z.enum([
+    "deepseek",
+    "qwen",
+    "kimi",
+    "glm",
+    "mimo",
+    "opencode_zen",
+    "opencode_go",
+    "openai",
+    "custom",
+  ]),
+  reasoningEffort: z.string().max(32).default(""),
   baseUrl: z.string().max(500),
   model: z.string().max(200),
   timeoutSeconds: z.number().positive().max(300),
   apiKey: z.string().max(2_000).nullable().optional(),
 });
 export const ModelSettingsViewSchema = z.object({
+  reasoningEffort: z.string().max(32).default(""),
   preset: z.string(),
   baseUrl: z.string(),
   model: z.string(),
@@ -105,6 +117,15 @@ export const SettingsViewSchema = z.object({
   }),
   modelPresets: z.record(z.string(), z.array(AvailableModelSchema)).default({}),
   modelSetupSkipped: z.boolean().default(false),
+  modelCapabilities: z
+    .record(
+      z.string(),
+      z.object({
+        reasoningLevels: z.array(z.string()).default([]),
+        defaultReasoningEffort: z.string().default(""),
+      }),
+    )
+    .default({}),
 });
 export const RuntimeSettingsInputSchema = z.object({
   ollama: z.object({

@@ -2164,3 +2164,10 @@ progress::-webkit-progress-bar {
     animation-iteration-count: 1 !important;
   }
 }
+
+.field-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-tertiary, #6b6b6b);
+}

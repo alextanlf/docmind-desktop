@@ -15,6 +15,10 @@ MODEL_PRESETS = {
     "kimi": ("https://api.moonshot.cn/v1", "kimi-k2.5"),
     "glm": ("https://open.bigmodel.cn/api/paas/v4", "glm-4.6"),
     "mimo": ("https://api.xiaomimimo.com/v1", "mimo-v2.5-pro"),
+    # OpenCode Zen is pay-as-you-go with a set of free models; Go is the flat
+    # monthly plan. Both verified live: GET /models returns 200 without a key.
+    "opencode_zen": ("https://opencode.ai/zen/v1", "mimo-v2.5-free"),
+    "opencode_go": ("https://opencode.ai/zen/go/v1", "mimo-v2.5"),
     "openai": ("https://api.openai.com/v1", "gpt-5-mini"),
     "custom": ("", ""),
 }
@@ -22,13 +26,39 @@ MODEL_PRESETS = {
 # Curated per-preset model catalogue. Lets the settings form offer a real choice
 # before an API key exists (and when the provider has no `/models` endpoint),
 # while `GET /models` still overrides this with the provider's live list.
-# Verified against vendor docs; the first entry is the preset default.
+# Ids verified against each vendor's official docs and, for OpenCode, against a
+# live `GET /models` call. The first entry is the preset default.
 MODEL_CATALOG: dict[str, tuple[str, ...]] = {
     "deepseek": ("deepseek-chat", "deepseek-reasoner"),
     "qwen": ("qwen-plus", "qwen-max", "qwen-turbo", "qwen-flash"),
-    "kimi": ("kimi-k2.5", "kimi-k2", "kimi-latest", "moonshot-v1-128k", "moonshot-v1-32k"),
-    "glm": ("glm-4.6", "glm-4.5", "glm-4-plus", "glm-4-flash"),
-    "mimo": ("mimo-v2.5-pro", "mimo-v2.5", "mimo-v2.5-flash"),
+    "kimi": ("kimi-k2.5", "kimi-k2.6", "kimi-k3", "kimi-k2.7-code", "moonshot-v1-128k"),
+    "glm": ("glm-4.6", "glm-5", "glm-5.1", "glm-5.2", "glm-5.3-flash"),
+    "mimo": ("mimo-v2.5-pro", "mimo-v2.5", "mimo-v2.6-pro", "mimo-v2.6-flash"),
+    # Free tier ids come from a live `GET https://opencode.ai/zen/v1/models`
+    # (200 without a key, 86 models, 13 with "free" in the id).
+    "opencode_zen": (
+        "mimo-v2.5-free",
+        "deepseek-v4-flash-free",
+        "mimo-v2.6-flash-free",
+        "nemotron-3-ultra-free",
+        "ling-3.1-flash-free",
+        "space-bunny-free",
+        "longcat-2.5-preview-free",
+        "fledge-alpha-free",
+        "big-pickle",
+        "kimi-k3",
+        "glm-5.3-flash",
+    ),
+    "opencode_go": (
+        "mimo-v2.5",
+        "mimo-v2.5-pro",
+        "deepseek-v4-flash",
+        "deepseek-v4-pro",
+        "glm-5.3-flash",
+        "kimi-k2.6",
+        "longcat-2.0",
+        "space-bunny-free",
+    ),
     "openai": ("gpt-5-mini", "gpt-5", "gpt-4.1-mini", "gpt-4o-mini"),
     "custom": (),
 }
@@ -99,6 +129,13 @@ class FeishuBindingUpdate(WireModel):
     webhook_url: str | None = Field(default=None, max_length=2_000)
 
 
+class ModelPresetCapabilities(WireModel):
+    """What a preset supports, so the UI can offer only valid choices."""
+
+    reasoning_levels: list[str] = Field(default_factory=list)
+    default_reasoning_effort: str = ""
+
+
 class SettingsView(WireModel):
     model: ModelSettingsView
     has_api_key: bool
@@ -111,6 +148,8 @@ class SettingsView(WireModel):
     # Curated per-preset catalogue so the model picker has choices on first
     # paint, before an API key is entered and before any live query.
     model_presets: dict[str, list[AvailableModel]] = Field(default_factory=dict)
+    # Per-preset reasoning support, keyed like `model_presets`.
+    model_capabilities: dict[str, ModelPresetCapabilities] = Field(default_factory=dict)
     # True once the user dismissed first-run setup, so it is not shown again.
     model_setup_skipped: bool = False
 
@@ -134,6 +173,7 @@ __all__ = [
     "ModelConnectionResult",
     "ModelListProbe",
     "ModelListView",
+    "ModelPresetCapabilities",
     "ModelSettingsUpdate",
     "ModelSettingsView",
     "ModelSetupSkip",

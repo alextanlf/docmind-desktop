@@ -12,6 +12,11 @@ from fastapi import APIRouter, Request, Response
 from app.api.errors import DomainError
 from app.config import AppSettings
 from app.core.llm import AvailableModel, LLMProvider, ModelConfig, OpenAICompatibleProvider
+from app.core.model_capabilities import (
+    default_reasoning_effort,
+    reasoning_levels,
+    supports_reasoning_control,
+)
 from app.core.ollama_validation import normalize_loopback_base_url
 from app.core.secrets import SecretStore
 from app.remote.credentials import CredentialStore
@@ -25,6 +30,7 @@ from app.schemas.settings import (
     ModelConnectionResult,
     ModelListProbe,
     ModelListView,
+    ModelPresetCapabilities,
     ModelSettingsUpdate,
     ModelSettingsView,
     SettingsView,
@@ -96,7 +102,14 @@ class SettingsService:
     async def save_model(self, update: ModelSettingsUpdate) -> ModelSettingsView:
         if update.preset not in MODEL_PRESETS:
             raise DomainError("MODEL_PRESET_INVALID", "模型预设无效", 422)
-        config = ModelSettingsView(**update.model_dump(exclude={"api_key"}))
+        # `WireModel.model_dump` emits alias keys, so the effort key is camelCase.
+        payload = update.model_dump(exclude={"api_key"})
+        # An unset effort means "use the vendor's documented default" rather
+        # than "off", so switching presets never silently keeps a stale level
+        # that the new vendor does not accept.
+        if not payload.get("reasoningEffort"):
+            payload["reasoningEffort"] = default_reasoning_effort(update.preset)
+        config = ModelSettingsView(**payload)
         serialized_config = config.model_dump_json()
         if update.api_key is None:
             # Saving any model config means the user engaged with setup, so a
@@ -189,6 +202,14 @@ class SettingsService:
             feishu=self.feishu_binding(),
             model_presets={
                 preset: preset_models(preset) for preset in MODEL_PRESETS if preset != "custom"
+            },
+            model_capabilities={
+                preset: ModelPresetCapabilities(
+                    reasoning_levels=list(reasoning_levels(preset)),
+                    default_reasoning_effort=default_reasoning_effort(preset),
+                )
+                for preset in MODEL_PRESETS
+                if supports_reasoning_control(preset)
             },
             model_setup_skipped=self.model_setup_skipped(),
         )

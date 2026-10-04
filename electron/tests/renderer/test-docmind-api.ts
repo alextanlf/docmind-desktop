@@ -23,6 +23,7 @@ export const readySettings: SettingsView = {
     baseUrl: "https://api.deepseek.com",
     model: "deepseek-chat",
     timeoutSeconds: 30,
+    reasoningEffort: "high",
   },
   hasApiKey: true,
   dataPath: "/Users/test/Library/Application Support/DocMind",
@@ -44,6 +45,11 @@ export const readySettings: SettingsView = {
     active: false,
   },
   modelSetupSkipped: false,
+  modelCapabilities: {
+    deepseek: { reasoningLevels: ["off", "low", "high"], defaultReasoningEffort: "high" },
+    kimi: { reasoningLevels: ["low", "high"], defaultReasoningEffort: "low" },
+    glm: { reasoningLevels: ["off", "low", "high"], defaultReasoningEffort: "high" },
+  },
   modelPresets: {
     deepseek: [
       { id: "deepseek-chat", label: "DeepSeek Chat" },

@@ -242,6 +242,64 @@ describe("设置", () => {
     expect(trigger).toHaveFocus();
   });
 
+  it("saves the chosen reasoning level for a vendor that supports it", async () => {
+    const api = installDocMindApi();
+    renderSettings();
+
+    const effort = await screen.findByLabelText("推理强度");
+    // The saved level from settings is preselected.
+    expect(effort).toHaveValue("high");
+    expect(within(effort as HTMLSelectElement).getByRole("option", { name: "关闭思考" })).toBeVisible();
+
+    fireEvent.change(effort, { target: { value: "low" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+
+    await waitFor(() =>
+      expect(api.settings.saveModel).toHaveBeenLastCalledWith(
+        expect.objectContaining({ reasoningEffort: "low" }),
+      ),
+    );
+  });
+
+  it("only offers levels the vendor actually accepts after switching preset", async () => {
+    const api = installDocMindApi();
+    renderSettings();
+
+    // DeepSeek allows turning thinking off; Kimi's K3 always reasons, so the
+    // picker must not offer a level the vendor would reject.
+    fireEvent.change(await screen.findByLabelText("模型预设"), { target: { value: "kimi" } });
+    const effort = await screen.findByLabelText("推理强度");
+    expect(within(effort as HTMLSelectElement).queryByRole("option", { name: "关闭思考" })).toBeNull();
+    // Switching resets to that preset's documented default rather than keeping
+    // a level the new vendor may not accept.
+    expect(effort).toHaveValue("low");
+
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+    await waitFor(() =>
+      expect(api.settings.saveModel).toHaveBeenLastCalledWith(
+        expect.objectContaining({ preset: "kimi", reasoningEffort: "low" }),
+      ),
+    );
+  });
+
+  it("explains the absence of a level picker for gateways without one", async () => {
+    const api = installDocMindApi();
+    renderSettings();
+
+    fireEvent.change(await screen.findByLabelText("模型预设"), {
+      target: { value: "opencode_zen" },
+    });
+
+    expect(await screen.findByText("该服务商未提供推理档位，使用其默认行为")).toBeVisible();
+    expect(screen.queryByLabelText("推理强度")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+    await waitFor(() =>
+      expect(api.settings.saveModel).toHaveBeenLastCalledWith(
+        expect.objectContaining({ preset: "opencode_zen", baseUrl: "https://opencode.ai/zen/v1" }),
+      ),
+    );
+  });
+
   it("offers curated model choices per vendor and saves the picked one", async () => {
     const api = installDocMindApi();
     renderSettings();

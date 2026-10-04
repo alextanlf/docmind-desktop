@@ -7,6 +7,7 @@ import re
 from typing import Protocol
 
 from app.core.llm import ChatRequest, LLMMessage, LLMProvider
+from app.core.model_capabilities import TEMPERATURE_MIN_DETERMINISTIC
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,10 @@ class LLMQueryPlanner:
     async def _complete(self, query: str, max_queries: int) -> str:
         request = ChatRequest(
             messages=[LLMMessage(role="user", content=_build_prompt(query, max_queries))],
-            temperature=0,
+            # Rewriting wants low variance, not absolute zero: Zhipu documents
+            # temperature as (0, 1] and rejects 0, so sending 0 would fail the
+            # whole request on some vendors.
+            temperature=TEMPERATURE_MIN_DETERMINISTIC,
         )
         parts: list[str] = []
         async for delta in self.llm.stream_chat(request):

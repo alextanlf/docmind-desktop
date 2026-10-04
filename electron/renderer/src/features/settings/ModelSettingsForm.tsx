@@ -14,9 +14,28 @@ const PRESETS = {
   kimi: { label: "Kimi (月之暗面)", baseUrl: "https://api.moonshot.cn/v1", model: "kimi-k2.5" },
   glm: { label: "智谱 GLM", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4.6" },
   mimo: { label: "小米 MiMo", baseUrl: "https://api.xiaomimimo.com/v1", model: "mimo-v2.5-pro" },
+  opencode_zen: {
+    label: "OpenCode Zen（按量·含免费档）",
+    baseUrl: "https://opencode.ai/zen/v1",
+    model: "mimo-v2.5-free",
+  },
+  opencode_go: {
+    label: "OpenCode Go（$10/月订阅）",
+    baseUrl: "https://opencode.ai/zen/go/v1",
+    model: "mimo-v2.5",
+  },
   openai: { label: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-5-mini" },
   custom: { label: "自定义", baseUrl: "", model: "" },
 } as const;
+
+// Unified levels rendered as the same four meanings across vendors; the backend
+// translates each to the vendor's own field or drops it when unsupported.
+const EFFORT_LABELS: Record<string, string> = {
+  off: "关闭思考",
+  low: "轻量",
+  medium: "标准",
+  high: "深度",
+};
 
 type Preset = keyof typeof PRESETS;
 
@@ -40,6 +59,7 @@ export function ModelSettingsForm({
   const [preset, setPreset] = useState<Preset>(initialPreset);
   const [baseUrl, setBaseUrl] = useState(settings.model.baseUrl);
   const [model, setModel] = useState(settings.model.model);
+  const [reasoningEffort, setReasoningEffort] = useState(settings.model.reasoningEffort);
   const [timeoutSeconds, setTimeoutSeconds] = useState(settings.model.timeoutSeconds);
   const [apiKey, setApiKey] = useState("");
   const [clearKey, setClearKey] = useState(false);
@@ -76,6 +96,10 @@ export function ModelSettingsForm({
   // Keep an id the user already chose selectable even if the provider does not
   // report it, otherwise saving would silently rewrite the field.
   const isCustomModel = !knownModels.some((item) => item.id === model);
+  // Only presets the backend reports as adjustable get a level picker; the rest
+  // keep the vendor's own default, since sending a field it does not accept
+  // would fail the request.
+  const effortLevels = settings.modelCapabilities[preset]?.reasoningLevels ?? [];
   const options =
     hasCatalogue && !isCustomModel
       ? knownModels
@@ -95,6 +119,9 @@ export function ModelSettingsForm({
     setPreset(nextPreset);
     setBaseUrl(next.baseUrl);
     setModel(next.model);
+    // A level valid for the old vendor may be rejected by the new one, so fall
+    // back to that preset's documented default. Empty means "vendor default".
+    setReasoningEffort(settings.modelCapabilities[nextPreset]?.defaultReasoningEffort ?? "");
     setLiveModels([]);
     invalidateConnection();
   }
@@ -138,6 +165,7 @@ export function ModelSettingsForm({
         baseUrl: baseUrl.trim(),
         model: model.trim(),
         timeoutSeconds,
+        reasoningEffort,
         apiKey: submittedKey,
       });
       appQueryClient.setQueryData(settingsKeys.root, saved);
@@ -272,6 +300,27 @@ export function ModelSettingsForm({
               从列表中选择
             </button>
           ) : null}
+        </label>
+        <label>
+          <span>推理强度</span>
+          {effortLevels.length > 0 ? (
+            <select
+              disabled={busy}
+              value={reasoningEffort || effortLevels[0]}
+              onChange={(event) => {
+                setReasoningEffort(event.target.value);
+                invalidateConnection();
+              }}
+            >
+              {effortLevels.map((level) => (
+                <option key={level} value={level}>
+                  {EFFORT_LABELS[level] ?? level}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <p className="field-hint">该服务商未提供推理档位，使用其默认行为</p>
+          )}
         </label>
         <label>
           <span>超时时间（秒）</span>

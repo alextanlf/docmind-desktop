@@ -10,6 +10,7 @@ import httpx
 from pydantic import Field, field_validator
 
 from app.api.errors import DomainError
+from app.core.model_capabilities import clamp_temperature, reasoning_params
 from app.schemas.common import WireModel
 
 
@@ -18,6 +19,9 @@ class ModelConfig(WireModel):
     base_url: str
     model: str
     timeout_seconds: float = Field(gt=0, le=300)
+    # Unified reasoning-effort level persisted from the settings form. Empty
+    # means "use the vendor's own default" and sends no vendor-specific field.
+    reasoning_effort: str = ""
 
     @field_validator("base_url")
     @classmethod
@@ -71,6 +75,9 @@ class LLMMessage(WireModel):
 class ChatRequest(WireModel):
     messages: list[LLMMessage]
     temperature: float = 0.2
+    # Unified reasoning-effort level. Translated to the vendor's own field by
+    # `reasoning_params`; ignored when the vendor does not declare support.
+    reasoning_effort: str | None = None
 
 
 class ChatDelta(WireModel):
@@ -148,6 +155,8 @@ class OpenAICompatibleProvider:
         payload = {
             "model": self.config.model,
             "messages": [{"role": "user", "content": "请回复“连接成功”。"}],
+            # Probe with the lowest broadly-accepted temperature instead of
+            # absolute zero, which Zhipu rejects outright.
             "temperature": CONNECTION_TEST_TEMPERATURE,
             "stream": False,
         }
@@ -172,9 +181,15 @@ class OpenAICompatibleProvider:
         payload = {
             "model": self.config.model,
             "messages": [message.model_dump() for message in request.messages],
-            "temperature": request.temperature,
+            "temperature": clamp_temperature(request.temperature),
             "stream": True,
         }
+        # Only vendors whose docs confirm the field receive reasoning controls;
+        # an unrecognised preset gets nothing extra, so a wrong field name can
+        # never provoke a 400.
+        effort = request.reasoning_effort or self.config.reasoning_effort
+        if effort:
+            payload.update(reasoning_params(self.config.preset, effort))
         try:
             async with (
                 httpx.AsyncClient(timeout=self.config.timeout_seconds) as client,

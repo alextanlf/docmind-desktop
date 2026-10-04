@@ -312,6 +312,118 @@ async def test_list_models_skips_request_when_base_url_is_empty() -> None:
     assert await OpenAICompatibleProvider(empty, "test-key").list_models() == []
 
 
+def _stream_route() -> respx.Route:
+    return respx.post("https://example.test/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"好"}}]}\n\ndata: [DONE]\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+    )
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    ("preset", "expected_extra"),
+    [
+        # Kimi and DeepSeek take reasoning_effort; the payload must carry it.
+        ("deepseek", {"reasoning_effort": "high"}),
+        ("kimi", {"reasoning_effort": "high"}),
+        # Zhipu and Xiaomi take thinking.type, never reasoning_effort.
+        ("glm", {"thinking": {"type": "enabled"}}),
+        ("mimo", {"thinking": {"type": "enabled"}}),
+        # Aggregated gateways get nothing extra.
+        ("opencode_zen", {}),
+        ("opencode_go", {}),
+    ],
+)
+async def test_stream_sends_vendor_specific_reasoning_fields(
+    config: ModelConfig, chat_request: ChatRequest, preset: str, expected_extra: dict
+) -> None:
+    route = _stream_route()
+    configured = config.model_copy(update={"preset": preset, "reasoning_effort": "high"})
+
+    _ = [
+        delta
+        async for delta in OpenAICompatibleProvider(configured, "test-key").stream_chat(chat_request)
+    ]
+
+    sent = json.loads(route.calls[0].request.content)
+    for key, value in expected_extra.items():
+        assert sent[key] == value
+    # Never both shapes at once: that combination is rejected by some vendors.
+    assert not ("reasoning_effort" in sent and "thinking" in sent)
+    if not expected_extra:
+        assert "reasoning_effort" not in sent and "thinking" not in sent
+
+
+@respx.mock
+async def test_stream_clamps_zero_temperature_to_a_vendor_safe_value(
+    config: ModelConfig,
+) -> None:
+    """query-style tasks ask for temperature 0, which Zhipu rejects outright."""
+    route = _stream_route()
+
+    _ = [
+        delta
+        async for delta in OpenAICompatibleProvider(config, "test-key").stream_chat(
+            ChatRequest(messages=[LLMMessage(role="user", content="改写")], temperature=0)
+        )
+    ]
+
+    assert json.loads(route.calls[0].request.content)["temperature"] == 0.1
+
+
+@respx.mock
+async def test_stream_does_not_send_reasoning_fields_when_effort_is_unset(
+    config: ModelConfig, chat_request: ChatRequest
+) -> None:
+    """No configured level means "vendor default", not an invented field."""
+    route = _stream_route()
+    configured = config.model_copy(update={"preset": "glm", "reasoning_effort": ""})
+
+    _ = [
+        delta
+        async for delta in OpenAICompatibleProvider(configured, "test-key").stream_chat(chat_request)
+    ]
+
+    sent = json.loads(route.calls[0].request.content)
+    assert "thinking" not in sent and "reasoning_effort" not in sent
+
+
+@respx.mock
+async def test_request_level_effort_overrides_configured_default(
+    config: ModelConfig, chat_request: ChatRequest
+) -> None:
+    route = _stream_route()
+    configured = config.model_copy(update={"preset": "deepseek", "reasoning_effort": "low"})
+
+    _ = [
+        delta
+        async for delta in OpenAICompatibleProvider(configured, "test-key").stream_chat(
+            chat_request.model_copy(update={"reasoning_effort": "high"})
+        )
+    ]
+
+    assert json.loads(route.calls[0].request.content)["reasoning_effort"] == "high"
+
+
+@respx.mock
+async def test_connection_probe_never_sends_vendor_specific_fields(
+    config: ModelConfig,
+) -> None:
+    """The connectivity check must not depend on optional parameters."""
+    route = respx.post("https://example.test/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json={"choices": [{"message": {"content": "连接成功"}}]})
+    )
+    configured = config.model_copy(update={"preset": "glm", "reasoning_effort": "high"})
+
+    await OpenAICompatibleProvider(configured, "test-key").test_connection()
+
+    sent = json.loads(route.calls[0].request.content)
+    assert "thinking" not in sent and "reasoning_effort" not in sent
+
+
 @respx.mock
 async def test_model_connection_uses_non_streaming_minimal_prompt_and_reports_latency(
     config: ModelConfig

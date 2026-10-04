@@ -313,6 +313,8 @@ def test_presets_supply_editable_defaults(client, auth_headers) -> None:
         "baseUrl": "https://gateway.example/v1",
         "model": "my-deepseek",
         "timeoutSeconds": 30,
+        # Unset effort resolves to the vendor's documented default on save.
+        "reasoningEffort": "high",
     }
 
 
