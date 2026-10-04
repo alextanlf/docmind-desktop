@@ -5,15 +5,15 @@ import { appQueryClient } from "../../app/query-client";
 import { clientErrorMessage, settingsKeys } from "./settings.queries";
 
 const PRESETS = {
-  deepseek: { label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+  deepseek: { label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-flash" },
   qwen: {
     label: "通义千问",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     model: "qwen-plus",
   },
-  kimi: { label: "Kimi (月之暗面)", baseUrl: "https://api.moonshot.cn/v1", model: "kimi-k2.5" },
+  kimi: { label: "Kimi (月之暗面)", baseUrl: "https://api.moonshot.cn/v1", model: "kimi-k3" },
   glm: { label: "智谱 GLM", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4.6" },
-  mimo: { label: "小米 MiMo", baseUrl: "https://api.xiaomimimo.com/v1", model: "mimo-v2.5-pro" },
+  mimo: { label: "小米 MiMo", baseUrl: "https://api.xiaomimimo.com/v1", model: "mimo-v2.6-pro" },
   opencode_zen: {
     label: "OpenCode Zen（按量·含免费档）",
     baseUrl: "https://opencode.ai/zen/v1",
@@ -96,10 +96,10 @@ export function ModelSettingsForm({
   // Keep an id the user already chose selectable even if the provider does not
   // report it, otherwise saving would silently rewrite the field.
   const isCustomModel = !knownModels.some((item) => item.id === model);
-  // Only presets the backend reports as adjustable get a level picker; the rest
-  // keep the vendor's own default, since sending a field it does not accept
-  // would fail the request.
-  const effortLevels = settings.modelCapabilities[preset]?.reasoningLevels ?? [];
+  // Capabilities are per model, not per vendor: Kimi K3 and K2.6 use different
+  // fields, and some models cannot turn thinking off at all.
+  const effortLevels =
+    settings.modelCapabilities[preset]?.[model.trim().toLowerCase()]?.reasoningLevels ?? [];
   const options =
     hasCatalogue && !isCustomModel
       ? knownModels
@@ -116,13 +116,26 @@ export function ModelSettingsForm({
 
   function changePreset(nextPreset: Preset) {
     const next = PRESETS[nextPreset];
+    const nextModel = next.model;
     setPreset(nextPreset);
     setBaseUrl(next.baseUrl);
-    setModel(next.model);
-    // A level valid for the old vendor may be rejected by the new one, so fall
-    // back to that preset's documented default. Empty means "vendor default".
-    setReasoningEffort(settings.modelCapabilities[nextPreset]?.defaultReasoningEffort ?? "");
+    setModel(nextModel);
+    // A level valid for the old model may be rejected by the new one, so fall
+    // back to that model's documented default. Empty means "vendor default".
+    setReasoningEffort(
+      settings.modelCapabilities[nextPreset]?.[nextModel.toLowerCase()]?.defaultReasoningEffort ?? "",
+    );
     setLiveModels([]);
+    invalidateConnection();
+  }
+
+  function changeModel(nextModel: string) {
+    setModel(nextModel);
+    // Same reasoning as switching preset: reset to the new model's default so a
+    // level the vendor does not accept is never sent.
+    setReasoningEffort(
+      settings.modelCapabilities[preset]?.[nextModel.trim().toLowerCase()]?.defaultReasoningEffort ?? "",
+    );
     invalidateConnection();
   }
 
@@ -262,8 +275,12 @@ export function ModelSettingsForm({
               value={model}
               onChange={(event) => {
                 const next = event.target.value;
-                setModel(next === CUSTOM_MODEL_VALUE ? "" : next);
-                invalidateConnection();
+                if (next === CUSTOM_MODEL_VALUE) {
+                  setModel("");
+                  invalidateConnection();
+                } else {
+                  changeModel(next);
+                }
               }}
             >
               {options.map((option) => (
@@ -290,10 +307,7 @@ export function ModelSettingsForm({
               disabled={busy}
               onClick={() => {
                 const first = options[0];
-                if (first) {
-                  setModel(first.id);
-                  invalidateConnection();
-                }
+                if (first) changeModel(first.id);
               }}
               type="button"
             >

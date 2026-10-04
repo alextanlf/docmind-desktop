@@ -117,13 +117,17 @@ export const SettingsViewSchema = z.object({
   }),
   modelPresets: z.record(z.string(), z.array(AvailableModelSchema)).default({}),
   modelSetupSkipped: z.boolean().default(false),
+  // Keyed by preset, then by model id: the same vendor's models differ.
   modelCapabilities: z
     .record(
       z.string(),
-      z.object({
-        reasoningLevels: z.array(z.string()).default([]),
-        defaultReasoningEffort: z.string().default(""),
-      }),
+      z.record(
+        z.string(),
+        z.object({
+          reasoningLevels: z.array(z.string()).default([]),
+          defaultReasoningEffort: z.string().default(""),
+        }),
+      ),
     )
     .default({}),
 });

@@ -26,7 +26,7 @@ describe("设置", () => {
     const api = installDocMindApi();
     renderSettings();
 
-    await screen.findByRole("option", { name: /deepseek-chat/ });
+    await screen.findByRole("option", { name: /deepseek-flash/ });
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
     expect(api.settings.saveModel).toHaveBeenLastCalledWith(
       expect.objectContaining({ apiKey: undefined }),
@@ -89,7 +89,7 @@ describe("设置", () => {
     installDocMindApi();
     renderSettings();
 
-    await screen.findByRole("option", { name: /deepseek-chat/ });
+    await screen.findByRole("option", { name: /deepseek-flash/ });
     const nav = screen.getByRole("navigation", { name: "设置分区" });
     expect(within(nav).getAllByRole("button")).toHaveLength(6);
 
@@ -261,25 +261,47 @@ describe("设置", () => {
     );
   });
 
-  it("only offers levels the vendor actually accepts after switching preset", async () => {
+  it("offers only the levels the selected model accepts, not the vendor's", async () => {
     const api = installDocMindApi();
     renderSettings();
 
-    // DeepSeek allows turning thinking off; Kimi's K3 always reasons, so the
-    // picker must not offer a level the vendor would reject.
     fireEvent.change(await screen.findByLabelText("模型预设"), { target: { value: "kimi" } });
     const effort = await screen.findByLabelText("推理强度");
+    // Kimi K3 always reasons, so no "off" even though DeepSeek (same "thinking"
+    // concept) allows it.
     expect(within(effort as HTMLSelectElement).queryByRole("option", { name: "关闭思考" })).toBeNull();
-    // Switching resets to that preset's documented default rather than keeping
-    // a level the new vendor may not accept.
-    expect(effort).toHaveValue("low");
+    expect(effort).toHaveValue("high");
+
+    // Switching to K2.6 changes the allowed levels for the same vendor.
+    fireEvent.change(await screen.findByLabelText("模型名称"), { target: { value: "kimi-k2.6" } });
+    expect(within(screen.getByLabelText("推理强度") as HTMLSelectElement).getByRole("option", { name: "关闭思考" })).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
     await waitFor(() =>
       expect(api.settings.saveModel).toHaveBeenLastCalledWith(
-        expect.objectContaining({ preset: "kimi", reasoningEffort: "low" }),
+        expect.objectContaining({ model: "kimi-k2.6" }),
       ),
     );
+  });
+
+  it("drops the off level for a model that forces thinking on", async () => {
+    installDocMindApi();
+    renderSettings();
+
+    fireEvent.change(await screen.findByLabelText("模型预设"), { target: { value: "glm" } });
+    // GLM-4.6 can be switched off, GLM-5.3 cannot.
+    expect(
+      within(screen.getByLabelText("推理强度") as HTMLSelectElement).getByRole("option", {
+        name: "关闭思考",
+      }),
+    ).toBeVisible();
+
+    fireEvent.change(await screen.findByLabelText("模型名称"), { target: { value: "glm-5.3" } });
+    expect(
+      within(screen.getByLabelText("推理强度") as HTMLSelectElement).queryByRole("option", {
+        name: "关闭思考",
+      }),
+    ).toBeNull();
   });
 
   it("explains the absence of a level picker for gateways without one", async () => {
@@ -307,14 +329,14 @@ describe("设置", () => {
     const preset = await screen.findByLabelText("模型预设");
     fireEvent.change(preset, { target: { value: "kimi" } });
     const picker = await screen.findByLabelText("模型名称");
-    expect(picker).toHaveValue("kimi-k2.5");
+    expect(picker).toHaveValue("kimi-k3");
 
-    fireEvent.change(picker, { target: { value: "kimi-k2" } });
+    fireEvent.change(picker, { target: { value: "kimi-k2.6" } });
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
 
     await waitFor(() =>
       expect(api.settings.saveModel).toHaveBeenLastCalledWith(
-        expect.objectContaining({ preset: "kimi", model: "kimi-k2" }),
+        expect.objectContaining({ preset: "kimi", model: "kimi-k2.6" }),
       ),
     );
   });

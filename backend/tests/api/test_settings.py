@@ -302,7 +302,7 @@ def test_presets_supply_editable_defaults(client, auth_headers) -> None:
         json={
             "preset": "deepseek",
             "baseUrl": "https://gateway.example/v1",
-            "model": "my-deepseek",
+            "model": "deepseek-v4-pro",
             "timeoutSeconds": 30,
         },
     )
@@ -311,7 +311,7 @@ def test_presets_supply_editable_defaults(client, auth_headers) -> None:
     assert response.json()["model"] == {
         "preset": "deepseek",
         "baseUrl": "https://gateway.example/v1",
-        "model": "my-deepseek",
+        "model": "deepseek-v4-pro",
         "timeoutSeconds": 30,
         # Unset effort resolves to the vendor's documented default on save.
         "reasoningEffort": "high",
@@ -340,7 +340,7 @@ def test_saving_model_config_clears_a_previous_skip(client, auth_headers) -> Non
         json={
             "preset": "kimi",
             "baseUrl": "https://api.moonshot.cn/v1",
-            "model": "kimi-k2.5",
+            "model": "kimi-k3",
             "timeoutSeconds": 30,
         },
     )
@@ -367,7 +367,7 @@ def test_model_list_serves_curated_choices_before_any_key_is_saved(
         json={
             "preset": "kimi",
             "baseUrl": "https://api.moonshot.cn/v1",
-            "model": "kimi-k2.5",
+            "model": "kimi-k3",
             "timeoutSeconds": 30,
         },
     )
@@ -376,8 +376,8 @@ def test_model_list_serves_curated_choices_before_any_key_is_saved(
 
     assert response.status_code == 200
     ids = [model["id"] for model in response.json()["models"]]
-    assert "kimi-k2.5" in ids
-    assert response.json()["models"][0]["label"] == "Kimi K2.5"
+    assert "kimi-k3" in ids
+    assert response.json()["models"][0]["label"] == "Kimi K3"
 
 
 def test_model_list_uses_live_provider_models_and_keeps_saved_model(
@@ -438,7 +438,7 @@ def test_model_list_falls_back_to_curated_when_provider_rejects_listing(
         json={
             "preset": "mimo",
             "baseUrl": "https://api.xiaomimimo.com/v1",
-            "model": "mimo-v2.5-pro",
+            "model": "mimo-v2.6-pro",
             "timeoutSeconds": 30,
         },
     )
@@ -446,7 +446,7 @@ def test_model_list_falls_back_to_curated_when_provider_rejects_listing(
     response = client.post("/api/settings/model/list", json={}, headers=auth_headers)
 
     assert response.status_code == 200
-    assert "mimo-v2.5-pro" in [model["id"] for model in response.json()["models"]]
+    assert "mimo-v2.6-pro" in [model["id"] for model in response.json()["models"]]
 
 
 def test_settings_view_exposes_curated_models_for_every_preset(client, auth_headers) -> None:

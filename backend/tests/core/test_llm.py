@@ -324,24 +324,33 @@ def _stream_route() -> respx.Route:
 
 @respx.mock
 @pytest.mark.parametrize(
-    ("preset", "expected_extra"),
+    ("preset", "model", "expected_extra"),
     [
-        # Kimi and DeepSeek take reasoning_effort; the payload must carry it.
-        ("deepseek", {"reasoning_effort": "high"}),
-        ("kimi", {"reasoning_effort": "high"}),
-        # Zhipu and Xiaomi take thinking.type, never reasoning_effort.
-        ("glm", {"thinking": {"type": "enabled"}}),
-        ("mimo", {"thinking": {"type": "enabled"}}),
+        # Zhipu and Xiaomi drive reasoning through thinking.type.
+        ("glm", "glm-4.6", {"thinking": {"type": "enabled"}}),
+        ("mimo", "mimo-v2.6-pro", {"thinking": {"type": "enabled"}}),
+        # DeepSeek's toggle is also thinking.type, not reasoning_effort.
+        ("deepseek", "deepseek-flash", {"thinking": {"type": "enabled"}}),
+        # Kimi K3 is the reasoning_effort model, and cannot be disabled.
+        ("kimi", "kimi-k3", {"reasoning_effort": "high"}),
+        # Kimi K2.6 is a thinking.type model — same vendor, different field.
+        ("kimi", "kimi-k2.6", {"thinking": {"type": "enabled"}}),
         # Aggregated gateways get nothing extra.
-        ("opencode_zen", {}),
-        ("opencode_go", {}),
+        ("opencode_zen", "mimo-v2.5-free", {}),
+        ("opencode_go", "mimo-v2.5", {}),
     ],
 )
-async def test_stream_sends_vendor_specific_reasoning_fields(
-    config: ModelConfig, chat_request: ChatRequest, preset: str, expected_extra: dict
+async def test_stream_sends_model_specific_reasoning_fields(
+    config: ModelConfig,
+    chat_request: ChatRequest,
+    preset: str,
+    model: str,
+    expected_extra: dict,
 ) -> None:
     route = _stream_route()
-    configured = config.model_copy(update={"preset": preset, "reasoning_effort": "high"})
+    configured = config.model_copy(
+        update={"preset": preset, "model": model, "reasoning_effort": "high"}
+    )
 
     _ = [
         delta
@@ -380,7 +389,7 @@ async def test_stream_does_not_send_reasoning_fields_when_effort_is_unset(
 ) -> None:
     """No configured level means "vendor default", not an invented field."""
     route = _stream_route()
-    configured = config.model_copy(update={"preset": "glm", "reasoning_effort": ""})
+    configured = config.model_copy(update={"preset": "glm", "model": "glm-4.6", "reasoning_effort": ""})
 
     _ = [
         delta
@@ -396,7 +405,7 @@ async def test_request_level_effort_overrides_configured_default(
     config: ModelConfig, chat_request: ChatRequest
 ) -> None:
     route = _stream_route()
-    configured = config.model_copy(update={"preset": "deepseek", "reasoning_effort": "low"})
+    configured = config.model_copy(update={"preset": "kimi", "model": "kimi-k3", "reasoning_effort": "low"})
 
     _ = [
         delta
@@ -416,7 +425,7 @@ async def test_connection_probe_never_sends_vendor_specific_fields(
     route = respx.post("https://example.test/v1/chat/completions").mock(
         return_value=httpx.Response(200, json={"choices": [{"message": {"content": "连接成功"}}]})
     )
-    configured = config.model_copy(update={"preset": "glm", "reasoning_effort": "high"})
+    configured = config.model_copy(update={"preset": "glm", "model": "glm-4.6", "reasoning_effort": "high"})
 
     await OpenAICompatibleProvider(configured, "test-key").test_connection()
 

@@ -21,7 +21,7 @@ export const readySettings: SettingsView = {
   model: {
     preset: "deepseek",
     baseUrl: "https://api.deepseek.com",
-    model: "deepseek-chat",
+    model: "deepseek-flash",
     timeoutSeconds: 30,
     reasoningEffort: "high",
   },
@@ -45,19 +45,34 @@ export const readySettings: SettingsView = {
     active: false,
   },
   modelSetupSkipped: false,
+  // Keyed by preset then model id, mirroring the backend's model-level table.
   modelCapabilities: {
-    deepseek: { reasoningLevels: ["off", "low", "high"], defaultReasoningEffort: "high" },
-    kimi: { reasoningLevels: ["low", "high"], defaultReasoningEffort: "low" },
-    glm: { reasoningLevels: ["off", "low", "high"], defaultReasoningEffort: "high" },
+    deepseek: {
+      "deepseek-flash": { reasoningLevels: ["off", "low", "high"], defaultReasoningEffort: "high" },
+    },
+    kimi: {
+      // K3 always reasons; K2.6 uses a different field and can be turned off.
+      "kimi-k3": { reasoningLevels: ["low", "high"], defaultReasoningEffort: "high" },
+      "kimi-k2.6": { reasoningLevels: ["off", "high"], defaultReasoningEffort: "high" },
+    },
+    glm: {
+      // 4.6 only exposes the toggle; 5.3 cannot be disabled at all.
+      "glm-4.6": { reasoningLevels: ["off", "high"], defaultReasoningEffort: "high" },
+      "glm-5.3": { reasoningLevels: ["low", "high"], defaultReasoningEffort: "high" },
+    },
   },
   modelPresets: {
     deepseek: [
-      { id: "deepseek-chat", label: "DeepSeek Chat" },
-      { id: "deepseek-reasoner", label: "DeepSeek Reasoner" },
+      { id: "deepseek-flash", label: "DeepSeek Flash" },
+      { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
     ],
     kimi: [
-      { id: "kimi-k2.5", label: "Kimi K2.5" },
-      { id: "kimi-k2", label: "Kimi K2" },
+      { id: "kimi-k3", label: "Kimi K3" },
+      { id: "kimi-k2.6", label: "Kimi K2.6" },
+    ],
+    glm: [
+      { id: "glm-4.6", label: "GLM-4.6" },
+      { id: "glm-5.3", label: "GLM-5.3" },
     ],
   },
   feishu: {

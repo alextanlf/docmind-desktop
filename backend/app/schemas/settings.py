@@ -10,11 +10,14 @@ from app.schemas.ollama import RuntimeSettingsInput
 from app.schemas.web_search import WebSearchSettings
 
 MODEL_PRESETS = {
-    "deepseek": ("https://api.deepseek.com/v1", "deepseek-chat"),
+    # DeepSeek retired deepseek-chat / deepseek-reasoner on 2026-07-24; the
+    # pricing page now names deepseek-flash and deepseek-v4-pro.
+    "deepseek": ("https://api.deepseek.com/v1", "deepseek-flash"),
     "qwen": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus"),
-    "kimi": ("https://api.moonshot.cn/v1", "kimi-k2.5"),
+    "kimi": ("https://api.moonshot.cn/v1", "kimi-k3"),
     "glm": ("https://open.bigmodel.cn/api/paas/v4", "glm-4.6"),
-    "mimo": ("https://api.xiaomimimo.com/v1", "mimo-v2.5-pro"),
+    # MiMo-V2.5 is retired on 2026-10-21 per the vendor's deprecation notice.
+    "mimo": ("https://api.xiaomimimo.com/v1", "mimo-v2.6-pro"),
     # OpenCode Zen is pay-as-you-go with a set of free models; Go is the flat
     # monthly plan. Both verified live: GET /models returns 200 without a key.
     "opencode_zen": ("https://opencode.ai/zen/v1", "mimo-v2.5-free"),
@@ -29,11 +32,11 @@ MODEL_PRESETS = {
 # Ids verified against each vendor's official docs and, for OpenCode, against a
 # live `GET /models` call. The first entry is the preset default.
 MODEL_CATALOG: dict[str, tuple[str, ...]] = {
-    "deepseek": ("deepseek-chat", "deepseek-reasoner"),
+    "deepseek": ("deepseek-flash", "deepseek-v4-pro"),
     "qwen": ("qwen-plus", "qwen-max", "qwen-turbo", "qwen-flash"),
-    "kimi": ("kimi-k2.5", "kimi-k2.6", "kimi-k3", "kimi-k2.7-code", "moonshot-v1-128k"),
-    "glm": ("glm-4.6", "glm-5", "glm-5.1", "glm-5.2", "glm-5.3-flash"),
-    "mimo": ("mimo-v2.5-pro", "mimo-v2.5", "mimo-v2.6-pro", "mimo-v2.6-flash"),
+    "kimi": ("kimi-k3", "kimi-k2.6", "kimi-k2.5", "kimi-k2.7-code"),
+    "glm": ("glm-4.6", "glm-5.2", "glm-5.3", "glm-5.3-flash", "glm-4.7"),
+    "mimo": ("mimo-v2.6-pro", "mimo-v2.6-flash"),
     # Free tier ids come from a live `GET https://opencode.ai/zen/v1/models`
     # (200 without a key, 86 models, 13 with "free" in the id).
     "opencode_zen": (

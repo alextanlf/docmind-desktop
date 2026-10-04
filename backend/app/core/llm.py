@@ -184,12 +184,12 @@ class OpenAICompatibleProvider:
             "temperature": clamp_temperature(request.temperature),
             "stream": True,
         }
-        # Only vendors whose docs confirm the field receive reasoning controls;
-        # an unrecognised preset gets nothing extra, so a wrong field name can
+        # Only models whose docs confirm the field receive reasoning controls;
+        # anything unregistered gets nothing extra, so a wrong field name can
         # never provoke a 400.
         effort = request.reasoning_effort or self.config.reasoning_effort
         if effort:
-            payload.update(reasoning_params(self.config.preset, effort))
+            payload.update(reasoning_params(self.config.preset, self.config.model, effort))
         try:
             async with (
                 httpx.AsyncClient(timeout=self.config.timeout_seconds) as client,
@@ -265,18 +265,24 @@ def model_label(model_id: str) -> str:
     """Humanize a model id for display, keeping the raw id as the shown value
     when nothing better exists so the user always sees what will be sent."""
     friendly = {
-        "kimi-k2.5": "Kimi K2.5",
-        "kimi-k2": "Kimi K2",
-        "kimi-latest": "Kimi 最新版",
         "kimi-k3": "Kimi K3",
-        "glm-4.6": "GLM-4.6",
-        "glm-5": "GLM-5",
-        "glm-5.1": "GLM-5.1",
-        "glm-5.2": "GLM-5.2",
+        "kimi-k2.6": "Kimi K2.6",
+        "kimi-k2.5": "Kimi K2.5",
+        "kimi-k2.7-code": "Kimi K2.7 Code",
         "glm-5.3": "GLM-5.3",
+        "glm-5.3-flash": "GLM-5.3 Flash",
+        "glm-5.2": "GLM-5.2",
+        "glm-5.1": "GLM-5.1",
+        "glm-5": "GLM-5",
+        "glm-4.7": "GLM-4.7",
+        "glm-4.6": "GLM-4.6",
+        "glm-4.5": "GLM-4.5",
+        "mimo-v2.6-pro": "MiMo V2.6 Pro",
+        "mimo-v2.6-flash": "MiMo V2.6 Flash",
         "mimo-v2.5-pro": "MiMo V2.5 Pro",
         "mimo-v2.5": "MiMo V2.5",
-        "mimo-v2.6-pro": "MiMo V2.6 Pro",
+        "deepseek-flash": "DeepSeek Flash",
+        "deepseek-v4-pro": "DeepSeek V4 Pro",
         "deepseek-chat": "DeepSeek Chat",
         "deepseek-reasoner": "DeepSeek Reasoner",
         "qwen-plus": "通义千问 Plus",

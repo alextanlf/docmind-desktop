@@ -15,7 +15,6 @@ from app.core.llm import AvailableModel, LLMProvider, ModelConfig, OpenAICompati
 from app.core.model_capabilities import (
     default_reasoning_effort,
     reasoning_levels,
-    supports_reasoning_control,
 )
 from app.core.ollama_validation import normalize_loopback_base_url
 from app.core.secrets import SecretStore
@@ -23,6 +22,7 @@ from app.remote.credentials import CredentialStore
 from app.storage.models import ProviderCredentialState
 from app.schemas.ollama import OllamaConfig, RoutingSettings, RuntimeSettingsInput
 from app.schemas.settings import (
+    MODEL_CATALOG,
     MODEL_PRESETS,
     ConnectionBindingView,
     ConnectionTestResult,
@@ -108,7 +108,9 @@ class SettingsService:
         # than "off", so switching presets never silently keeps a stale level
         # that the new vendor does not accept.
         if not payload.get("reasoningEffort"):
-            payload["reasoningEffort"] = default_reasoning_effort(update.preset)
+            payload["reasoningEffort"] = default_reasoning_effort(
+                update.preset, str(payload.get("model") or "")
+            )
         config = ModelSettingsView(**payload)
         serialized_config = config.model_dump_json()
         if update.api_key is None:
@@ -203,13 +205,17 @@ class SettingsService:
             model_presets={
                 preset: preset_models(preset) for preset in MODEL_PRESETS if preset != "custom"
             },
+            # Capabilities are keyed by preset then model id, because the same
+            # vendor's models differ (Kimi K3 vs K2.6, GLM-5.3 vs 4.6).
             model_capabilities={
-                preset: ModelPresetCapabilities(
-                    reasoning_levels=list(reasoning_levels(preset)),
-                    default_reasoning_effort=default_reasoning_effort(preset),
-                )
+                preset: {
+                    model: ModelPresetCapabilities(
+                        reasoning_levels=list(reasoning_levels(preset, model)),
+                        default_reasoning_effort=default_reasoning_effort(preset, model),
+                    )
+                    for model in MODEL_CATALOG.get(preset, ())
+                }
                 for preset in MODEL_PRESETS
-                if supports_reasoning_control(preset)
             },
             model_setup_skipped=self.model_setup_skipped(),
         )
