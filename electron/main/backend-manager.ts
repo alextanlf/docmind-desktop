@@ -46,6 +46,7 @@ export class BackendManager {
     shutdownTimeoutMs?: number;
     repoDir?: string;
     packaged?: boolean;
+    platform?: string;
     backendCommand?: string;
     backendArgs?: string[];
     backendCwd?: string;
@@ -60,6 +61,8 @@ export class BackendManager {
     const packaged = opts.packaged ?? false;
     try {
       this.runtime = resolveBackendRuntime(
+        // 只有 macOS 打包态才会从 Info.plist 的 LSEnvironment 拿到这三个值；
+        // Windows / Linux 没有对应机制，传 undefined 让契约层走 resourcesPath 自解析。
         packaged
           ? {
               DOCMIND_BACKEND_COMMAND: opts.backendCommand,
@@ -72,9 +75,10 @@ export class BackendManager {
           packaged,
           repoDir: opts.repoDir ?? process.cwd(),
           dataDir: opts.dataDir ?? "",
-          // packaged 模式下 Info.plist 里的后端路径是 $RESOURCES 占位符，
-          // 用 process.resourcesPath 展开成 <app>/Contents/Resources/...。
+          // packaged 模式下从 resourcesPath 解析后端路径：
+          // macOS 是 <app>/Contents/Resources，Windows 是 <安装目录>/resources。
           resourcesPath: packaged ? process.resourcesPath : undefined,
+          platform: opts.platform ?? process.platform,
         },
       );
     } catch {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from typing import Protocol
 
 import keyring
@@ -15,7 +16,37 @@ class SecretStore(Protocol):
     def delete(self, name: str) -> None: ...
 
 
+def _lock_secret_persistence_to_this_machine() -> None:
+    """把 Windows 凭据的持久化范围从「企业漫游」改成「仅本机」。
+
+    keyring 的 Windows 后端默认用 ``CRED_PERSIST_ENTERPRISE``，凭据会随用户的
+    域漫游配置同步到其他机器。DocMind 存的是模型厂商 API Key 和远程知识库
+    凭据，不该跟着账号走到别的电脑上，所以显式降级为 ``CRED_PERSIST_LOCAL_MACHINE``
+    ——仍然由 DPAPI 用用户密钥加密，但只在本机凭据管理器里留存。
+
+    平台差异：macOS 钥匙串与 Linux SecretService 没有「漫游」这个维度，
+    凭据本来就只在本机，所以这个调用只在 Windows 上执行。
+
+    失败不致命：设不进去只是保持库默认行为（仍能正常存取），不值得因此让整个
+    应用起不来。真正读不到凭据时 ``_safe_secret_get`` 那侧会表现为「未配置」。
+    """
+    if sys.platform != "win32":
+        return
+    backend = keyring.get_keyring()
+    # 只有 Windows 后端有 persist 属性；其他后端设了也没意义。
+    if not hasattr(backend, "persist"):
+        return
+    try:
+        # Persistence 描述符接受 'local machine' 字符串，内部转成 win32cred 常量。
+        backend.persist = "local machine"  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - 拿到底层 win32cred 失败时保持默认即可
+        return
+
+
 class KeyringSecretStore:
+    def __init__(self) -> None:
+        _lock_secret_persistence_to_this_machine()
+
     def get(self, name: str) -> str | None:
         try:
             return keyring.get_password(KEYRING_SERVICE, name)

@@ -1,6 +1,6 @@
 # DocMind
 
-DocMind 是一个运行在 macOS 本机的个人知识库助手。它把网页、PDF、Markdown 和语雀文档集中到一个地方，让你可以浏览、整理和提问，并且每个回答都尽量带上来源引用。
+DocMind 是一个运行在 macOS 或 Windows 本机的个人知识库助手。它把网页、PDF、Markdown 和语雀文档集中到一个地方，让你可以浏览、整理和提问，并且每个回答都尽量带上来源引用。
 
 ## 它能做什么
 
@@ -27,11 +27,13 @@ DocMind 是一个运行在 macOS 本机的个人知识库助手。它把网页�
 
 ### 1. 准备环境
 
-需要 macOS，以及：
+需要 macOS 或 Windows，以及：
 
 - Node.js 20 或更高版本
 - Python 3.11 或更高版本
 - [uv](https://docs.astral.sh/uv/)
+
+Windows 上的 shell 脚本需要在 Git Bash 或 MSYS2 里执行。
 
 ### 2. 安装依赖
 
@@ -52,7 +54,7 @@ npm run dev
 
 启动后，在设置中选择模型服务，并填写 API Key。DocMind 支持 DeepSeek、Qwen、OpenAI 和自定义 OpenAI-compatible 服务。
 
-API Key 只保存在 macOS Keychain 中，不会写入 SQLite、诊断信息或日志。
+API Key 只保存在系统凭据存储中（macOS Keychain / Windows 凭据管理器），不会写入 SQLite、诊断信息或日志。Windows 上的凭据被显式限制为仅本机保存，不会随域漫游配置同步到其他电脑。
 
 进入工作台不要求绑定语雀。需要使用时，在“设置 → 连接与绑定”中按需选择：
 
@@ -60,7 +62,7 @@ API Key 只保存在 macOS Keychain 中，不会写入 SQLite、诊断信息或�
 - **语雀 API**：填写语雀个人访问令牌并验证；验证通过后，语雀读写会优先使用 API
 - **飞书绑定**：填写飞书自定义机器人的 Webhook，验证成功后会发送一条测试消息
 
-语雀 API Token、飞书 Webhook 和模型 API Key 一样只保存在 macOS Keychain 中。第一次需要语义检索时，应用会提示准备 embedding 模型，下载体积约 400 MB。
+语雀 API Token、飞书 Webhook 和模型 API Key 一样只保存在系统凭据存储中。第一次需要语义检索时，应用会提示准备 embedding 模型，下载体积约 400 MB。
 
 应用内“新建知识库”默认创建纯本地知识库，文档会保存在本机并建立本地索引，不要求登录语雀。已绑定的语雀知识库仍会显示在列表中，可以继续同步远端内容。
 
@@ -84,7 +86,7 @@ API Key 只保存在 macOS Keychain 中，不会写入 SQLite、诊断信息或�
 ## 隐私和数据归属
 
 - 文档索引和缓存默认保存在本机应用数据目录
-- API Key 仅保存在 macOS Keychain
+- API Key 仅保存在系统凭据存储（macOS Keychain / Windows 凭据管理器）
 - 开启联网搜索后（“自动”模式或确认联网时），应用会按“模型内置联网 → Tavily → SearXNG（已配置时）→ Bing/DuckDuckGo 免费兜底”的顺序访问搜索服务；免费兜底会抓取命中结果的网页正文（自动剔除导航、侧栏等噪声）；关闭联网搜索时不会访问
 - 免费兜底的网页正文由本机直接抓取，目标网站会看到你的网络地址；不开启联网搜索时不会发生任何抓取
 - 本地文件路径不会进入回答中的引用或持久化内容
