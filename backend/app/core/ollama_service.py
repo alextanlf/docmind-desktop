@@ -61,6 +61,7 @@ class OllamaService:
         *,
         config: OllamaConfig | None = None,
         clock: Callable[[], float] | None = None,
+        base_url_provider: Callable[[], str] | None = None,
     ) -> None:
         if config is None and isinstance(base_url, OllamaConfig):
             config = base_url
@@ -72,14 +73,21 @@ class OllamaService:
                 timeout_seconds=max(float(timeout), 0.001),
             )
         self.config = config
-        self.base_url = config.base_url.rstrip("/")
+        self._base_url = config.base_url.rstrip("/")
+        # When injected, the address is re-read on every access so a settings
+        # change takes effect without rebuilding this long-lived service (it backs
+        # the pull worker and the model preflight). Keeping one instance in app
+        # state while a separate provider holds the user-configured URL would make
+        # pulls talk to a different host than inference does.
+        self._base_url_provider = base_url_provider
+        self._resolved_base_url = self._base_url
+        self._health: _HealthCache | None = None
         self.model = config.model
         self.transport = transport
         self.timeout = config.timeout_seconds
         self.resolver = resolver
         self.store = store
         self._clock = clock or time.monotonic
-        self._health: _HealthCache | None = None
         self._pulls: dict[UUID, OllamaPullView] = {}
         self._events: dict[UUID, list[dict[str, object]]] = {}
         self._tasks: dict[UUID, asyncio.Task[Any]] = {}
@@ -92,10 +100,32 @@ class OllamaService:
         if self.resolver is None:
             self.resolver = getattr(self.coordinator, "resolver", None)
 
+    @property
+    def base_url(self) -> str:
+        if self._base_url_provider is not None:
+            resolved = self._base_url_provider().rstrip("/")
+            if resolved:
+                # A changed address invalidates the cached health probe: the
+                # cached result describes the old host and would otherwise mask
+                # the new one for HEALTH_CACHE_SECONDS.
+                if resolved != self._resolved_base_url:
+                    self._resolved_base_url = resolved
+                    self._health = None
+                return resolved
+        return self._base_url
+
+    @base_url.setter
+    def base_url(self, value: str) -> None:
+        self._base_url = value.rstrip("/")
+        self._resolved_base_url = self._base_url
+
     def invalidate_health(self) -> None:
         self._health = None
 
     def _cache_is_fresh(self) -> bool:
+        # Touch base_url first so a settings-driven address change clears the
+        # cache before we decide the cached answer is still valid.
+        _ = self.base_url
         return (
             self._health is not None
             and self._clock() - self._health.checked_monotonic < HEALTH_CACHE_SECONDS

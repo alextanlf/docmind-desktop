@@ -235,3 +235,57 @@ async def test_pull_worker_stops_without_extra_poll_after_event():
         stop.set()
     await asyncio.gather(run_pull_worker(service, stop, interval=0.001), stop_soon())
     assert service.calls > 0
+
+
+@pytest.mark.asyncio
+async def test_base_url_provider_is_re_read_on_every_access():
+    """Catches a long-lived service pinning the address from construction time.
+
+    This service backs the pull worker and the model preflight, while
+    inference goes through OllamaProvider built from the same setting. If the
+    address is frozen at construction, changing it in settings makes pulls talk
+    to a different host than inference does — an IPv6-only Ollama reachable only
+    via ``[::1]`` would fail to pull while answering fine.
+    """
+    current = {"url": "http://127.0.0.1:11434"}
+    service = OllamaService(base_url_provider=lambda: current["url"])
+
+    assert service.base_url == "http://127.0.0.1:11434"
+
+    current["url"] = "http://[::1]:11434"
+    assert service.base_url == "http://[::1]:11434"
+
+    # Trailing-slash normalisation must still apply to the injected value.
+    current["url"] = "http://localhost:11434/"
+    assert service.base_url == "http://localhost:11434"
+
+
+@pytest.mark.asyncio
+async def test_base_url_provider_requests_hit_the_current_host():
+    """The injected address must reach the wire, not just the property."""
+    seen: list[str] = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(200, json={"models": []})
+
+    current = {"url": "http://127.0.0.1:11434"}
+    service = OllamaService(
+        base_url_provider=lambda: current["url"], transport=httpx.MockTransport(handler)
+    )
+
+    await service.models()
+    current["url"] = "http://[::1]:11434"
+    await service.models()
+
+    assert seen == ["http://127.0.0.1:11434/api/tags", "http://[::1]:11434/api/tags"]
+
+
+@pytest.mark.asyncio
+async def test_base_url_provider_falls_back_when_unset():
+    """An empty or missing setting must not produce a malformed URL."""
+    service = OllamaService("http://127.0.0.1:11434", base_url_provider=lambda: "")
+    assert service.base_url == "http://127.0.0.1:11434"
+
+    # The main.py provider returns "" before SettingsService exists.
+    assert service.base_url.startswith("http://127.0.0.1:11434")

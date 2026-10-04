@@ -250,7 +250,20 @@ def create_app(
         database.upgrade()
         ollama_pull_store = OllamaPullStore(database)
         ollama_pull_store.recover_interrupted()
-        app.state.ollama_service = OllamaService("http://127.0.0.1:11434", store=ollama_pull_store)
+
+        def _configured_ollama_base_url() -> str:
+            # Read lazily: this service is constructed before SettingsService, and
+            # the user can change the address at any time. Resolving per access
+            # keeps pulls and preflight on the same host as inference
+            # (OllamaProvider is built from the same value in _chat_router).
+            service = getattr(app.state, "settings_service", None)
+            if service is None:
+                return ""
+            return service.runtime().ollama.base_url
+
+        app.state.ollama_service = OllamaService(
+            base_url_provider=_configured_ollama_base_url, store=ollama_pull_store
+        )
         ollama_stop_event = asyncio.Event()
         ollama_worker_task = (
             asyncio.create_task(run_pull_worker(app.state.ollama_service, ollama_stop_event))
