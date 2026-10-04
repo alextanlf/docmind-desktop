@@ -128,7 +128,14 @@ class PlaywrightYuqueGateway:
                 await login.with_retry("open-login", open_login_page)
                 if not await login.wait_until_logged_in(timeout=600_000):
                     await login._capture_failure("login-timeout")
-                    raise DomainError("YUQUE_LOGIN_REQUIRED", "语雀登录超时或已取消", 408, True, "重新登录语雀")
+                    raise DomainError(
+                        "YUQUE_LOGIN_REQUIRED",
+                        "语雀登录超时或已取消",
+                        408,
+                        True,
+                        "重新登录语雀",
+                        auth_expired=True,
+                    )
                 return LoginResult(
                     logged_in=True,
                     account_label=_mask_account(await login.account_label()),
@@ -450,7 +457,14 @@ class PlaywrightYuqueGateway:
                 if await login.is_logged_in():
                     return
                 if _is_login_url(page.url):
-                    raise DomainError("YUQUE_LOGIN_REQUIRED", "语雀登录已失效，请重新登录", 401, False, "重新登录语雀")
+                    raise DomainError(
+                        "YUQUE_LOGIN_REQUIRED",
+                        "语雀登录已失效，请重新登录",
+                        401,
+                        False,
+                        "重新登录语雀",
+                        auth_expired=True,
+                    )
                 raise DomainError("YUQUE_PAGE_CHANGED", "语雀页面结构已变化，请重新登录后重试", 503, True)
 
             await login.with_retry(f"{operation}-authenticate", authenticate)

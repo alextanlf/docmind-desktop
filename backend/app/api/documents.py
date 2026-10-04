@@ -481,10 +481,9 @@ def _remove_local_files(request: Request, document_id: str) -> None:
 
 
 def _remote_failure(error: Exception) -> DomainError:
-    if isinstance(error, DomainError) and error.code in {
-        "REMOTE_LOGIN_REQUIRED",
-        "YUQUE_LOGIN_REQUIRED",
-    }:
+    # 只认 DomainError 自带的 auth_expired 语义标记，不列举任何平台错误码——
+    # 新增 provider 时只要在抛出点声明该标记，就会自动获得正确透传行为。
+    if isinstance(error, DomainError) and error.auth_expired:
         return error
     status_code = error.status_code if isinstance(error, DomainError) else 503
     return DomainError(

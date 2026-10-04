@@ -443,6 +443,7 @@ describe("设置", () => {
       "MODEL_PRESET_INVALID",
       "REMOTE_LOGIN_REQUIRED",
       "YUQUE_LOGIN_REQUIRED",
+      "FEISHU_LOGIN_REQUIRED",
       "VALIDATION_ERROR",
       "DESTRUCTIVE_OPERATION",
     ]) {

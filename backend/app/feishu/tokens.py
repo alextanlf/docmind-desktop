@@ -194,6 +194,7 @@ class FeishuTokenManager:
                 401,
                 False,
                 "在设置中配置飞书自建应用或完成账号授权",
+                auth_expired=True,
             )
         return token
 

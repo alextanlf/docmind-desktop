@@ -206,7 +206,12 @@ class YuqueApiGateway:
         token = self._token()
         if token is None:
             raise DomainError(
-                "YUQUE_LOGIN_REQUIRED", "尚未绑定语雀 API", 401, False, "配置语雀 API Token"
+                "YUQUE_LOGIN_REQUIRED",
+                "尚未绑定语雀 API",
+                401,
+                False,
+                "配置语雀 API Token",
+                auth_expired=True,
             )
         return token
 

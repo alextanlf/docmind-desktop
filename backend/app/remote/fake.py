@@ -220,7 +220,12 @@ class FakeRemoteProvider:
     def _require_login(self, allow_first_use: bool = False) -> None:
         if not self._logged_in and not allow_first_use:
             raise DomainError(
-                "REMOTE_LOGIN_REQUIRED", "请先登录远程知识库", 401, False, "重新登录"
+                "REMOTE_LOGIN_REQUIRED",
+                "请先登录远程知识库",
+                401,
+                False,
+                "重新登录",
+                auth_expired=True,
             )
 
     def _repository(self, repository_id: str) -> RemoteRepository:

@@ -186,7 +186,7 @@ def test_confirmed_delete_keeps_local_state_when_remote_delete_fails(client, aut
     )
     document_id = created.json()["id"]
 
-    async def fail_delete(_: str) -> None:
+    async def fail_delete(document_id: str, repository_id: str) -> None:
         raise DomainError("YUQUE_PAGE_CHANGED", "remote unavailable", 503, True)
 
     gateway.delete_document = fail_delete  # type: ignore[method-assign]
@@ -197,6 +197,73 @@ def test_confirmed_delete_keeps_local_state_when_remote_delete_fails(client, aut
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "REMOTE_OPERATION_FAILED"
     assert client.app.state.import_service.document_store.get(document_id) is not None
+
+
+@pytest.mark.parametrize(
+    ("code", "status_code", "message"),
+    [
+        # 语雀：曾经被通用层硬编码白名单覆盖。
+        ("YUQUE_LOGIN_REQUIRED", 401, "语雀登录已失效，请重新登录"),
+        # 飞书：曾因不在白名单里而被降级成 503「重试远程操作」，而重试必然再次失败。
+        ("FEISHU_LOGIN_REQUIRED", 401, "飞书登录已失效，请重新授权"),
+        # 未登记过的 provider：只要声明 auth_expired 就能自动获得透传行为。
+        ("ACME_LOGIN_REQUIRED", 401, "ACME 登录已失效，请重新登录"),
+    ],
+)
+def test_auth_expired_errors_pass_through_without_provider_coupling(
+    client, auth_headers, code: str, status_code: int, message: str
+) -> None:
+    """Catches the generic layer recognising provider error codes.
+
+    The mapper must branch on the ``auth_expired`` flag instead of an
+    enumeration of platform codes, so any provider's login failure reaches the
+    user as-is. Hard-coding a third code here would have passed under the old
+    implementation only for that code; adding a provider used to silently
+    downgrade to ``REMOTE_OPERATION_FAILED``.
+    """
+    repository_id, gateway = _seed_repository(client)
+    created = client.post(
+        f"/api/repositories/{repository_id}/documents",
+        headers=auth_headers,
+        json={"title": "Auth", "content": "# Auth\n\n凭证失效"},
+    )
+    document_id = created.json()["id"]
+
+    async def require_login(document_id: str, repository_id: str) -> None:
+        raise DomainError(code, message, status_code, False, "重新登录", auth_expired=True)
+
+    gateway.delete_document = require_login  # type: ignore[method-assign]
+    response = client.request(
+        "DELETE", f"/api/documents/{document_id}", headers=auth_headers, json={"confirm": True}
+    )
+
+    body = response.json()["error"]
+    assert response.status_code == status_code
+    assert body["code"] == code
+    assert body["message"] == message
+    assert body["retryable"] is False
+
+
+def test_generic_remote_error_is_normalised_without_auth_expired(client, auth_headers) -> None:
+    """Catches loss of the fallback path: non-auth failures still normalise."""
+    repository_id, gateway = _seed_repository(client)
+    created = client.post(
+        f"/api/repositories/{repository_id}/documents",
+        headers=auth_headers,
+        json={"title": "State", "content": "# State\n\n状态管理"},
+    )
+    document_id = created.json()["id"]
+
+    async def fail_delete(document_id: str, repository_id: str) -> None:
+        # Same message shape as an auth error but without the flag.
+        raise DomainError("ACME_LOGIN_REQUIRED", "看起来像登录失效", 503, True)
+
+    gateway.delete_document = fail_delete  # type: ignore[method-assign]
+    response = client.request(
+        "DELETE", f"/api/documents/{document_id}", headers=auth_headers, json={"confirm": True}
+    )
+
+    assert response.json()["error"]["code"] == "REMOTE_OPERATION_FAILED"
 
 
 def test_index_upsert_failure_compensates_vectors_and_leaves_old_index(client, auth_headers) -> None:
