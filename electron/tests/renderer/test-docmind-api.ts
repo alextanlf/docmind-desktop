@@ -84,9 +84,11 @@ export const readySettings: SettingsView = {
 
 export const unavailableEmbedding: ModelStatus = {
   state: "unavailable",
-  modelName: "BAAI/bge-base-zh-v1.5",
-  dimension: null,
-  message: "尚未下载",
+  // 与后端 config.py::embedding_model_name 默认值保持一致（打包态内置的也是 bge-m3）。
+  // 早前这里写 bge-base-zh-v1.5/768，让测试固化了与生产不符的元数据。
+  modelName: "BAAI/bge-m3",
+  dimension: 1024,
+  message: "模型尚未准备",
   progress: 0,
 };
 

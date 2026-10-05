@@ -17,8 +17,8 @@ describe("单文档导入", () => {
       embedding: {
         status: vi.fn().mockResolvedValue({
           state: "ready",
-          modelName: "BAAI/bge-base-zh-v1.5",
-          dimension: 768,
+          modelName: "BAAI/bge-m3",
+          dimension: 1024,
           message: "已就绪",
           progress: 100,
         }),
@@ -122,8 +122,8 @@ describe("单文档导入", () => {
       embedding: {
         status: vi.fn().mockResolvedValue({
           state: "ready",
-          modelName: "BAAI/bge-base-zh-v1.5",
-          dimension: 768,
+          modelName: "BAAI/bge-m3",
+          dimension: 1024,
           message: "已就绪",
           progress: 100,
         }),
@@ -160,8 +160,8 @@ describe("单文档导入", () => {
       embedding: {
         status: vi.fn().mockResolvedValue({
           state: "ready",
-          modelName: "BAAI/bge-base-zh-v1.5",
-          dimension: 768,
+          modelName: "BAAI/bge-m3",
+          dimension: 1024,
           message: "已就绪",
           progress: 100,
         }),

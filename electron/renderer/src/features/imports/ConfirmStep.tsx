@@ -1,4 +1,4 @@
-import { Download, LoaderCircle } from "lucide-react";
+import { LoaderCircle, Play } from "lucide-react";
 import type { ModelStatus, Repository, SourcePreview } from "../../../../shared/contracts";
 
 type ConfirmStepProps = {
@@ -50,7 +50,9 @@ export function ConfirmStep({
         <div className="embedding-gate">
           <div>
             <strong>准备 Embedding 模型</strong>
-            <p>约 400 MB，首次导入前需要下载。</p>
+            {/* 模型随应用内置（package-local.sh 缺模型即拒绝打包），这里只需加载到内存，
+                写「下载 + 体积」会误导用户以为要额外下几百 MB。 */}
+            <p>模型已随应用内置，加载到内存后即可开始索引，无需额外下载。</p>
             {embedding?.state === "error" ? (
               <p className="editor-error" role="alert">
                 {embedding.message}
@@ -66,7 +68,7 @@ export function ConfirmStep({
             {preparing || embedding?.state === "downloading" ? (
               <LoaderCircle aria-hidden="true" className="spin" size={16} />
             ) : (
-              <Download aria-hidden="true" size={16} />
+              <Play aria-hidden="true" size={16} />
             )}
             {preparing || embedding?.state === "downloading" ? "正在准备…" : "准备模型"}
           </button>

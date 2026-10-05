@@ -32,6 +32,10 @@ class BGEEmbeddingProvider:
         self._status = ModelStatus(
             state="unavailable",
             model_name=settings.model_name,
+            # 注意：这里的「已缓存」是前端 EmbeddingStatus.tsx::isCached 的判据字符串，
+            # 改文案必须同步改前端，否则前端会退化成「未缓存」提示分支。
+            # 措辞刻意不用「下载」：打包态模型走 bundled_onnx_dir（随应用分发），
+            # 真实动作是「从内置目录加载到内存」，说成下载会误导用户以为要额外下几百 MB。
             message="模型已缓存，点击加载" if self._cached_model else "模型尚未准备",
         )
         self._lock = asyncio.Lock()

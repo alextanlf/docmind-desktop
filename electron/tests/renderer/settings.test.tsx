@@ -102,16 +102,19 @@ describe("设置", () => {
     ).toHaveFocus();
   });
 
-  it("shows embedding download details, progress, retry, and remote login controls", async () => {
+  it("shows embedding load details, progress, and remote login controls", async () => {
     const api = installDocMindApi({
       remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
     });
     renderSettings();
 
-    expect(await screen.findByText("约 400 MB，首次导入前需要下载")).toBeVisible();
-    expect(screen.getByText("BAAI/bge-base-zh-v1.5")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "下载模型" }));
-    expect(await screen.findByRole("progressbar", { name: "Embedding 下载进度" })).toHaveAttribute(
+    // 模型随应用内置，UI 不得出现「下载」或任何体积字样。
+    expect(
+      await screen.findByText("首次导入文档时会自动加载，无需额外下载"),
+    ).toBeVisible();
+    expect(screen.getByText("BAAI/bge-m3")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "加载模型" }));
+    expect(await screen.findByRole("progressbar", { name: "Embedding 加载进度" })).toHaveAttribute(
       "aria-valuenow",
       "12",
     );
@@ -200,14 +203,14 @@ describe("设置", () => {
         status: vi.fn().mockResolvedValue({
           ...unavailableEmbedding,
           state: "error",
-          message: "下载失败，请检查网络",
+          message: "嵌入模型准备失败",
         }),
       },
     });
     renderSettings();
 
-    expect(await screen.findByRole("button", { name: "重试下载" })).toBeVisible();
-    expect(screen.getByRole("alert")).toHaveTextContent("下载失败，请检查网络");
+    expect(await screen.findByRole("button", { name: "重新加载" })).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent("嵌入模型准备失败");
   });
 
   it("confirms and clears only diagnostic screenshots, then refetches settings", async () => {
