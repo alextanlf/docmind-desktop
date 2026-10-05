@@ -24,6 +24,7 @@ from app.api.import_batches import router as import_batches_router
 from app.api.imports import router as imports_router
 from app.api.memory import router as memory_router
 from app.api.ollama import router as ollama_router
+from app.api.remote import router as remote_router
 from app.api.repositories import router as repositories_router
 from app.api.request_limits import RequestBodyLimitMiddleware
 from app.api.search import router as search_router
@@ -32,7 +33,6 @@ from app.api.settings import SettingsService
 from app.api.settings import router as settings_router
 from app.api.sync import router as sync_router
 from app.api.web_search import router as web_search_router
-from app.api.remote import router as remote_router
 from app.chat.service import ChatService
 from app.config import AppSettings, get_settings
 from app.core.embedding import EmbeddingProvider, FakeEmbeddingProvider, create_embedding_provider
@@ -54,6 +54,9 @@ from app.document.parser import DocumentParser
 from app.document.safe_http import SafeHttpClient
 from app.document.sources import SourceInspector
 from app.document.web_discovery import WebDiscovery
+from app.feishu.credentials import FEISHU_CREDENTIAL_SPEC
+from app.feishu.provider import FeishuProvider
+from app.feishu.tokens import FeishuTokenManager
 from app.imports.batch_service import BatchService
 from app.imports.events import InMemoryEventBroker
 from app.imports.service import ImportService
@@ -62,6 +65,11 @@ from app.memory.indexer import MemoryIndexer
 from app.memory.persistence import LocalKnowledgeStore
 from app.memory.retriever import MemoryRetriever
 from app.memory.summary import SummaryScheduler, SummaryService
+from app.remote.credentials import CredentialStore
+from app.remote.discovery import RemoteDiscovery
+from app.remote.provider import RemoteProvider
+from app.remote.registry import ProviderRegistry
+from app.remote.snapshot import read_remote_snapshot
 from app.schemas.common import HealthResponse
 from app.schemas.web_search import SearchConnectionResult
 from app.search.bing import BingProvider
@@ -75,6 +83,7 @@ from app.search.searxng import SearxngProvider
 from app.search.service import SearchService
 from app.search.tavily import TavilyProvider
 from app.storage.database import Database
+from app.storage.models import ProviderCredentialState
 from app.storage.repositories import (
     BatchImportStore,
     ConversationStore,
@@ -98,17 +107,8 @@ from app.sync.conflict import SyncConflictService
 from app.sync.refresher import DocumentRefresher
 from app.sync.scheduler import SyncScheduler
 from app.sync.service import IncrementalSyncService
-from app.remote.credentials import CredentialStore
-from app.remote.discovery import RemoteDiscovery
-from app.remote.provider import RemoteProvider
-from app.remote.registry import ProviderRegistry
-from app.remote.snapshot import read_remote_snapshot
-from app.storage.models import ProviderCredentialState
 from app.yuque.api_gateway import YuqueApiGateway, YuqueProvider
 from app.yuque.credentials import YUQUE_CREDENTIAL_SPEC
-from app.feishu.credentials import FEISHU_CREDENTIAL_SPEC
-from app.feishu.provider import FeishuProvider
-from app.feishu.tokens import FeishuTokenManager
 from app.yuque.gateway import PlaywrightYuqueGateway
 
 # 界面启动时会拉起语雀浏览器做"首次设置"检查；启动同步必须排在它后面，

@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 
 from app.remote.provider import RemoteProvider
-from app.schemas.remote import RemoteDocumentContent
 from app.schemas.sync import RemoteDocumentState
 
 

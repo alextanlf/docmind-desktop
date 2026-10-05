@@ -21,14 +21,14 @@ from app.remote.provider import ProviderCapabilities, ProviderIdentity
 from app.schemas.imports import DownloadedDocument
 from app.schemas.remote import (
     BrowserInstallResult,
-    CreateRemoteRepositoryRequest,
     CreateRemoteDocumentRequest,
+    CreateRemoteRepositoryRequest,
     LoginResult,
     LoginStatus,
-    UpdateRemoteDocumentRequest,
     RemoteDocument,
     RemoteDocumentContent,
     RemoteRepository,
+    UpdateRemoteDocumentRequest,
 )
 from app.yuque.base_page import RETRY_DELAYS
 from app.yuque.dashboard_page import DashboardPage

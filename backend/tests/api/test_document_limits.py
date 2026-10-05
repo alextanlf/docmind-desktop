@@ -8,8 +8,8 @@ from app.config import AppSettings
 from app.core.embedding import FakeEmbeddingProvider
 from app.core.secrets import MemorySecretStore
 from app.main import create_app
-from app.schemas.documents import DocumentInput
 from app.remote.fake import FakeRemoteProvider
+from app.schemas.documents import DocumentInput
 
 
 def test_document_content_preserves_whitespace_at_the_character_boundary() -> None:

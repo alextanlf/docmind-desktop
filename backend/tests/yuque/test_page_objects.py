@@ -14,11 +14,11 @@ from pydantic import SecretStr
 from app.api.errors import DomainError
 from app.config import AppSettings
 from app.schemas.remote import (
-    CreateRemoteRepositoryRequest,
     CreateRemoteDocumentRequest,
-    UpdateRemoteDocumentRequest,
+    CreateRemoteRepositoryRequest,
     RemoteDocument,
     RemoteDocumentContent,
+    UpdateRemoteDocumentRequest,
 )
 from app.yuque.base_page import BasePage
 from app.yuque.dashboard_page import DashboardPage

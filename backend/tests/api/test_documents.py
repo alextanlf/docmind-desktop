@@ -10,8 +10,8 @@ from starlette.requests import Request
 from app.api.documents import update_document
 from app.api.errors import DomainError
 from app.core.embedding import FakeEmbeddingProvider
-from app.schemas.documents import DocumentInput
 from app.remote.fake import FakeRemoteProvider
+from app.schemas.documents import DocumentInput
 
 
 class RecordingVectorStore:

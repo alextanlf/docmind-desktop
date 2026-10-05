@@ -72,7 +72,7 @@ class UserTokenBundle:
         )
 
     @staticmethod
-    def from_json(raw: str) -> "UserTokenBundle | None":
+    def from_json(raw: str) -> UserTokenBundle | None:
         try:
             data: Any = json.loads(raw)
         except ValueError:

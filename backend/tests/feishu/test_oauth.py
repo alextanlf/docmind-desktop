@@ -113,7 +113,7 @@ class _StubOAuth:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
 
-    async def run(self, app_id: str, app_secret: str):  # noqa: ANN202
+    async def run(self, app_id: str, app_secret: str):
         from app.feishu.tokens import UserTokenBundle
 
         self.calls.append((app_id, app_secret))

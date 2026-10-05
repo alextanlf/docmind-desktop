@@ -5,7 +5,6 @@ from typing import cast
 from fastapi import APIRouter, Request, status
 
 from app.api.errors import DomainError
-
 from app.remote.registry import ProviderRegistry
 from app.schemas.remote import CreateRemoteRepositoryRequest, RemoteRepository
 from app.schemas.repositories import RepositoryCreate, RepositoryUpdate, RepositoryView

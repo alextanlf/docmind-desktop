@@ -14,11 +14,11 @@ from pydantic import SecretStr
 
 from app.config import AppSettings
 from app.imports.events import EventEnvelope
+from app.remote.fake import FakeRemoteProvider
 from app.schemas.batches import BatchImportView, BatchItemPage
 from app.schemas.imports import ImportJobView, SourcePreview
 from app.schemas.repositories import RepositoryView
 from app.schemas.sessions import SessionSummary
-from app.remote.fake import FakeRemoteProvider
 
 RUNTIME_TOKEN = "integration-runtime-token"
 

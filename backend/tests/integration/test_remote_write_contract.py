@@ -3,11 +3,11 @@ from uuid import uuid4
 
 import pytest
 
-from app.schemas.batches import DiscoveryRequest
-from app.schemas.remote import CreateRemoteRepositoryRequest, CreateRemoteDocumentRequest
 from app.remote.discovery import RemoteDiscovery
 from app.remote.fake import FakeRemoteProvider
 from app.remote.registry import ProviderRegistry
+from app.schemas.batches import DiscoveryRequest
+from app.schemas.remote import CreateRemoteDocumentRequest, CreateRemoteRepositoryRequest
 
 
 class _Repos:

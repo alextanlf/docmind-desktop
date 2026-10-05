@@ -20,6 +20,8 @@ from app.document.sources import SourceInspector
 from app.imports.batch_service import BatchService
 from app.imports.events import InMemoryEventBroker
 from app.imports.service import ImportService
+from app.remote.provider import ProviderIdentity
+from app.remote.registry import ProviderRegistry
 from app.schemas.batches import ConfirmBatchInput, ConfirmBatchItem
 from app.schemas.imports import (
     DownloadedDocument,
@@ -28,8 +30,6 @@ from app.schemas.imports import (
     SourceRef,
 )
 from app.schemas.remote import RemoteDocument, RemoteDocumentContent
-from app.remote.provider import ProviderIdentity
-from app.remote.registry import ProviderRegistry
 from app.storage.models import (
     BatchImportRecord,
     BatchItemRecord,

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pytest
 
-from app.api.errors import DomainError
 from app.core.secrets import MemorySecretStore
 from app.remote.credentials import (
     CredentialChannelSpec,

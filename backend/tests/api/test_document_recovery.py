@@ -17,11 +17,11 @@ from app.config import AppSettings
 from app.core.embedding import FakeEmbeddingProvider
 from app.core.secrets import MemorySecretStore
 from app.main import create_app
+from app.remote.fake import FakeRemoteProvider
 from app.schemas.remote import CreateRemoteDocumentRequest
 from app.storage.database import Database
 from app.storage.models import DocumentChunkRecord, DocumentRecord
 from app.storage.repositories import DocumentMutationStore, RepositoryStore
-from app.remote.fake import FakeRemoteProvider
 from tests.conftest import install_remote_provider
 
 

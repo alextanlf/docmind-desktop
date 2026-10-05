@@ -16,8 +16,8 @@ from app.core.embedding import FakeEmbeddingProvider
 from app.core.llm import ChatDelta
 from app.core.secrets import MemorySecretStore
 from app.main import create_app
-from app.storage.models import DistillationRecord, MemoryChunkRecord, SessionRecord
 from app.remote.fake import FakeRemoteProvider
+from app.storage.models import DistillationRecord, MemoryChunkRecord, SessionRecord
 from tests.integration.conftest import TestAppHarness
 
 TOKEN = "memory-acceptance-token"

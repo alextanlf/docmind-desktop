@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.schemas.sync import ConflictResolution, RemoteDocumentState
 from app.remote.registry import ProviderRegistry
+from app.schemas.sync import ConflictResolution, RemoteDocumentState
 from app.sync.conflict import SyncConflictService
 
 

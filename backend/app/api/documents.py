@@ -17,11 +17,17 @@ from app.api.errors import DomainError
 from app.core.embedding import EmbeddingProvider
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
+from app.remote.provider import RemoteProvider
+from app.remote.registry import ProviderRegistry
 from app.schemas.documents import DocumentDelete, DocumentDetail, DocumentInput, DocumentSummary
 from app.schemas.imports import DownloadedDocument
+from app.schemas.remote import (
+    CreateRemoteDocumentRequest,
+    RemoteDocument,
+    UpdateRemoteDocumentRequest,
+)
 from app.schemas.sync import ConflictResolution
 from app.schemas.versioning import DocumentVersion
-from app.schemas.remote import CreateRemoteDocumentRequest, UpdateRemoteDocumentRequest, RemoteDocument
 from app.storage.models import DocumentChunkRecord, DocumentRecord, RepositoryRecord
 from app.storage.repositories import (
     DocumentMutationStore,
@@ -30,8 +36,6 @@ from app.storage.repositories import (
     VectorCleanupStore,
 )
 from app.storage.vectorstore import PersistentVectorStore
-from app.remote.provider import RemoteProvider
-from app.remote.registry import ProviderRegistry
 
 router = APIRouter(tags=["documents"])
 

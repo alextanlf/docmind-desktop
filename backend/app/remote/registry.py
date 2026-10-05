@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from app.api.errors import DomainError
 from app.remote.credentials import CredentialStore, ProviderCredentialSpec
-from app.remote.provider import ProviderCapabilities, ProviderIdentity, RemoteProvider
+from app.remote.provider import ProviderCapabilities, RemoteProvider
 from app.schemas.remote import ProviderCapabilitiesView, ProviderSummaryView
 
 
@@ -56,9 +56,9 @@ class ProviderRegistry:
                 # Only channels the provider itself declares count — e.g. a
                 # Feishu *webhook* binding must not make the Feishu
                 # knowledge-base provider look configured.
-                is_configured = lambda: store.any_verified(name, channels)  # noqa: E731
+                is_configured = lambda: store.any_verified(name, channels)
             else:
-                is_configured = lambda: False  # noqa: E731
+                is_configured = lambda: False
         self._registrations[name] = ProviderRegistration(
             provider=provider,
             is_configured=is_configured,
@@ -94,7 +94,7 @@ class ProviderRegistry:
             return True
         try:
             return bool(registration.is_configured())
-        except Exception:
+        except Exception:  # noqa: BLE001 - a failing probe means "not configured"
             return False
 
     def any_configured(self) -> bool:

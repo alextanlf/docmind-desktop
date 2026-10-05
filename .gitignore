@@ -21,8 +21,11 @@ test-results/
 blob-report/
 .docmind-test-data/
 artifacts/
-build/electron-dist/Electron.app
-build/electron-dist/version
+# Local Electron runtime: the symlinks point at this machine's
+# /Users/<name>/Applications, so they must never be committed. Enumerate the
+# whole directory rather than naming entries — a stray "Electron 2.app" from a
+# re-download previously slipped past the explicit rules.
+build/electron-dist/
 build/embedding-models/
 backend/build/
 

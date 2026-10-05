@@ -48,7 +48,7 @@ class OAuthSettings:
     timeout: float = _DEFAULT_TIMEOUT_SECONDS
 
     @staticmethod
-    def from_env() -> "OAuthSettings":
+    def from_env() -> OAuthSettings:
         try:
             port = int(os.getenv("DOCMIND_FEISHU_OAUTH_PORT", DEFAULT_OAUTH_PORT))
         except ValueError:
@@ -128,7 +128,8 @@ class FeishuOAuthFlow:
             except Exception:  # noqa: BLE001 - malformed requests are ignored
                 try:
                     await self._respond(writer, _ERROR_HTML)
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001,S110 - the one-shot server is
+                    # tearing down anyway; nothing left to report the failure to
                     pass
             finally:
                 writer.close()
@@ -150,7 +151,7 @@ class FeishuOAuthFlow:
         async with server:
             try:
                 self._open_url(url)
-            except Exception as error:  # noqa: BLE001 - browser launch failure
+            except Exception as error:
                 raise DomainError(
                     "FEISHU_OAUTH_UNAVAILABLE",
                     "无法打开系统浏览器完成飞书授权",
@@ -160,7 +161,7 @@ class FeishuOAuthFlow:
                 ) from error
             try:
                 return await asyncio.wait_for(result, timeout=self._settings.timeout)
-            except asyncio.TimeoutError as error:
+            except TimeoutError as error:
                 raise DomainError(
                     "FEISHU_OAUTH_TIMEOUT",
                     "飞书授权超时，未完成登录",

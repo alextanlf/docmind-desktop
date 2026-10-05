@@ -16,8 +16,8 @@ Design rules:
 """
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Awaitable, Callable
 
 from app.core.secrets import SecretStore
 from app.storage.database import Database

@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import Any
 
 from app.api.errors import DomainError
-from app.schemas.sync import ConflictResolution
 from app.schemas.remote import CreateRemoteDocumentRequest, UpdateRemoteDocumentRequest
+from app.schemas.sync import ConflictResolution
 
 
 @dataclass(frozen=True)

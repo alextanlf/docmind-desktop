@@ -388,7 +388,10 @@ def _descendants_for_batch(
         for block in descendants:
             block_id = block.get("block_id")
             parent_id = block.get("parent_id")
-            if block_id in included or parent_id in included:
+            # Kept nested on purpose: the outer check admits a block whose parent
+            # is already included, the inner one guards against adding it twice.
+            # Collapsing them would skip the `not in included` test.
+            if block_id in included or parent_id in included:  # noqa: SIM102
                 if block_id not in included:
                     included.add(block_id)
                     changed = True
