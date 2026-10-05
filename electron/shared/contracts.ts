@@ -6,6 +6,21 @@ const bounded = (max: number) => z.string().min(1).max(max);
 const nullableText = (max: number) => z.string().max(max).nullable();
 const timestamp = z.string().min(1);
 
+export const RagSettingsSchema = z.object({
+  maxSources: z.number().int().min(1).max(20),
+  memoryRecallMinSimilarity: z.number().min(-1).max(1),
+});
+const OllamaRuntimeSchema = z.object({
+  baseUrl: z.string(),
+  model: z.string().max(200),
+  timeoutSeconds: z.number().positive().max(600),
+});
+const RoutingSchema = z.object({ mode: z.enum(["local_only", "cloud_only", "automatic"]) });
+const RagRuntimeSchema = RagSettingsSchema.default({
+  maxSources: 5,
+  memoryRecallMinSimilarity: 0.65,
+});
+
 export const ErrorBodySchema = z.object({
   code: z.string().min(1).max(128),
   message: z.string().min(1).max(2_000),
@@ -106,12 +121,9 @@ export const SettingsViewSchema = z.object({
     }),
   runtime: z
     .object({
-      ollama: z.object({
-        baseUrl: z.string(),
-        model: z.string().max(200),
-        timeoutSeconds: z.number().positive().max(600),
-      }),
-      routing: z.object({ mode: z.enum(["local_only", "cloud_only", "automatic"]) }),
+      ollama: OllamaRuntimeSchema,
+      routing: RoutingSchema,
+      rag: RagRuntimeSchema,
     })
     .optional(),
   yuqueApi: YuqueApiBindingViewSchema.default({
@@ -142,12 +154,9 @@ export const SettingsViewSchema = z.object({
     .default({}),
 });
 export const RuntimeSettingsInputSchema = z.object({
-  ollama: z.object({
-    baseUrl: z.string(),
-    model: z.string().max(200),
-    timeoutSeconds: z.number().positive().max(600),
-  }),
-  routing: z.object({ mode: z.enum(["local_only", "cloud_only", "automatic"]) }),
+  ollama: OllamaRuntimeSchema,
+  routing: RoutingSchema,
+  rag: RagRuntimeSchema,
 });
 export const OllamaStatusSchema = z.object({
   available: z.boolean(),

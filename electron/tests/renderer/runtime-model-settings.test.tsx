@@ -2,6 +2,8 @@ import { render, waitFor } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { appQueryClient } from "../../renderer/src/app/query-client";
+import type { SettingsView } from "../../shared/contracts";
+import { RuntimeModelSettings } from "../../renderer/src/features/settings/RuntimeModelSettings";
 import {
   clientErrorMessage,
   ollamaKeys,
@@ -60,6 +62,7 @@ describe("runtime query contracts", () => {
       result.mutateAsync({
         ollama: { baseUrl: "http://127.0.0.1:11434", model: "llama3.2", timeoutSeconds: 60 },
         routing: { mode: "local_only" },
+        rag: { maxSources: 5, memoryRecallMinSimilarity: 0.65 },
       }),
     ).rejects.toBeDefined();
     await waitFor(() => expect(api.settings.saveRuntime).toHaveBeenCalled());
@@ -80,3 +83,59 @@ function renderHookHarness<T>(factory: () => T): T {
   );
   return value;
 }
+
+describe("retrieval settings form", () => {
+  beforeEach(() => {
+    appQueryClient.clear();
+  });
+
+  function renderForm() {
+    const settings: SettingsView = {
+      ...readySettings,
+      runtime: {
+        ollama: { baseUrl: "http://127.0.0.1:11434", model: "llama3.2", timeoutSeconds: 60 },
+        routing: { mode: "cloud_only" },
+        rag: { maxSources: 5, memoryRecallMinSimilarity: 0.65 },
+      },
+    };
+    return render(
+      <QueryClientProvider client={appQueryClient}>
+        <RuntimeModelSettings settings={settings} />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("shows the persisted retrieval limits instead of the fallback", () => {
+    const { getByLabelText } = renderForm();
+
+    expect(getByLabelText(/片段上限/)).toHaveValue(5);
+    expect(getByLabelText(/记忆召回相似度/)).toHaveValue(0.65);
+  });
+
+  it("explains that the similarity floor only gates memory recall", () => {
+    const { container } = renderForm();
+
+    expect(container.textContent).toContain("只影响记忆召回");
+  });
+
+  // A runtime persisted before the rag key existed must still render; the inputs
+  // are controlled, so a missing field would throw instead of showing a default.
+  it("falls back to defaults when the stored runtime predates the rag key", () => {
+    const settings = {
+      ...readySettings,
+      runtime: {
+        ollama: { baseUrl: "http://127.0.0.1:11434", model: "llama3.2", timeoutSeconds: 60 },
+        routing: { mode: "cloud_only" as const },
+      },
+    } as unknown as SettingsView;
+
+    const { getByLabelText } = render(
+      <QueryClientProvider client={appQueryClient}>
+        <RuntimeModelSettings settings={settings} />
+      </QueryClientProvider>,
+    );
+
+    expect(getByLabelText(/片段上限/)).toHaveValue(5);
+    expect(getByLabelText(/记忆召回相似度/)).toHaveValue(0.65);
+  });
+});

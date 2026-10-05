@@ -84,7 +84,6 @@ class HybridRetriever:
         database: Database,
         vector_store: PersistentVectorStore,
         embedding_provider: EmbeddingProvider,
-        similarity_threshold: float = 0.65,
         include_overview: bool = True,
         overview_documents: int = 3,
         candidate_pool: int = 50,
@@ -93,7 +92,6 @@ class HybridRetriever:
         self.database = database
         self.vector_store = vector_store
         self.embedding_provider = embedding_provider
-        self.similarity_threshold = similarity_threshold
         self.include_overview = include_overview
         self.overview_documents = max(overview_documents, 0)
         # 送进 RRF 的候选池大小。原来两个通道都硬编码 top_k=10，对单篇文档够用，

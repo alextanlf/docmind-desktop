@@ -7,12 +7,19 @@ import { OllamaPullForm } from "./OllamaPullForm";
 const fallback: RuntimeSettingsInput = {
   ollama: { baseUrl: "http://127.0.0.1:11434", model: "llama3.2", timeoutSeconds: 60 },
   routing: { mode: "automatic" },
+  rag: { maxSources: 5, memoryRecallMinSimilarity: 0.65 },
 };
 
 export function RuntimeModelSettings({ settings }: { settings: SettingsView }) {
   const mutation = useSaveRuntimeMutation();
   const initial = settings.runtime ?? fallback;
-  const [draft, setDraft] = useState<RuntimeSettingsInput>(initial);
+  const [draft, setDraft] = useState<RuntimeSettingsInput>({
+    ...fallback,
+    ...initial,
+    // A runtime saved before the rag key existed has no `rag`; the schema default
+    // only applies on the wire, so fill it in here to keep the inputs controlled.
+    rag: initial.rag ?? fallback.rag,
+  });
   const update = (patch: Partial<RuntimeSettingsInput>) =>
     setDraft((value) => ({ ...value, ...patch }));
   const save = () => mutation.mutate(draft);
@@ -64,6 +71,40 @@ export function RuntimeModelSettings({ settings }: { settings: SettingsView }) {
           onChange={(e) => update({ ollama: { ...draft.ollama, model: e.target.value } })}
         />
       </label>
+      <fieldset>
+        <legend>检索</legend>
+        <label>
+          送入模型的片段上限（1–20）
+          <input
+            type="number"
+            min={1}
+            max={20}
+            value={draft.rag.maxSources}
+            onChange={(e) =>
+              update({ rag: { ...draft.rag, maxSources: Number(e.target.value) } })
+            }
+          />
+        </label>
+        <p role="status">
+          调高能改善“总结全部”这类全局提问的召回，代价是提示词变长、调用变贵。
+        </p>
+        <label>
+          记忆召回相似度下限（0–1）
+          <input
+            type="number"
+            min={0}
+            max={1}
+            step={0.05}
+            value={draft.rag.memoryRecallMinSimilarity}
+            onChange={(e) =>
+              update({
+                rag: { ...draft.rag, memoryRecallMinSimilarity: Number(e.target.value) },
+              })
+            }
+          />
+        </label>
+        <p role="status">只影响记忆召回；文档检索刻意不设相似度门槛，以免漏掉短查询。</p>
+      </fieldset>
       <button
         className="button button-primary"
         type="button"

@@ -41,10 +41,13 @@ class AppSettings(BaseSettings):
     # 随应用分发的内置模型根目录（Electron 打包态注入 DOCMIND_BUNDLED_MODELS_DIR），
     # 对应 .app/Contents/Resources/models，只读。
     bundled_models_dir: Path | None = None
-    rag_similarity_threshold: float = Field(default=0.65, ge=-1.0, le=1.0)
     # 送进 LLM 的检索块数上限。召回候选池(见 HybridRetriever.candidate_pool)可以很大，
     # 但提示词长度与成本随块数线性增长，所以最终结果在这里封顶。
     rag_max_sources: int = Field(default=5, ge=1, le=20)
+    # 记忆召回的相似度下限。**只作用于记忆召回**，检索侧刻意不设阈值门控：
+    # 固定绝对余弦分数随查询长度漂移（实测 0.59~0.99），任何阈值都会错杀短查询。
+    # 详见 memory/retriever.py 的过滤条件。
+    memory_recall_min_similarity: float = Field(default=0.65, ge=-1.0, le=1.0)
     staging_manifest_max_bytes: int = Field(default=2 * 1024 * 1024, gt=0)
     batch_max_items: int = Field(default=1000, gt=0)
     sync_interval_seconds: float = Field(default=0.0, ge=0.0)

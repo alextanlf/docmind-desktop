@@ -47,9 +47,24 @@ class RoutingSettings(WireModel):
     mode: Literal["local_only", "cloud_only", "automatic"] = "cloud_only"
 
 
+class RagSettings(WireModel):
+    """Retrieval and memory-recall limits surfaced in the settings UI.
+
+    ``max_sources`` caps how many chunks reach the LLM; raising it improves
+    recall on global questions ("summarize everything") at linear prompt cost.
+    ``memory_recall_min_similarity`` only gates memory recall — document
+    retrieval intentionally has no similarity gate, because a fixed absolute
+    cosine threshold was measured to reject legitimate short queries.
+    """
+
+    max_sources: int = Field(default=5, ge=1, le=20)
+    memory_recall_min_similarity: float = Field(default=0.65, ge=-1.0, le=1.0)
+
+
 class RuntimeSettingsInput(WireModel):
     ollama: OllamaConfig = OllamaConfig()
     routing: RoutingSettings = RoutingSettings()
+    rag: RagSettings = RagSettings()
 
 
 class GenerationRoute(WireModel):

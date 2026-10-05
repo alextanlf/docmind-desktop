@@ -19,7 +19,7 @@ from app.core.secrets import SecretStore
 from app.feishu.credentials import FEISHU_WEBHOOK_SECRET_REF
 from app.feishu.webhook import normalize_feishu_webhook, probe_feishu_webhook
 from app.remote.credentials import CredentialStore
-from app.schemas.ollama import OllamaConfig, RoutingSettings, RuntimeSettingsInput
+from app.schemas.ollama import OllamaConfig, RagSettings, RoutingSettings, RuntimeSettingsInput
 from app.schemas.settings import (
     MODEL_CATALOG,
     MODEL_PRESETS,
@@ -56,6 +56,7 @@ WEB_SEARCH_CONFIG_KEY = "web-search.config"
 WEB_SEARCH_API_KEY_NAME = "web-search:tavily"
 OLLAMA_RUNTIME_CONFIG_KEY = "ollama.config"
 MODEL_ROUTING_KEY = "model.routing"
+RAG_CONFIG_KEY = "rag.config"
 ProviderFactory = Callable[[ModelConfig, str], LLMProvider]
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -326,12 +327,15 @@ class SettingsService:
     def runtime(self) -> RuntimeSettingsInput:
         raw_ollama = self.setting_store.get(OLLAMA_RUNTIME_CONFIG_KEY)
         raw_routing = self.setting_store.get(MODEL_ROUTING_KEY)
+        raw_rag = self.setting_store.get(RAG_CONFIG_KEY)
+        fallback = RuntimeSettingsInput()
         try:
-            ollama = OllamaConfig.model_validate_json(raw_ollama) if raw_ollama else RuntimeSettingsInput().ollama
-            routing = RoutingSettings.model_validate_json(raw_routing) if raw_routing else RuntimeSettingsInput().routing
+            ollama = OllamaConfig.model_validate_json(raw_ollama) if raw_ollama else fallback.ollama
+            routing = RoutingSettings.model_validate_json(raw_routing) if raw_routing else fallback.routing
+            rag = RagSettings.model_validate_json(raw_rag) if raw_rag else fallback.rag
         except ValueError as error:
             raise DomainError("SETTINGS_INVALID", "运行时设置无效，请重新配置", 500) from error
-        return RuntimeSettingsInput(ollama=ollama, routing=routing)
+        return RuntimeSettingsInput(ollama=ollama, routing=routing, rag=rag)
 
     async def save_runtime(self, update: RuntimeSettingsInput) -> RuntimeSettingsInput:
         # Resolve/validate the complete update before touching either key so a
@@ -348,6 +352,7 @@ class SettingsService:
             {
                 OLLAMA_RUNTIME_CONFIG_KEY: normalized.ollama.model_dump_json(),
                 MODEL_ROUTING_KEY: normalized.routing.model_dump_json(),
+                RAG_CONFIG_KEY: normalized.rag.model_dump_json(),
             }
         )
         return normalized

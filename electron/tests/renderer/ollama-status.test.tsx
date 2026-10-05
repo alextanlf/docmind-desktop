@@ -10,6 +10,7 @@ import { installDocMindApi, readySettings } from "./test-docmind-api";
 const baseRuntime = {
   ollama: { baseUrl: "http://127.0.0.1:11434", model: "qwen2.5:7b", timeoutSeconds: 60 },
   routing: { mode: "cloud_only" as const },
+  rag: { maxSources: 5, memoryRecallMinSimilarity: 0.65 },
 };
 const settings: SettingsView = { ...readySettings, runtime: baseRuntime };
 const unavailable: OllamaStatusView = {

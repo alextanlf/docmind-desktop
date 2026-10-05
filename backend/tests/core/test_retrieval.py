@@ -18,14 +18,17 @@ def test_rrf_merges_and_deduplicates_vector_and_bm25_hits() -> None:
     assert result[0].score > result[2].score
 
 
-def test_hybrid_retriever_uses_default_threshold_without_reloading_app_settings(database, tmp_path) -> None:
+def test_hybrid_retriever_uses_constructor_limits_without_reading_app_settings(database, tmp_path) -> None:
     retriever = HybridRetriever(
         database=database,
         vector_store=PersistentVectorStore(VectorStoreSettings(directory=tmp_path / "vectors")),
         embedding_provider=FakeEmbeddingProvider(EmbeddingSettings(dimension=8)),
     )
 
-    assert retriever.similarity_threshold == 0.65
+    # Retrieval deliberately has no similarity gate, so the only limit it honours
+    # is the chunk cap. It must come from the constructor, never from settings.
+    assert retriever.max_sources == 5
+    assert not hasattr(retriever, "similarity_threshold")
 
 
 @pytest.fixture
@@ -58,7 +61,6 @@ async def low_retriever(database, tmp_path) -> HybridRetriever:
         database=database,
         vector_store=store,
         embedding_provider=provider,
-        similarity_threshold=0.65,
     )
 
 
@@ -120,7 +122,7 @@ async def test_hybrid_search_returns_database_backed_fused_hits(database, tmp_pa
         [{"doc_id": document.id, "doc_title": document.title, "section_path": "State"}],
     )
     result = await HybridRetriever(
-        database=database, vector_store=store, embedding_provider=provider, similarity_threshold=0.65
+        database=database, vector_store=store, embedding_provider=provider
     ).search("@State", [repository.id])
 
     assert [hit.chunk_id for hit in result.hits] == [chunk.id]
@@ -231,7 +233,6 @@ async def test_orphan_vectors_do_not_raise_repository_confidence(database) -> No
             }
         ),  # type: ignore[arg-type]
         embedding_provider=FakeEmbeddingProvider(EmbeddingSettings(dimension=8)),
-        similarity_threshold=0.65,
     )
 
     result = await retriever.search("needle", [repository.id])
@@ -281,7 +282,7 @@ async def test_overview_chunk_is_injected_by_its_own_vector_recall(database, tmp
         ],
     )
     result = await HybridRetriever(
-        database=database, vector_store=store, embedding_provider=provider, similarity_threshold=0.65
+        database=database, vector_store=store, embedding_provider=provider
     ).search("这篇论文提出了什么方法", [repository.id])
 
     # 概览块排在最前，且它是按自己的向量召回进来的（正文召回里根本没有它）

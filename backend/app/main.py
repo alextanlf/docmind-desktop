@@ -482,7 +482,15 @@ def create_app(
         memory_store = MemoryStore(database)
         memory_store.recover_interrupted()
         memory_indexer = MemoryIndexer(database, runtime_embedding_provider, vector_store)
-        memory_retriever = MemoryRetriever(database, runtime_embedding_provider, vector_store)
+        # Persisted settings win over the env default so the settings UI actually
+        # takes effect; a fresh install still falls back to AppSettings.
+        rag_settings = app.state.settings_service.runtime().rag
+        memory_retriever = MemoryRetriever(
+            database,
+            runtime_embedding_provider,
+            vector_store,
+            similarity_threshold=rag_settings.memory_recall_min_similarity,
+        )
         await memory_indexer.replay_cleanups()
         await memory_indexer.replay_pending_indexes()
         summary_service = SummaryService(
@@ -503,8 +511,7 @@ def create_app(
                 database=database,
                 vector_store=vector_store,
                 embedding_provider=runtime_embedding_provider,
-                similarity_threshold=runtime_settings.rag_similarity_threshold,
-                max_sources=runtime_settings.rag_max_sources,
+                max_sources=rag_settings.max_sources,
             ),
             llm=runtime_llm_provider,
             conversation_store=conversation_store,

@@ -559,3 +559,47 @@ def test_clear_diagnostics_refuses_symlinked_root(client, auth_headers, app_sett
 
     assert response.status_code == 204
     assert external_png.exists()
+
+
+class TestRagSettings:
+    """RAG limits used to be env-only: AppSettings carried them but nothing
+    persisted them, so the settings UI had no way to change them."""
+
+    def test_runtime_exposes_defaults_on_a_fresh_install(
+        self, client, auth_headers
+    ) -> None:
+        response = client.get("/api/settings", headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json()["runtime"]["rag"] == {
+            "maxSources": 5,
+            "memoryRecallMinSimilarity": 0.65,
+        }
+
+    def test_saved_limits_round_trip(self, client, auth_headers) -> None:
+        current = client.get("/api/settings", headers=auth_headers).json()["runtime"]
+        response = client.post(
+            "/api/settings/runtime",
+            headers=auth_headers,
+            json={**current, "rag": {"maxSources": 12, "memoryRecallMinSimilarity": 0.4}},
+        )
+
+        assert response.status_code == 200
+        reloaded = client.get("/api/settings", headers=auth_headers).json()["runtime"]["rag"]
+        assert reloaded == {"maxSources": 12, "memoryRecallMinSimilarity": 0.4}
+
+    @pytest.mark.parametrize(
+        "rag",
+        [
+            {"maxSources": 0, "memoryRecallMinSimilarity": 0.65},
+            {"maxSources": 21, "memoryRecallMinSimilarity": 0.65},
+            {"maxSources": 5, "memoryRecallMinSimilarity": 1.5},
+        ],
+    )
+    def test_out_of_range_limits_are_rejected(self, client, auth_headers, rag) -> None:
+        current = client.get("/api/settings", headers=auth_headers).json()["runtime"]
+        response = client.post(
+            "/api/settings/runtime", headers=auth_headers, json={**current, "rag": rag}
+        )
+
+        assert response.status_code == 422
