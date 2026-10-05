@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { z } from "zod";
 import { BackendProxy, DocMindClientError, type StreamSender } from "./backend-proxy";
 import { StagedFileService } from "./staged-files";
+import { redactSecrets } from "./redaction";
 import { IPC_CHANNELS, streamEventChannel } from "../shared/channels";
 import {
   ChatStreamInputSchema,
@@ -775,10 +776,7 @@ function sanitizeSerialized(value: {
     BATCH_LIMIT_EXCEEDED: "目录超过批量导入限制",
     BATCH_SOURCE_CHANGED: "目录内容在暂存期间发生变化",
   };
-  const clean = (text: string) =>
-    text
-      .replace(/DOCMIND_SESSION_TOKEN=[^\s]+/g, "DOCMIND_SESSION_TOKEN=[redacted]")
-      .replace(/(?:[A-Za-z]:)?\/(?:[^\s/]+\/)+[^\s]*/g, "[path]");
+  const clean = (text: string) => redactSecrets(text);
   const result: {
     code: string;
     message: string;

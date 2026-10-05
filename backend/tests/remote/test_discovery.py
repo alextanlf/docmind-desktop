@@ -2,13 +2,14 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from app.api.errors import DomainError
 from app.remote.discovery import RemoteDiscovery
 from app.remote.fake import FakeRemoteProvider
 from app.remote.registry import ProviderRegistry
 from app.remote.snapshot import read_remote_snapshot
-from app.schemas.batches import DiscoveryRequest
+from app.schemas.batches import DiscoveryRequest, RemoteBinding
 from app.schemas.remote import CreateRemoteDocumentRequest, CreateRemoteRepositoryRequest
 
 
@@ -94,3 +95,20 @@ async def test_read_remote_snapshot_hashes_content() -> None:
     assert state.document_id.startswith("doc-")
     assert len(state.content_sha256) == 64
     assert content == "# One"
+
+
+class TestRemoteBindingProviderIsRequired:
+    """`provider` used to default to "yuque", so any binding that omitted it
+    silently landed on Yuque. The field is now mandatory."""
+
+    def test_provider_is_required(self) -> None:
+        with pytest.raises(ValidationError):
+            RemoteBinding(repository_id="r1", document_id="d1")
+
+    def test_explicit_provider_round_trips(self) -> None:
+        binding = RemoteBinding(provider="feishu", repository_id="r1", document_id="d1")
+        assert binding.model_dump()["provider"] == "feishu"
+
+    def test_empty_provider_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            RemoteBinding(provider="", repository_id="r1", document_id="d1")

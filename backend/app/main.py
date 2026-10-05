@@ -504,6 +504,7 @@ def create_app(
                 vector_store=vector_store,
                 embedding_provider=runtime_embedding_provider,
                 similarity_threshold=runtime_settings.rag_similarity_threshold,
+                max_sources=runtime_settings.rag_max_sources,
             ),
             llm=runtime_llm_provider,
             conversation_store=conversation_store,

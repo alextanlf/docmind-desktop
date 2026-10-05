@@ -88,6 +88,7 @@ class HybridRetriever:
         include_overview: bool = True,
         overview_documents: int = 3,
         candidate_pool: int = 50,
+        max_sources: int = 5,
     ) -> None:
         self.database = database
         self.vector_store = vector_store
@@ -100,12 +101,16 @@ class HybridRetriever:
         # 召回阶段扩大候选池几乎不花钱（Chroma 一次 ANN 查询 + BM25 本就是全库扫描），
         # 真正的成本在最终送进 LLM 的块数，那仍由 limit 控制。
         self.candidate_pool = max(candidate_pool, 1)
+        # 送进 LLM 的块数上限。召回可以放宽，但提示词长度与成本随块数线性增长，
+        # 所以这里保留一个显式上限；曾经是 search() 里的裸字面量 5，导致调用方传
+        # top_k=20 被无声砍成 5 且没有任何提示。现改为可配置项，默认值不变。
+        self.max_sources = max(max_sources, 0)
         self.bm25 = BM25Index(database)
 
     async def search(
         self, query: str, repository_ids: list[str], top_k: int = 5
     ) -> RetrievalResult:
-        limit = min(max(top_k, 0), 5)
+        limit = min(max(top_k, 0), self.max_sources) if self.max_sources else 0
         if not query.strip() or not repository_ids or limit == 0:
             return RetrievalResult(hits=[], max_score=0.0)
         query_embedding = await self.embedding_provider.embed_query(query)

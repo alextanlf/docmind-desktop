@@ -1,6 +1,6 @@
 import { CheckCircle2, LoaderCircle, PlugZap, RefreshCw, Save } from "lucide-react";
 import { useRef, useState, type FormEvent } from "react";
-import type { AvailableModel, SettingsView } from "../../../../shared/contracts";
+import type { AvailableModel, ModelPreset, SettingsView } from "../../../../shared/contracts";
 import { appQueryClient } from "../../app/query-client";
 import { clientErrorMessage, settingsKeys } from "./settings.queries";
 
@@ -26,7 +26,7 @@ const PRESETS = {
   },
   openai: { label: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-5-mini" },
   custom: { label: "自定义", baseUrl: "", model: "" },
-} as const;
+} as const satisfies Record<ModelPreset, { label: string; baseUrl: string; model: string }>;
 
 // Unified levels rendered as the same four meanings across vendors; the backend
 // translates each to the vendor's own field or drops it when unsupported.
@@ -36,8 +36,6 @@ const EFFORT_LABELS: Record<string, string> = {
   medium: "标准",
   high: "深度",
 };
-
-type Preset = keyof typeof PRESETS;
 
 const CUSTOM_MODEL_VALUE = "__custom__";
 
@@ -55,8 +53,8 @@ export function ModelSettingsForm({
   onConnectionInvalidated,
 }: Props) {
   const initialPreset =
-    settings.model.preset in PRESETS ? (settings.model.preset as Preset) : "custom";
-  const [preset, setPreset] = useState<Preset>(initialPreset);
+    settings.model.preset in PRESETS ? (settings.model.preset as ModelPreset) : "custom";
+  const [preset, setPreset] = useState<ModelPreset>(initialPreset);
   const [baseUrl, setBaseUrl] = useState(settings.model.baseUrl);
   const [model, setModel] = useState(settings.model.model);
   const [reasoningEffort, setReasoningEffort] = useState(settings.model.reasoningEffort);
@@ -114,7 +112,7 @@ export function ModelSettingsForm({
     onConnectionInvalidated?.();
   }
 
-  function changePreset(nextPreset: Preset) {
+  function changePreset(nextPreset: ModelPreset) {
     const next = PRESETS[nextPreset];
     const nextModel = next.model;
     setPreset(nextPreset);
@@ -246,7 +244,7 @@ export function ModelSettingsForm({
           <select
             disabled={busy}
             value={preset}
-            onChange={(event) => changePreset(event.target.value as Preset)}
+            onChange={(event) => changePreset(event.target.value as ModelPreset)}
           >
             {Object.entries(PRESETS).map(([value, option]) => (
               <option key={value} value={value}>

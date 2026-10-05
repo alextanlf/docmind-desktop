@@ -18,6 +18,8 @@ from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
 from app.document.sources import CollectionCacheRequest
 from app.imports.events import EventType, ImportEventBroker
+from app.remote.provider import RemoteProvider
+from app.remote.registry import ProviderRegistry
 from app.schemas.batches import CachedSourceRef
 from app.schemas.imports import (
     DownloadedDocument,
@@ -29,8 +31,8 @@ from app.schemas.imports import (
 )
 from app.schemas.remote import (
     CreateRemoteDocumentRequest,
-    UpdateRemoteDocumentRequest,
     RemoteDocument,
+    UpdateRemoteDocumentRequest,
 )
 from app.storage.models import (
     BatchItemDecision,
@@ -43,8 +45,6 @@ from app.storage.models import (
 )
 from app.storage.repositories import DocumentStore, ImportJobStore, RepositoryStore
 from app.storage.vectorstore import PersistentVectorStore
-from app.remote.provider import RemoteProvider
-from app.remote.registry import ProviderRegistry
 
 
 class ImportService:
@@ -438,7 +438,11 @@ class ImportService:
         if await self._cancel_if_requested(job_id):
             return False
         repository = self.repository_store.get(job.repository_id or "")
-        target_message = "准备写入语雀" if repository and repository.remote_id else "准备建立本地索引"
+        target_message = (
+            f"准备写入{self._provider_label(repository)}"
+            if repository and repository.remote_id
+            else "准备建立本地索引"
+        )
         await self._transition(
             job_id, {ImportStatus.PARSING}, ImportStatus.UPLOADING, 45, target_message
         )
@@ -473,76 +477,80 @@ class ImportService:
                     job_id, {ImportStatus.UPLOADING}, ImportStatus.INDEXING, 70, "正在建立本地索引"
                 )
                 return True
-            try:
-                markdown = Path(document.markdown_path or "").read_text(encoding="utf-8")
-                if metadata.get("attach_remote"):
-                    binding = metadata.get("remote_binding") or {}
-                    remote_id = binding.get("document_id") or binding.get("documentId")
-                    remote_repository = binding.get("repository_id") or binding.get("repositoryId")
-                    remote_url = (
-                        binding.get("document_url")
-                        or binding.get("documentUrl")
-                        or binding.get("url")
-                        or binding.get("remote_url")
-                        or binding.get("remoteUrl")
-                    )
-                    if not isinstance(remote_id, str) or not remote_id:
-                        raise DomainError("UPLOAD_FAILED", "远端绑定缺少文档标识", 409, False)
-                    if remote_repository and remote_repository != repository.remote_id:
-                        raise DomainError("UPLOAD_FAILED", "远端绑定知识库不匹配", 409, False)
-                    self.document_store.update_remote(
-                        document.id, remote_id=remote_id, remote_url=remote_url
-                    )
-                    if job.document_id is None:
-                        self.job_store.attach_document(job_id, document.id)
-                    remote = None
-                else:
-                    remote = None
-                remote_markdown = f"{markdown.rstrip()}\n\n<!-- {metadata['marker']} -->\n"
-                provider = self._provider(repository)
-                if metadata.get("attach_remote"):
-                    pass
-                elif document.remote_id:
-                    remote = await provider.update_document(
-                        UpdateRemoteDocumentRequest(
-                            document_id=document.remote_id,
-                            title=document.title,
-                            content=remote_markdown,
-                        )
-                    )
-                else:
-                    remote = await self._reconcile_remote_document(
-                        job_id, provider, repository.remote_id, metadata["marker"]
-                    )
-                    if await self._cancel_if_requested(job_id):
-                        return False
-                    if remote is None:
-                        if job.document_id is not None:
-                            raise DomainError(
-                                "UPLOAD_FAILED",
-                                "已绑定文档缺少远端标识，为避免重复创建已停止",
-                                409,
-                                True,
-                            )
-                        if await self._cancel_if_requested(job_id):
-                            return False
-                        remote = await provider.create_document(
-                            CreateRemoteDocumentRequest(
-                                repository_id=repository.remote_id,
+            markdown = Path(document.markdown_path or "").read_text(encoding="utf-8")
+            attach_remote = bool(metadata.get("attach_remote"))
+            remote_markdown = f"{markdown.rstrip()}\n\n<!-- {metadata['marker']} -->\n"
+            remote: RemoteDocument | None = None
+            if attach_remote:
+                binding = metadata.get("remote_binding") or {}
+                remote_id = binding.get("document_id") or binding.get("documentId")
+                remote_repository = binding.get("repository_id") or binding.get("repositoryId")
+                remote_url = (
+                    binding.get("document_url")
+                    or binding.get("documentUrl")
+                    or binding.get("url")
+                    or binding.get("remote_url")
+                    or binding.get("remoteUrl")
+                )
+                if not isinstance(remote_id, str) or not remote_id:
+                    raise DomainError("UPLOAD_FAILED", "远端绑定缺少文档标识", 409, False)
+                if remote_repository and remote_repository != repository.remote_id:
+                    raise DomainError("UPLOAD_FAILED", "远端绑定知识库不匹配", 409, False)
+                # Local bookkeeping only (no gateway call), so it stays outside the
+                # remote try-block below: a failure here is not a remote write.
+                self.document_store.update_remote(
+                    document.id, remote_id=remote_id, remote_url=remote_url
+                )
+                if job.document_id is None:
+                    self.job_store.attach_document(job_id, document.id)
+            else:
+                try:
+                    provider = self._provider(repository)
+                    if document.remote_id:
+                        remote = await provider.update_document(
+                            UpdateRemoteDocumentRequest(
+                                document_id=document.remote_id,
                                 title=document.title,
                                 content=remote_markdown,
-                                parent_id=repository.remote_parent_id,
                             )
                         )
-                if not metadata.get("attach_remote"):
-                    self.document_store.update_remote(
-                        document.id, remote_id=remote.remote_id, remote_url=remote.url
+                    else:
+                        remote = await self._reconcile_remote_document(
+                            job_id, provider, repository.remote_id, metadata["marker"]
+                        )
+                        if await self._cancel_if_requested(job_id):
+                            return False
+                        if remote is None:
+                            if job.document_id is not None:
+                                raise DomainError(
+                                    "UPLOAD_FAILED",
+                                    "已绑定文档缺少远端标识，为避免重复创建已停止",
+                                    409,
+                                    True,
+                                )
+                            if await self._cancel_if_requested(job_id):
+                                return False
+                            remote = await provider.create_document(
+                                CreateRemoteDocumentRequest(
+                                    repository_id=repository.remote_id,
+                                    title=document.title,
+                                    content=remote_markdown,
+                                    parent_id=repository.remote_parent_id,
+                                )
+                            )
+                except Exception:  # noqa: BLE001 - gateway failures map to a stable workflow code
+                    await self._fail(
+                        job_id,
+                        "UPLOAD_FAILED",
+                        f"写入{self._provider_label(repository)}失败",
+                        True,
                     )
-                    if job.document_id is None:
-                        self.job_store.attach_document(job_id, document.id)
-            except Exception:  # noqa: BLE001 - gateway failures map to a stable workflow code
-                await self._fail(job_id, "UPLOAD_FAILED", "写入语雀失败", True)
-                return False
+                    return False
+                self.document_store.update_remote(
+                    document.id, remote_id=remote.remote_id, remote_url=remote.url
+                )
+                if job.document_id is None:
+                    self.job_store.attach_document(job_id, document.id)
 
         if await self._cancel_if_requested(job_id):
             return False
@@ -663,6 +671,20 @@ class ImportService:
         if not repository.provider:
             raise DomainError("REMOTE_NOT_BOUND", "知识库未绑定远程来源", 409, False)
         return self.remote_registry.get(repository.provider)
+
+    def _provider_label(self, repository: RepositoryRecord) -> str:
+        """Display label of the bound provider, for user-facing progress copy.
+
+        Falls back to a platform-neutral phrase so this module never hard-codes
+        a vendor name; the provider registry owns the naming.
+        """
+        if not repository.provider or not repository.remote_id:
+            return "远程知识库"
+        try:
+            provider = self.remote_registry.get(repository.provider)
+        except Exception:  # noqa: BLE001 - display copy must never break the job
+            return "远程知识库"
+        return getattr(getattr(provider, "identity", None), "label", None) or "远程知识库"
 
     async def _reconcile_remote_document(
         self, job_id: str, provider: RemoteProvider, repository_id: str, marker: str
@@ -944,7 +966,7 @@ class ImportService:
             return
         failures = {
             ImportStatus.PARSING: ("PARSE_FAILED", "文档解析失败", False),
-            ImportStatus.UPLOADING: ("UPLOAD_FAILED", "写入语雀失败", True),
+            ImportStatus.UPLOADING: ("UPLOAD_FAILED", "写入远程知识库失败", True),
             ImportStatus.INDEXING: ("INDEX_FAILED", "写入文档索引失败", True),
         }
         code, message, retryable = failures[job.state]

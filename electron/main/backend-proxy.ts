@@ -6,6 +6,7 @@ import {
   ErrorEnvelopeSchema,
 } from "../shared/contracts";
 import { streamEventChannel } from "../shared/channels";
+import { redactSecrets } from "./redaction";
 
 export interface StreamSender {
   send(channel: string, ...args: unknown[]): void;
@@ -357,9 +358,7 @@ export class BackendProxy {
 }
 
 function sanitizeStreamErrorMessage(message: string): string {
-  return message
-    .replace(/DOCMIND_SESSION_TOKEN=[^\s]+/g, "DOCMIND_SESSION_TOKEN=[redacted]")
-    .replace(/(?:[A-Za-z]:)?\/(?:[^\s/]+\/)+[^\s]*/g, "[path]");
+  return redactSecrets(message);
 }
 
 function isSchema(value: unknown): value is z.ZodType<unknown> {

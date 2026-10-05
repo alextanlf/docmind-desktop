@@ -19,18 +19,28 @@ export const IpcResultSchema = <T extends z.ZodTypeAny>(value: T) =>
     z.object({ ok: z.literal(false), error: ErrorBodySchema }),
   ]);
 
+/**
+ * Model preset ids — single source of truth shared by the input schema and the
+ * renderer form.  Keep the backend `MODEL_PRESETS` keys in sync (there is no
+ * cross-language link; `contracts.test.ts` asserts both sides of this pair).
+ */
+export const MODEL_PRESET_IDS = [
+  "deepseek",
+  "qwen",
+  "kimi",
+  "glm",
+  "mimo",
+  "opencode_zen",
+  "opencode_go",
+  "openai",
+  "custom",
+] as const;
+
+export const ModelPresetSchema = z.enum(MODEL_PRESET_IDS);
+export type ModelPreset = z.infer<typeof ModelPresetSchema>;
+
 export const ModelSettingsInputSchema = z.object({
-  preset: z.enum([
-    "deepseek",
-    "qwen",
-    "kimi",
-    "glm",
-    "mimo",
-    "opencode_zen",
-    "opencode_go",
-    "openai",
-    "custom",
-  ]),
+  preset: ModelPresetSchema,
   reasoningEffort: z.string().max(32).default(""),
   baseUrl: z.string().max(500),
   model: z.string().max(200),

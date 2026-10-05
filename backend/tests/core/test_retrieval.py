@@ -450,3 +450,41 @@ async def test_candidate_pool_widens_what_is_sent_to_rrf(database) -> None:
     assert retriever.candidate_pool == 50
     assert len(result.hits) == 5  # 最终送进 prompt 的仍是 limit，池子只影响排序质量
     assert result.hits[0].vector_score > 0.8
+
+
+async def test_hybrid_search_max_sources_is_configurable(database) -> None:
+    """The 5-chunk cap was a bare literal inside search(), so callers passing
+    top_k=20 were silently trimmed. It is now an explicit constructor knob whose
+    default keeps the previous behaviour."""
+    repository = RepositoryRecord(id="repo-1", name="Repository")
+    document = DocumentRecord(id="doc-1", repository_id=repository.id, title="Guide")
+    chunks = [
+        DocumentChunkRecord(
+            id=f"chunk-{index}",
+            document_id=document.id,
+            repository_id=repository.id,
+            chunk_index=index,
+            text="needle",
+            token_count=1,
+        )
+        for index in range(8)
+    ]
+    with database.session() as session:
+        session.add_all([repository, document, *chunks])
+
+    def build(max_sources: int) -> HybridRetriever:
+        return HybridRetriever(
+            database=database,
+            vector_store=_StubVectorStore(
+                {"repo-1": [_vector_hit(chunk.id, 0.9) for chunk in chunks]}
+            ),
+            embedding_provider=FakeEmbeddingProvider(EmbeddingSettings(dimension=8)),
+            max_sources=max_sources,
+        )
+
+    # Default cap still applies and still trims silently-but-consistently at 5.
+    assert len((await build(5).search("needle", [repository.id], top_k=20)).hits) == 5
+    # Raising the knob actually raises the ceiling.
+    assert len((await build(8).search("needle", [repository.id], top_k=20)).hits) == 8
+    # A raised ceiling still yields at most top_k.
+    assert len((await build(8).search("needle", [repository.id], top_k=2)).hits) == 2

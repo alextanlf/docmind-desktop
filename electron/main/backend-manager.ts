@@ -3,6 +3,8 @@ import { spawn as nodeSpawn, ChildProcess } from "node:child_process";
 import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveBackendRuntime, type BackendRuntimeContract } from "./backend-runtime-contract";
+import { isE2ERuntime } from "./e2e-runtime";
+import { redactSecrets } from "./redaction";
 
 export interface BackendConnection {
   baseUrl: string;
@@ -36,6 +38,8 @@ export class BackendManager {
   private readonly runtime: BackendRuntimeContract;
   private readonly configurationError?: BackendStartError;
   private readonly bundledModelsDir?: string;
+  /** Resolved once so every artifact write obeys the same E2E gate. */
+  private readonly e2eRuntime: boolean;
   private lifecycleTail?: Promise<void>;
   constructor(opts: {
     spawn?: SpawnFn;
@@ -59,6 +63,7 @@ export class BackendManager {
     this.shutdownTimeout = opts.shutdownTimeoutMs ?? 3000;
     this.bundledModelsDir = opts.bundledModelsDir;
     const packaged = opts.packaged ?? false;
+    this.e2eRuntime = isE2ERuntime(process.env, packaged);
     try {
       this.runtime = resolveBackendRuntime(
         // 只有 macOS 打包态才会从 Info.plist 的 LSEnvironment 拿到这三个值；
@@ -138,7 +143,7 @@ export class BackendManager {
     child.stderr?.on("data", (data: Buffer | string) => {
       this.stderr = (this.stderr + String(data)).slice(-2000);
       const artifacts = process.env.DOCMIND_E2E_ARTIFACTS_DIR;
-      if (process.env.DOCMIND_E2E === "1" && artifacts)
+      if (this.e2eRuntime && artifacts)
         void appendFile(join(artifacts, "backend.log"), String(data), "utf8").catch(() => {});
     });
     child.once("error", () => {
@@ -150,7 +155,7 @@ export class BackendManager {
       exited = true;
       this.childExited = true;
       const artifacts = process.env.DOCMIND_E2E_ARTIFACTS_DIR;
-      if (process.env.DOCMIND_E2E === "1" && artifacts)
+      if (this.e2eRuntime && artifacts)
         void appendFile(join(artifacts, "backend.log"), "backend exited\n", "utf8").catch(() => {});
     });
     const deadline = Date.now() + this.timeout;
@@ -219,10 +224,7 @@ export class BackendManager {
     }
   }
   private redactedError() {
-    const safe = this.stderr
-      .replaceAll(this.token, "[redacted]")
-      .replace(/DOCMIND_SESSION_TOKEN=[^\s]+/g, "DOCMIND_SESSION_TOKEN=[redacted]")
-      .replace(/\/[\w.@+~%=-]+(?:\/[\w.@+~%=-]+)*/g, "[path]");
+    const safe = redactSecrets(this.stderr.replaceAll(this.token, "[redacted]"));
     return safe ? `Backend failed to start: ${safe}` : "Backend failed to start";
   }
   private reset() {

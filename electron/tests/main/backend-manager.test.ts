@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BackendManager } from "../../main/backend-manager";
@@ -148,7 +148,10 @@ describe("BackendManager", () => {
 
   it("omits bundled models directory variable when not provided", async () => {
     const process = fakeProcess();
-    const spawn = vi.fn((..._args: unknown[]) => process as any);
+    const spawn = vi.fn((...args: unknown[]) => {
+      void args;
+      return process as any;
+    });
     const manager = new BackendManager({
       spawn,
       fetch: vi.fn().mockResolvedValue(new Response("{}")),
@@ -469,5 +472,41 @@ describe("BackendManager", () => {
       code: "BACKEND_START_FAILED",
     });
     expect(process.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  // Regression: artifact writes used to test `DOCMIND_E2E === "1"` directly, so a
+  // packaged app launched with that variable set would write into the artifacts
+  // dir even without fake services. All gates must go through isE2ERuntime().
+  it.each([
+    ["fake services absent", { DOCMIND_E2E: "1" }, false, false],
+    ["already packaged", { DOCMIND_E2E: "1", DOCMIND_FAKE_SERVICES: "1" }, true, false],
+    ["genuine e2e run", { DOCMIND_E2E: "1", DOCMIND_FAKE_SERVICES: "1" }, false, true],
+  ])("writes the backend log only for a real e2e run (%s)", async (_label, env, packaged, expected) => {
+    const artifacts = mkdtempSync(join(tmpdir(), "docmind-e2e-artifacts-"));
+    const fixture = packagedRuntimeFixture();
+    const previous = { ...process.env };
+    Object.assign(process.env, env, { DOCMIND_E2E_ARTIFACTS_DIR: artifacts });
+    try {
+      const child = fakeProcess();
+      const manager = new BackendManager({
+        spawn: () => child as any,
+        fetch: vi.fn().mockResolvedValue(new Response('{"status":"ok"}')),
+        healthIntervalMs: 0,
+        packaged,
+        backendCommand: fixture.command,
+        backendArgs: [],
+        backendCwd: fixture.cwd,
+      });
+      await manager.start();
+      child.__stderr("boom\n");
+      child.__exit();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(existsSync(join(artifacts, "backend.log"))).toBe(expected);
+    } finally {
+      for (const key of Object.keys(process.env)) delete process.env[key];
+      Object.assign(process.env, previous);
+      fixture.cleanup();
+      rmSync(artifacts, { recursive: true, force: true });
+    }
   });
 });

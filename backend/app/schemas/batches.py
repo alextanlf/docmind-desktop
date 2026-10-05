@@ -39,8 +39,10 @@ class CachedSourceRef(WireModel):
 
 
 class RemoteBinding(WireModel):
-    # Default keeps historical persisted bindings (all Yuque) loadable.
-    provider: str = "yuque"
+    # No default on purpose: a silently-defaulted provider made new bindings land
+    # on Yuque. Every construction site passes the provider explicitly, and a
+    # legacy payload without one now fails loudly instead of mis-binding.
+    provider: str = Field(min_length=1)
     repository_id: str
     document_id: str
     document_url: str | None = None
