@@ -203,12 +203,18 @@ describe("Workspace", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: `展开 ${repository.name}` }));
     fireEvent.click(await screen.findByRole("button", { name: document.title }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑文档" }));
     fireEvent.change(await screen.findByLabelText("Markdown 内容"), {
       target: { value: "# Unsaved first document draft" },
     });
     fireEvent.click(screen.getByRole("button", { name: secondDocument.title }));
 
-    expect(await screen.findByLabelText("文档标题")).toHaveValue(secondDocument.title);
+    // 正文里也有同名标题，只认编辑器 header 上的这一个。
+    const editor = await screen.findByLabelText("文档编辑器");
+    await waitFor(() =>
+      expect(editor.querySelector(".document-view-title")).toHaveTextContent(secondDocument.title),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "编辑文档" }));
     expect(screen.getByLabelText("Markdown 内容")).toHaveValue(secondDocument.content);
     fireEvent.click(screen.getByRole("button", { name: "保存文档" }));
     await waitFor(() =>
