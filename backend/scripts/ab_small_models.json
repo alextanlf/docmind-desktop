@@ -1,0 +1,989 @@
+{
+  "bge-m3 (当前)": {
+    "repo": "bge-m3",
+    "dim": 1024,
+    "disk_mb": 564.6,
+    "claimed_mb": 565,
+    "encode_s": 4.16,
+    "vector_hit": 15,
+    "bm25_hit": 11,
+    "n": 16,
+    "rows": [
+      {
+        "query": "文档问答系统怎么把召回来的内容交给模型判断？",
+        "kind": "同义改写",
+        "gold": [
+          "c01"
+        ],
+        "vector": [
+          "c01",
+          "c08",
+          "c06"
+        ],
+        "bm25": [
+          "c01",
+          "c06",
+          "c03"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "哪部分决定了查询速度？",
+        "kind": "同义改写",
+        "gold": [
+          "c03"
+        ],
+        "vector": [
+          "c03",
+          "c13",
+          "c15"
+        ],
+        "bm25": [
+          "c15",
+          "c13",
+          "c03"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "去掉重排序之后效果变好了吗？",
+        "kind": "术语别名",
+        "gold": [
+          "c04"
+        ],
+        "vector": [
+          "c04",
+          "c14",
+          "c15"
+        ],
+        "bm25": [
+          "c09",
+          "c05",
+          "c13"
+        ],
+        "vector_hit": true,
+        "bm25_hit": false,
+        "gold_rank": 1
+      },
+      {
+        "query": "bi-encoder 后面接的是什么模块？",
+        "kind": "中英交叉",
+        "gold": [
+          "c02"
+        ],
+        "vector": [
+          "c02",
+          "c08",
+          "c01"
+        ],
+        "bm25": [
+          "c02",
+          "c01",
+          "c08"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "测试集里有多少篇参考文献？",
+        "kind": "中英交叉",
+        "gold": [
+          "c07"
+        ],
+        "vector": [
+          "c07",
+          "c06",
+          "c01"
+        ],
+        "bm25": [
+          "c13",
+          "c10",
+          "c15"
+        ],
+        "vector_hit": true,
+        "bm25_hit": false,
+        "gold_rank": 1
+      },
+      {
+        "query": "how long is a typical chunk with overlap",
+        "kind": "纯英文查询",
+        "gold": [
+          "c05"
+        ],
+        "vector": [
+          "c05",
+          "c06",
+          "c11"
+        ],
+        "bm25": [
+          "c02"
+        ],
+        "vector_hit": true,
+        "bm25_hit": false,
+        "gold_rank": 1
+      },
+      {
+        "query": "精确匹配类问题哪种索引更合适？",
+        "kind": "同义改写",
+        "gold": [
+          "c14"
+        ],
+        "vector": [
+          "c14",
+          "c06",
+          "c01"
+        ],
+        "bm25": [
+          "c06",
+          "c13",
+          "c01"
+        ],
+        "vector_hit": true,
+        "bm25_hit": false,
+        "gold_rank": 1
+      },
+      {
+        "query": "词条定位和相关性打分是怎么做的？",
+        "kind": "同义改写",
+        "gold": [
+          "c13"
+        ],
+        "vector": [
+          "c13",
+          "c15",
+          "c14"
+        ],
+        "bm25": [
+          "c13",
+          "c15",
+          "c05"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "阈值会不会把有效结果误杀？",
+        "kind": "同义改写",
+        "gold": [
+          "c15"
+        ],
+        "vector": [
+          "c15",
+          "c04",
+          "c09"
+        ],
+        "bm25": [
+          "c15",
+          "c08",
+          "c09"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "安装包体积主要由哪几部分组成？",
+        "kind": "细节数字",
+        "gold": [
+          "c11"
+        ],
+        "vector": [
+          "c11",
+          "c05",
+          "c03"
+        ],
+        "bm25": [
+          "c11",
+          "c04",
+          "c06"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "记忆内容存在哪里，是跟正文放一起吗？",
+        "kind": "同义改写",
+        "gold": [
+          "c08"
+        ],
+        "vector": [
+          "c08",
+          "c06",
+          "c09"
+        ],
+        "bm25": [
+          "c09",
+          "c08",
+          "c01"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "摘要块是干什么的？",
+        "kind": "同义改写",
+        "gold": [
+          "c06"
+        ],
+        "vector": [
+          "c06",
+          "c08",
+          "c05"
+        ],
+        "bm25": [
+          "c06",
+          "c08",
+          "c01"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "how is memory stored separately from the main index?",
+        "kind": "纯英文查询",
+        "gold": [
+          "c08"
+        ],
+        "vector": [
+          "c08",
+          "c05",
+          "c03"
+        ],
+        "bm25": [
+          "c07",
+          "c14"
+        ],
+        "vector_hit": true,
+        "bm25_hit": false,
+        "gold_rank": 1
+      },
+      {
+        "query": "Spa 赛道的几何和实测数据对得上吗？",
+        "kind": "同义改写",
+        "gold": [
+          "c10"
+        ],
+        "vector": [
+          "c10",
+          "c14",
+          "c11"
+        ],
+        "bm25": [
+          "c10",
+          "c15",
+          "c09"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "平台相关的代码应该放在哪一层？",
+        "kind": "同义改写",
+        "gold": [
+          "c12"
+        ],
+        "vector": [
+          "c12",
+          "c05",
+          "c08"
+        ],
+        "bm25": [
+          "c12",
+          "c03",
+          "c13"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "总体流程是什么？",
+        "kind": "全局型",
+        "gold": [
+          "c01",
+          "c02"
+        ],
+        "vector": [
+          "c06",
+          "c15",
+          "c03"
+        ],
+        "bm25": [
+          "c12",
+          "c01"
+        ],
+        "vector_hit": false,
+        "bm25_hit": true,
+        "gold_rank": 4
+      }
+    ]
+  },
+  "bge-small-zh-v1.5": {
+    "repo": "bge-small-zh-v1.5",
+    "dim": 512,
+    "disk_mb": 23.3,
+    "claimed_mb": 23,
+    "encode_s": 0.26,
+    "vector_hit": 12,
+    "bm25_hit": 11,
+    "n": 16,
+    "rows": [
+      {
+        "query": "文档问答系统怎么把召回来的内容交给模型判断？",
+        "kind": "同义改写",
+        "gold": [
+          "c01"
+        ],
+        "vector": [
+          "c01",
+          "c06",
+          "c13"
+        ],
+        "bm25": [
+          "c01",
+          "c06",
+          "c03"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "哪部分决定了查询速度？",
+        "kind": "同义改写",
+        "gold": [
+          "c03"
+        ],
+        "vector": [
+          "c13",
+          "c03",
+          "c15"
+        ],
+        "bm25": [
+          "c15",
+          "c13",
+          "c03"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 2
+      },
+      {
+        "query": "去掉重排序之后效果变好了吗？",
+        "kind": "术语别名",
+        "gold": [
+          "c04"
+        ],
+        "vector": [
+          "c13",
+          "c04",
+          "c09"
+        ],
+        "bm25": [
+          "c09",
+          "c05",
+          "c13"
+        ],
+        "vector_hit": true,
+        "bm25_hit": false,
+        "gold_rank": 2
+      },
+      {
+        "query": "bi-encoder 后面接的是什么模块？",
+        "kind": "中英交叉",
+        "gold": [
+          "c02"
+        ],
+        "vector": [
+          "c11",
+          "c12",
+          "c02"
+        ],
+        "bm25": [
+          "c02",
+          "c01",
+          "c08"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 3
+      },
+      {
+        "query": "测试集里有多少篇参考文献？",
+        "kind": "中英交叉",
+        "gold": [
+          "c07"
+        ],
+        "vector": [
+          "c13",
+          "c06",
+          "c01"
+        ],
+        "bm25": [
+          "c13",
+          "c10",
+          "c15"
+        ],
+        "vector_hit": false,
+        "bm25_hit": false,
+        "gold_rank": 4
+      },
+      {
+        "query": "how long is a typical chunk with overlap",
+        "kind": "纯英文查询",
+        "gold": [
+          "c05"
+        ],
+        "vector": [
+          "c14",
+          "c07",
+          "c02"
+        ],
+        "bm25": [
+          "c02"
+        ],
+        "vector_hit": false,
+        "bm25_hit": false,
+        "gold_rank": 14
+      },
+      {
+        "query": "精确匹配类问题哪种索引更合适？",
+        "kind": "同义改写",
+        "gold": [
+          "c14"
+        ],
+        "vector": [
+          "c13",
+          "c06",
+          "c01"
+        ],
+        "bm25": [
+          "c06",
+          "c13",
+          "c01"
+        ],
+        "vector_hit": false,
+        "bm25_hit": false,
+        "gold_rank": 6
+      },
+      {
+        "query": "词条定位和相关性打分是怎么做的？",
+        "kind": "同义改写",
+        "gold": [
+          "c13"
+        ],
+        "vector": [
+          "c13",
+          "c08",
+          "c15"
+        ],
+        "bm25": [
+          "c13",
+          "c15",
+          "c05"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "阈值会不会把有效结果误杀？",
+        "kind": "同义改写",
+        "gold": [
+          "c15"
+        ],
+        "vector": [
+          "c15",
+          "c09",
+          "c04"
+        ],
+        "bm25": [
+          "c15",
+          "c08",
+          "c09"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "安装包体积主要由哪几部分组成？",
+        "kind": "细节数字",
+        "gold": [
+          "c11"
+        ],
+        "vector": [
+          "c11",
+          "c13",
+          "c05"
+        ],
+        "bm25": [
+          "c11",
+          "c04",
+          "c06"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "记忆内容存在哪里，是跟正文放一起吗？",
+        "kind": "同义改写",
+        "gold": [
+          "c08"
+        ],
+        "vector": [
+          "c08",
+          "c09",
+          "c13"
+        ],
+        "bm25": [
+          "c09",
+          "c08",
+          "c01"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "摘要块是干什么的？",
+        "kind": "同义改写",
+        "gold": [
+          "c06"
+        ],
+        "vector": [
+          "c06",
+          "c08",
+          "c05"
+        ],
+        "bm25": [
+          "c06",
+          "c08",
+          "c01"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "how is memory stored separately from the main index?",
+        "kind": "纯英文查询",
+        "gold": [
+          "c08"
+        ],
+        "vector": [
+          "c07",
+          "c14",
+          "c13"
+        ],
+        "bm25": [
+          "c07",
+          "c14"
+        ],
+        "vector_hit": false,
+        "bm25_hit": false,
+        "gold_rank": 5
+      },
+      {
+        "query": "Spa 赛道的几何和实测数据对得上吗？",
+        "kind": "同义改写",
+        "gold": [
+          "c10"
+        ],
+        "vector": [
+          "c10",
+          "c13",
+          "c14"
+        ],
+        "bm25": [
+          "c10",
+          "c15",
+          "c09"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "平台相关的代码应该放在哪一层？",
+        "kind": "同义改写",
+        "gold": [
+          "c12"
+        ],
+        "vector": [
+          "c12",
+          "c01",
+          "c13"
+        ],
+        "bm25": [
+          "c12",
+          "c03",
+          "c13"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "总体流程是什么？",
+        "kind": "全局型",
+        "gold": [
+          "c01",
+          "c02"
+        ],
+        "vector": [
+          "c13",
+          "c01",
+          "c11"
+        ],
+        "bm25": [
+          "c12",
+          "c01"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 2
+      }
+    ]
+  },
+  "multilingual-e5-small": {
+    "repo": "multilingual-e5-small",
+    "dim": 384,
+    "disk_mb": 129.2,
+    "claimed_mb": 135,
+    "encode_s": 1.95,
+    "vector_hit": 12,
+    "bm25_hit": 11,
+    "n": 16,
+    "rows": [
+      {
+        "query": "文档问答系统怎么把召回来的内容交给模型判断？",
+        "kind": "同义改写",
+        "gold": [
+          "c01"
+        ],
+        "vector": [
+          "c01",
+          "c06",
+          "c09"
+        ],
+        "bm25": [
+          "c01",
+          "c06",
+          "c03"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "哪部分决定了查询速度？",
+        "kind": "同义改写",
+        "gold": [
+          "c03"
+        ],
+        "vector": [
+          "c15",
+          "c13",
+          "c03"
+        ],
+        "bm25": [
+          "c15",
+          "c13",
+          "c03"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 3
+      },
+      {
+        "query": "去掉重排序之后效果变好了吗？",
+        "kind": "术语别名",
+        "gold": [
+          "c04"
+        ],
+        "vector": [
+          "c13",
+          "c15",
+          "c04"
+        ],
+        "bm25": [
+          "c09",
+          "c05",
+          "c13"
+        ],
+        "vector_hit": true,
+        "bm25_hit": false,
+        "gold_rank": 3
+      },
+      {
+        "query": "bi-encoder 后面接的是什么模块？",
+        "kind": "中英交叉",
+        "gold": [
+          "c02"
+        ],
+        "vector": [
+          "c01",
+          "c06",
+          "c15"
+        ],
+        "bm25": [
+          "c02",
+          "c01",
+          "c08"
+        ],
+        "vector_hit": false,
+        "bm25_hit": true,
+        "gold_rank": 13
+      },
+      {
+        "query": "测试集里有多少篇参考文献？",
+        "kind": "中英交叉",
+        "gold": [
+          "c07"
+        ],
+        "vector": [
+          "c13",
+          "c01",
+          "c15"
+        ],
+        "bm25": [
+          "c13",
+          "c10",
+          "c15"
+        ],
+        "vector_hit": false,
+        "bm25_hit": false,
+        "gold_rank": 13
+      },
+      {
+        "query": "how long is a typical chunk with overlap",
+        "kind": "纯英文查询",
+        "gold": [
+          "c05"
+        ],
+        "vector": [
+          "c14",
+          "c06",
+          "c07"
+        ],
+        "bm25": [
+          "c02"
+        ],
+        "vector_hit": false,
+        "bm25_hit": false,
+        "gold_rank": 7
+      },
+      {
+        "query": "精确匹配类问题哪种索引更合适？",
+        "kind": "同义改写",
+        "gold": [
+          "c14"
+        ],
+        "vector": [
+          "c13",
+          "c01",
+          "c06"
+        ],
+        "bm25": [
+          "c06",
+          "c13",
+          "c01"
+        ],
+        "vector_hit": false,
+        "bm25_hit": false,
+        "gold_rank": 13
+      },
+      {
+        "query": "词条定位和相关性打分是怎么做的？",
+        "kind": "同义改写",
+        "gold": [
+          "c13"
+        ],
+        "vector": [
+          "c13",
+          "c15",
+          "c08"
+        ],
+        "bm25": [
+          "c13",
+          "c15",
+          "c05"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "阈值会不会把有效结果误杀？",
+        "kind": "同义改写",
+        "gold": [
+          "c15"
+        ],
+        "vector": [
+          "c15",
+          "c04",
+          "c01"
+        ],
+        "bm25": [
+          "c15",
+          "c08",
+          "c09"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "安装包体积主要由哪几部分组成？",
+        "kind": "细节数字",
+        "gold": [
+          "c11"
+        ],
+        "vector": [
+          "c11",
+          "c15",
+          "c10"
+        ],
+        "bm25": [
+          "c11",
+          "c04",
+          "c06"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "记忆内容存在哪里，是跟正文放一起吗？",
+        "kind": "同义改写",
+        "gold": [
+          "c08"
+        ],
+        "vector": [
+          "c08",
+          "c09",
+          "c13"
+        ],
+        "bm25": [
+          "c09",
+          "c08",
+          "c01"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "摘要块是干什么的？",
+        "kind": "同义改写",
+        "gold": [
+          "c06"
+        ],
+        "vector": [
+          "c06",
+          "c05",
+          "c08"
+        ],
+        "bm25": [
+          "c06",
+          "c08",
+          "c01"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "how is memory stored separately from the main index?",
+        "kind": "纯英文查询",
+        "gold": [
+          "c08"
+        ],
+        "vector": [
+          "c14",
+          "c02",
+          "c08"
+        ],
+        "bm25": [
+          "c07",
+          "c14"
+        ],
+        "vector_hit": true,
+        "bm25_hit": false,
+        "gold_rank": 3
+      },
+      {
+        "query": "Spa 赛道的几何和实测数据对得上吗？",
+        "kind": "同义改写",
+        "gold": [
+          "c10"
+        ],
+        "vector": [
+          "c10",
+          "c06",
+          "c01"
+        ],
+        "bm25": [
+          "c10",
+          "c15",
+          "c09"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "平台相关的代码应该放在哪一层？",
+        "kind": "同义改写",
+        "gold": [
+          "c12"
+        ],
+        "vector": [
+          "c12",
+          "c01",
+          "c11"
+        ],
+        "bm25": [
+          "c12",
+          "c03",
+          "c13"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 1
+      },
+      {
+        "query": "总体流程是什么？",
+        "kind": "全局型",
+        "gold": [
+          "c01",
+          "c02"
+        ],
+        "vector": [
+          "c06",
+          "c15",
+          "c01"
+        ],
+        "bm25": [
+          "c12",
+          "c01"
+        ],
+        "vector_hit": true,
+        "bm25_hit": true,
+        "gold_rank": 3
+      }
+    ]
+  }
+}

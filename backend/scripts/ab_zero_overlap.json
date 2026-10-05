@@ -1,0 +1,162 @@
+{
+  "summary": {
+    "n": 6,
+    "bm25": 2,
+    "vector": 3,
+    "fused": 2
+  },
+  "rows": [
+    {
+      "query": "怎么让安装包更小一些？",
+      "kind": "同义·零重叠",
+      "gold": [
+        "g1"
+      ],
+      "bm25": [
+        "g1",
+        "g4",
+        "d1"
+      ],
+      "vector": [
+        "g1",
+        "g4",
+        "d1"
+      ],
+      "fused": [
+        "g1",
+        "g4",
+        "d1"
+      ],
+      "bm25_gold_rank": 1,
+      "bm25_hit": true,
+      "vector_hit": true,
+      "fused_hit": true
+    },
+    {
+      "query": "为什么去掉相似度阈值之后准确率反而上升了？",
+      "kind": "同义·零重叠",
+      "gold": [
+        "g2"
+      ],
+      "bm25": [
+        "d4",
+        "d1",
+        "d7"
+      ],
+      "vector": [
+        "d4",
+        "d7",
+        "g2"
+      ],
+      "fused": [
+        "d4",
+        "d7",
+        "d1"
+      ],
+      "bm25_gold_rank": 13,
+      "bm25_hit": false,
+      "vector_hit": true,
+      "fused_hit": false
+    },
+    {
+      "query": "送给模型的上下文里怎么排除不相关的片段？",
+      "kind": "同义·零重叠",
+      "gold": [
+        "g3"
+      ],
+      "bm25": [
+        "d4",
+        "d3",
+        "g3"
+      ],
+      "vector": [
+        "g5",
+        "d3",
+        "d4"
+      ],
+      "fused": [
+        "d4",
+        "d3",
+        "g5"
+      ],
+      "bm25_gold_rank": 3,
+      "bm25_hit": true,
+      "vector_hit": false,
+      "fused_hit": false
+    },
+    {
+      "query": "how do I shrink the installer footprint?",
+      "kind": "跨语言·同义",
+      "gold": [
+        "g1"
+      ],
+      "bm25": [],
+      "vector": [
+        "g1",
+        "g4",
+        "g3"
+      ],
+      "fused": [
+        "g1",
+        "g4",
+        "g3"
+      ],
+      "bm25_gold_rank": 9,
+      "bm25_hit": false,
+      "vector_hit": true,
+      "fused_hit": true
+    },
+    {
+      "query": "文档开头那段简介是怎么参与检索的？",
+      "kind": "机制·零重叠",
+      "gold": [
+        "g4"
+      ],
+      "bm25": [
+        "g5",
+        "d2",
+        "d4"
+      ],
+      "vector": [
+        "g5",
+        "d2",
+        "d8"
+      ],
+      "fused": [
+        "g5",
+        "d2",
+        "d8"
+      ],
+      "bm25_gold_rank": 12,
+      "bm25_hit": false,
+      "vector_hit": false,
+      "fused_hit": false
+    },
+    {
+      "query": "之前聊过的结论下次提问还会被用到吗？",
+      "kind": "机制·零重叠",
+      "gold": [
+        "g5"
+      ],
+      "bm25": [
+        "d3",
+        "d8",
+        "d2"
+      ],
+      "vector": [
+        "g6",
+        "d8",
+        "g2"
+      ],
+      "fused": [
+        "d8",
+        "g6",
+        "d3"
+      ],
+      "bm25_gold_rank": 4,
+      "bm25_hit": false,
+      "vector_hit": false,
+      "fused_hit": false
+    }
+  ]
+}
