@@ -1,16 +1,10 @@
-import { Check, Copy } from "lucide-react";
-import {
-  Children,
-  isValidElement,
-  useState,
-  type ComponentPropsWithoutRef,
-  type ReactNode,
-} from "react";
+import type { ComponentPropsWithoutRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Citation } from "../../../../shared/contracts";
+import { markdownComponents } from "../../components/markdown-components";
+import { MarkdownLink } from "../../components/markdown-primitives";
 import { CitationButton } from "../references/CitationButton";
-import { openExternalUrl } from "../references/external-links";
 import type { ScopedCitation } from "../references/citation-types";
 
 type MarkdownNode = {
@@ -60,63 +54,6 @@ function citationRemarkPlugin(citations: ScopedCitation[]) {
   };
 }
 
-function MarkdownLink({ href, children }: ComponentPropsWithoutRef<"a">) {
-  if (href?.startsWith(CITATION_URL_PREFIX)) return null;
-  if (!href || !/^https?:\/\//i.test(href)) return <span>{children}</span>;
-  return (
-    <a
-      href={href}
-      onClick={(event) => {
-        event.preventDefault();
-        openExternalUrl(href);
-      }}
-    >
-      {children}
-    </a>
-  );
-}
-
-function codeText(children: ReactNode): string {
-  return Children.toArray(children)
-    .map((child) => {
-      if (typeof child === "string") return child;
-      if (isValidElement<{ children?: ReactNode }>(child)) return codeText(child.props.children);
-      return "";
-    })
-    .join("")
-    .replace(/\n$/, "");
-}
-
-function Code({ children, className, ...rest }: ComponentPropsWithoutRef<"code">) {
-  return (
-    <code className={className} {...rest}>
-      {children}
-    </code>
-  );
-}
-
-function CodeBlock({ children, ...rest }: ComponentPropsWithoutRef<"pre">) {
-  const [copied, setCopied] = useState(false);
-  const code = codeText(children);
-  return (
-    <div className="markdown-code-block">
-      <pre {...rest}>{children}</pre>
-      <button
-        aria-label="复制代码"
-        className="markdown-copy-button"
-        onClick={() => {
-          void navigator.clipboard?.writeText(code);
-          setCopied(true);
-        }}
-        title={copied ? "已复制" : "复制代码"}
-        type="button"
-      >
-        {copied ? <Check aria-hidden="true" size={15} /> : <Copy aria-hidden="true" size={15} />}
-      </button>
-    </div>
-  );
-}
-
 function CitationLink({
   href,
   citationsBySourceId,
@@ -154,9 +91,8 @@ export function MarkdownMessage({
     <div className="markdown-message">
       <ReactMarkdown
         components={{
+          ...markdownComponents,
           a: (props) => <CitationLink {...props} citationsBySourceId={citationsBySourceId} />,
-          code: Code,
-          pre: CodeBlock,
         }}
         remarkPlugins={[remarkGfm, citationRemarkPlugin(scoped)]}
       >

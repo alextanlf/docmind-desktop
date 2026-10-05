@@ -27,6 +27,51 @@ describe("文档编辑", () => {
     expect(remove).toBeEnabled();
   });
 
+  it("renders the document as formatted content instead of raw Markdown", () => {
+    installDocMindApi();
+    render(
+      <AppProviders>
+        <DocumentEditor document={document} onClose={() => undefined} />
+      </AppProviders>,
+    );
+
+    const view = screen.getByLabelText("文档内容");
+    expect(view.querySelector("h1")).toHaveTextContent("State 管理");
+    expect(view).not.toHaveTextContent("# State 管理");
+    expect(screen.queryByLabelText("Markdown 内容")).not.toBeInTheDocument();
+  });
+
+  it("reveals the raw Markdown source only after switching to edit mode", () => {
+    installDocMindApi();
+    render(
+      <AppProviders>
+        <DocumentEditor document={document} onClose={() => undefined} />
+      </AppProviders>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑文档" }));
+    expect(screen.getByLabelText("Markdown 内容")).toHaveValue(document.content);
+
+    fireEvent.click(screen.getByRole("button", { name: "预览文档" }));
+    expect(screen.queryByLabelText("Markdown 内容")).not.toBeInTheDocument();
+  });
+
+  it("discards unsaved edits when leaving edit mode", () => {
+    installDocMindApi();
+    render(
+      <AppProviders>
+        <DocumentEditor document={document} onClose={() => undefined} />
+      </AppProviders>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑文档" }));
+    fireEvent.change(screen.getByLabelText("Markdown 内容"), { target: { value: "# 草稿" } });
+    fireEvent.click(screen.getByRole("button", { name: "预览文档" }));
+
+    expect(screen.getByLabelText("文档内容")).toHaveTextContent("State 管理");
+    expect(screen.getByLabelText("文档内容")).not.toHaveTextContent("草稿");
+  });
+
   it("saves Markdown edits and refreshes the repository documents", async () => {
     const api = installDocMindApi();
     render(
@@ -35,6 +80,7 @@ describe("文档编辑", () => {
       </AppProviders>,
     );
 
+    fireEvent.click(screen.getByRole("button", { name: "编辑文档" }));
     fireEvent.change(screen.getByLabelText("文档标题"), { target: { value: "更新后的 State" } });
     fireEvent.change(screen.getByLabelText("Markdown 内容"), { target: { value: "# 新内容" } });
     fireEvent.click(screen.getByRole("button", { name: "保存文档" }));
@@ -45,5 +91,6 @@ describe("文档编辑", () => {
         content: "# 新内容",
       }),
     );
+    await waitFor(() => expect(screen.getByLabelText("文档内容")).toHaveTextContent("新内容"));
   });
 });
