@@ -80,3 +80,19 @@ async def test_coordinator_rejects_different_model_while_address_active(database
     with pytest.raises(DomainError) as raised:
         await coordinator.start("llama3.2")
     assert raised.value.code == "OLLAMA_PULL_FAILED"
+
+
+def test_explicit_timeout_equal_to_the_old_sentinel_is_honoured():
+    """`timeout == 600` used to mean "not supplied", so a caller that explicitly
+    asked for 600s silently got config.timeout_seconds (120s) instead."""
+    config = OllamaConfig(timeout_seconds=120)
+    assert PullCoordinator(config=config, timeout=600).timeout == 600
+    # A value that is not the sentinel already worked, and must keep working.
+    assert PullCoordinator(config=config, timeout=42).timeout == 42
+    # Omitting the argument still defers to the config.
+    assert PullCoordinator(config=config).timeout == 120
+
+
+def test_timeout_defaults_to_the_pull_budget_when_no_config_is_supplied():
+    coordinator = PullCoordinator(base_url="http://127.0.0.1:11434")
+    assert coordinator.timeout == 600.0

@@ -4,9 +4,7 @@ import asyncio
 import socket
 from collections.abc import Callable
 from pathlib import Path
-from urllib.parse import urlparse
 
-import httpx
 from fastapi import APIRouter, Request, Response
 
 from app.api.errors import DomainError
@@ -18,8 +16,8 @@ from app.core.model_capabilities import (
 )
 from app.core.ollama_validation import normalize_loopback_base_url
 from app.core.secrets import SecretStore
+from app.feishu.webhook import normalize_feishu_webhook, probe_feishu_webhook
 from app.remote.credentials import CredentialStore
-from app.storage.models import ProviderCredentialState
 from app.schemas.ollama import OllamaConfig, RoutingSettings, RuntimeSettingsInput
 from app.schemas.settings import (
     MODEL_CATALOG,
@@ -44,6 +42,7 @@ from app.schemas.web_search import SearchConnectionResult, WebSearchSettings
 from app.search.model_native import ModelSearchProvider, detect_native_search
 from app.search.searxng import SearxngProvider
 from app.search.tavily import TavilyProvider
+from app.storage.models import ProviderCredentialState
 from app.storage.repositories import SettingStore
 from app.yuque.api_gateway import YuqueApiGateway
 from app.yuque.credentials import YUQUE_CREDENTIAL_SPEC
@@ -298,7 +297,7 @@ class SettingsService:
         if update.webhook_url is None:
             return self.feishu_binding()
         store = self._require_credential_store()
-        webhook_url = _normalize_feishu_webhook(update.webhook_url)
+        webhook_url = normalize_feishu_webhook(update.webhook_url)
         store.save_secret("feishu", "webhook", webhook_url, FEISHU_WEBHOOK_NAME)
         return self.feishu_binding()
 
@@ -314,7 +313,7 @@ class SettingsService:
                 "保存 Webhook 后重试",
             )
         try:
-            await _probe_feishu_webhook(webhook_url)
+            await probe_feishu_webhook(webhook_url)
         except DomainError:
             store.mark_state("feishu", "webhook", "unverified")
             raise
@@ -442,52 +441,6 @@ class SettingsService:
                 continue
             if child.is_file() and child.suffix in {".png", ".json", ".html"}:
                 child.unlink()
-
-
-def _normalize_feishu_webhook(value: str) -> str:
-    candidate = value.strip()
-    if not candidate:
-        return ""
-    parsed = urlparse(candidate)
-    if (
-        parsed.scheme != "https"
-        or parsed.hostname not in {"open.feishu.cn", "open.larksuite.com"}
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.port not in {None, 443}
-        or not parsed.path.startswith("/open-apis/bot/v2/hook/")
-    ):
-        raise DomainError(
-            "FEISHU_WEBHOOK_INVALID",
-            "飞书 Webhook 地址无效，请使用飞书自定义机器人的 Webhook",
-            422,
-        )
-    return parsed.geturl()
-
-
-async def _probe_feishu_webhook(webhook_url: str) -> None:
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0), follow_redirects=False) as client:
-            response = await client.post(
-                webhook_url,
-                json={"msg_type": "text", "content": {"text": "DocMind 飞书绑定验证成功"}},
-            )
-    except httpx.HTTPError as error:
-        raise DomainError(
-            "FEISHU_UNAVAILABLE", "无法连接飞书，请检查网络后重试", 503, True
-        ) from error
-    if response.status_code >= 400:
-        raise DomainError("FEISHU_AUTH_FAILED", "飞书 Webhook 无效或已失效", 401, False)
-    try:
-        payload = response.json()
-    except ValueError as error:
-        raise DomainError("FEISHU_PROTOCOL_ERROR", "飞书返回的数据格式无效", 502, True) from error
-    if not isinstance(payload, dict):
-        raise DomainError("FEISHU_PROTOCOL_ERROR", "飞书返回的数据格式无效", 502, True)
-    code = payload.get("code")
-    status_code = payload.get("StatusCode")
-    if code not in {None, 0} or status_code not in {None, 0}:
-        raise DomainError("FEISHU_AUTH_FAILED", "飞书 Webhook 无效或已失效", 401, False)
 
 
 def _screenshot_count(directory: Path) -> int:

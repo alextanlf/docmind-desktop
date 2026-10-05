@@ -24,6 +24,9 @@ _UNAVAILABLE_MESSAGE = "Ollama 未运行或暂时无法连接"
 _PROTOCOL_MESSAGE = "Ollama 返回了无法识别的数据"
 _MAX_LINE_BYTES = 1 << 20
 _CHAT_DEADLINE_SECONDS = 10 * 60
+# Model pulls download multi-GB weights, so they get a budget well above the
+# 120s inference default. `OllamaConfig.timeout_seconds` caps at 600.
+_PULL_TIMEOUT_SECONDS = 600.0
 
 
 class _SystemResolver:
@@ -190,7 +193,7 @@ class PullCoordinator:
         self,
         base_url: OllamaConfig | str | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
-        timeout: float = 600,
+        timeout: float | None = None,
         resolver=None,
         *,
         config: OllamaConfig | None = None,
@@ -200,15 +203,19 @@ class PullCoordinator:
         if config is None and isinstance(base_url, OllamaConfig):
             config = base_url
             base_url = None
+        # A pull is long-running, so it gets its own budget rather than the
+        # inference default. `None` means "not supplied"; using the old sentinel
+        # of `600` silently discarded an explicit 600 from the caller.
+        effective_timeout = _PULL_TIMEOUT_SECONDS if timeout is None else max(float(timeout), 0.001)
         if config is None:
             config = OllamaConfig(
                 base_url=base_url or "http://127.0.0.1:11434",
-                timeout_seconds=max(float(timeout), 0.001),
+                timeout_seconds=effective_timeout,
             )
         self.config = config
         self.base_url = config.base_url.rstrip("/")
         self.transport = transport
-        self.timeout = config.timeout_seconds if timeout == 600 else timeout
+        self.timeout = effective_timeout if timeout is not None else config.timeout_seconds
         self.resolver = resolver or _SystemResolver()
         self.store = store
         self._clock = clock or time.monotonic
