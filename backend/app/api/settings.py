@@ -16,6 +16,7 @@ from app.core.model_capabilities import (
 )
 from app.core.ollama_validation import normalize_loopback_base_url
 from app.core.secrets import SecretStore
+from app.feishu.credentials import FEISHU_WEBHOOK_SECRET_REF
 from app.feishu.webhook import normalize_feishu_webhook, probe_feishu_webhook
 from app.remote.credentials import CredentialStore
 from app.schemas.ollama import OllamaConfig, RoutingSettings, RuntimeSettingsInput
@@ -45,7 +46,7 @@ from app.search.tavily import TavilyProvider
 from app.storage.models import ProviderCredentialState
 from app.storage.repositories import SettingStore
 from app.yuque.api_gateway import YuqueApiGateway
-from app.yuque.credentials import YUQUE_CREDENTIAL_SPEC
+from app.yuque.credentials import YUQUE_API_SECRET_REF, YUQUE_CREDENTIAL_SPEC
 
 MODEL_CONFIG_KEY = "model.config"
 MODEL_KEY_REFERENCE = "model.api_key_ref"
@@ -55,8 +56,6 @@ WEB_SEARCH_CONFIG_KEY = "web-search.config"
 WEB_SEARCH_API_KEY_NAME = "web-search:tavily"
 OLLAMA_RUNTIME_CONFIG_KEY = "ollama.config"
 MODEL_ROUTING_KEY = "model.routing"
-YUQUE_API_TOKEN_NAME = "yuque-api:token"
-FEISHU_WEBHOOK_NAME = "feishu:webhook"
 ProviderFactory = Callable[[ModelConfig, str], LLMProvider]
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -262,7 +261,7 @@ class SettingsService:
             return self.yuque_api_binding()
         store = self._require_credential_store()
         token = update.token.strip()
-        store.save_secret("yuque", "api", token, YUQUE_API_TOKEN_NAME)
+        store.save_secret("yuque", "api", token, YUQUE_API_SECRET_REF)
         return self.yuque_api_binding()
 
     async def test_yuque_api(self) -> ConnectionTestResult:
@@ -298,7 +297,7 @@ class SettingsService:
             return self.feishu_binding()
         store = self._require_credential_store()
         webhook_url = normalize_feishu_webhook(update.webhook_url)
-        store.save_secret("feishu", "webhook", webhook_url, FEISHU_WEBHOOK_NAME)
+        store.save_secret("feishu", "webhook", webhook_url, FEISHU_WEBHOOK_SECRET_REF)
         return self.feishu_binding()
 
     async def test_feishu(self) -> ConnectionTestResult:

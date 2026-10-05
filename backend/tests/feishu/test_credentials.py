@@ -43,3 +43,21 @@ async def test_app_credential_tester_rejects_invalid_secret() -> None:
 
     with pytest.raises(DomainError):
         await app_credential_tester("cli_a1b2c3:wrong")
+
+
+class TestFeishuWebhookChannel:
+    """The webhook channel used to be wired entirely inside api/settings.py, so
+    its keychain entry name had a second definition outside the provider spec."""
+
+    def test_webhook_channel_is_declared_in_the_spec(self) -> None:
+        channel = FEISHU_CREDENTIAL_SPEC.channel("webhook")
+        assert channel is not None
+        assert channel.has_secret is True
+        assert channel.default_secret_ref == "feishu:webhook"
+        assert channel.tester is not None
+
+    def test_login_channel_is_still_the_user_channel(self) -> None:
+        assert FEISHU_CREDENTIAL_SPEC.login_channel == "user"
+
+    def test_channels_keep_their_declared_order(self) -> None:
+        assert [c.name for c in FEISHU_CREDENTIAL_SPEC.channels] == ["app", "user", "webhook"]

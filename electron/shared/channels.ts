@@ -84,8 +84,9 @@ export const IPC_CHANNELS = {
   streamCancel: "stream:cancel",
 } as const;
 
-export const streamEventChannel = (requestId: string) => `stream:event:${requestId}`;
-export const CHANNELS = IPC_CHANNELS;
-export const STREAM_EVENT_PREFIX = "stream:event:";
+const STREAM_EVENT_PREFIX = "stream:event:";
+
+export const streamEventChannel = (requestId: string) =>
+  `${STREAM_EVENT_PREFIX}${requestId}`;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

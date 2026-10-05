@@ -63,34 +63,39 @@ export function errorAction(code: string | null | undefined): string {
   return (code && actions[code]) || "重试";
 }
 
+/**
+ * Codes kept for compatibility with older backend builds. Lives at module level
+ * with `messages`/`actions` so `clientErrorMessage` does not rebuild these 18
+ * entries on every call.
+ */
+const legacyMessages: Record<string, string> = {
+  MODEL_AUTH_FAILED: "API Key 无效，请更新密钥后重试",
+  MODEL_NOT_FOUND: "未找到指定模型，请检查模型名称",
+  MODEL_PRESET_INVALID: "模型预设无效，请重新选择",
+  MODEL_TIMEOUT: "模型连接超时，请检查网络或调大超时时间",
+  RATE_LIMITED: "请求过于频繁，请稍后重试",
+  MODEL_RATE_LIMITED: "请求过于频繁，请稍后重试",
+  PROTOCOL_ERROR: "模型服务响应格式异常，请检查 Base URL 或接口兼容性",
+  MODEL_PROTOCOL_ERROR: "模型服务响应格式异常，请检查 Base URL 或接口兼容性",
+  UNAVAILABLE: "模型服务暂不可用，请稍后重试",
+  MODEL_UNAVAILABLE: "模型服务暂不可用，请稍后重试",
+  BACKEND_UNAVAILABLE: "本地服务暂不可用，请稍后重试",
+  YUQUE_BROWSER_UNAVAILABLE: "本机尚未安装语雀登录浏览器，暂无法打开登录窗口",
+  EMBEDDING_DOWNLOAD_FAILED: "Embedding 模型下载失败，请检查网络后重试",
+  YUQUE_LOGIN_REQUIRED: "语雀登录已失效，请重新登录",
+  FEISHU_LOGIN_REQUIRED: "飞书访问凭证已失效，请重新配置或授权",
+  BATCH_STALE_CONFIRMATION: "目录内容已变化，请重新选择目录后再试",
+  BATCH_SOURCE_CHANGED: "目录内容已变化，请重新选择目录",
+  BATCH_STATE_CONFLICT: "批量导入状态已变化，请刷新后重试",
+};
+
+const VALIDATION_CODES = ["VALIDATION_ERROR", "INVALID_REQUEST", "MODEL_VALIDATION_FAILED"];
+
 export function clientErrorMessage(error: unknown): string {
   const value = error as ClientError | null;
   if (value?.code && messages[value.code]) return messages[value.code];
-  const legacy: Record<string, string> = {
-    MODEL_AUTH_FAILED: "API Key 无效，请更新密钥后重试",
-    MODEL_NOT_FOUND: "未找到指定模型，请检查模型名称",
-    MODEL_PRESET_INVALID: "模型预设无效，请重新选择",
-    MODEL_TIMEOUT: "模型连接超时，请检查网络或调大超时时间",
-    RATE_LIMITED: "请求过于频繁，请稍后重试",
-    MODEL_RATE_LIMITED: "请求过于频繁，请稍后重试",
-    PROTOCOL_ERROR: "模型服务响应格式异常，请检查 Base URL 或接口兼容性",
-    MODEL_PROTOCOL_ERROR: "模型服务响应格式异常，请检查 Base URL 或接口兼容性",
-    UNAVAILABLE: "模型服务暂不可用，请稍后重试",
-    MODEL_UNAVAILABLE: "模型服务暂不可用，请稍后重试",
-    BACKEND_UNAVAILABLE: "本地服务暂不可用，请稍后重试",
-    YUQUE_BROWSER_UNAVAILABLE: "本机尚未安装语雀登录浏览器，暂无法打开登录窗口",
-    EMBEDDING_DOWNLOAD_FAILED: "Embedding 模型下载失败，请检查网络后重试",
-    YUQUE_LOGIN_REQUIRED: "语雀登录已失效，请重新登录",
-    FEISHU_LOGIN_REQUIRED: "飞书访问凭证已失效，请重新配置或授权",
-    BATCH_STALE_CONFIRMATION: "目录内容已变化，请重新选择目录后再试",
-    BATCH_SOURCE_CHANGED: "目录内容已变化，请重新选择目录",
-    BATCH_STATE_CONFLICT: "批量导入状态已变化，请刷新后重试",
-  };
-  if (value?.code && legacy[value.code]) return legacy[value.code];
-  if (
-    value?.code &&
-    ["VALIDATION_ERROR", "INVALID_REQUEST", "MODEL_VALIDATION_FAILED"].includes(value.code)
-  ) {
+  if (value?.code && legacyMessages[value.code]) return legacyMessages[value.code];
+  if (value?.code && VALIDATION_CODES.includes(value.code)) {
     return "设置内容无效，请检查填写内容";
   }
   return "操作失败，请检查设置后重试";
