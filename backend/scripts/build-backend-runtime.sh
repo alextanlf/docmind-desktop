@@ -192,6 +192,21 @@ if ! probe_out="$("$runtime_python" -c "$probe_imports" 2>&1)"; then
 fi
 echo "  关键依赖自检通过"
 
+# 3.5) AST 级 import 覆盖校验：在装依赖**之前**就确认 app/ 里每个运行时 import
+#      （含函数体内的延迟 import）都有对应的直接依赖声明。
+# 为什么放在安装前：装完再发现漏依赖，runtime 已经建了一半，清理成本高。
+# 为什么需要它：延迟 import 逃过源码审查，而这里只装 [project].dependencies。
+# transformers 就这样漏过——开发 venv 靠 sentence-transformers 传递带入而正常，
+# 安装版 runtime 完全没有，直到用户点「加载模型」才炸。
+echo "校验运行时 import 的依赖声明覆盖..."
+# 只需要标准库（ast / re / sys），所以用 uv 托管的 interp 即可，不依赖 venv。
+if ! import_check_out="$("$interp" "$backend_dir/scripts/check_runtime_imports.py" 2>&1)"; then
+  echo "运行时 import 依赖校验失败（安装版会在运行期 ModuleNotFoundError）" >&2
+  echo "${import_check_out}" >&2
+  exit 1
+fi
+echo "  ${import_check_out}"
+
 # 4) 复制应用代码与 alembic 配置。
 echo "复制应用代码..."
 mkdir -p "$runtime_dir/app"

@@ -70,3 +70,98 @@ def test_build_probe_covers_lazy_imports() -> None:
             f"构建期探针未覆盖 {module}：源码里是延迟 import，"
             "漏掉就会拖到用户点「加载模型」才暴露"
         )
+
+# ── check_runtime_imports.py：AST 级覆盖校验 ────────────────────────────────
+# 这个脚本是 transformers 漏依赖事故的长期防线：延迟 import 逃过源码审查，
+# 只有 AST 扫描能穿透函数体。测试直接跑它的 main()，验证判定逻辑而不只是跑通。
+
+import importlib.util
+import subprocess
+import sys
+from pathlib import Path
+
+_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check_runtime_imports.py"
+
+
+def _load_checker():
+    spec = importlib.util.spec_from_file_location("check_runtime_imports", _SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_checker_passes_on_current_source() -> None:
+    assert _load_checker().main() == 0, "当前源码存在未被依赖声明覆盖的运行时 import"
+
+
+def test_checker_finds_lazy_imports_inside_functions() -> None:
+    """核心能力：必须能穿透函数体发现延迟 import。
+
+    transformers 的import 就在 `ONNXEmbeddingModel.__init__` 里，
+    只扫顶层节点的话这个脚本就毫无价值。
+    """
+    checker = _load_checker()
+    imported = checker.imported_modules()
+
+    assert "transformers" in imported, "没扫到 onnx_embedding 的延迟 import transformers"
+    assert any("onnx_embedding" in where for where in imported["transformers"])
+    # numpy 同理，也是延迟 import
+    assert "numpy" in imported
+    assert any("onnx_embedding" in where for where in imported["numpy"])
+
+
+def test_checker_flags_undeclared_module() -> None:
+    """把 transformers 从声明里去掉，校验必须失败并点名它+ 给出位置。"""
+    pyproject = PYPROJECT
+    original = pyproject.read_text(encoding="utf-8")
+    stripped = original.replace('  "transformers>=5,<6",\n', "")
+    assert stripped != original, "pyproject 里找不到 transformers 声明行"
+    pyproject.write_text(stripped, encoding="utf-8")
+    try:
+        assert _load_checker().main() == 1, "漏声明依赖时校验应当失败"
+    finally:
+        pyproject.write_text(original, encoding="utf-8")
+
+    assert _load_checker().main() == 0, "恢复声明后应当通过"
+
+
+def test_checker_maps_import_name_to_distribution_name() -> None:
+    """import 名 != PyPI 名时必须按分布名比对，否则误报一片。"""
+    checker = _load_checker()
+    declared = checker.declared_distributions()
+
+    assert "beautifulsoup4" in declared and "bs4" not in declared
+    assert checker.IMPORT_TO_DISTRIBUTION["bs4"] in declared
+    assert checker.IMPORT_TO_DISTRIBUTION["sqlite_vec"] in declared
+    assert checker.IMPORT_TO_DISTRIBUTION["rank_bm25"] in declared
+
+
+def test_checker_excludes_optional_fp32_path() -> None:
+    """sentence_transformers 只在 fp32 extra 用，不该被要求进默认依赖。"""
+    checker = _load_checker()
+    assert "sentence_transformers" in checker.OPTIONAL_ONLY
+    assert checker.OPTIONAL_ONLY["sentence_transformers"] not in checker.declared_distributions()
+
+
+def test_checker_is_wired_into_the_build_script() -> None:
+    """校验必须接在构建流程里，否则只是个没人跑的工具。"""
+    build_script = (PYPROJECT.parent / "scripts" / "build-backend-runtime.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "check_runtime_imports.py" in build_script, "构建脚本未调用 import 校验"
+    check_line = next(
+        line for line in build_script.splitlines() if "check_runtime_imports.py" in line
+    )
+    assert "if !" in check_line, "校验失败必须硬失败（if ! ... exit 1），不能只打印"
+
+
+def test_checker_runs_as_standalone_script() -> None:
+    """确认它真能在纯标准库解释器下独立运行（构建时就只有 interp 可用）。"""
+    result = subprocess.run(
+        [sys.executable, str(_SCRIPT)], capture_output=True, text=True, cwd=str(PYPROJECT.parent)
+    )
+
+    assert result.returncode == 0, f"独立运行失败:\n{result.stdout}\n{result.stderr}"
+    assert "校验通过" in result.stdout
