@@ -115,6 +115,10 @@ export function RuntimeModelSettings({ settings }: { settings: SettingsView }) {
           onChange={(e) => update({ local: { ...local, apiKey: e.target.value } })}
         />
       </label>
+      <p className="runtime-hint">
+        仅当本地服务开启了鉴权时才需要（Ollama 忽略此项）。该值以明文存于本地配置，
+        与云端 API Key 的钥匙串存储方式不同，请勿填写敏感凭据。
+      </p>
       <fieldset>
         <legend>检索</legend>
         <label>
