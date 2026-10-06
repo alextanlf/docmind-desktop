@@ -2097,6 +2097,11 @@ progress::-webkit-progress-bar {
   gap: 8px;
   margin: 0;
   padding-left: 20px;
+  /* Tailwind preflight 把 list-style 重置为 none。padding-left 是给序号留的位，
+     不写回 list-style-type 的话序号整个不显示（留了空缩进）。
+     同 .markdown-body ol（见上）——凡是渲染有序列表都要显式写回。 */
+  list-style-position: outside;
+  list-style-type: decimal;
 }
 .web-search-sources li {
   display: grid;

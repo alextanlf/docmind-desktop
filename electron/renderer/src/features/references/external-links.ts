@@ -7,7 +7,7 @@ export function isHttpUrl(url: string) {
   }
 }
 
-export function isYuqueUrl(url: string) {
+function isYuqueUrl(url: string) {
   try {
     const hostname = new URL(url).hostname;
     return hostname === "yuque.com" || hostname.endsWith(".yuque.com");

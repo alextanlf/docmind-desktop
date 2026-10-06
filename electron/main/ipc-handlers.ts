@@ -3,7 +3,7 @@ import { z } from "zod";
 import { BackendProxy, DocMindClientError, type StreamSender } from "./backend-proxy";
 import { StagedFileService } from "./staged-files";
 import { redactSecrets } from "./redaction";
-import { IPC_CHANNELS, streamEventChannel } from "../shared/channels";
+import { IPC_CHANNELS, PUSH_CHANNELS, streamEventChannel } from "../shared/channels";
 import {
   ChatStreamInputSchema,
   ConflictResolutionSchema,
@@ -691,13 +691,7 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
   const ipcMain = dependencies.ipcMain ?? electronIpc.ipcMain;
   if (ipcMain) {
     for (const [channel, handler] of Object.entries(handlers)) {
-      if (
-        channel === IPC_CHANNELS.streamCancel ||
-        channel === IPC_CHANNELS.importsSubscribe ||
-        channel === IPC_CHANNELS.chatStream ||
-        channel === IPC_CHANNELS.chatSearchStream ||
-        channel === IPC_CHANNELS.memorySubscribeDistillation
-      ) {
+      if (PUSH_CHANNELS.has(channel)) {
         ipcMain.on(channel, (event: IpcEvent, ...args: any[]) => {
           try {
             const result = handler(event, ...args);

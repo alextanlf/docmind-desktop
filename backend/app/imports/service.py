@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.api.errors import DomainError
 from app.config import AppSettings
-from app.core.embedding import EmbeddingProvider
+from app.core.embedding import EmbeddingProvider, require_ready_embedding
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
 from app.document.sources import CollectionCacheRequest
@@ -574,9 +574,7 @@ class ImportService:
             try:
                 parsed = self._parsed_from_persisted(document)
                 chunks = self.chunker.chunk(parsed)
-                status = await self.embedding_provider.ensure_ready()
-                if status.state != "ready":
-                    raise DomainError("INDEX_FAILED", "嵌入模型不可用", 503, True)
+                await require_ready_embedding(self.embedding_provider)
                 embeddings = await self.embedding_provider.embed_documents(
                     [chunk.text for chunk in chunks]
                 )

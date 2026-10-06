@@ -344,11 +344,10 @@ async def insert_descendant_blocks(
 ) -> None:
     if not descendants:
         return
-    id_set = set(first_level_ids)
     cursor = index
     for offset in range(0, len(first_level_ids), _DESCENDANT_BATCH):
         batch_ids = first_level_ids[offset : offset + _DESCENDANT_BATCH]
-        batch = _descendants_for_batch(descendants, batch_ids, id_set)
+        batch = _descendants_for_batch(descendants, batch_ids)
         await _request_data(
             "POST",
             f"/open-apis/docx/v1/documents/{document_id}/blocks/{document_id}/descendant",
@@ -373,13 +372,16 @@ async def delete_drive_file(token: str, file_token: str, file_type: str = "docx"
 def _descendants_for_batch(
     descendants: list[dict[str, Any]],
     batch_ids: list[str],
-    first_level_id_set: set[str],
 ) -> list[dict[str, Any]]:
     """Collect the descendants belonging to one first-level batch.
 
     A descendant belongs to the batch when it is one of the batch blocks or
     its (transitive) parent is. Block ids are caller-assigned in the convert
     response, so membership can be resolved through the ``parent_id`` links.
+
+    🔴 此前还有第三个 `first_level_id_set` 参数，函数体内从未读取
+    （成员判定只用 `included`，即本批次的 batch_ids），
+    调用方还为此每批重建一次 `set(first_level_ids)`。已删除。
     """
     included = set(batch_ids)
     changed = True

@@ -36,7 +36,9 @@ describe("runtime query contracts", () => {
     expect(api.ollama.status).not.toHaveBeenCalled();
     expect(api.ollama.models).not.toHaveBeenCalled();
     expect(ollamaKeys.status).toEqual(["ollama", "status"]);
-    expect(settingsKeys.runtime).toEqual(["settings", "runtime"]);
+    // 原先这里还断言 settingsKeys.runtime === ["settings","runtime"]，那是纯字面量
+    // 断言（不验证任何行为），而该 key 唯一的使用者 useRuntimeSettingsQuery 已零调用、
+    // setQueryData 也已删除，故 key 一并移除。
   });
 
   it.each([

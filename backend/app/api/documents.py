@@ -14,7 +14,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 from fastapi import APIRouter, Request, Response, status
 
 from app.api.errors import DomainError
-from app.core.embedding import EmbeddingProvider
+from app.core.embedding import EmbeddingProvider, require_ready_embedding
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
 from app.remote.provider import RemoteProvider
@@ -26,7 +26,7 @@ from app.schemas.remote import (
     RemoteDocument,
     UpdateRemoteDocumentRequest,
 )
-from app.schemas.sync import ConflictResolution
+from app.schemas.sync import ConflictResolutionInput
 from app.schemas.versioning import DocumentVersion
 from app.storage.models import DocumentChunkRecord, DocumentRecord, RepositoryRecord
 from app.storage.repositories import (
@@ -247,9 +247,7 @@ async def _restore_index(request: Request, snapshot: dict[str, object], current_
     if old_chunks:
         try:
             provider = _embedding_provider(request)
-            readiness = await provider.ensure_ready()
-            if readiness.state != "ready":
-                raise DomainError("INDEX_FAILED", "嵌入模型不可用", 503, True)
+            await require_ready_embedding(provider)
             embeddings = await provider.embed_documents([chunk.text for chunk in old_chunks])
             await _vector_call(
                 vector_store.upsert,
@@ -295,9 +293,7 @@ async def _index(
     )
     chunks = _chunker(request).chunk(parsed)
     provider = _embedding_provider(request)
-    readiness = await provider.ensure_ready()
-    if readiness.state != "ready":
-        raise DomainError("INDEX_FAILED", "嵌入模型不可用", 503, True)
+    await require_ready_embedding(provider)
     embeddings = await provider.embed_documents([chunk.text for chunk in chunks])
     records = [
         DocumentChunkRecord(
@@ -1134,10 +1130,10 @@ async def delete_document(request: Request, document_id: str, body: DocumentDele
 
 
 @router.post("/api/documents/{document_id}/conflict", status_code=status.HTTP_204_NO_CONTENT)
-async def resolve_conflict(request: Request, document_id: str) -> Response:
-    payload = await request.json()
-    resolution = ConflictResolution(payload.get("resolution", ""))
-    await request.app.state.conflict_service.resolve(document_id, resolution)
+async def resolve_conflict(
+    request: Request, document_id: str, payload: ConflictResolutionInput
+) -> Response:
+    await request.app.state.conflict_service.resolve(document_id, payload.resolution)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

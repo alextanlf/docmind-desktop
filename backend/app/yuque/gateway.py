@@ -18,6 +18,7 @@ from app.config import AppSettings
 from app.document.parser import DocumentParser
 from app.remote.markers import extract_mutation_marker, strip_mutation_marker
 from app.remote.provider import ProviderCapabilities, ProviderIdentity
+from app.remote.redaction import mask_account
 from app.schemas.imports import DownloadedDocument
 from app.schemas.remote import (
     BrowserInstallResult,
@@ -95,7 +96,7 @@ class PlaywrightYuqueGateway:
                     if await login.is_logged_in(timeout=_LOGIN_STATUS_SELECTOR_TIMEOUT_MS):
                         return LoginStatus(
                             logged_in=True,
-                            account_label=_mask_account(await login.account_label()),
+                            account_label=mask_account(await login.account_label()),
                             requires_login=False,
                         )
                     if time.monotonic() >= deadline:
@@ -138,7 +139,7 @@ class PlaywrightYuqueGateway:
                     )
                 return LoginResult(
                     logged_in=True,
-                    account_label=_mask_account(await login.account_label()),
+                    account_label=mask_account(await login.account_label()),
                     requires_login=False,
                 )
         except DomainError:
@@ -536,17 +537,6 @@ async def _has_yuque_session_cookie(page: Any) -> bool:
     )
 
 
-def _mask_account(value: str | None) -> str | None:
-    if not value:
-        return None
-    compact = value.strip()
-    if len(compact) <= 2:
-        return "*" * len(compact)
-    return f"{compact[0]}***{compact[-1]}"
-
-
-def _document_summary(document: RemoteDocumentContent) -> RemoteDocument:
-    return RemoteDocument.model_validate(document.model_dump(exclude={"content"}))
 
 
 async def _open_yuque_resource(page: Any, resource_id: str) -> None:

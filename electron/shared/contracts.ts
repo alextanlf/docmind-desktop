@@ -599,11 +599,40 @@ export const BatchItemPageSchema = z.object({
   items: z.array(BatchItemSchema),
   nextCursor: z.string().nullable(),
 });
-export const CreateBatchInputSchema = z.object({
-  kind: z.literal("staged_directory"),
-  sourceId: id,
-  repositoryId: id,
-});
+/**
+ * 批量导入入参。后端 `CreateBatchRequest`（app/schemas/batches.py）是
+ * 以 `kind` 为判别式的四路 union，四个变体的字段与约束必须逐字对齐：
+ *
+ * | kind                 | 字段 |
+ * |---------------------|------|
+ * | staged_directory    | sourceId |
+ * | web                 | entryUrl / maxDepth(0-5) / maxPages(1-200) / useSitemap |
+ * | remote_repository   | — |
+ * | search_results      | searchRunId / resultIds(1-10) |
+ *
+ * 🔴 此前这里只写了 `staged_directory` 一种，而 UI 上「网站 / 远程知识库」
+ * 两个 tab 会构造另外两种 —— preload 的 `CreateBatchInputSchema.parse`
+ * 必然抛 ZodError，两个 tab 完全不可用。`kind` 一变，字段集就变，
+ * 所以必须是 discriminatedUnion，不能用可选字段堆在一个 object 上。
+ */
+export const CreateBatchInputSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("staged_directory"), sourceId: id, repositoryId: id }),
+  z.object({
+    kind: z.literal("web"),
+    entryUrl: z.string().url(),
+    repositoryId: id,
+    maxDepth: z.number().int().min(0).max(5).optional(),
+    maxPages: z.number().int().min(1).max(200).optional(),
+    useSitemap: z.boolean().optional(),
+  }),
+  z.object({ kind: z.literal("remote_repository"), repositoryId: id }),
+  z.object({
+    kind: z.literal("search_results"),
+    searchRunId: id,
+    resultIds: z.array(id).min(1).max(10),
+    repositoryId: id,
+  }),
+]);
 export const ConfirmBatchInputSchema = z.object({
   discoveryVersion: z.number().int().positive(),
   items: z

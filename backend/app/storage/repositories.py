@@ -343,6 +343,10 @@ class WebSearchRunStore:
     ) -> WebSearchRunRecord:
         with self.database.session() as s:
             run = s.get(WebSearchRunRecord, run_id)
+            # 与 fail() 同款守卫：缺了会 AttributeError('NoneType' has no 'status')
+            # 而不是可读的 404，且因 run_id 外键约束，下面的 s.add 也会连带 IntegrityError。
+            if run is None:
+                raise DomainError("SEARCH_RUN_NOT_FOUND", "搜索任务不存在", 404)
             if provider:
                 run.provider = provider[:32]
             for r in results:
@@ -1093,6 +1097,12 @@ class BatchImportStore:
     def _document_target(
         session: Session, repository_id: str | None, item: BatchItemRecord
     ) -> DocumentRecord | None:
+        """按来源标识 → 内容哈希回退，找出这条 item 对应的既有文档。
+
+        两条调用路径（insert_discovered_items 与 _confirm_and_reserve_in_session）
+        曾各有一份逐字相同的实现，只有 `repository_id` 可空的处理不同 ——
+        现在统一走这里，可空判断留在本方法内。
+        """
         if not repository_id:
             return None
         target = session.scalar(
@@ -1442,23 +1452,9 @@ class BatchImportStore:
         repository_id: str,
         item: BatchItemRecord,
     ) -> DocumentRecord | None:
-        by_identity = session.scalar(
-            select(DocumentRecord).where(
-                DocumentRecord.repository_id == repository_id,
-                DocumentRecord.source_identity == item.source_identity,
-            )
-        )
-        if by_identity is not None:
-            return by_identity
-        revision = item.source_revision.removeprefix("sha256:")
-        if len(revision) != 64:
-            return None
-        return session.scalar(
-            select(DocumentRecord).where(
-                DocumentRecord.repository_id == repository_id,
-                DocumentRecord.content_hash == revision,
-            )
-        )
+        # 与 _document_target 是同一段逻辑（来源标识 → 内容哈希回退），
+        # 此调用点保证 repository_id 非空，直接委托避免两份实现漂移。
+        return BatchImportStore._document_target(session, repository_id, item)
 
     @staticmethod
     def _current_actions(

@@ -207,15 +207,7 @@ class HybridRetriever:
                 )
             ).all()
         records = {(chunk.id, document.id): (chunk, document) for chunk, document in rows}
-        wanted = {
-            (hit.id, hit.metadata.get("doc_id"))
-            for repository_id in repository_ids
-            for hit in self._overview_vector_hits(repository_id, query_embedding)
-        }
-        candidates = [
-            self._overview_hit(records[key], hit)
-            for key, hit in ((k, None) for k in wanted)  # 占位，下面按分数填
-        ] if False else []
+        candidates: list[RetrievalHit] = []
         for repository_id in repository_ids:
             for hit in self._overview_vector_hits(repository_id, query_embedding):
                 record = records.get((hit.id, hit.metadata.get("doc_id")))

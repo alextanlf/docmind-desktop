@@ -23,6 +23,21 @@ class EmbeddingProvider(Protocol):
     async def embed_query(self, text: str) -> list[float]: ...
 
 
+async def require_ready_embedding(provider: EmbeddingProvider) -> ModelStatus:
+    """确保嵌入模型可用，否则抛 503。
+
+    🔴 嵌入是**索引期硬依赖**（没有向量就写不了索引），不是可降级项 ——
+    所以这里是抛错而不是回退。此前这段 `ensure_ready()` + `state != "ready"`
+    + `DomainError("INDEX_FAILED", "嵌入模型不可用", 503, True)` 在
+    `api/documents.py`（两处）、`imports/service.py`、`sync/refresher.py`
+    各抄了一份，四份的错误码与文案靠人工保持一致。收敛到这里。
+    """
+    status = await provider.ensure_ready()
+    if status.state != "ready":
+        raise DomainError("INDEX_FAILED", "嵌入模型不可用", 503, True)
+    return status
+
+
 class BGEEmbeddingProvider:
     def __init__(self, settings: EmbeddingSettings) -> None:
         self.settings = settings

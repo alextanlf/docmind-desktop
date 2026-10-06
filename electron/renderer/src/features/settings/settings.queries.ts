@@ -16,7 +16,6 @@ export const settingsKeys = {
   remote: (provider: string) => ["remote", "status", provider] as const,
   remoteProviders: ["remote", "providers"] as const,
   remoteCredentials: (provider: string) => ["remote", "credentials", provider] as const,
-  runtime: ["settings", "runtime"] as const,
 };
 export const ollamaKeys = {
   status: ["ollama", "status"] as const,
@@ -93,15 +92,6 @@ export function useDeleteRemoteCredentialMutation(provider: string, channel: str
   });
 }
 
-export function useRuntimeSettingsQuery(enabled = true) {
-  return useQuery({
-    queryKey: settingsKeys.runtime,
-    queryFn: () => window.docmind.settings.get(),
-    enabled,
-    select: (settings) => settings.runtime,
-  });
-}
-
 export function useOllamaStatusQuery(enabled = true) {
   return useQuery({
     queryKey: ollamaKeys.status,
@@ -173,7 +163,6 @@ export function useSaveRuntimeMutation() {
     mutationFn: (input: RuntimeSettingsInput) => window.docmind.settings.saveRuntime(input),
     onSuccess: (settings) => {
       client.setQueryData(settingsKeys.root, settings);
-      client.setQueryData(settingsKeys.runtime, settings.runtime);
       void client.invalidateQueries({ queryKey: ollamaKeys.status });
       void client.invalidateQueries({ queryKey: ollamaKeys.models });
     },

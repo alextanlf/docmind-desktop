@@ -77,7 +77,10 @@ export function BatchSourceStep({
               useSitemap,
             }
           : { kind: "remote_repository" as const, repositoryId: selectedRepositoryId };
-      const batch = await createBatch.mutateAsync(input as never);
+      // 不再 `as never`：CreateBatchInputSchema 已是覆盖后端四种 kind 的
+      // discriminatedUnion，类型能自己推出来。那个 as never 是在掩盖
+      // 「schema 只认 staged_directory」的事实。
+      const batch = await createBatch.mutateAsync(input);
       onCreated(batch.id, batch.discoveryVersion);
     } catch (cause) {
       setError(clientErrorMessage(cause));

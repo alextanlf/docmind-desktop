@@ -27,6 +27,7 @@ from app.feishu.oauth import FeishuOAuthFlow
 from app.feishu.tokens import FeishuTokenManager
 from app.remote.markers import strip_mutation_marker
 from app.remote.provider import ProviderCapabilities, ProviderIdentity
+from app.remote.redaction import mask_account
 from app.schemas.remote import (
     CreateRemoteDocumentRequest,
     CreateRemoteRepositoryRequest,
@@ -76,7 +77,7 @@ class FeishuProvider:
                         label = None
                 return LoginStatus(
                     logged_in=True,
-                    account_label=_mask_account(label or ""),
+                    account_label=mask_account(label or ""),
                     requires_login=False,
                 )
         return LoginStatus(logged_in=False, account_label=None, requires_login=True)
@@ -98,7 +99,7 @@ class FeishuProvider:
         )
         return LoginResult(
             logged_in=True,
-            account_label=_mask_account(bundle.name or ""),
+            account_label=mask_account(bundle.name or ""),
             requires_login=False,
         )
 
@@ -329,12 +330,3 @@ def _node_to_document(node: dict[str, object], repository_id: str) -> RemoteDocu
         title=str(node.get("title") or node_token),
         url=f"https://feishu.cn/wiki/{node_token}",
     )
-
-
-def _mask_account(value: str) -> str | None:
-    compact = value.strip()
-    if not compact:
-        return None
-    if len(compact) <= 2:
-        return "*" * len(compact)
-    return f"{compact[0]}***{compact[-1]}"

@@ -5,7 +5,7 @@ from hashlib import sha256
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
-from app.api.errors import DomainError
+from app.core.embedding import require_ready_embedding
 from app.graph.extractor import extract_graph
 from app.schemas.imports import DownloadedDocument
 from app.storage.models import DocumentChunkRecord, DocumentRecord
@@ -61,9 +61,7 @@ class DocumentRefresher:
             )
         )
         chunks = self.chunker.chunk(parsed)
-        status = await self.embedding_provider.ensure_ready()
-        if status.state != "ready":
-            raise DomainError("INDEX_FAILED", "嵌入模型不可用", 503, True)
+        await require_ready_embedding(self.embedding_provider)
         embeddings = await self.embedding_provider.embed_documents(
             [chunk.text for chunk in chunks]
         )

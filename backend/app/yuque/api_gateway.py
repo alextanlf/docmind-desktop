@@ -10,6 +10,7 @@ import httpx
 from app.api.errors import DomainError
 from app.document.parser import DocumentParser
 from app.remote.provider import ProviderCapabilities, ProviderIdentity
+from app.remote.redaction import mask_account
 from app.schemas.imports import DownloadedDocument
 from app.schemas.remote import (
     BrowserInstallResult,
@@ -49,7 +50,7 @@ class YuqueApiGateway:
             raise
         return LoginStatus(
             logged_in=True,
-            account_label=_mask_account(str(user.get("name") or user.get("login") or "")),
+            account_label=mask_account(str(user.get("name") or user.get("login") or "")),
             requires_login=False,
         )
 
@@ -59,7 +60,7 @@ class YuqueApiGateway:
             user = await _fetch_user(token)
             return LoginResult(
                 logged_in=True,
-                account_label=_mask_account(str(user.get("name") or user.get("login") or "")),
+                account_label=mask_account(str(user.get("name") or user.get("login") or "")),
                 requires_login=False,
             )
         raise DomainError(
@@ -442,12 +443,3 @@ def _quote_path(value: str) -> str:
     # Path segments are kept readable for Yuque namespaces while unsafe characters
     # are escaped by httpx when the URL is dispatched.
     return value.strip("/")
-
-
-def _mask_account(value: str) -> str | None:
-    compact = value.strip()
-    if not compact:
-        return None
-    if len(compact) <= 2:
-        return "*" * len(compact)
-    return f"{compact[0]}***{compact[-1]}"

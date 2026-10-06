@@ -1,5 +1,5 @@
 import { Check, ChevronDown, Database } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import type { Repository } from "../../../../shared/contracts";
 
 type RepositoryScopeProps = {
@@ -13,7 +13,14 @@ export function RepositoryScope({
   repositories,
   selectedRepositoryIds,
 }: RepositoryScopeProps) {
-  const indexed = repositories.filter((repository) => repository.indexedDocumentCount > 0);
+  // 🔴 必须 memo：`indexed` 进了下方 effect 的依赖数组，而 filter 每次渲染
+  // 都返回新数组 —— 不 memo 就等于依赖「每次都变」，effect 每帧都跑。
+  // 目前靠 `valid.length !== selectedRepositoryIds.length` 侥幸不发 onChange，
+  // 但只要这个守卫有任何变化（或 onChange 换成非稳定引用）就是死循环。
+  const indexed = useMemo(
+    () => repositories.filter((repository) => repository.indexedDocumentCount > 0),
+    [repositories],
+  );
   useEffect(() => {
     const valid = selectedRepositoryIds.filter((id) => indexed.some((repo) => repo.id === id));
     if (valid.length !== selectedRepositoryIds.length) onChange(valid);

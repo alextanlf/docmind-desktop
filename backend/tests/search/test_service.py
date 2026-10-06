@@ -246,3 +246,21 @@ async def test_tavily_results_are_not_enriched(database) -> None:
     await service.run(_request())
 
     assert enricher.calls == 0
+
+
+def test_complete_and_fail_both_reject_unknown_run(database) -> None:
+    """complete() 与 fail() 必须对「运行不存在」给同一个 404，而不是崩溃。
+
+    回归：complete() 少了 None 守卫，`run.provider = ...` 直接抛
+    AttributeError('NoneType' has no attribute 'status') -> 500。
+    """
+    store = WebSearchRunStore(database)
+
+    for call in (
+        lambda: store.complete("missing-run", []),
+        lambda: store.fail("missing-run", error_code="SEARCH_FAILED"),
+    ):
+        with pytest.raises(DomainError) as error:
+            call()
+        assert error.value.code == "SEARCH_RUN_NOT_FOUND"
+        assert error.value.status_code == 404

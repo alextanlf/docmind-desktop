@@ -18,10 +18,12 @@ export function ChatPanel({
   sessionId,
   repositoryIds,
   ended = false,
+  onOpenSettings,
 }: {
   sessionId: string;
   repositoryIds: string[];
   ended?: boolean;
+  onOpenSettings?: () => void;
 }) {
   const queryClient = useQueryClient();
   const messages = useMessagesQuery(sessionId);
@@ -139,7 +141,11 @@ export function ChatPanel({
   const routeLabel = route
     ? `${route.source === "local" ? "本地" : "云端"} · ${route.model}${route.fallbackReason ? "（本地不可用，已回退）" : ""}`
     : null;
-  const errorCode = activeStream?.error ? (activeStream.error as string) : null;
+  // 🔴 按原始错误码判定，不是按已翻译的中文 error 串做 .includes()。
+  // 后端 core/ollama_service.py:279 抛的码是 OLLAMA_MODEL_NOT_INSTALLED，
+  // 文案会随翻译表变化 —— 用文案匹配等于把可操作 UI 绑死在文案上，
+  // 结果是按钮几乎永不出现（此前还漏了 onClick，点不动）。
+  const needsModelSetup = activeStream?.errorCode === "OLLAMA_MODEL_NOT_INSTALLED";
   return (
     <section className="chat-panel" aria-label="对话">
       {routeLabel ? (
@@ -172,11 +178,13 @@ export function ChatPanel({
       {activeStream?.error ? (
         <div className="chat-stream-error" role="alert">
           <span>{activeStream.error}</span>
-          {errorCode?.includes("选定模型尚未安装") ? (
+          {needsModelSetup ? (
             <button
               type="button"
               className="button button-secondary"
               aria-label="打开设置并拉取模型"
+              onClick={onOpenSettings}
+              disabled={!onOpenSettings}
             >
               打开设置并拉取模型
             </button>

@@ -27,6 +27,17 @@ class RemoteDocumentState:
     url: str
 
 
+class ConflictResolutionInput(WireModel):
+    """冲突处置请求体。
+
+    🔴 此前该路由用裸 `await request.json()` 再 `ConflictResolution(payload["resolution"])`，
+    非法值/缺字段抛的是 `ValueError`，不经过 DomainError handler -> 直接 500。
+    改成 pydantic 入参后由 FastAPI 自动回 422，与本文件其余路由一致。
+    """
+
+    resolution: ConflictResolution
+
+
 class SyncOutcome(WireModel):
     repository_id: str
     added: int

@@ -325,6 +325,7 @@ export function Workspace() {
               </header>
               <ChatPanel
                 ended={Boolean(selectedSession.endedAt)}
+                onOpenSettings={() => setActiveView("settings")}
                 repositoryIds={selectedRepositoryIds}
                 sessionId={selectedSession.id}
               />

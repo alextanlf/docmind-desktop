@@ -25,6 +25,14 @@ type ChatStreamState = {
   lastSequence: number;
   status: ChatStreamStatus;
   error: string | null;
+  /**
+   * 原始错误码（如 `OLLAMA_MODEL_NOT_INSTALLED`）。
+   *
+   * 🔴 不能从 `error`（已被翻译成中文）里反推：ChatPanel 需要按码决定
+   * 是否显示「打开设置并拉取模型」这类**可操作**的按钮，而中文文案会随
+   * 翻译表变化，按字符串匹配等于把 UI 行为绑死在文案上。
+   */
+  errorCode: string | null;
   subscription: StreamSubscription | null;
   searchSuggestion: { userMessageId: string } | null;
   continuationUserMessageId: string | null;
@@ -54,6 +62,7 @@ const initialState = {
   lastSequence: 0,
   status: "idle" as ChatStreamStatus,
   error: null,
+  errorCode: null,
   subscription: null,
   searchSuggestion: null,
   continuationUserMessageId: null,
@@ -79,20 +88,20 @@ function mergeCitations(current: Citation[], incoming: Citation[]) {
   );
 }
 
-function errorMessage(payload: Record<string, unknown>) {
+/** 从错误事件负载里取原始错误码，供 UI 做「可操作」分支判定。 */
+function errorCode(payload: Record<string, unknown>): string | null {
   const error =
     payload.error && typeof payload.error === "object"
       ? (payload.error as Record<string, unknown>)
       : payload;
-  const code = typeof error.code === "string" ? error.code : "";
-  const messages: Record<string, string> = {
-    MODEL_TIMEOUT: "模型连接超时，请检查网络或调大超时时间",
-    MODEL_UNAVAILABLE: "模型服务暂不可用，请稍后重试",
-    MODEL_AUTH_FAILED: "API Key 无效，请更新密钥后重试",
-    RATE_LIMITED: "请求过于频繁，请稍后重试",
-    BACKEND_UNAVAILABLE: "本地服务暂不可用，请稍后重试",
-  };
-  return messages[code] ?? clientErrorMessage({ code });
+  return typeof error.code === "string" && error.code ? error.code : null;
+}
+
+function errorMessage(payload: Record<string, unknown>) {
+  // 直接复用 clientErrorMessage —— 它已覆盖 MODEL_TIMEOUT / MODEL_UNAVAILABLE /
+  // MODEL_AUTH_FAILED / RATE_LIMITED / BACKEND_UNAVAILABLE 等全部模型错误码。
+  // 此前这里另有一份同文案的小表，两边漂移时用户会看到不一致的提示。
+  return clientErrorMessage({ code: errorCode(payload) ?? "" });
 }
 
 function parseRoute(payload: Record<string, unknown>): RouteView | null {
@@ -126,6 +135,7 @@ export const useChatStreamStore = create<ChatStreamState>((set, get) => ({
       lastSequence: 0,
       status: "streaming",
       error: null,
+      errorCode: null,
       subscription: null,
       searchSuggestion: null,
       continuationUserMessageId: continuationUserMessageId ?? null,
@@ -195,6 +205,7 @@ export const useChatStreamStore = create<ChatStreamState>((set, get) => ({
       set((state) => ({
         status: "error",
         error: errorMessage(event.payload),
+        errorCode: errorCode(event.payload),
         lastSequence: event.sequence,
         subscription: null,
         requestId: state.requestId,
@@ -208,7 +219,13 @@ export const useChatStreamStore = create<ChatStreamState>((set, get) => ({
     const current = get();
     if (current.status !== "streaming" || !current.subscription) return;
     current.subscription.cancel();
-    set({ requestId: null, subscription: null, status: "stopped", error: "已停止生成" });
+    set({
+      requestId: null,
+      subscription: null,
+      status: "stopped",
+      error: "已停止生成",
+      errorCode: null,
+    });
   },
   cancelForSession: (sessionId) => {
     const current = get();

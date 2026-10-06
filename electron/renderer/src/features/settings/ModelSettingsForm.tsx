@@ -71,7 +71,10 @@ export function ModelSettingsForm({
   const revisionRef = useRef(0);
   const activeOperationRef = useRef<{ kind: "save" | "test"; revision: number } | null>(null);
   const busy = saving || testing;
-  const savedKeyPlaceholder = "••••••••";
+  // 🔴 不要把掩码当受控 value 回填输入框。此前 `value={hasSavedKey ? "••••••••" : apiKey}`
+  // 让用户聚焦后输入的每个字符都变成 "••••••••x"，onChange 拿到含掩码的串，
+  // 提交时 `apiKey: "••••••••x"` 被写进钥匙串 —— 真实密钥被覆盖且无法恢复。
+  // 「已保存」的提示走 placeholder，value 恒为用户真实输入。
 
   // A picker is only useful when the provider actually offers choices. The
   // curated catalogue (or a fetched live list) supplies them; with neither, the
@@ -359,7 +362,7 @@ export function ModelSettingsForm({
             }}
             placeholder={hasSavedKey ? "已安全保存，留空可保留" : "请输入 API Key"}
             type="password"
-            value={hasSavedKey && !clearKey && apiKey === "" ? savedKeyPlaceholder : apiKey}
+            value={apiKey}
           />
         </label>
       </div>
