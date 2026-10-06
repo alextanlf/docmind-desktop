@@ -38,12 +38,6 @@ export const readySettings: SettingsView = {
     modelSearchLabel: "",
     freeFallbackAvailable: true,
   },
-  yuqueApi: {
-    configured: false,
-    verified: false,
-    label: null,
-    active: false,
-  },
   modelSetupSkipped: false,
   // Keyed by preset then model id, mirroring the backend's model-level table.
   // Values are the vendors' own effort levels (not a normalized scale), so they
@@ -80,11 +74,6 @@ export const readySettings: SettingsView = {
       { id: "glm-5.3", label: "GLM-5.3" },
     ],
   },
-  feishu: {
-    configured: false,
-    verified: false,
-    label: null,
-  },
 };
 
 export const unavailableEmbedding: ModelStatus = {
@@ -108,7 +97,12 @@ export const yuqueProviderSummaries: RemoteProviderSummary[] = [
     name: "yuque",
     label: "语雀",
     configured: false,
-    capabilities: { browserInstall: true, markerLookup: true, parentNodeWrite: false },
+    capabilities: {
+      browserInstall: true,
+      markerLookup: true,
+      parentNodeWrite: false,
+      browserUnavailableCode: "YUQUE_BROWSER_UNAVAILABLE",
+    },
   },
 ];
 
@@ -116,7 +110,12 @@ export const feishuProviderSummary: RemoteProviderSummary = {
   name: "feishu",
   label: "飞书文档",
   configured: false,
-  capabilities: { browserInstall: false, markerLookup: true, parentNodeWrite: true },
+  capabilities: {
+    browserInstall: false,
+    markerLookup: true,
+    parentNodeWrite: true,
+    browserUnavailableCode: null,
+  },
 };
 
 export const allProviderSummaries: RemoteProviderSummary[] = [
@@ -142,6 +141,9 @@ export const yuqueCredentialChannels: RemoteCredentialChannel[] = [
     state: "disconnected",
     accountLabel: null,
     hasSecret: true,
+    secretPlaceholder: "粘贴语雀个人访问令牌",
+    helpUrl: "https://www.yuque.com/yuque/developer/api",
+    helpLabel: "获取令牌",
   },
 ];
 
@@ -163,6 +165,18 @@ export const feishuCredentialChannels: RemoteCredentialChannel[] = [
     state: "disconnected",
     accountLabel: null,
     hasSecret: false,
+  },
+  {
+    provider: "feishu",
+    channel: "webhook",
+    label: "飞书机器人",
+    configured: false,
+    state: "disconnected",
+    accountLabel: null,
+    hasSecret: true,
+    secretPlaceholder: "https://open.feishu.cn/open-apis/bot/v2/hook/…",
+    helpUrl: "https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot",
+    helpLabel: "添加机器人",
   },
 ];
 
@@ -307,18 +321,6 @@ export function installDocMindApi(overrides?: {
       skipModelSetup: vi.fn().mockResolvedValue(readySettings),
       clearDiagnostics: vi.fn().mockResolvedValue(undefined),
       saveWebSearch: vi.fn().mockResolvedValue(readySettings),
-      saveYuqueApi: vi.fn().mockResolvedValue(readySettings),
-      testYuqueApi: vi.fn().mockResolvedValue({
-        connected: true,
-        message: "语雀 API 已连接，后续语雀读写将优先使用 API",
-        label: "t***t",
-      }),
-      saveFeishu: vi.fn().mockResolvedValue(readySettings),
-      testFeishu: vi.fn().mockResolvedValue({
-        connected: true,
-        message: "飞书绑定成功，测试消息已发送",
-        label: "飞书机器人",
-      }),
       ...overrides?.settings,
     },
     embedding: {

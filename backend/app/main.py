@@ -55,7 +55,10 @@ from app.document.parser import DocumentParser
 from app.document.safe_http import SafeHttpClient
 from app.document.sources import SourceInspector
 from app.document.web_discovery import WebDiscovery
-from app.feishu.credentials import FEISHU_CREDENTIAL_SPEC
+from app.feishu.credentials import (
+    FEISHU_CREDENTIAL_SPEC,
+    build_feishu_notification_target,
+)
 from app.feishu.provider import FeishuProvider
 from app.feishu.tokens import FeishuTokenManager
 from app.imports.batch_service import BatchService
@@ -68,6 +71,7 @@ from app.memory.retriever import MemoryRetriever
 from app.memory.summary import SummaryScheduler, SummaryService
 from app.remote.credentials import CredentialStore
 from app.remote.discovery import RemoteDiscovery
+from app.remote.notifications import NotificationHub
 from app.remote.provider import RemoteProvider
 from app.remote.registry import ProviderRegistry
 from app.remote.snapshot import read_remote_snapshot
@@ -300,6 +304,14 @@ def create_app(
                     registry, credential_store, runtime_settings
                 )
             app.state.remote_registry = registry
+        # Notification targets are declared by the providers themselves, so
+        # business code can announce a finished import without naming a vendor.
+        notifications = NotificationHub()
+        if not fake_services:
+            notifications.register(
+                build_feishu_notification_target(credential_store)
+            )
+        app.state.notifications = notifications
         conversation_store = ConversationStore(database)
         vector_store = PersistentVectorStore(runtime_settings.vectorstore_settings)
         document_store = DocumentStore(database)
@@ -315,6 +327,7 @@ def create_app(
             document_store=document_store,
             job_store=ImportJobStore(database),
             event_broker=InMemoryEventBroker(),
+            notifications=notifications,
         )
         app.state.batch_store = BatchImportStore(database)
         class _SystemResolver:

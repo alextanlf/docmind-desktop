@@ -1,7 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
-  FeishuBindingInput,
   RuntimeSettingsInput,
   SaveRemoteCredentialInput,
   WebSearchSettingsInput,
@@ -174,22 +173,6 @@ export function useSaveWebSearchMutation() {
   return useMutation({
     mutationFn: (input: WebSearchSettingsInput) => window.docmind.settings.saveWebSearch(input),
     onSuccess: (settings) => client.setQueryData(settingsKeys.root, settings),
-  });
-}
-
-export function useSaveFeishuMutation() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (input: FeishuBindingInput) => window.docmind.settings.saveFeishu(input),
-    onSuccess: (settings) => client.setQueryData(settingsKeys.root, settings),
-  });
-}
-
-export function useTestFeishuMutation() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: () => window.docmind.settings.testFeishu(),
-    onSuccess: () => client.invalidateQueries({ queryKey: settingsKeys.root }),
   });
 }
 

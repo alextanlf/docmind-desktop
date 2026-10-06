@@ -186,30 +186,6 @@ class ModelSettingsView(ModelConfig):
     pass
 
 
-class ConnectionBindingView(WireModel):
-    configured: bool = False
-    verified: bool = False
-    label: str | None = None
-
-
-class YuqueApiBindingView(ConnectionBindingView):
-    active: bool = False
-
-
-class ConnectionTestResult(WireModel):
-    connected: bool
-    message: str
-    label: str | None = None
-
-
-class YuqueApiSettingsUpdate(WireModel):
-    token: str | None = Field(default=None, max_length=2_000)
-
-
-class FeishuBindingUpdate(WireModel):
-    webhook_url: str | None = Field(default=None, max_length=2_000)
-
-
 class ModelPresetCapabilities(WireModel):
     """What a preset supports, so the UI can offer only valid choices."""
 
@@ -224,8 +200,6 @@ class SettingsView(WireModel):
     screenshot_count: int
     web_search: WebSearchSettings
     runtime: RuntimeSettingsInput | None = None
-    yuque_api: YuqueApiBindingView = Field(default_factory=YuqueApiBindingView)
-    feishu: ConnectionBindingView = Field(default_factory=ConnectionBindingView)
     # Curated per-preset catalogue so the model picker has choices on first
     # paint, before an API key is entered and before any live query.
     model_presets: dict[str, list[AvailableModel]] = Field(default_factory=dict)
@@ -254,9 +228,6 @@ __all__ = [
     "MODEL_CATALOG",
     "MODEL_PRESETS",
     "AvailableModel",
-    "ConnectionBindingView",
-    "ConnectionTestResult",
-    "FeishuBindingUpdate",
     "ModelConfig",
     "ModelConnectionResult",
     "ModelListProbe",
@@ -267,9 +238,7 @@ __all__ = [
     "ModelSetupSkip",
     "SettingsView",
     "WebSearchSettingsUpdate",
-    "YuqueApiBindingView",
-    "YuqueApiSettingsUpdate",
-    "model_label",
     "is_free_model",
+    "model_label",
     "preset_models",
 ]

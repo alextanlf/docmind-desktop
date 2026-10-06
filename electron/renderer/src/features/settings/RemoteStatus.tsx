@@ -6,13 +6,13 @@ import { StatusBadge } from "../../components/StatusBadge";
 import { clientErrorMessage, settingsKeys, useRemoteStatusQuery } from "./settings.queries";
 
 export function RemoteStatus({
-  provider = "yuque",
-  displayName = "语雀",
+  provider,
+  displayName,
   loginLabel,
   capabilities,
 }: {
-  provider?: string;
-  displayName?: string;
+  provider: string;
+  displayName: string;
   loginLabel?: string;
   capabilities?: RemoteProviderCapabilities;
 }) {
@@ -22,9 +22,14 @@ export function RemoteStatus({
   const [browserUnavailable, setBrowserUnavailable] = useState(false);
   const [installingBrowser, setInstallingBrowser] = useState(false);
   const [installMessage, setInstallMessage] = useState<string | null>(null);
-  // Providers without the browser_install capability never offer the install
-  // button; absent capability info keeps the historical behavior.
-  const canInstallBrowser = capabilities?.browserInstall ?? true;
+  // Whether an install button makes sense is declared by the provider, and so
+  // is the error code it raises when the browser is missing. Hard-coding a
+  // vendor code here made this component wrong for every other provider.
+  const canInstallBrowser = capabilities?.browserInstall ?? false;
+  const browserUnavailableCode = capabilities?.browserUnavailableCode ?? null;
+  const isBrowserMissing = (error: unknown): boolean =>
+    browserUnavailableCode !== null &&
+    (error as { code?: string }).code === browserUnavailableCode;
 
   useEffect(() => {
     if (query.data?.loggedIn) {
@@ -41,7 +46,7 @@ export function RemoteStatus({
       await appQueryClient.invalidateQueries({ queryKey: ["repositories"] });
       setBrowserUnavailable(false);
     } catch (loginError) {
-      setBrowserUnavailable((loginError as { code?: string }).code === "YUQUE_BROWSER_UNAVAILABLE");
+      setBrowserUnavailable(isBrowserMissing(loginError));
       setError(clientErrorMessage(loginError));
     } finally {
       setLoggingIn(false);
@@ -65,7 +70,7 @@ export function RemoteStatus({
 
   if (query.isPending) return <p className="muted-row">正在检查{displayName}登录状态…</p>;
   if (query.isError) {
-    const unavailable = (query.error as { code?: string }).code === "YUQUE_BROWSER_UNAVAILABLE";
+    const unavailable = isBrowserMissing(query.error);
     return (
       <div className="inline-error" role="alert">
         <span>{clientErrorMessage(query.error)}</span>

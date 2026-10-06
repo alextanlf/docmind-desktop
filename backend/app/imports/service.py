@@ -18,6 +18,12 @@ from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
 from app.document.sources import CollectionCacheRequest
 from app.imports.events import EventType, ImportEventBroker
+from app.remote.notifications import (
+    NOTIFY_ERROR,
+    NOTIFY_SUCCESS,
+    NotificationEvent,
+    NotificationHub,
+)
 from app.remote.provider import RemoteProvider
 from app.remote.registry import ProviderRegistry
 from app.schemas.batches import CachedSourceRef
@@ -62,6 +68,7 @@ class ImportService:
         document_store: DocumentStore,
         job_store: ImportJobStore,
         event_broker: ImportEventBroker,
+        notifications: NotificationHub | None = None,
     ) -> None:
         self.settings = settings
         self.source_inspector = source_inspector
@@ -74,6 +81,9 @@ class ImportService:
         self.document_store = document_store
         self.job_store = job_store
         self.event_broker = event_broker
+        # Optional so tests and the fake harness can omit it; delivery is
+        # best-effort and never affects the import itself.
+        self.notifications = notifications
         self._job_locks: dict[str, asyncio.Lock] = {}
         self._event_locks: dict[str, asyncio.Lock] = {}
         self._reservation_lock = asyncio.Lock()
@@ -664,6 +674,12 @@ class ImportService:
             "done",
             {"progress": 100, "state": completed.state.value, "message": completed.message},
         )
+        await self._notify(
+            NOTIFY_SUCCESS,
+            "文档导入完成",
+            self._import_notification_body(job_id),
+            dedupe_key=f"import-done:{job_id}",
+        )
 
     def _provider(self, repository: RepositoryRecord) -> RemoteProvider:
         if not repository.provider:
@@ -951,6 +967,51 @@ class ImportService:
                 "retryable": retryable,
             },
         )
+        await self._notify(
+            NOTIFY_ERROR,
+            "文档导入失败",
+            f"{message}{'（可重试）' if retryable else ''}",
+            dedupe_key=f"import-failed:{job_id}",
+        )
+
+    async def _notify(
+        self,
+        severity: str,
+        title: str,
+        body: str,
+        *,
+        dedupe_key: str | None = None,
+    ) -> None:
+        """Announce a terminal import outcome to whatever the user configured.
+
+        Deliberately silent about providers: the hub fans out to every bound
+        target, so adding one never requires editing this module. Failures are
+        swallowed inside the hub, and an unbound target costs one cheap probe.
+        """
+        if self.notifications is None or not self.notifications.any_ready():
+            return
+        await self.notifications.notify(
+            NotificationEvent(
+                title=title, body=body, severity=severity, dedupe_key=dedupe_key
+            )
+        )
+
+    def _import_notification_body(self, job_id: str) -> str:
+        """One user-facing line describing what finished, or '' if unknowable.
+
+        Notification copy must never fail the job, so every lookup degrades to
+        an empty body rather than raising.
+        """
+        try:
+            job = self.job_store.get(job_id)
+            if job is None or not job.document_id:
+                return ""
+            document = self.document_store.get(job.document_id)
+            if document is None:
+                return ""
+            return document.title or ""
+        except Exception:  # noqa: BLE001 - display copy must never break the job
+            return ""
 
     async def _fail_unhandled(self, job_id: str) -> None:
         job = self._job(job_id)

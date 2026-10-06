@@ -23,6 +23,7 @@ from app.schemas.remote import (
     RemoteRepository,
     UpdateRemoteDocumentRequest,
 )
+from app.yuque.codes import YUQUE_BROWSER_UNAVAILABLE_CODE
 
 YUQUE_API_BASE_URL = "https://www.yuque.com/api/v2"
 _PAGE_LIMIT = 100
@@ -230,7 +231,11 @@ class YuqueProvider:
     identity = ProviderIdentity(
         name="yuque",
         label="语雀",
-        capabilities=ProviderCapabilities(browser_install=True, marker_lookup=True),
+        capabilities=ProviderCapabilities(
+            browser_install=True,
+            marker_lookup=True,
+            browser_unavailable_code=YUQUE_BROWSER_UNAVAILABLE_CODE,
+        ),
     )
 
     def __init__(

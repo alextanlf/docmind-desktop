@@ -32,6 +32,7 @@ from app.schemas.remote import (
     UpdateRemoteDocumentRequest,
 )
 from app.yuque.base_page import RETRY_DELAYS
+from app.yuque.codes import YUQUE_BROWSER_UNAVAILABLE_CODE
 from app.yuque.dashboard_page import DashboardPage
 from app.yuque.editor_page import EditorPage
 from app.yuque.login_page import LoginPage
@@ -59,7 +60,11 @@ class PlaywrightYuqueGateway:
     identity = ProviderIdentity(
         name="yuque",
         label="语雀",
-        capabilities=ProviderCapabilities(browser_install=True, marker_lookup=True),
+        capabilities=ProviderCapabilities(
+            browser_install=True,
+            marker_lookup=True,
+            browser_unavailable_code=YUQUE_BROWSER_UNAVAILABLE_CODE,
+        ),
     )
 
     def __init__(self, settings: AppSettings) -> None:
@@ -146,7 +151,7 @@ class PlaywrightYuqueGateway:
             raise
         except PlaywrightError:
             raise DomainError(
-                "YUQUE_BROWSER_UNAVAILABLE",
+                YUQUE_BROWSER_UNAVAILABLE_CODE,
                 "本机缺少语雀登录浏览器，请先安装 Playwright Chromium",
                 503,
                 True,

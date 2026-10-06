@@ -119,30 +119,34 @@ describe("设置", () => {
     expect(api.remote.login).toHaveBeenCalledWith("yuque");
   });
 
-  it("shows data-driven provider cards plus the Feishu webhook card", async () => {
+  it("shows one card per provider, each rendering its own credential channels", async () => {
     const api = installDocMindApi({
       remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
     });
     renderSettings();
 
-    // One card per registered provider (from remote.listProviders), one for
-    // the notification-only Feishu webhook.
+    // One card per registered provider (from remote.listProviders). Every
+    // channel a provider declares — including the Feishu bot webhook and the
+    // Yuque API token — is rendered by the generic, data-driven path.
     expect(await screen.findByRole("heading", { name: "语雀" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "飞书文档" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "飞书绑定" })).toBeVisible();
+    // The hard-coded Feishu card is gone: the webhook is a channel on the
+    // Feishu provider card now, so no second binding card may appear.
+    expect(screen.queryByRole("heading", { name: "飞书绑定" })).not.toBeInTheDocument();
     expect(api.remote.listProviders).toHaveBeenCalledTimes(1);
     expect(api.remote.listCredentials).toHaveBeenCalledWith("yuque");
     expect(api.remote.listCredentials).toHaveBeenCalledWith("feishu");
     // Wait for the credential channel forms before counting badges.
-    expect(await screen.findByLabelText("语雀 API Token")).toBeVisible();
-    expect(await screen.findByLabelText("飞书自建应用 Token")).toBeVisible();
-    // 语雀 API、飞书自建应用、飞书 webhook 三张表单初始均为未绑定。
+    expect(await screen.findByLabelText("语雀 API")).toBeVisible();
+    expect(await screen.findByLabelText("飞书自建应用")).toBeVisible();
+    expect(await screen.findByLabelText("飞书机器人")).toBeVisible();
+    // 语雀 API、飞书自建应用、飞书机器人（webhook）三张 secret 表单初始均为未绑定。
     expect(screen.getAllByText("未绑定")).toHaveLength(3);
     // 飞书 user 通道是 OAuth 授权入口，无安装浏览器按钮。
     expect(screen.getByRole("button", { name: "登录飞书文档" })).toBeVisible();
 
     // 飞书自建应用通道（第二张“保存并验证”按钮属于飞书卡片）。
-    fireEvent.change(screen.getByLabelText("飞书自建应用 Token"), {
+    fireEvent.change(screen.getByLabelText("飞书自建应用"), {
       target: { value: "cli_a1b2:s3cret" },
     });
     fireEvent.click(screen.getAllByRole("button", { name: "保存并验证" })[1]);
@@ -152,7 +156,7 @@ describe("设置", () => {
     });
     expect(api.remote.testCredential).toHaveBeenCalledWith("feishu", "app");
 
-    fireEvent.change(screen.getByLabelText("语雀 API Token"), {
+    fireEvent.change(screen.getByLabelText("语雀 API"), {
       target: { value: "yuque-token" },
     });
     fireEvent.click(screen.getAllByRole("button", { name: "保存并验证" })[0]);
@@ -162,16 +166,53 @@ describe("设置", () => {
       }),
     );
     expect(api.remote.testCredential).toHaveBeenCalledWith("yuque", "api");
+  });
 
-    fireEvent.change(screen.getByLabelText("飞书 Webhook"), {
-      target: { value: "https://open.feishu.cn/open-apis/bot/v2/hook/test-token" },
+  it("renders channel-declared hints instead of inventing provider copy", async () => {
+    installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
+    renderSettings();
+
+    // A URL-shaped credential must not be labelled "… Token", and the form
+    // has to surface the provider's own placeholder and help link.
+    const webhookInput = await screen.findByLabelText("飞书机器人");
+    expect(webhookInput).toHaveAttribute(
+      "placeholder",
+      "https://open.feishu.cn/open-apis/bot/v2/hook/…",
+    );
+    // The webhook channel supplies the help link itself; the copy comes from
+    // the channel descriptor rather than any hard-coded vendor string.
+    expect(screen.getAllByRole("link", { name: /添加机器人/ })).toHaveLength(1);
+    // Channels supply their own placeholder too, instead of the generic copy.
+    expect(await screen.findByLabelText("语雀 API")).toHaveAttribute(
+      "placeholder",
+      "粘贴语雀个人访问令牌",
+    );
+  });
+
+  it("falls back to generic copy when a channel declares no hint", async () => {
+    installDocMindApi({
+      remote: {
+        status: vi.fn().mockResolvedValue(loggedOutRemote),
+        listCredentials: vi.fn().mockResolvedValue([
+          {
+            provider: "acme",
+            channel: "api",
+            label: "Acme API",
+            configured: false,
+            state: "disconnected",
+            accountLabel: null,
+            hasSecret: true,
+          },
+        ]),
+      },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存并绑定" }));
-    await screen.findByText("飞书绑定成功，测试消息已发送");
-    expect(api.settings.saveFeishu).toHaveBeenCalledWith({
-      webhookUrl: "https://open.feishu.cn/open-apis/bot/v2/hook/test-token",
-    });
-    expect(api.settings.testFeishu).toHaveBeenCalledTimes(1);
+    renderSettings();
+
+    expect(await screen.findByLabelText("Acme API")).toHaveAttribute(
+      "placeholder",
+      "输入访问凭据",
+    );
+    expect(screen.queryByRole("link", { name: /获取凭据/ })).toBeNull();
   });
 
   it("installs the Yuque browser when login reports a missing browser", async () => {

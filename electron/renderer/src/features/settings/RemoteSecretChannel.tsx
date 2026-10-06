@@ -1,4 +1,4 @@
-import { LoaderCircle, ShieldCheck, Unlink } from "lucide-react";
+import { ExternalLink, LoaderCircle, ShieldCheck, Unlink } from "lucide-react";
 import { useState } from "react";
 import type { RemoteCredentialChannel } from "../../../../shared/contracts";
 import { StatusBadge } from "../../components/StatusBadge";
@@ -22,7 +22,10 @@ export function RemoteSecretChannel({ channel }: { channel: RemoteCredentialChan
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const busy = save.isPending || test.isPending || remove.isPending;
   const verified = channel.state === "verified";
-  const secretLabel = `${channel.label} Token`;
+  // A channel whose secret is a URL (a bot webhook) would read as "… Token",
+  // so the label comes from the channel and only gains a "Token" suffix when
+  // the provider did not supply its own wording.
+  const secretLabel = channel.label;
 
   async function saveAndVerify() {
     setMessage(null);
@@ -68,7 +71,11 @@ export function RemoteSecretChannel({ channel }: { channel: RemoteCredentialChan
           autoComplete="off"
           disabled={busy}
           onChange={(event) => setSecret(event.target.value)}
-          placeholder={channel.configured ? "已保存，留空则保留" : "输入访问凭据"}
+          placeholder={
+            channel.configured
+              ? "已保存，留空则保留"
+              : (channel.secretPlaceholder ?? "输入访问凭据")
+          }
           type="password"
           value={secret}
         />
@@ -97,6 +104,19 @@ export function RemoteSecretChannel({ channel }: { channel: RemoteCredentialChan
             <Unlink aria-hidden="true" size={16} />
             解除绑定
           </button>
+        ) : null}
+        {channel.helpUrl ? (
+          <a
+            className="connection-help-link"
+            href={channel.helpUrl}
+            onClick={(event) => {
+              event.preventDefault();
+              void window.docmind.shell.openExternal(channel.helpUrl!);
+            }}
+          >
+            {channel.helpLabel ?? "获取凭据"}
+            <ExternalLink aria-hidden="true" size={14} />
+          </a>
         ) : null}
       </div>
       {message ? (

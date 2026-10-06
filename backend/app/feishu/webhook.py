@@ -44,15 +44,17 @@ def normalize_feishu_webhook(value: str) -> str:
     return parsed.geturl()
 
 
-async def probe_feishu_webhook(
+async def post_feishu_webhook_text(
     webhook_url: str,
+    text: str,
     *,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> None:
-    """Send the binding-verification message, raising a DomainError on failure.
+    """Send one plain-text custom-bot message.
 
-    ``transport`` exists so tests can drive the four response shapes without a
-    network round trip.
+    Shared by the binding probe and real notifications so both agree on the
+    payload shape and on what counts as a successful delivery (Feishu answers
+    200 with either ``code`` or ``StatusCode``; both must be 0/None).
     """
     try:
         async with httpx.AsyncClient(
@@ -62,7 +64,7 @@ async def probe_feishu_webhook(
         ) as client:
             response = await client.post(
                 webhook_url,
-                json={"msg_type": "text", "content": {"text": "DocMind 飞书绑定验证成功"}},
+                json={"msg_type": "text", "content": {"text": text}},
             )
     except httpx.HTTPError as error:
         raise DomainError(
@@ -81,3 +83,18 @@ async def probe_feishu_webhook(
     status_code = payload.get("StatusCode")
     if code not in {None, 0} or status_code not in {None, 0}:
         raise DomainError("FEISHU_AUTH_FAILED", "飞书 Webhook 无效或已失效", 401, False)
+
+
+async def probe_feishu_webhook(
+    webhook_url: str,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> None:
+    """Send the binding-verification message, raising a DomainError on failure.
+
+    ``transport`` exists so tests can drive the four response shapes without a
+    network round trip.
+    """
+    await post_feishu_webhook_text(
+        webhook_url, "DocMind 飞书绑定验证成功", transport=transport
+    )

@@ -16,16 +16,11 @@ from app.core.model_capabilities import (
 )
 from app.core.ollama_validation import normalize_loopback_base_url
 from app.core.secrets import SecretStore
-from app.feishu.credentials import FEISHU_WEBHOOK_SECRET_REF
-from app.feishu.webhook import normalize_feishu_webhook, probe_feishu_webhook
 from app.remote.credentials import CredentialStore
 from app.schemas.ollama import OllamaConfig, RagSettings, RoutingSettings, RuntimeSettingsInput
 from app.schemas.settings import (
     MODEL_CATALOG,
     MODEL_PRESETS,
-    ConnectionBindingView,
-    ConnectionTestResult,
-    FeishuBindingUpdate,
     ModelConnectionResult,
     ModelListProbe,
     ModelListView,
@@ -34,8 +29,6 @@ from app.schemas.settings import (
     ModelSettingsView,
     SettingsView,
     WebSearchSettingsUpdate,
-    YuqueApiBindingView,
-    YuqueApiSettingsUpdate,
     is_free_model,
     model_label,
     preset_models,
@@ -44,10 +37,7 @@ from app.schemas.web_search import SearchConnectionResult, WebSearchSettings
 from app.search.model_native import ModelSearchProvider, detect_native_search
 from app.search.searxng import SearxngProvider
 from app.search.tavily import TavilyProvider
-from app.storage.models import ProviderCredentialState
 from app.storage.repositories import SettingStore
-from app.yuque.api_gateway import YuqueApiGateway
-from app.yuque.credentials import YUQUE_API_SECRET_REF, YUQUE_CREDENTIAL_SPEC
 
 MODEL_CONFIG_KEY = "model.config"
 MODEL_KEY_REFERENCE = "model.api_key_ref"
@@ -233,8 +223,6 @@ class SettingsService:
             screenshot_count=_screenshot_count(settings.screenshots_dir),
             web_search=self.web_search(),
             runtime=self.runtime(),
-            yuque_api=self.yuque_api_binding(),
-            feishu=self.feishu_binding(),
             model_presets={
                 preset: preset_models(preset) for preset in MODEL_PRESETS if preset != "custom"
             },
@@ -251,111 +239,6 @@ class SettingsService:
                 for preset in MODEL_PRESETS
             },
             model_setup_skipped=self.model_setup_skipped(),
-        )
-
-    def _require_credential_store(self) -> CredentialStore:
-        if self.credential_store is None:
-            raise DomainError(
-                "REMOTE_CREDENTIALS_UNAVAILABLE",
-                "远程凭据服务不可用",
-                503,
-                True,
-                "稍后重试",
-            )
-        return self.credential_store
-
-    def yuque_api_binding(self) -> YuqueApiBindingView:
-        if self.credential_store is None:
-            return YuqueApiBindingView(
-                configured=False, verified=False, label=None, active=False
-            )
-        state = self.credential_store.channel_state(
-            "yuque", "api", YUQUE_CREDENTIAL_SPEC.channel("api")
-        )
-        return YuqueApiBindingView(
-            configured=state.configured,
-            verified=state.verified,
-            label=state.account_label if state.verified else None,
-            active=state.verified,
-        )
-
-    def feishu_binding(self) -> ConnectionBindingView:
-        if self.credential_store is None:
-            return ConnectionBindingView(configured=False, verified=False)
-        record = self.credential_store.get("feishu", "webhook")
-        if record is None:
-            return ConnectionBindingView(configured=False, verified=False)
-        configured = bool(self.credential_store.secret_for("feishu", "webhook"))
-        return ConnectionBindingView(
-            configured=configured,
-            verified=configured and record.state == ProviderCredentialState.VERIFIED.value,
-        )
-
-    async def save_yuque_api(self, update: YuqueApiSettingsUpdate) -> YuqueApiBindingView:
-        if update.token is None:
-            return self.yuque_api_binding()
-        store = self._require_credential_store()
-        token = update.token.strip()
-        store.save_secret("yuque", "api", token, YUQUE_API_SECRET_REF)
-        return self.yuque_api_binding()
-
-    async def test_yuque_api(self) -> ConnectionTestResult:
-        store = self._require_credential_store()
-        token = store.secret_for("yuque", "api")
-        if not token:
-            raise DomainError(
-                "YUQUE_API_TOKEN_REQUIRED",
-                "请先保存语雀 API Token",
-                400,
-                False,
-                "保存 Token 后重试",
-            )
-        try:
-            result = await YuqueApiGateway(lambda: token).begin_login()
-        except DomainError:
-            store.mark_state("yuque", "api", ProviderCredentialState.UNVERIFIED.value)
-            raise
-        store.mark_state(
-            "yuque",
-            "api",
-            ProviderCredentialState.VERIFIED.value,
-            account_label=result.account_label,
-        )
-        return ConnectionTestResult(
-            connected=True,
-            message="语雀 API 已连接，后续语雀读写将优先使用 API",
-            label=result.account_label,
-        )
-
-    async def save_feishu(self, update: FeishuBindingUpdate) -> ConnectionBindingView:
-        if update.webhook_url is None:
-            return self.feishu_binding()
-        store = self._require_credential_store()
-        webhook_url = normalize_feishu_webhook(update.webhook_url)
-        store.save_secret("feishu", "webhook", webhook_url, FEISHU_WEBHOOK_SECRET_REF)
-        return self.feishu_binding()
-
-    async def test_feishu(self) -> ConnectionTestResult:
-        store = self._require_credential_store()
-        webhook_url = store.secret_for("feishu", "webhook")
-        if not webhook_url:
-            raise DomainError(
-                "FEISHU_WEBHOOK_REQUIRED",
-                "请先保存飞书机器人 Webhook",
-                400,
-                False,
-                "保存 Webhook 后重试",
-            )
-        try:
-            await probe_feishu_webhook(webhook_url)
-        except DomainError:
-            store.mark_state("feishu", "webhook", "unverified")
-            raise
-        store.mark_state("feishu", "webhook", "verified")
-        return ConnectionTestResult(
-            connected=True,
-            message="飞书绑定成功，测试消息已发送",
-            label="飞书机器人",
         )
 
     def runtime(self) -> RuntimeSettingsInput:
@@ -563,25 +446,3 @@ async def save_web_search(update: WebSearchSettingsUpdate, request: Request) -> 
 @router.post("/web-search/test", response_model=SearchConnectionResult)
 async def test_web_search(request: Request) -> SearchConnectionResult:
     return await _service(request).test_web_search()
-
-
-@router.put("/connections/yuque-api", response_model=SettingsView)
-async def save_yuque_api(update: YuqueApiSettingsUpdate, request: Request) -> SettingsView:
-    await _service(request).save_yuque_api(update)
-    return _service(request).view(_settings(request))
-
-
-@router.post("/connections/yuque-api/test", response_model=ConnectionTestResult)
-async def test_yuque_api(request: Request) -> ConnectionTestResult:
-    return await _service(request).test_yuque_api()
-
-
-@router.put("/connections/feishu", response_model=SettingsView)
-async def save_feishu(update: FeishuBindingUpdate, request: Request) -> SettingsView:
-    await _service(request).save_feishu(update)
-    return _service(request).view(_settings(request))
-
-
-@router.post("/connections/feishu/test", response_model=ConnectionTestResult)
-async def test_feishu(request: Request) -> ConnectionTestResult:
-    return await _service(request).test_feishu()

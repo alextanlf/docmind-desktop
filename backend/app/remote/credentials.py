@@ -27,6 +27,13 @@ from app.storage.models import ProviderCredentialRecord, ProviderCredentialState
 # account label on success, or raises DomainError on failure.
 CredentialTester = Callable[[str], Awaitable[str | None]]
 
+# A normalizer receives the user-supplied secret and returns its canonical
+# form, or raises DomainError when the value must be rejected outright. It
+# exists so that a channel whose secret is really a constrained value (e.g. a
+# Feishu bot webhook URL) can enforce its own rules declaratively, instead of
+# the API layer special-casing ``provider == "feishu"`` before the save.
+CredentialNormalizer = Callable[[str], str]
+
 
 @dataclass(frozen=True)
 class CredentialChannelSpec:
@@ -37,6 +44,15 @@ class CredentialChannelSpec:
     has_secret: bool  # whether a keychain entry backs this channel
     default_secret_ref: str | None = None  # keychain entry name when has_secret
     tester: CredentialTester | None = None  # verification probe for save/test flows
+    normalizer: CredentialNormalizer | None = None  # canonicalize/reject on save
+    # When set, the rendered form labels the input as a URL and shows this
+    # example instead of a generic "enter credential" hint. Purely cosmetic,
+    # but it is the difference between a usable and an unusable URL field.
+    secret_placeholder: str | None = None
+    # Optional help link surfaced next to the form, for credentials users must
+    # create out-of-band (a bot webhook, a token page, ...).
+    help_url: str | None = None
+    help_label: str | None = None
 
 
 @dataclass(frozen=True)

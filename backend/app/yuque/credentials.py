@@ -33,6 +33,9 @@ YUQUE_CREDENTIAL_SPEC = ProviderCredentialSpec(
             has_secret=True,
             default_secret_ref=YUQUE_API_SECRET_REF,
             tester=test_yuque_api_token,
+            secret_placeholder="粘贴语雀个人访问令牌",
+            help_url="https://www.yuque.com/yuque/developer/api",
+            help_label="获取令牌",
         ),
     ),
 )

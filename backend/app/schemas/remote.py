@@ -58,6 +58,9 @@ class ProviderCapabilitiesView(WireModel):
     browser_install: bool = False
     marker_lookup: bool = False
     parent_node_write: bool = False
+    # The error code this provider raises when its login browser is missing,
+    # so the client can offer the install action without naming a vendor.
+    browser_unavailable_code: str | None = None
 
 
 class ProviderSummaryView(WireModel):
@@ -79,6 +82,12 @@ class CredentialChannelView(WireModel):
     state: str  # 'verified' | 'unverified' | 'disconnected'
     account_label: str | None = None
     has_secret: bool = False
+    # Channel-declared presentation hints. The generic form uses them instead
+    # of inventing provider-specific copy, so a URL-shaped credential can show
+    # an example and an out-of-band creation link.
+    secret_placeholder: str | None = None
+    help_url: str | None = None
+    help_label: str | None = None
 
 
 class SaveCredentialRequest(WireModel):

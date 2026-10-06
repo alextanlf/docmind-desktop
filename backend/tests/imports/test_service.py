@@ -20,6 +20,13 @@ from app.document.sources import SourceInspector
 from app.imports.batch_service import BatchService
 from app.imports.events import InMemoryEventBroker
 from app.imports.service import ImportService
+from app.remote.notifications import (
+    NOTIFY_ERROR,
+    NOTIFY_SUCCESS,
+    NotificationEvent,
+    NotificationHub,
+    NotificationTarget,
+)
 from app.remote.provider import ProviderIdentity
 from app.remote.registry import ProviderRegistry
 from app.schemas.batches import ConfirmBatchInput, ConfirmBatchItem
@@ -221,6 +228,7 @@ def make_service(
     vector_store: FakeVectorStore | None = None,
     gateway: FakeRemoteProvider | None = None,
     seed_repository: bool = True,
+    notifications: NotificationHub | None = None,
 ) -> tuple[ImportService, FakeSourceInspector, FakeVectorStore, FakeRemoteProvider]:
     settings = AppSettings(session_token="token", data_dir=tmp_path / "data", environment="test")
     source = source or FakeSourceInspector()
@@ -250,6 +258,7 @@ def make_service(
         document_store=DocumentStore(database),
         job_store=ImportJobStore(database),
         event_broker=InMemoryEventBroker(),
+        notifications=notifications,
     )
     return service, source, vector_store, gateway
 
@@ -762,6 +771,98 @@ async def test_local_repository_import_skips_yuque_but_indexes_content(
     assert Path(document.markdown_path).read_text() == "# Imported\n\nUseful text"  # type: ignore[arg-type]
     assert len(vector_store.upserts) == 1
     assert gateway.create_calls == gateway.update_calls == 0
+
+
+def _recording_hub(
+    *, ready: bool = True, fail: bool = False
+) -> tuple[NotificationHub, list[NotificationEvent]]:
+    seen: list[NotificationEvent] = []
+
+    async def _send(event: NotificationEvent) -> None:
+        if fail:
+            raise RuntimeError("notification target exploded")
+        seen.append(event)
+
+    hub = NotificationHub()
+    hub.register(
+        NotificationTarget(name="recorder", send=_send, is_ready=lambda: ready)
+    )
+    return hub, seen
+
+
+class TestImportNotifiesTerminalOutcomes:
+    """A finished import must reach whatever the user bound.
+
+    Regression: the bot webhook was only ever exercised by its own
+    verification message, so binding it produced no notifications at all.
+    """
+
+    async def test_completed_import_announces_success(self, database, tmp_path) -> None:
+        hub, seen = _recording_hub()
+        service, source, _vector_store, _gateway = make_service(
+            database, tmp_path, notifications=hub
+        )
+        job = await create_job(service, source)
+
+        await service.run(job.id)
+
+        assert len(seen) == 1
+        assert seen[0].severity == NOTIFY_SUCCESS
+        assert "导入完成" in seen[0].title
+        # One message per job, not one per stage transition.
+        assert seen[0].dedupe_key == f"import-done:{job.id}"
+
+    async def test_failed_import_announces_the_error(self, database, tmp_path) -> None:
+        hub, seen = _recording_hub()
+
+        class _ExplodingParser(DocumentParser):
+            def parse(self, document):  # type: ignore[no-untyped-def]
+                raise DomainError("PARSE_FAILED", "文档解析失败", 422, False)
+
+        service, source, _vs, _gw = make_service(database, tmp_path, notifications=hub)
+        service.parser = _ExplodingParser()
+        job = await create_job(service, source)
+
+        await service.run(job.id)
+
+        failed = [event for event in seen if event.severity == NOTIFY_ERROR]
+        assert len(failed) == 1
+        assert "导入失败" in failed[0].title
+        assert "文档解析失败" in failed[0].body
+
+    async def test_no_bound_target_means_no_publish_attempt(
+        self, database, tmp_path
+    ) -> None:
+        """An unbound bot must not turn every import into a failing call."""
+        hub, seen = _recording_hub(ready=False)
+        service, source, _vs, _gw = make_service(database, tmp_path, notifications=hub)
+        job = await create_job(service, source)
+
+        await service.run(job.id)
+
+        assert seen == []
+        assert service.job_store.get(job.id).state == ImportStatus.COMPLETED  # type: ignore[union-attr]
+
+    async def test_a_broken_target_does_not_fail_the_import(
+        self, database, tmp_path
+    ) -> None:
+        """Delivery is best-effort: the import must still reach COMPLETED."""
+        hub, _seen = _recording_hub(fail=True)
+        service, source, _vs, _gw = make_service(database, tmp_path, notifications=hub)
+        job = await create_job(service, source)
+
+        await service.run(job.id)
+
+        assert service.job_store.get(job.id).state == ImportStatus.COMPLETED  # type: ignore[union-attr]
+
+    async def test_import_without_a_hub_still_completes(self, database, tmp_path) -> None:
+        """The fake harness and older call sites omit notifications entirely."""
+        service, source, _vs, _gw = make_service(database, tmp_path)
+        job = await create_job(service, source)
+
+        await service.run(job.id)
+
+        assert service.job_store.get(job.id).state == ImportStatus.COMPLETED  # type: ignore[union-attr]
 
 
 async def test_retry_reconciles_remote_marker_after_lost_create_response(

@@ -69,24 +69,10 @@ export const ModelSettingsViewSchema = z.object({
   model: z.string(),
   timeoutSeconds: z.number(),
 });
-export const ConnectionBindingViewSchema = z.object({
-  configured: z.boolean(),
-  verified: z.boolean(),
-  label: z.string().nullable().optional(),
-});
-export const YuqueApiBindingViewSchema = ConnectionBindingViewSchema.extend({
-  active: z.boolean(),
-});
 export const ConnectionTestResultSchema = z.object({
   connected: z.boolean(),
   message: z.string(),
   label: z.string().nullable().optional(),
-});
-export const YuqueApiSettingsInputSchema = z.object({
-  token: z.string().max(2_000).nullable().optional(),
-});
-export const FeishuBindingInputSchema = z.object({
-  webhookUrl: z.string().max(2_000).nullable().optional(),
 });
 export const AvailableModelSchema = z.object({
   id: z.string().min(1).max(200),
@@ -126,17 +112,6 @@ export const SettingsViewSchema = z.object({
       rag: RagRuntimeSchema,
     })
     .optional(),
-  yuqueApi: YuqueApiBindingViewSchema.default({
-    configured: false,
-    verified: false,
-    label: null,
-    active: false,
-  }),
-  feishu: ConnectionBindingViewSchema.default({
-    configured: false,
-    verified: false,
-    label: null,
-  }),
   modelPresets: z.record(z.string(), z.array(AvailableModelSchema)).default({}),
   modelSetupSkipped: z.boolean().default(false),
   // Keyed by preset, then by model id: the same vendor's models differ.
@@ -260,6 +235,11 @@ export const RemoteProviderCapabilitiesSchema = z.object({
   browserInstall: z.boolean(),
   markerLookup: z.boolean(),
   parentNodeWrite: z.boolean(),
+  /**
+   * Error code this provider raises when its login browser is missing.
+   * Declared by the provider so the install action never hardcodes a vendor.
+   */
+  browserUnavailableCode: z.string().nullable().optional(),
 });
 export const RemoteProviderSummarySchema = z.object({
   name: z.string(),
@@ -275,6 +255,10 @@ export const RemoteCredentialChannelSchema = z.object({
   state: z.enum(["verified", "unverified", "disconnected"]),
   accountLabel: z.string().nullable().optional(),
   hasSecret: z.boolean(),
+  /** Channel-declared input hint; a URL-shaped secret overrides the default copy. */
+  secretPlaceholder: z.string().nullable().optional(),
+  helpUrl: z.string().nullable().optional(),
+  helpLabel: z.string().nullable().optional(),
 });
 export const RemoteCredentialTestResultSchema = z.object({
   connected: z.boolean(),
@@ -755,8 +739,6 @@ export type ErrorEnvelope = z.infer<typeof ErrorEnvelopeSchema>;
 export type ModelSettingsInput = z.infer<typeof ModelSettingsInputSchema>;
 export type RuntimeSettingsInput = z.infer<typeof RuntimeSettingsInputSchema>;
 export type SettingsView = z.infer<typeof SettingsViewSchema>;
-export type YuqueApiSettingsInput = z.infer<typeof YuqueApiSettingsInputSchema>;
-export type FeishuBindingInput = z.infer<typeof FeishuBindingInputSchema>;
 export type ConnectionTestResult = z.infer<typeof ConnectionTestResultSchema>;
 export type ModelConnectionResult = z.infer<typeof ModelConnectionResultSchema>;
 export type AvailableModel = z.infer<typeof AvailableModelSchema>;
@@ -867,10 +849,6 @@ export interface DocMindApi {
     clearDiagnostics(): Promise<void>;
     saveWebSearch(input: WebSearchSettingsInput): Promise<SettingsView>;
     saveRuntime(input: z.infer<typeof RuntimeSettingsInputSchema>): Promise<SettingsView>;
-    saveYuqueApi(input: YuqueApiSettingsInput): Promise<SettingsView>;
-    testYuqueApi(): Promise<ConnectionTestResult>;
-    saveFeishu(input: FeishuBindingInput): Promise<SettingsView>;
-    testFeishu(): Promise<ConnectionTestResult>;
   };
   embedding: {
     status(): Promise<ModelStatus>;
@@ -980,8 +958,6 @@ export interface DocMindApi {
 export const schemas = {
   SettingsViewSchema,
   ConnectionTestResultSchema,
-  YuqueApiSettingsInputSchema,
-  FeishuBindingInputSchema,
   ModelConnectionResultSchema,
   AvailableModelSchema,
   ModelListViewSchema,

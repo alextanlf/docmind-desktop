@@ -83,7 +83,7 @@ export function SettingsView() {
             description="语雀网页、语雀 API 和飞书均为可选连接，不影响 DocMind 启动"
             meta={SETTINGS_SECTIONS.connections}
           >
-            <ConnectionSettings settings={settings.data} />
+            <ConnectionSettings />
           </SettingsSection>
           <SettingsSection
             description="本地证据不足时按模型内置联网、Tavily、免费兜底的顺序搜索"

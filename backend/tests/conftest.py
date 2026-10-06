@@ -87,3 +87,25 @@ def database() -> Iterator[Database]:
     database.upgrade()
     yield database
     database.engine.dispose()
+
+
+@pytest.fixture
+def production_client(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[TestClient]:
+    """A client whose remote registry is assembled by production wiring.
+
+    The shared ``client`` fixture injects stub providers, so anything that must
+    observe the real credential specs or capability declarations (the Feishu
+    webhook guard, the Yuque missing-browser code) needs this one instead.
+    """
+    from app.main import create_app
+
+    monkeypatch.setenv("DOCMIND_SESSION_TOKEN", RUNTIME_TOKEN)
+    monkeypatch.setenv("DOCMIND_DATA_DIR", str(tmp_path / "production-data"))
+    monkeypatch.setenv("DOCMIND_ENVIRONMENT", "test")
+    settings = AppSettings(
+        session_token=SecretStr(RUNTIME_TOKEN),
+        data_dir=tmp_path / "production-data",
+        environment="test",
+    )
+    with TestClient(create_app(settings, secret_store=MemorySecretStore())) as test_client:
+        yield test_client

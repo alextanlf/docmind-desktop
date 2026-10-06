@@ -63,6 +63,9 @@ def _channel_view(
         state=state.state,
         account_label=state.account_label,
         has_secret=state.has_secret,
+        secret_placeholder=spec.secret_placeholder,
+        help_url=spec.help_url,
+        help_label=spec.help_label,
     )
 
 
@@ -127,7 +130,11 @@ async def save_credential(
         )
     store = _credential_store(request)
     secret_ref = spec.default_secret_ref or f"{provider}:{channel}"
-    store.save_secret(provider, channel, body.secret.strip(), secret_ref)
+    # The channel owns its own validation rules. A constrained secret (e.g. a
+    # webhook URL whose host whitelist is an SSRF guard) declares a normalizer
+    # in its spec, so the API layer never special-cases a provider name.
+    secret = spec.normalizer(body.secret) if spec.normalizer is not None else body.secret.strip()
+    store.save_secret(provider, channel, secret, secret_ref)
     return _channel_view(store, provider, spec)
 
 
