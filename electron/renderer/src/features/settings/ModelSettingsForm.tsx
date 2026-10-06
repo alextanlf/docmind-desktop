@@ -9,32 +9,41 @@ const PRESETS = {
   qwen: {
     label: "通义千问",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    model: "qwen-plus",
+    model: "qwen3.8-max",
   },
   kimi: { label: "Kimi (月之暗面)", baseUrl: "https://api.moonshot.cn/v1", model: "kimi-k3" },
   glm: { label: "智谱 GLM", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4.6" },
   mimo: { label: "小米 MiMo", baseUrl: "https://api.xiaomimimo.com/v1", model: "mimo-v2.6-pro" },
+  // Zen is restricted to its free tier by the backend; the label must not imply
+  // that paid ids are selectable here.
   opencode_zen: {
-    label: "OpenCode Zen（按量·含免费档）",
+    label: "OpenCode Zen（仅免费模型）",
     baseUrl: "https://opencode.ai/zen/v1",
-    model: "mimo-v2.5-free",
+    model: "mimo-v2.6-flash-free",
   },
   opencode_go: {
     label: "OpenCode Go（$10/月订阅）",
     baseUrl: "https://opencode.ai/zen/go/v1",
-    model: "mimo-v2.5",
+    model: "mimo-v2.6-pro",
   },
-  openai: { label: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-5-mini" },
+  openai: { label: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-5.6-terra" },
   custom: { label: "自定义", baseUrl: "", model: "" },
 } as const satisfies Record<ModelPreset, { label: string; baseUrl: string; model: string }>;
 
-// Unified levels rendered as the same four meanings across vendors; the backend
-// translates each to the vendor's own field or drops it when unsupported.
+// 档位标签直接对应厂商原生值。后端下发的 levels 就是官方文档里的档位
+// （Kimi K3 = low/high/max，GLM-4.6 = 开/关两态，GPT-5.6 = none…xhigh），
+// 不再把它们压成自造的「轻量/标准/深度」—— 那个抽象层会丢掉 max/xhigh/none，
+// 而且「深度」在不同厂商之间根本不是同一件事。
 const EFFORT_LABELS: Record<string, string> = {
   off: "关闭思考",
-  low: "轻量",
-  medium: "标准",
-  high: "深度",
+  on: "开启思考",
+  none: "不推理",
+  minimal: "最低",
+  low: "低",
+  medium: "中",
+  high: "高",
+  xhigh: "很高",
+  max: "最高",
 };
 
 const CUSTOM_MODEL_VALUE = "__custom__";
@@ -147,15 +156,26 @@ export function ModelSettingsForm({
     const submittedKey = clearKey ? "" : apiKey.trim() || undefined;
     try {
       const result = await window.docmind.settings.listModels({
+        preset,
         baseUrl: baseUrl.trim() || undefined,
         model: model.trim() || undefined,
         apiKey: submittedKey,
       });
       setLiveModels(result.models);
-      if (result.models.length > 0) {
-        setMessage({ tone: "success", text: `已获取 ${result.models.length} 个可用模型` });
+      if (result.models.length === 0) {
+        setMessage({
+          tone: "error",
+          text: result.notice ?? "该服务商未返回模型列表，请手动填写模型名称",
+        });
+      } else if (result.source === "curated") {
+        // Never say "已获取 N 个模型" for a hardcoded list — the user needs to
+        // know the provider was never reached, and why.
+        setMessage({
+          tone: result.notice ? "error" : "success",
+          text: result.notice ?? `已加载 ${result.models.length} 个内置模型（未配置 API Key）`,
+        });
       } else {
-        setMessage({ tone: "error", text: "该服务商未返回模型列表，请手动填写模型名称" });
+        setMessage({ tone: "success", text: `已获取 ${result.models.length} 个可用模型` });
       }
     } catch (error) {
       setMessage({ tone: "error", text: clientErrorMessage(error) });
@@ -329,7 +349,9 @@ export function ModelSettingsForm({
             >
               {effortLevels.map((level) => (
                 <option key={level} value={level}>
-                  {EFFORT_LABELS[level] ?? level}
+                  {/* Show the raw vendor value next to the gloss so the choice
+                      can be matched against that vendor's own docs. */}
+                  {EFFORT_LABELS[level] ? `${EFFORT_LABELS[level]}（${level}）` : level}
                 </option>
               ))}
             </select>

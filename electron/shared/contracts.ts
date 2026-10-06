@@ -223,6 +223,10 @@ export const ModelConnectionResultSchema = z.object({
 });
 
 export const ModelListProbeSchema = z.object({
+  // The preset must be sent: the backend falls back to the *saved* preset's
+  // catalogue without it, so a user picking a vendor they never saved would
+  // get an empty list.
+  preset: z.string().max(32).optional(),
   baseUrl: z.string().max(500).optional(),
   model: z.string().max(200).optional(),
   apiKey: z.string().max(2_000).optional(),
@@ -230,6 +234,10 @@ export const ModelListProbeSchema = z.object({
 
 export const ModelListViewSchema = z.object({
   models: z.array(AvailableModelSchema).default([]),
+  // "curated" means the provider did not answer and the built-in list was used;
+  // the form must not claim those came from the provider.
+  source: z.enum(["live", "curated"]).default("live"),
+  notice: z.string().max(500).nullable().optional(),
 });
 
 export const ModelStatusSchema = z.object({

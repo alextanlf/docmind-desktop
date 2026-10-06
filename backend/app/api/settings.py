@@ -36,6 +36,7 @@ from app.schemas.settings import (
     WebSearchSettingsUpdate,
     YuqueApiBindingView,
     YuqueApiSettingsUpdate,
+    is_free_model,
     model_label,
     preset_models,
 )
@@ -101,6 +102,16 @@ class SettingsService:
     async def save_model(self, update: ModelSettingsUpdate) -> ModelSettingsView:
         if update.preset not in MODEL_PRESETS:
             raise DomainError("MODEL_PRESET_INVALID", "模型预设无效", 422)
+        # A free-only preset bills the account for anything else, and the picker
+        # cannot stop a hand-typed id, so the restriction is enforced on save.
+        if not is_free_model(update.preset, str(update.model or "")):
+            raise DomainError(
+                "MODEL_NOT_FREE",
+                "该预设仅支持免费模型，请从列表中选择",
+                422,
+                False,
+                "OpenCode Zen 免费档会随官方活动轮换",
+            )
         # `WireModel.model_dump` emits alias keys, so the effort key is camelCase.
         payload = update.model_dump(exclude={"api_key"})
         # An unset effort means "use the vendor's documented default" rather
@@ -149,47 +160,70 @@ class SettingsService:
             raise DomainError("MODEL_AUTH_FAILED", "请先配置 API Key", 400, False, "保存 API Key 后重试")
         return await self.provider_factory(ModelConfig(**self.model().model_dump()), api_key).test_connection()
 
-    async def list_models(self, probe: ModelListProbe | None = None) -> list[AvailableModel]:
-        """List models for the saved provider, or for an unsaved draft.
+    async def list_models(self, probe: ModelListProbe | None = None) -> ModelListView:
+        """List models for the provider the form is currently describing.
 
-        The settings form lets the user point at a different base URL before
-        saving, so draft values win when supplied; the API key still comes from
-        the secret store unless the draft carries one. Falls back to the curated
-        per-preset catalogue when the provider cannot be reached or has no
-        `/models` endpoint, so the picker always offers something.
+        The form's draft wins over the saved config, **including the preset**:
+        the picker is driven by what the user just chose, and falling back to the
+        saved preset would show a catalogue for a vendor they are not configuring.
+        `GET /models` still overrides the curated list when the provider answers.
         """
         saved = self.model()
         config = ModelConfig(**saved.model_dump())
         preset = saved.preset
+        if probe is not None and probe.preset in MODEL_PRESETS:
+            preset = probe.preset
+            config = config.model_copy(update={"preset": probe.preset})
         if probe is not None:
             if probe.base_url:
                 config = config.model_copy(update={"base_url": probe.base_url})
             if probe.model:
                 config = config.model_copy(update={"model": probe.model})
+        curated = preset_models(preset)
         api_key = self.secret_store.get(MODEL_API_KEY_NAME)
         if probe is not None and probe.api_key:
             api_key = probe.api_key
-        curated = preset_models(preset)
         if not api_key:
-            return curated
+            # Not an error: plenty of gateways list their models unauthenticated,
+            # and the curated list is a valid answer. Say which one the user got.
+            return ModelListView(
+                models=curated,
+                source="curated",
+                notice=None if curated else "未填写 API Key，且该预设没有内置模型列表",
+            )
         provider = self.provider_factory(config, api_key)
         lister = getattr(provider, "list_models", None)
         if lister is None:
-            return curated
+            return ModelListView(models=curated, source="curated")
         try:
             models = await lister()
-        except DomainError:
-            # Live listing is a convenience. A provider that rejects it (no
-            # endpoint, restricted key, offline) must not block model choice.
-            return curated
+        except DomainError as error:
+            # Live listing is a convenience, so a provider that rejects it must
+            # not block model choice — but the reason has to reach the user,
+            # otherwise a wrong key looks identical to "unsupported endpoint".
+            return ModelListView(
+                models=curated,
+                source="curated",
+                notice=f"实时获取失败（{error.message}），已显示内置列表",
+            )
+        # A free-only preset (OpenCode Zen) bills the balance for anything the
+        # gateway reports, and its /models lists all 86 paid ids alongside the
+        # free tier, so the live list has to be narrowed too — not just the
+        # curated catalogue. Without a key the curated list is already free.
+        models = [model for model in models if is_free_model(preset, model.id)]
         if not models:
-            return curated
-        # Keep the curated entry for the saved model selectable even if the
+            return ModelListView(
+                models=curated,
+                source="curated",
+                notice="该服务商未返回可用的免费模型，已显示内置列表",
+            )
+        # Keep the entry for the currently selected model selectable even if the
         # provider does not report it.
         known = {model.id for model in models}
-        if saved.model and saved.model not in known:
-            models = [*models, AvailableModel(id=saved.model, label=model_label(saved.model))]
-        return models
+        selected = str(config.model or "")
+        if selected and selected not in known and is_free_model(preset, selected):
+            models = [*models, AvailableModel(id=selected, label=model_label(selected))]
+        return ModelListView(models=models, source="live")
 
     def view(self, settings: AppSettings) -> SettingsView:
         return SettingsView(
@@ -506,7 +540,7 @@ async def list_models(request: Request) -> ModelListView:
         except ValueError as error:
             raise DomainError("INVALID_REQUEST", "请求参数无效", 422) from error
     models = await _service(request).list_models(probe)
-    return ModelListView(models=models)
+    return models
 
 @router.post("/runtime", response_model=SettingsView)
 async def save_runtime(update: RuntimeSettingsInput, request: Request) -> SettingsView:

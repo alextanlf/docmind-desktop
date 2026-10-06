@@ -449,6 +449,132 @@ def test_model_list_falls_back_to_curated_when_provider_rejects_listing(
     assert "mimo-v2.6-pro" in [model["id"] for model in response.json()["models"]]
 
 
+def test_model_list_uses_the_presets_curated_catalogue_before_anything_is_saved(
+    client, auth_headers
+) -> None:
+    """全新安装时，列表必须跟着**表单里选的预设**走。
+
+    回归：`ModelListProbe` 早期没有 preset 字段，`list_models` 只能退回
+    `saved.preset`，而未保存过时它是 `custom` —— 目录为空元组，于是无论用户
+    选哪家、Base URL 填什么都返回空列表，前端显示「该服务商未返回模型列表」。
+    """
+
+    class FakeProvider:
+        def __init__(self, config, api_key):  # pragma: no cover - no key, unused
+            raise AssertionError("没有 key 时不该构造 provider")
+
+        async def test_connection(self) -> ModelConnectionResult:  # pragma: no cover
+            raise NotImplementedError
+
+        async def list_models(self) -> list[AvailableModel]:  # pragma: no cover
+            raise AssertionError("没有 key 时不该请求 /models")
+
+    client.app.state.settings_service.provider_factory = FakeProvider
+
+    for preset, expected in (
+        ("openai", "gpt-5.6-terra"),
+        ("qwen", "qwen3.8-max"),
+        ("deepseek", "deepseek-flash"),
+        ("opencode_zen", "mimo-v2.6-flash-free"),
+    ):
+        response = client.post(
+            "/api/settings/model/list",
+            headers=auth_headers,
+            json={"preset": preset},
+        )
+        assert response.status_code == 200, preset
+        ids = [model["id"] for model in response.json()["models"]]
+        assert expected in ids, f"{preset} 的目录没返回：{ids}"
+        # 没有 key 时是内置目录，不能谎称来自服务商。
+        assert response.json()["source"] == "curated", preset
+
+
+def test_model_list_reports_why_it_fell_back_to_the_curated_list(
+    client, auth_headers, app_secret_store: MemorySecretStore
+) -> None:
+    """实时获取失败的原因必须透出，不能静默回落。"""
+
+    class FakeProvider:
+        def __init__(self, config, api_key):
+            self.config = config
+
+        async def test_connection(self) -> ModelConnectionResult:  # pragma: no cover
+            raise NotImplementedError
+
+        async def list_models(self) -> list[AvailableModel]:
+            raise DomainError("MODEL_AUTH_FAILED", "API Key 无效", 401)
+
+    app_secret_store.set("model-api-key", "bad-key")
+    client.app.state.settings_service.provider_factory = FakeProvider
+    client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "openai",
+            "baseUrl": "https://api.openai.com/v1",
+            "model": "gpt-5.6-terra",
+            "timeoutSeconds": 30,
+        },
+    )
+
+    response = client.post(
+        "/api/settings/model/list", headers=auth_headers, json={"preset": "openai"}
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source"] == "curated"
+    assert "API Key 无效" in payload["notice"]
+    # 目录仍然可用，不能因为实时失败就让选择器空掉。
+    assert "gpt-5.6-terra" in [model["id"] for model in payload["models"]]
+
+
+def test_model_list_marks_a_successful_live_fetch(client, auth_headers, app_secret_store: MemorySecretStore) -> None:
+    app_secret_store.set("model-api-key", "k")
+
+    class FakeProvider:
+        def __init__(self, config, api_key):
+            self.config = config
+
+        async def test_connection(self) -> ModelConnectionResult:  # pragma: no cover
+            raise NotImplementedError
+
+        async def list_models(self) -> list[AvailableModel]:
+            return [AvailableModel(id="gpt-5.6-terra", label="GPT-5.6 Terra")]
+
+    client.app.state.settings_service.provider_factory = FakeProvider
+    client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "openai",
+            "baseUrl": "https://api.openai.com/v1",
+            "model": "gpt-5.6-terra",
+            "timeoutSeconds": 30,
+        },
+    )
+
+    response = client.post(
+        "/api/settings/model/list", headers=auth_headers, json={"preset": "openai"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["source"] == "live"
+    assert response.json()["notice"] is None
+
+
+def test_model_list_explains_an_empty_catalogue(client, auth_headers) -> None:
+    """custom 预设没有内置目录，必须说清是「没 key 且没目录」而不是「服务商没返回」。"""
+    response = client.post(
+        "/api/settings/model/list", headers=auth_headers, json={"preset": "custom"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["models"] == []
+    assert response.json()["source"] == "curated"
+    assert response.json()["notice"]
+
+
 def test_settings_view_exposes_curated_models_for_every_preset(client, auth_headers) -> None:
     response = client.get("/api/settings", headers=auth_headers)
 
@@ -456,6 +582,174 @@ def test_settings_view_exposes_curated_models_for_every_preset(client, auth_head
     presets = response.json()["modelPresets"]
     assert {"deepseek", "qwen", "kimi", "glm", "mimo", "openai"} <= set(presets)
     assert "custom" not in presets
+
+
+def test_settings_view_keeps_zen_picker_free_only(client, auth_headers) -> None:
+    response = client.get("/api/settings", headers=auth_headers)
+
+    assert response.status_code == 200
+    zen = [model["id"] for model in response.json()["modelPresets"]["opencode_zen"]]
+    assert zen
+    assert all(model.endswith("-free") or model == "big-pickle" for model in zen)
+
+
+# ------------------------------------------------- OpenCode Zen 仅免费档
+def _zen_provider_factory(reported: list[AvailableModel]):
+    class FakeProvider:
+        def __init__(self, config, api_key):
+            self.config = config
+
+        async def test_connection(self) -> ModelConnectionResult:  # pragma: no cover
+            raise NotImplementedError
+
+        async def list_models(self) -> list[AvailableModel]:
+            return list(reported)
+
+    return FakeProvider
+
+
+def test_zen_model_list_drops_paid_ids_from_the_live_response(
+    client, auth_headers, app_secret_store: MemorySecretStore
+) -> None:
+    """Zen 的 /models 会返回全部 86 个 id（含付费），必须过滤后才给前端。"""
+    app_secret_store.set("model-api-key", "k")
+    client.app.state.settings_service.provider_factory = _zen_provider_factory(
+        [
+            AvailableModel(id="kimi-k3", label="Kimi K3"),
+            AvailableModel(id="mimo-v2.6-flash-free", label="MiMo V2.6 Flash Free"),
+            AvailableModel(id="gpt-5.6-terra", label="GPT-5.6 Terra"),
+        ]
+    )
+    client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "opencode_zen",
+            "baseUrl": "https://opencode.ai/zen/v1",
+            "model": "mimo-v2.6-flash-free",
+            "timeoutSeconds": 30,
+        },
+    )
+
+    response = client.post("/api/settings/model/list", json={}, headers=auth_headers)
+
+    assert response.status_code == 200
+    assert [model["id"] for model in response.json()["models"]] == ["mimo-v2.6-flash-free"]
+
+
+def test_zen_model_list_falls_back_to_curated_when_no_free_model_is_live(
+    client, auth_headers, app_secret_store: MemorySecretStore
+) -> None:
+    """免费档全部轮换下线时，实时列表为空也不能让选择器变空。"""
+    app_secret_store.set("model-api-key", "k")
+    client.app.state.settings_service.provider_factory = _zen_provider_factory(
+        [AvailableModel(id="kimi-k3", label="Kimi K3")]
+    )
+    client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "opencode_zen",
+            "baseUrl": "https://opencode.ai/zen/v1",
+            "model": "mimo-v2.6-flash-free",
+            "timeoutSeconds": 30,
+        },
+    )
+
+    response = client.post("/api/settings/model/list", json={}, headers=auth_headers)
+
+    assert response.status_code == 200
+    ids = [model["id"] for model in response.json()["models"]]
+    assert ids
+    assert all(model.endswith("-free") or model == "big-pickle" for model in ids)
+
+
+def test_zen_saved_paid_model_is_not_re_added_to_the_picker(
+    client, auth_headers, app_secret_store: MemorySecretStore
+) -> None:
+    """已存的付费 id 不该因为「保持可选」而被塞回免费档列表。"""
+    app_secret_store.set("model-api-key", "k")
+    client.app.state.settings_service.provider_factory = _zen_provider_factory(
+        [AvailableModel(id="space-bunny-free", label="Space Bunny Free")]
+    )
+    client.app.state.settings_service.setting_store.set(
+        MODEL_CONFIG_KEY,
+        json.dumps(
+            {
+                "preset": "opencode_zen",
+                "baseUrl": "https://opencode.ai/zen/v1",
+                "model": "kimi-k3",
+                "timeoutSeconds": 30,
+                "reasoningEffort": "",
+            }
+        ),
+    )
+
+    response = client.post("/api/settings/model/list", json={}, headers=auth_headers)
+
+    assert response.status_code == 200
+    assert [model["id"] for model in response.json()["models"]] == ["space-bunny-free"]
+
+
+def test_saving_a_paid_model_on_zen_is_rejected(
+    client, auth_headers, app_secret_store: MemorySecretStore
+) -> None:
+    app_secret_store.set("model-api-key", "k")
+
+    response = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "opencode_zen",
+            "baseUrl": "https://opencode.ai/zen/v1",
+            "model": "kimi-k3",
+            "timeoutSeconds": 30,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "MODEL_NOT_FREE"
+
+
+def test_saving_a_free_model_on_zen_is_accepted(
+    client, auth_headers, app_secret_store: MemorySecretStore
+) -> None:
+    app_secret_store.set("model-api-key", "k")
+
+    response = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "opencode_zen",
+            "baseUrl": "https://opencode.ai/zen/v1",
+            "model": "mimo-v2.6-flash-free",
+            "timeoutSeconds": 30,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["model"]["model"] == "mimo-v2.6-flash-free"
+
+
+def test_paid_models_are_still_savable_elsewhere(
+    client, auth_headers, app_secret_store: MemorySecretStore
+) -> None:
+    """限制只针对 Zen，不能误伤 OpenAI / Kimi 等付费厂商。"""
+    app_secret_store.set("model-api-key", "k")
+
+    response = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "openai",
+            "baseUrl": "https://api.openai.com/v1",
+            "model": "gpt-5.6-terra",
+            "timeoutSeconds": 30,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["model"]["model"] == "gpt-5.6-terra"
 
 
 def test_model_connection_returns_latency_without_real_network(
@@ -619,19 +913,19 @@ def test_model_capabilities_are_keyed_by_preset_then_model(
         "modelCapabilities"
     ]
 
-    # Known data that must survive serialization: deepseek-flash offers three
-    # levels and defaults to high.
+    # Known data that must survive serialization: deepseek-flash exposes
+    # off/low/high/max and defaults to high.
     deepseek = capabilities["deepseek"]
     assert isinstance(deepseek, dict)
     assert deepseek["deepseek-flash"] == {
-        "reasoningLevels": ["off", "low", "high"],
+        "reasoningLevels": ["off", "low", "high", "max"],
         "defaultReasoningEffort": "high",
     }
     assert deepseek["deepseek-v4-pro"]["reasoningLevels"], "每个 preset 下每个 model 都要有真实档位"
 
     # kimi-k3 differs from kimi-k2.7-code: the per-model keying is the whole
     # point, so a collapse to one entry per preset must fail this test.
-    assert capabilities["kimi"]["kimi-k3"]["reasoningLevels"] == ["low", "high"]
+    assert capabilities["kimi"]["kimi-k3"]["reasoningLevels"] == ["low", "high", "max"]
     assert capabilities["kimi"]["kimi-k2.7-code"]["reasoningLevels"] == []
 
 

@@ -233,7 +233,7 @@ describe("设置", () => {
     const effort = await screen.findByLabelText("推理强度");
     // The saved level from settings is preselected.
     expect(effort).toHaveValue("high");
-    expect(within(effort as HTMLSelectElement).getByRole("option", { name: "关闭思考" })).toBeVisible();
+    expect(within(effort as HTMLSelectElement).getByRole("option", { name: "关闭思考（off）" })).toBeVisible();
 
     fireEvent.change(effort, { target: { value: "low" } });
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
@@ -252,13 +252,19 @@ describe("设置", () => {
     fireEvent.change(await screen.findByLabelText("模型预设"), { target: { value: "kimi" } });
     const effort = await screen.findByLabelText("推理强度");
     // Kimi K3 always reasons, so no "off" even though DeepSeek (same "thinking"
-    // concept) allows it.
-    expect(within(effort as HTMLSelectElement).queryByRole("option", { name: "关闭思考" })).toBeNull();
-    expect(effort).toHaveValue("high");
+    // concept) allows it. Its levels are the vendor's own (low/high/max), and
+    // the documented default is max.
+    expect(within(effort as HTMLSelectElement).queryByRole("option", { name: "关闭思考（off）" })).toBeNull();
+    expect(within(effort as HTMLSelectElement).getByRole("option", { name: "最高（max）" })).toBeVisible();
+    expect(effort).toHaveValue("max");
 
-    // Switching to K2.6 changes the allowed levels for the same vendor.
+    // Switching to K2.6 changes the allowed levels for the same vendor: it is a
+    // plain on/off toggle, not an intensity scale.
     fireEvent.change(await screen.findByLabelText("模型名称"), { target: { value: "kimi-k2.6" } });
-    expect(within(screen.getByLabelText("推理强度") as HTMLSelectElement).getByRole("option", { name: "关闭思考" })).toBeVisible();
+    const toggled = screen.getByLabelText("推理强度") as HTMLSelectElement;
+    expect(within(toggled).getByRole("option", { name: "关闭思考（off）" })).toBeVisible();
+    expect(within(toggled).getByRole("option", { name: "开启思考（on）" })).toBeVisible();
+    expect(within(toggled).queryByRole("option", { name: "最高（max）" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
     await waitFor(() =>
@@ -276,14 +282,14 @@ describe("设置", () => {
     // GLM-4.6 can be switched off, GLM-5.3 cannot.
     expect(
       within(screen.getByLabelText("推理强度") as HTMLSelectElement).getByRole("option", {
-        name: "关闭思考",
+        name: "关闭思考（off）",
       }),
     ).toBeVisible();
 
     fireEvent.change(await screen.findByLabelText("模型名称"), { target: { value: "glm-5.3" } });
     expect(
       within(screen.getByLabelText("推理强度") as HTMLSelectElement).queryByRole("option", {
-        name: "关闭思考",
+        name: "关闭思考（off）",
       }),
     ).toBeNull();
   });
@@ -382,6 +388,8 @@ describe("设置", () => {
         { id: "kimi-k3", label: "Kimi K3" },
         { id: "kimi-k2.5", label: "Kimi K2.5" },
       ],
+      source: "live",
+      notice: null,
     });
     const api = installDocMindApi({ settings: { listModels } });
     renderSettings();
@@ -404,12 +412,68 @@ describe("设置", () => {
   });
 
   it("reports a provider that returns no models instead of silently showing none", async () => {
-    installDocMindApi({ settings: { listModels: vi.fn().mockResolvedValue({ models: [] }) } });
+    installDocMindApi({ settings: { listModels: vi.fn().mockResolvedValue({ models: [], source: "live", notice: null }) } });
     renderSettings();
 
     fireEvent.click(await screen.findByRole("button", { name: "获取模型列表" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("该服务商未返回模型列表");
+  });
+
+  // 回归：后端早期没有从表单接收 preset，只能退回 saved.preset，于是无论选哪家
+  // 都返回空列表。这里锁住「预设必须随请求一起发出去」。
+  it("sends the selected preset when refreshing the model list", async () => {
+    const listModels = vi.fn().mockResolvedValue({
+      models: [{ id: "gpt-5.6-terra", label: "GPT-5.6 Terra" }],
+      source: "live",
+      notice: null,
+    });
+    installDocMindApi({ settings: { listModels } });
+    renderSettings();
+
+    fireEvent.change(await screen.findByLabelText("模型预设"), { target: { value: "openai" } });
+    fireEvent.click(screen.getByRole("button", { name: "获取模型列表" }));
+
+    await waitFor(() => expect(listModels).toHaveBeenCalled());
+    expect(listModels).toHaveBeenLastCalledWith(
+      expect.objectContaining({ preset: "openai", baseUrl: "https://api.openai.com/v1" }),
+    );
+  });
+
+  it("does not claim a curated list came from the provider", async () => {
+    installDocMindApi({
+      settings: {
+        listModels: vi.fn().mockResolvedValue({
+          models: [{ id: "mimo-v2.6-flash-free", label: "MiMo V2.6 Flash Free" }],
+          source: "curated",
+          notice: "未填写 API Key，且该预设没有内置模型列表",
+        }),
+      },
+    });
+    renderSettings();
+
+    fireEvent.click(await screen.findByRole("button", { name: "获取模型列表" }));
+
+    // The reason must reach the user instead of "已获取 N 个可用模型".
+    expect(await screen.findByRole("alert")).toHaveTextContent("未填写 API Key");
+    expect(screen.queryByText(/已获取 \d+ 个可用模型/)).toBeNull();
+  });
+
+  it("surfaces the reason a live fetch fell back to the built-in list", async () => {
+    installDocMindApi({
+      settings: {
+        listModels: vi.fn().mockResolvedValue({
+          models: [{ id: "gpt-5.6-terra", label: "GPT-5.6 Terra" }],
+          source: "curated",
+          notice: "实时获取失败（API Key 无效），已显示内置列表",
+        }),
+      },
+    });
+    renderSettings();
+
+    fireEvent.click(await screen.findByRole("button", { name: "获取模型列表" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("API Key 无效");
   });
 
   it("retries a retryable settings query once but excludes semantic non-retryable codes", async () => {

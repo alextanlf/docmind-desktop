@@ -46,19 +46,24 @@ export const readySettings: SettingsView = {
   },
   modelSetupSkipped: false,
   // Keyed by preset then model id, mirroring the backend's model-level table.
+  // Values are the vendors' own effort levels (not a normalized scale), so they
+  // must stay in sync with backend/app/core/model_capabilities.py.
   modelCapabilities: {
     deepseek: {
-      "deepseek-flash": { reasoningLevels: ["off", "low", "high"], defaultReasoningEffort: "high" },
+      "deepseek-flash": {
+        reasoningLevels: ["off", "low", "high", "max"],
+        defaultReasoningEffort: "high",
+      },
     },
     kimi: {
-      // K3 always reasons; K2.6 uses a different field and can be turned off.
-      "kimi-k3": { reasoningLevels: ["low", "high"], defaultReasoningEffort: "high" },
-      "kimi-k2.6": { reasoningLevels: ["off", "high"], defaultReasoningEffort: "high" },
+      // K3 always reasons and tops out at max; K2.6 is a plain on/off toggle.
+      "kimi-k3": { reasoningLevels: ["low", "high", "max"], defaultReasoningEffort: "max" },
+      "kimi-k2.6": { reasoningLevels: ["off", "on"], defaultReasoningEffort: "on" },
     },
     glm: {
-      // 4.6 only exposes the toggle; 5.3 cannot be disabled at all.
-      "glm-4.6": { reasoningLevels: ["off", "high"], defaultReasoningEffort: "high" },
-      "glm-5.3": { reasoningLevels: ["low", "high"], defaultReasoningEffort: "high" },
+      // 4.6 only exposes the toggle; 5.3 cannot be disabled and has max.
+      "glm-4.6": { reasoningLevels: ["off", "on"], defaultReasoningEffort: "on" },
+      "glm-5.3": { reasoningLevels: ["low", "high", "max"], defaultReasoningEffort: "max" },
     },
   },
   modelPresets: {
@@ -298,7 +303,7 @@ export function installDocMindApi(overrides?: {
       get: vi.fn().mockResolvedValue(readySettings),
       saveModel: vi.fn().mockResolvedValue(readySettings),
       testModel: vi.fn().mockResolvedValue({ connected: true, latencyMs: 86 }),
-      listModels: vi.fn().mockResolvedValue({ models: [] }),
+      listModels: vi.fn().mockResolvedValue({ models: [], source: "live", notice: null }),
       skipModelSetup: vi.fn().mockResolvedValue(readySettings),
       clearDiagnostics: vi.fn().mockResolvedValue(undefined),
       saveWebSearch: vi.fn().mockResolvedValue(readySettings),
