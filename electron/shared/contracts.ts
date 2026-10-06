@@ -965,6 +965,8 @@ export interface DocMindApi {
   sources: SourcesApi;
   batches: BatchesApi;
   shell: { openExternal(url: string): Promise<void> };
+  /** Full app restart — the only recovery when a schema mismatch keeps failing. */
+  app: { restart(): Promise<void> };
 }
 
 export const schemas = {

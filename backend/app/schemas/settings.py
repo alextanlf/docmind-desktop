@@ -151,8 +151,14 @@ class SettingsView(WireModel):
     # Curated per-preset catalogue so the model picker has choices on first
     # paint, before an API key is entered and before any live query.
     model_presets: dict[str, list[AvailableModel]] = Field(default_factory=dict)
-    # Per-preset reasoning support, keyed like `model_presets`.
-    model_capabilities: dict[str, ModelPresetCapabilities] = Field(default_factory=dict)
+    # Reasoning support keyed by preset, then by model id — the same vendor's
+    # models differ (Kimi K3 vs K2.6, GLM-5.3 vs 4.6). The nesting must match
+    # what SettingsService.view() builds: declaring the inner value as a bare
+    # ModelPresetCapabilities makes pydantic silently drop every model's entry
+    # and emit default-empty capabilities under each preset.
+    model_capabilities: dict[str, dict[str, ModelPresetCapabilities]] = Field(
+        default_factory=dict
+    )
     # True once the user dismissed first-run setup, so it is not shown again.
     model_setup_skipped: bool = False
 

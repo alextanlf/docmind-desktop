@@ -69,7 +69,11 @@ import {
 const require = createRequire(import.meta.url);
 let electronIpc: {
   ipcMain?: any;
-  app?: { on?(event: "before-quit", listener: () => void): void };
+  app?: {
+    on?(event: "before-quit", listener: () => void): void;
+    relaunch?(): void;
+    quit?(): void;
+  };
   shell?: { openExternal: (url: string) => Promise<void> };
 } = {};
 try {
@@ -100,7 +104,12 @@ export interface IpcDependencies {
     removeAllListeners?(channel?: string): void;
   };
   getWebContents?: () => { on?(event: "destroyed", listener: () => void): void } | undefined;
-  app?: { on?(event: "before-quit", listener: () => void): void };
+  app?: {
+    on?(event: "before-quit", listener: () => void): void;
+    relaunch?(): void;
+    quit?(): void;
+    exit?(code: number): void;
+  };
 }
 
 export type IpcHandlerMap = Record<string, Handler>;
@@ -681,6 +690,21 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         dependencies.shell?.openExternal ??
         electronIpc.shell?.openExternal
       )?.(parsed.toString());
+    },
+    /**
+     * Restart is the only real escape hatch when the renderer and the backend
+     * disagree on the settings contract: refetching re-runs the same failing
+     * validation, so the user would be stuck in a retry loop. `relaunch()` only
+     * takes effect on exit, and `quit()` still routes through `before-quit`,
+     * where index.ts stops the backend first — so the old runtime never keeps
+     * holding port 18900 against the new instance.
+     */
+    [IPC_CHANNELS.appRestart]: () => {
+      const relaunch = dependencies.app?.relaunch ?? electronIpc.app?.relaunch;
+      const quit = dependencies.app?.quit ?? electronIpc.app?.quit;
+      if (!relaunch || !quit) throw new DocMindClientError("APP_RESTART_UNAVAILABLE", "无法重启应用");
+      relaunch.call(dependencies.app ?? electronIpc.app);
+      quit.call(dependencies.app ?? electronIpc.app);
     },
     [IPC_CHANNELS.streamCancel]: (_event, requestId) => {
       const id = parse(UUID, requestId);

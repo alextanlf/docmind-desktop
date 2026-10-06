@@ -216,6 +216,32 @@ describe("首次设置", () => {
     expect(screen.getByRole("button", { name: "重新检查设置" })).toBeVisible();
   });
 
+  it("offers a restart when settings fail on a contract mismatch instead of a retry loop", async () => {
+    const restart = vi.fn().mockResolvedValue(undefined);
+    installDocMindApi({
+      settings: {
+        get: vi
+          .fn()
+          .mockRejectedValue({ code: "BACKEND_PROTOCOL_ERROR", message: "格式无效", retryable: true }),
+      },
+      app: { restart },
+    });
+
+    render(<App />);
+
+    // A contract mismatch is deterministic: retrying re-runs the same failing
+    // validation, so the dialog must not be retry-only or the user is trapped.
+    const dialog = await screen.findByRole("dialog", {
+      name: "本地服务返回了无法识别的数据",
+    });
+    expect(dialog).toHaveTextContent("版本不一致");
+
+    const restartButton = within(dialog).getByRole("button", { name: "重启应用" });
+    await fireEvent.click(restartButton);
+
+    await waitFor(() => expect(restart).toHaveBeenCalledTimes(1));
+  });
+
   it("isolates the real startup error modal and focuses its retry action", async () => {
     installDocMindApi({
       settings: {

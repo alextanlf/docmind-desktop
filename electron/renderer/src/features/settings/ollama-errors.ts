@@ -1,6 +1,8 @@
 type ClientError = { code?: string; retryable?: boolean };
 
 const messages: Record<string, string> = {
+  BACKEND_PROTOCOL_ERROR: "应用与本地服务的数据格式不一致",
+  APP_RESTART_UNAVAILABLE: "无法自动重启，请手动退出后重新打开应用",
   OLLAMA_UNAVAILABLE: "Ollama 未运行或暂时无法连接",
   OLLAMA_MODEL_NOT_INSTALLED: "选定模型尚未安装",
   OLLAMA_PULL_FAILED: "模型拉取失败",

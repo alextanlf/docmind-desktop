@@ -9,6 +9,10 @@ dependencies = [
   "httpx>=0.28,<1",
   "keyring>=25.6,<26",
   "markdownify>=1.2,<2",
+  # numpy 被 app/core/onnx_embedding.py 延迟 import。目前靠 onnxruntime 硬依赖它
+  # 侥幸存在于 runtime，但那是运气不是契约：一旦上游依赖树变动就会同样炸在
+  # 「加载模型」时。与 transformers 一并显式声明。
+  "numpy>=2,<3",
   "onnxruntime>=1.20,<2",
   "pydantic-settings>=2.10,<3",
   "pymupdf>=1.26,<2",
@@ -19,6 +23,15 @@ dependencies = [
   # + grpc 40M + chromadb 3.3M + bcrypt/opentelemetry）。实测 5 万条 top-3 = 29ms。
   "sqlite-vec>=0.1.6,<1",
   "sqlalchemy>=2.0.40,<3",
+  # 只为 AutoTokenizer（bge-m3 分词）而装：app/core/onnx_embedding.py 直接
+  # `from transformers import AutoTokenizer`。必须显式声明，不能靠 fp32 extra 里
+  # sentence-transformers 带进来 —— 打包脚本 build-backend-runtime.sh 只解析
+  # 本项目的 dependencies 段，optional-dependencies 会被跳过，于是安装版
+  # 内置模型点击加载必然 ModuleNotFoundError: transformers。
+  # 纯 tokenizer 路径不碰 torch（torch 只在 fp32 extra 里）。
+  # ⚠️ 本段注释里禁止出现方括号。打包脚本用非贪婪正则截取依赖列表，
+  # 注释里任何右方括号都会让它提前截断、静默漏掉后面的依赖（踩过一次）。
+  "transformers>=5,<6",
   "uvicorn>=0.35,<1",
 ]
 

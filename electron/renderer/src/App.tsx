@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { AlertTriangle, LoaderCircle, RefreshCw } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 import { AppProviders } from "./app/AppProviders";
 import { ErrorBoundary } from "./app/ErrorBoundary";
 import { Workspace } from "./app/Workspace";
 import { Modal } from "./components/Modal";
 import { OnboardingDialog } from "./features/onboarding/OnboardingDialog";
+import { SettingsLoadErrorDialog } from "./features/settings/SettingsLoadErrorDialog";
 import { useSettingsQuery } from "./features/settings/settings.queries";
 
 function ResolvedApp({ initialReady, setupSkipped }: { initialReady: boolean; setupSkipped: boolean }) {
@@ -33,15 +34,7 @@ function AppContent() {
     return (
       <>
         <Workspace />
-        <Modal labelledBy="startup-error-title" className="confirm-dialog onboarding-error-dialog">
-          <AlertTriangle aria-hidden="true" size={22} />
-          <h1 id="startup-error-title">无法读取首次设置</h1>
-          <p>本地服务暂不可用，请重新检查后继续。</p>
-          <button className="button button-primary" onClick={() => void settings.refetch()}>
-            <RefreshCw aria-hidden="true" size={16} />
-            重新检查设置
-          </button>
-        </Modal>
+        <SettingsLoadErrorDialog error={settings.error} onRetry={() => void settings.refetch()} />
       </>
     );
   }

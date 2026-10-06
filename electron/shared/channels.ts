@@ -81,6 +81,7 @@ export const IPC_CHANNELS = {
   batchesRetry: "batches:retry",
   batchesSubscribe: "batches:subscribe",
   shellOpenExternal: "shell:openExternal",
+  appRestart: "app:restart",
   streamCancel: "stream:cancel",
 } as const;
 

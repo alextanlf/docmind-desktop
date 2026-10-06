@@ -451,6 +451,9 @@ const api: DocMindApi = {
       return subscription(IPC_CHANNELS.batchesSubscribe, id, [id, afterSequence], onEvent);
     },
   },
+  app: {
+    restart: () => invoke(IPC_CHANNELS.appRestart, z.undefined()),
+  },
   shell: {
     openExternal: (url) => {
       let parsed: URL;

@@ -271,4 +271,27 @@ describe("IPC handlers", () => {
       retryable: false,
     });
   });
+
+  it("relaunches before quitting so the backend stops before the new instance starts", async () => {
+    const order: string[] = [];
+    const deps = dependencies();
+    deps.app = {
+      relaunch: vi.fn(() => order.push("relaunch")),
+      quit: vi.fn(() => order.push("quit")),
+    };
+    const handlers = registerIpcHandlers(deps);
+
+    await handlers["app:restart"]({});
+
+    // Order matters: relaunch() only takes effect on exit, and quit() routes
+    // through before-quit where index.ts stops the backend. Reversing them would
+    // leave the old runtime holding port 18900 against the new instance.
+    expect(order).toEqual(["relaunch", "quit"]);
+  });
+
+  it("refuses to restart when no app handle is wired", () => {
+    const handlers = registerIpcHandlers(dependencies());
+
+    expect(() => handlers["app:restart"]({})).toThrowError(/无法重启应用/);
+  });
 });

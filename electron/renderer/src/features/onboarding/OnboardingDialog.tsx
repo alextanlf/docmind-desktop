@@ -1,7 +1,8 @@
-import { AlertTriangle, Check, LoaderCircle, RefreshCw, SkipForward } from "lucide-react";
+import { AlertTriangle, Check, LoaderCircle, SkipForward } from "lucide-react";
 import { useState } from "react";
 import { Modal } from "../../components/Modal";
 import { ModelSettingsForm } from "../settings/ModelSettingsForm";
+import { SettingsLoadErrorDialog } from "../settings/SettingsLoadErrorDialog";
 import { useSettingsQuery, useSkipModelSetupMutation } from "../settings/settings.queries";
 
 export function OnboardingDialog({ onComplete }: { onComplete: () => void }) {
@@ -30,17 +31,7 @@ export function OnboardingDialog({ onComplete }: { onComplete: () => void }) {
     );
   }
   if (settings.isError) {
-    return (
-      <Modal labelledBy="onboarding-error-title" className="confirm-dialog onboarding-error-dialog">
-        <AlertTriangle aria-hidden="true" size={22} />
-        <h1 id="onboarding-error-title">无法读取首次设置</h1>
-        <p>本地服务暂不可用，请重新检查后继续。</p>
-        <button className="button button-primary" onClick={() => void settings.refetch()}>
-          <RefreshCw aria-hidden="true" size={16} />
-          重新检查设置
-        </button>
-      </Modal>
-    );
+    return <SettingsLoadErrorDialog error={settings.error} onRetry={() => void settings.refetch()} />;
   }
 
   if (confirmingSkip) {

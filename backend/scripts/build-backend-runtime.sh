@@ -178,6 +178,10 @@ uv pip install \
 # 这里显式导入一次，把「构建期就发现缺依赖」变成硬失败，而不是等到用户点保存 API Key
 # 才在运行期看到「未配置」。
 probe_imports="import fastapi, uvicorn, sqlalchemy, onnxruntime, pymupdf, keyring, rank_bm25, sqlite_vec, alembic"
+# transformers 走 app/core/onnx_embedding.py 的延迟 import（构造时才发生），
+# 所以构建期不显式探针就会静默漏过，直到用户点「加载模型」才炸在用户面前。
+# 这是打包漏依赖最隐蔽的一种：源码 imports 干净、构建全绿、运行期才炸。
+probe_imports="${probe_imports}, transformers, numpy"
 if [ "$is_windows" = 1 ]; then
   probe_imports="${probe_imports}, win32ctypes.pywin32"
 fi

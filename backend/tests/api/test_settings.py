@@ -603,3 +603,43 @@ class TestRagSettings:
         )
 
         assert response.status_code == 422
+
+
+def test_model_capabilities_are_keyed_by_preset_then_model(
+    client, auth_headers
+) -> None:
+    """The wire shape is preset -> model id -> capabilities.
+
+    Declaring the inner value as a bare ModelPresetCapabilities makes pydantic
+    silently discard each model's entry and emit default-empty capabilities under
+    every preset. Nothing raised; the renderer just failed schema validation and
+    showed a dead-end "无法读取首次设置" dialog with a retry loop.
+    """
+    capabilities = client.get("/api/settings", headers=auth_headers).json()[
+        "modelCapabilities"
+    ]
+
+    # Known data that must survive serialization: deepseek-flash offers three
+    # levels and defaults to high.
+    deepseek = capabilities["deepseek"]
+    assert isinstance(deepseek, dict)
+    assert deepseek["deepseek-flash"] == {
+        "reasoningLevels": ["off", "low", "high"],
+        "defaultReasoningEffort": "high",
+    }
+    assert deepseek["deepseek-v4-pro"]["reasoningLevels"], "每个 preset 下每个 model 都要有真实档位"
+
+    # kimi-k3 differs from kimi-k2.7-code: the per-model keying is the whole
+    # point, so a collapse to one entry per preset must fail this test.
+    assert capabilities["kimi"]["kimi-k3"]["reasoningLevels"] == ["low", "high"]
+    assert capabilities["kimi"]["kimi-k2.7-code"]["reasoningLevels"] == []
+
+
+def test_model_capabilities_cover_every_catalogued_model(
+    client, auth_headers
+) -> None:
+    payload = client.get("/api/settings", headers=auth_headers).json()
+
+    capabilities = payload["modelCapabilities"]
+    for preset, models in payload["modelPresets"].items():
+        assert set(capabilities.get(preset, {})) == {model["id"] for model in models}

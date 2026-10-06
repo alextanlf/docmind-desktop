@@ -262,6 +262,7 @@ export function installDocMindApi(overrides?: {
   chat?: Partial<DocMindApi["chat"]>;
   dialogs?: Partial<DocMindApi["dialogs"]>;
   shell?: Partial<DocMindApi["shell"]>;
+  app?: Partial<DocMindApi["app"]>;
   sources?: Partial<DocMindApi["sources"]>;
   batches?: Partial<DocMindApi["batches"]>;
   memory?: Partial<DocMindApi["memory"]>;
@@ -452,6 +453,10 @@ export function installDocMindApi(overrides?: {
     shell: {
       openExternal: vi.fn().mockResolvedValue(undefined),
       ...overrides?.shell,
+    },
+    app: {
+      restart: vi.fn().mockResolvedValue(undefined),
+      ...overrides?.app,
     },
     sources: {
       stageDirectory: vi.fn().mockResolvedValue(null),
