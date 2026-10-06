@@ -277,6 +277,17 @@ fi
 # where 过滤用「放大候选集 + 回表筛」，与 app/storage/vectorstore.py::_search
 # 同一策略；UUID 仓库名走加引号标识符，覆盖生产里 repository_id 是 UUID 的事实。
 #
+# 🔴 探针里的 `sys.path.insert(0, Path.cwd())` 依赖 cwd == runtime 根，而本脚本
+#    从头到尾没有 cd 过（调用者的 cwd 是仓库根）。这意味着在正确目录下手动跑探针
+#    会通过，走脚本却必然 ModuleNotFoundError: No module named 'app'——
+#    两者结论相反，且失败信息完全指不到真正原因。实测踩过。
+#    所以这里显式 pushd 到 runtime 根，让探针的 cwd 与run.py 的启动cwd 一致
+#    （run.py 由 Electron 以 cwd=runtime 根 spawn）。
+#    -I 虽然会踢掉 cwd，但探针自己会把它insert 回来，不影响隔离性。
+pushd "$runtime_dir" >/dev/null || {
+  echo "无法进入 runtime 目录：${runtime_dir}" >&2
+  exit 1
+}
 if ! probe_out="$("$runtime_python" -I - <<'PY' 2>&1
 import sqlite3
 import sys
@@ -375,10 +386,12 @@ assert store.query(str(uuid.uuid4()), embeddings[0], top_k=3) == []
 print("OK")
 PY
 )"; then
+  popd >/dev/null || true
   echo "sqlite-vec 向量库自检失败（构建产物不可用）" >&2
   echo "${probe_out}" | tail -12 >&2
   exit 1
 fi
+popd >/dev/null || true
 echo "  向量库自检通过（隔离模式，已确认用的是本次构建产物）"
 
 size="$(du -sh "$runtime_dir" 2>/dev/null | cut -f1 || echo '?')"
