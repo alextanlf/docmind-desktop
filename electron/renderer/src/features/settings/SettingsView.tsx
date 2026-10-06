@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import { ConnectionSettings } from "./ConnectionSettings";
 import { DiagnosticsSection } from "./DiagnosticsSection";
-import { EmbeddingStatus } from "./EmbeddingStatus";
 import { ModelSettingsForm } from "./ModelSettingsForm";
 import { SettingsNav } from "./SettingsNav";
 import { WebSearchSettings } from "./WebSearchSettings";
@@ -60,7 +59,7 @@ export function SettingsView() {
       <header className="view-header">
         <div>
           <h1>设置</h1>
-          <p>管理模型、连接绑定、Embedding 和本地诊断信息</p>
+          <p>管理模型、连接绑定和本地诊断信息</p>
         </div>
       </header>
       <div className="settings-body">
@@ -73,12 +72,6 @@ export function SettingsView() {
             meta={SETTINGS_SECTIONS.model}
           >
             <ModelSettingsForm settings={settings.data} />
-          </SettingsSection>
-          <SettingsSection
-            description="本地生成文档向量，不上传原文"
-            meta={SETTINGS_SECTIONS.embedding}
-          >
-            <EmbeddingStatus />
           </SettingsSection>
           <SettingsSection
             description="配置 Ollama 与云端回退策略"

@@ -47,11 +47,10 @@ class BGEEmbeddingProvider:
         self._status = ModelStatus(
             state="unavailable",
             model_name=settings.model_name,
-            # 注意：这里的「已缓存」是前端 EmbeddingStatus.tsx::isCached 的判据字符串，
-            # 改文案必须同步改前端，否则前端会退化成「未缓存」提示分支。
-            # 措辞刻意不用「下载」：打包态模型走 bundled_onnx_dir（随应用分发），
-            # 真实动作是「从内置目录加载到内存」，说成下载会误导用户以为要额外下几百 MB。
-            message="模型已缓存，点击加载" if self._cached_model else "模型尚未准备",
+            # 这是应用刚启动、lifespan 预热任务尚未完成的瞬间状态。
+            # 措辞刻意中性：既不说「下载」（模型随应用分发，说下载会让人以为要额外下
+            # 几百 MB），也不说「点击加载」（启动即自动预热，没有手动动作）。
+            message="模型已内置，正在加载" if self._cached_model else "模型尚未准备",
         )
         self._lock = asyncio.Lock()
 
@@ -152,7 +151,7 @@ class BGEEmbeddingProvider:
             return []
         if self._model is None:
             raise DomainError(
-                "EMBEDDING_UNAVAILABLE", "嵌入模型尚未准备", 503, True, "准备嵌入模型后重试"
+                "EMBEDDING_UNAVAILABLE", "嵌入模型尚未准备", 503, True, "稍后重试"
             )
         vectors = await asyncio.to_thread(self._encode, self._model, texts)
         self._validate_vectors(vectors)

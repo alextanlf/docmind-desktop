@@ -8,7 +8,6 @@ import {
   installDocMindApi,
   loggedOutRemote,
   readySettings,
-  unavailableEmbedding,
 } from "./test-docmind-api";
 
 function renderSettings() {
@@ -91,7 +90,7 @@ describe("设置", () => {
 
     await screen.findByRole("option", { name: /deepseek-flash/ });
     const nav = screen.getByRole("navigation", { name: "设置分区" });
-    expect(within(nav).getAllByRole("button")).toHaveLength(6);
+    expect(within(nav).getAllByRole("button")).toHaveLength(5);
 
     const target = within(nav).getByRole("button", { name: "本地数据与诊断" });
     fireEvent.click(target);
@@ -102,22 +101,20 @@ describe("设置", () => {
     ).toHaveFocus();
   });
 
-  it("shows embedding load details, progress, and remote login controls", async () => {
+  it("shows remote login controls without any embedding panel", async () => {
     const api = installDocMindApi({
       remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
     });
     renderSettings();
 
-    // 模型随应用内置，UI 不得出现「下载」或任何体积字样。
-    expect(
-      await screen.findByText("首次导入文档时会自动加载，无需额外下载"),
-    ).toBeVisible();
-    expect(screen.getByText("BAAI/bge-m3")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "加载模型" }));
-    expect(await screen.findByRole("progressbar", { name: "Embedding 加载进度" })).toHaveAttribute(
-      "aria-valuenow",
-      "12",
-    );
+    // 嵌入模型随应用分发且启动即自动预热，设置页不再暴露它的状态/加载入口。
+    expect(screen.queryByText("Embedding 模型")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "加载模型" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重新加载" })).not.toBeInTheDocument();
+    expect(api.embedding.prepare).not.toHaveBeenCalled();
+    expect(screen.queryByRole("progressbar", { name: "Embedding 加载进度" })).not.toBeInTheDocument();
+
+    expect(await screen.findByRole("button", { name: "登录语雀" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "登录语雀" }));
     expect(api.remote.login).toHaveBeenCalledWith("yuque");
   });
@@ -195,22 +192,6 @@ describe("设置", () => {
 
     expect(await screen.findByText("语雀浏览器已安装")).toBeVisible();
     expect(api.remote.installBrowser).toHaveBeenCalledWith("yuque");
-  });
-
-  it("offers retry after an embedding failure", async () => {
-    installDocMindApi({
-      embedding: {
-        status: vi.fn().mockResolvedValue({
-          ...unavailableEmbedding,
-          state: "error",
-          message: "嵌入模型准备失败",
-        }),
-      },
-    });
-    renderSettings();
-
-    expect(await screen.findByRole("button", { name: "重新加载" })).toBeVisible();
-    expect(screen.getByRole("alert")).toHaveTextContent("嵌入模型准备失败");
   });
 
   it("confirms and clears only diagnostic screenshots, then refetches settings", async () => {

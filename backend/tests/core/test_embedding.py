@@ -120,7 +120,8 @@ async def test_bge_provider_prefers_quantized_onnx_model(monkeypatch, tmp_path) 
     settings = EmbeddingSettings(dimension=3, onnx_dir=onnx_dir)
     provider = BGEEmbeddingProvider(settings)
     assert provider.status.state == "unavailable"
-    assert provider.status.message == "模型已缓存，点击加载"
+    # 启动瞬间的措辞不得暗示「点一下」或「去下载」——应用启动即自动预热。
+    assert provider.status.message == "模型已内置，正在加载"
 
     def fake_onnx_model(model_dir, **kwargs) -> object:
         assert Path(model_dir) == onnx_dir

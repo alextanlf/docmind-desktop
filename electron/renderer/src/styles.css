@@ -602,21 +602,6 @@ button:disabled {
 .inline-create .dialog-field {
   margin-top: 0;
 }
-.embedding-gate {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px;
-  border: 1px solid #d7e2f8;
-  border-radius: 6px;
-  background: #f4f7ff;
-}
-.embedding-gate p {
-  margin: 3px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-}
 .import-progress {
   display: grid;
   min-width: 0;

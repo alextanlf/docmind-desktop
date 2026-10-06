@@ -1,4 +1,3 @@
-import { LoaderCircle, Play } from "lucide-react";
 import type { ModelStatus, Repository, SourcePreview } from "../../../../shared/contracts";
 
 type ConfirmStepProps = {
@@ -6,8 +5,6 @@ type ConfirmStepProps = {
   repository: Repository;
   duplicateDecision: "skip" | "update" | null;
   embedding: ModelStatus | undefined;
-  preparing: boolean;
-  onPrepare: () => void;
   onBack: () => void;
   onConfirm: () => void;
   pending: boolean;
@@ -19,13 +16,15 @@ export function ConfirmStep({
   repository,
   duplicateDecision,
   embedding,
-  preparing,
-  onPrepare,
   onBack,
   onConfirm,
   pending,
 }: ConfirmStepProps) {
-  const ready = embedding?.state === "ready";
+  // 嵌入模型由后端在应用启动时自动预热（backend/app/main.py lifespan），
+  // 索引入口还有require_ready_embedding() 兜底，所以这里**不**设置任何门禁：
+  // 唯一值得拦住的是「加载已经失败」，那种情况点了确认也只会拿到 503。
+  const broken = embedding?.state === "error";
+  const warming = embedding?.state === "unavailable" || embedding?.state === "downloading";
   return (
     <div className="import-step">
       <dl className="preview-details">
@@ -46,33 +45,13 @@ export function ConfirmStep({
           <dd>{repository.provider ? "解析、上传、索引" : "解析、索引"}</dd>
         </div>
       </dl>
-      {!ready ? (
-        <div className="embedding-gate">
-          <div>
-            <strong>准备 Embedding 模型</strong>
-            {/* 模型随应用内置（package-local.sh 缺模型即拒绝打包），这里只需加载到内存，
-                写「下载 + 体积」会误导用户以为要额外下几百 MB。 */}
-            <p>模型已随应用内置，加载到内存后即可开始索引，无需额外下载。</p>
-            {embedding?.state === "error" ? (
-              <p className="editor-error" role="alert">
-                {embedding.message}
-              </p>
-            ) : null}
-          </div>
-          <button
-            className="button button-secondary"
-            disabled={preparing || embedding?.state === "downloading"}
-            onClick={onPrepare}
-            type="button"
-          >
-            {preparing || embedding?.state === "downloading" ? (
-              <LoaderCircle aria-hidden="true" className="spin" size={16} />
-            ) : (
-              <Play aria-hidden="true" size={16} />
-            )}
-            {preparing || embedding?.state === "downloading" ? "正在准备…" : "准备模型"}
-          </button>
-        </div>
+      {broken ? (
+        <p className="editor-error" role="alert">
+          {embedding?.message}
+        </p>
+      ) : warming ? (
+        // 预热通常在用户走到这一步之前就完成了，所以只做一句轻量提示、不阻断操作。
+        <p className="muted-row">向量模型正在就绪，索引时会自动等待。</p>
       ) : null}
       <div className="dialog-actions">
         <button
@@ -85,7 +64,7 @@ export function ConfirmStep({
         </button>
         <button
           className="button button-primary"
-          disabled={!ready || pending}
+          disabled={pending || broken}
           onClick={onConfirm}
           type="button"
         >

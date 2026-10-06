@@ -17,6 +17,7 @@ from app.api.auth import require_runtime_token
 from app.api.chat import router as chat_router
 from app.api.documents import recover_document_mutations, save_distillation_document
 from app.api.documents import router as documents_router
+from app.api.embedding import consume_terminal_exception
 from app.api.embedding import router as embedding_router
 from app.api.errors import DomainError, domain_error_handler, request_validation_handler
 from app.api.graph import router as graph_router
@@ -591,9 +592,21 @@ def create_app(
         summary_task = asyncio.create_task(summary_scheduler.run())
         sync_task = asyncio.create_task(sync_scheduler.run())
         await app.state.import_service.recover_pending_vector_cleanup()
+        # 嵌入模型是索引期硬依赖，且模型文件随应用分发（打包脚本缺模型即 exit 1），
+        # 所以启动即后台预热，而不是让用户去设置页手动点「加载模型」。
+        # ensure_ready() 内部走 asyncio.to_thread，不阻塞事件循环；失败也不致命——
+        # 真正用到嵌入的路径（require_ready_embedding）还会再兜底一次并抛 503。
+        embedding_warmup_task: asyncio.Task | None = None
+        if runtime_settings.environment != "test":
+            embedding_warmup_task = asyncio.create_task(runtime_embedding_provider.ensure_ready())
+            embedding_warmup_task.add_done_callback(consume_terminal_exception)
+            app.state.embedding_prepare_task = embedding_warmup_task
         try:
             yield
         finally:
+            if embedding_warmup_task is not None and not embedding_warmup_task.done():
+                embedding_warmup_task.cancel()
+                await asyncio.gather(embedding_warmup_task, return_exceptions=True)
             if ollama_worker_task is not None:
                 ollama_stop_event.set()
                 await asyncio.gather(ollama_worker_task, return_exceptions=True)

@@ -202,4 +202,70 @@ describe("单文档导入", () => {
     expect(screen.getByRole("button", { name: "Markdown" })).toBeVisible();
     expect(api.imports.create).toHaveBeenCalledTimes(1);
   });
+
+  it("lets the user confirm while the embedding model is still warming up", async () => {
+    // 嵌入模型由后端在应用启动时自动预热（见 backend/app/main.py lifespan），
+    // 确认页因此**不能**因为 state !== "ready" 就禁用确认按钮。
+    const api = installDocMindApi({
+      embedding: {
+        status: vi.fn().mockResolvedValue({
+          state: "unavailable",
+          modelName: "BAAI/bge-m3",
+          message: "模型已内置，正在加载",
+          progress: null,
+        }),
+      },
+    });
+    render(
+      <AppProviders>
+        <ImportDialog open onClose={() => undefined} />
+      </AppProviders>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Markdown" }));
+    fireEvent.click(screen.getByRole("button", { name: "选择 Markdown 文件" }));
+    expect(await screen.findByText("guide.md")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "继续" }));
+    await screen.findByLabelText("目标知识库");
+    fireEvent.change(screen.getByLabelText("目标知识库"), { target: { value: repository.id } });
+    fireEvent.click(screen.getByRole("button", { name: "继续" }));
+
+    const confirm = await screen.findByRole("button", { name: "确认导入" });
+    expect(confirm).toBeEnabled();
+    // 不再有任何「准备模型」按钮，也不该触发 embedding.prepare。
+    expect(screen.queryByRole("button", { name: "准备模型" })).not.toBeInTheDocument();
+    fireEvent.click(confirm);
+    await waitFor(() => expect(api.imports.create).toHaveBeenCalledTimes(1));
+    expect(api.embedding.prepare).not.toHaveBeenCalled();
+  });
+
+  it("blocks confirmation only when the embedding model actually failed to load", async () => {
+    installDocMindApi({
+      embedding: {
+        status: vi.fn().mockResolvedValue({
+          state: "error",
+          modelName: "BAAI/bge-m3",
+          message: "嵌入模型准备失败",
+          progress: null,
+        }),
+      },
+    });
+    render(
+      <AppProviders>
+        <ImportDialog open onClose={() => undefined} />
+      </AppProviders>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Markdown" }));
+    fireEvent.click(screen.getByRole("button", { name: "选择 Markdown 文件" }));
+    expect(await screen.findByText("guide.md")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "继续" }));
+    await screen.findByLabelText("目标知识库");
+    fireEvent.change(screen.getByLabelText("目标知识库"), { target: { value: repository.id } });
+    fireEvent.click(screen.getByRole("button", { name: "继续" }));
+
+    // 加载失败时点了确认也只会拿到 503，所以这里必须挡住并给出原因。
+    expect(await screen.findByRole("alert")).toHaveTextContent("嵌入模型准备失败");
+    expect(screen.getByRole("button", { name: "确认导入" })).toBeDisabled();
+  });
 });

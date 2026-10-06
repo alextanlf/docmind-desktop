@@ -49,9 +49,9 @@ export function ImportDialog({
   );
   const reset = useImportStore((state) => state.reset);
   const repositories = useRepositoriesQuery();
+  // 仅用于在确认页展示「向量模型正在就绪 / 加载失败」提示，不再驱动任何门禁。
   const embedding = useEmbeddingStatusQuery();
   const [pending, setPending] = useState(false);
-  const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState("");
   const [mode, setMode] = useState<"single" | "batch">("single");
   const confirmBatchMutation = useConfirmBatchMutation();
@@ -82,26 +82,6 @@ export function ImportDialog({
     setSource(currentSource);
     setPreview(inspected);
     setStep(2);
-  }
-  async function prepare() {
-    setPreparing(true);
-    setError("");
-    try {
-      let status = await window.docmind.embedding.prepare();
-      appQueryClient.setQueryData(["embedding", "status"], status);
-      for (let attempt = 0; attempt < 30 && status.state === "downloading"; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        const current = await embedding.refetch();
-        status = current.data ?? status;
-        appQueryClient.setQueryData(["embedding", "status"], status);
-      }
-      const finalStatus = await embedding.refetch();
-      if (finalStatus.data) appQueryClient.setQueryData(["embedding", "status"], finalStatus.data);
-    } catch (cause) {
-      setError(clientErrorMessage(cause));
-    } finally {
-      setPreparing(false);
-    }
   }
   async function confirm() {
     if (!source || !preview || !repositoryId) return;
@@ -253,9 +233,7 @@ export function ImportDialog({
             embedding={embedding.data}
             onBack={() => setStep(2)}
             onConfirm={() => void confirm()}
-            onPrepare={() => void prepare()}
             pending={pending}
-            preparing={preparing}
             preview={preview}
             repository={selectedRepository}
           />

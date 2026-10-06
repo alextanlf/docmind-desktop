@@ -322,7 +322,8 @@ export function installDocMindApi(overrides?: {
         ...unavailableEmbedding,
         state: "downloading",
         progress: 12,
-        message: "正在下载",
+        // 措辞跟随后端：是「加载」不是「下载」——模型随应用分发，不走网络。
+        message: "正在准备嵌入模型",
       }),
       ...overrides?.embedding,
     },
