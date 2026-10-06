@@ -37,8 +37,6 @@ openai/how-to/reasoning、opencode.ai/docs/zen）。
 
 from __future__ import annotations
 
-from typing import Literal
-
 # 档位标识符 = 厂商原生的 reasoning_effort 值，或 thinking 型厂商的 "off"/"on"。
 # 前端直接展示这些值，不再套一层自造的中文语义。
 ReasoningEffort = str

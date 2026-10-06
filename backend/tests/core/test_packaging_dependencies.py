@@ -21,7 +21,8 @@ import pytest
 PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
 
 # 与 scripts/build-backend-runtime.sh 中的解析逻辑保持一致。
-_DEPS_PATTERN = re.compile(r"^dependencies\s*=\s*\[(.*?)\]", re.S | re.M)
+# DOTALL 是必需的：pyproject 的 dependencies 数组跨多行书写。
+_DEPS_PATTERN = re.compile(r"^dependencies\s*=\s*\[(.*?)\]", re.DOTALL | re.MULTILINE)
 
 
 def declared_dependencies() -> list[str]:
@@ -160,7 +161,11 @@ def test_checker_is_wired_into_the_build_script() -> None:
 def test_checker_runs_as_standalone_script() -> None:
     """确认它真能在纯标准库解释器下独立运行（构建时就只有 interp 可用）。"""
     result = subprocess.run(
-        [sys.executable, str(_SCRIPT)], capture_output=True, text=True, cwd=str(PYPROJECT.parent)
+        [sys.executable, str(_SCRIPT)],
+        capture_output=True,
+        text=True,
+        cwd=str(PYPROJECT.parent),
+        check=False,
     )
 
     assert result.returncode == 0, f"独立运行失败:\n{result.stdout}\n{result.stderr}"
