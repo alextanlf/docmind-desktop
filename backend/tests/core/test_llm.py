@@ -15,6 +15,7 @@ from app.core.llm import (
     ModelConfig,
     OpenAICompatibleProvider,
 )
+from app.core.model_capabilities import accepts_temperature
 from app.schemas.settings import MODEL_PRESETS
 
 
@@ -324,20 +325,25 @@ def _stream_route() -> respx.Route:
 
 @respx.mock
 @pytest.mark.parametrize(
-    ("preset", "model", "expected_extra"),
+    ("preset", "model", "effort", "expected_extra"),
     [
-        # Zhipu and Xiaomi drive reasoning through thinking.type.
-        ("glm", "glm-4.6", {"thinking": {"type": "enabled"}}),
-        ("mimo", "mimo-v2.6-pro", {"thinking": {"type": "enabled"}}),
-        # DeepSeek's toggle is also thinking.type, not reasoning_effort.
-        ("deepseek", "deepseek-flash", {"thinking": {"type": "enabled"}}),
+        # Zhipu and Xiaomi drive reasoning through thinking.type, whose two
+        # states are exposed as off/on — not as an intensity scale.
+        ("glm", "glm-4.6", "on", {"thinking": {"type": "enabled"}}),
+        ("mimo", "mimo-v2.6-pro", "on", {"thinking": {"type": "enabled"}}),
+        # DeepSeek: "off" is thinking.type, but an intensity is reasoning_effort.
+        ("deepseek", "deepseek-flash", "off", {"thinking": {"type": "disabled"}}),
+        ("deepseek", "deepseek-flash", "max", {"reasoning_effort": "max"}),
         # Kimi K3 is the reasoning_effort model, and cannot be disabled.
-        ("kimi", "kimi-k3", {"reasoning_effort": "high"}),
+        ("kimi", "kimi-k3", "high", {"reasoning_effort": "high"}),
         # Kimi K2.6 is a thinking.type model — same vendor, different field.
-        ("kimi", "kimi-k2.6", {"thinking": {"type": "enabled"}}),
+        ("kimi", "kimi-k2.6", "on", {"thinking": {"type": "enabled"}}),
+        # OpenAI takes the vendor's own value verbatim, including none/xhigh.
+        ("openai", "gpt-6-astra", "xhigh", {"reasoning_effort": "xhigh"}),
+        ("openai", "gpt-5.6-terra", "none", {"reasoning_effort": "none"}),
         # Aggregated gateways get nothing extra.
-        ("opencode_zen", "mimo-v2.5-free", {}),
-        ("opencode_go", "mimo-v2.5", {}),
+        ("opencode_zen", "mimo-v2.5-free", "high", {}),
+        ("opencode_go", "mimo-v2.5", "high", {}),
     ],
 )
 async def test_stream_sends_model_specific_reasoning_fields(
@@ -345,11 +351,12 @@ async def test_stream_sends_model_specific_reasoning_fields(
     chat_request: ChatRequest,
     preset: str,
     model: str,
+    effort: str,
     expected_extra: dict,
 ) -> None:
     route = _stream_route()
     configured = config.model_copy(
-        update={"preset": preset, "model": model, "reasoning_effort": "high"}
+        update={"preset": preset, "model": model, "reasoning_effort": effort}
     )
 
     _ = [
@@ -364,6 +371,112 @@ async def test_stream_sends_model_specific_reasoning_fields(
     assert not ("reasoning_effort" in sent and "thinking" in sent)
     if not expected_extra:
         assert "reasoning_effort" not in sent and "thinking" not in sent
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    ("preset", "model"),
+    [
+        # gpt-5.5: "Unsupported parameter: 'temperature'". The 5.6 family
+        # accepts only the default 1, and GPT-6 Astra requires omitting it.
+        ("openai", "gpt-5.5"),
+        ("openai", "gpt-5.6-terra"),
+        ("openai", "gpt-6-astra"),
+        # Kimi K2.x fixes temperature at 1.0 and errors on anything else.
+        ("kimi", "kimi-k3"),
+    ],
+)
+async def test_stream_omits_temperature_for_models_that_reject_it(
+    config: ModelConfig,
+    chat_request: ChatRequest,
+    preset: str,
+    model: str,
+) -> None:
+    route = _stream_route()
+    configured = config.model_copy(update={"preset": preset, "model": model})
+
+    _ = [
+        delta
+        async for delta in OpenAICompatibleProvider(configured, "test-key").stream_chat(chat_request)
+    ]
+
+    sent = json.loads(route.calls[0].request.content)
+    assert "temperature" not in sent
+
+
+@respx.mock
+async def test_stream_still_sends_temperature_for_models_that_accept_it(
+    config: ModelConfig,
+    chat_request: ChatRequest,
+) -> None:
+    route = _stream_route()
+    configured = config.model_copy(update={"preset": "openai", "model": "gpt-5.4"})
+
+    _ = [
+        delta
+        async for delta in OpenAICompatibleProvider(configured, "test-key").stream_chat(chat_request)
+    ]
+
+    sent = json.loads(route.calls[0].request.content)
+    assert sent["temperature"] == pytest.approx(chat_request.temperature)
+
+
+@respx.mock
+async def test_every_vendor_request_carries_only_fields_that_model_accepts(
+    config: ModelConfig,
+) -> None:
+    """端到端核对每个厂商的最终请求体。
+
+    这是本次两处修复的判据合集：档位必须是厂商原生值（K3 的 max、
+    GLM-5.2 的 xhigh、GPT-5.5 的 none 都要原样透传），temperature 必须在
+    拒绝它的模型上整段消失，且两种推理字段永不同时下发。
+    """
+    cases = [
+        # (preset, model, effort, 期望出现在请求体里的额外字段)
+        ("kimi", "kimi-k3", "max", {"reasoning_effort": "max"}),
+        ("kimi", "kimi-k2.6", "on", {"thinking": {"type": "enabled"}}),
+        ("kimi", "kimi-k2.6", "off", {"thinking": {"type": "disabled"}}),
+        ("glm", "glm-5.3", "max", {"reasoning_effort": "max"}),
+        ("glm", "glm-5.2", "xhigh", {"reasoning_effort": "xhigh"}),
+        ("glm", "glm-5.2", "none", {"reasoning_effort": "none"}),
+        ("glm", "glm-4.6", "off", {"thinking": {"type": "disabled"}}),
+        ("deepseek", "deepseek-flash", "off", {"thinking": {"type": "disabled"}}),
+        ("deepseek", "deepseek-flash", "max", {"reasoning_effort": "max"}),
+        ("openai", "gpt-5.6-terra", "xhigh", {"reasoning_effort": "xhigh"}),
+        ("openai", "gpt-5.5", "none", {"reasoning_effort": "none"}),
+        ("openai", "gpt-6-astra", "high", {"reasoning_effort": "high"}),
+        # Non-reasoning model: no vendor field at all.
+        ("openai", "gpt-4.1", "", {}),
+        ("mimo", "mimo-v2.6-pro", "off", {"thinking": {"type": "disabled"}}),
+        # Unverified vendor: conservative, nothing but the OpenAI basics.
+        ("qwen", "qwen3.8-max", "high", {}),
+    ]
+    route = _stream_route()
+    base = ChatRequest(messages=[LLMMessage(role="user", content="hi")], temperature=0.3)
+
+    for preset, model, effort, expected in cases:
+        before = route.call_count
+        configured = config.model_copy(
+            update={"preset": preset, "model": model, "reasoning_effort": effort}
+        )
+        _ = [
+            delta
+            async for delta in OpenAICompatibleProvider(configured, "test-key").stream_chat(base)
+        ]
+        assert route.call_count == before + 1, f"{preset}/{model} 的请求没有命中 mock"
+        sent = json.loads(route.calls[before].request.content)
+        # `temperature` is a legitimate field where the model accepts it, so the
+        # reasoning shape is compared separately from the sampling field.
+        has_temperature = "temperature" in sent
+        extras = {k: v for k, v in sent.items() if k not in ("model", "messages", "stream")}
+        extras.pop("temperature", None)
+        assert extras == expected, f"{preset}/{model} 档位={effort!r} 实际下发 {extras}"
+        assert has_temperature is accepts_temperature(preset, model), (
+            f"{preset}/{model} 的 temperature 应当"
+            f"{'发送' if accepts_temperature(preset, model) else '省略'}"
+        )
+        # Never both reasoning shapes at once.
+        assert not ("reasoning_effort" in sent and "thinking" in sent)
 
 
 @respx.mock

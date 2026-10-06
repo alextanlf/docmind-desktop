@@ -10,7 +10,11 @@ import httpx
 from pydantic import Field, field_validator
 
 from app.api.errors import DomainError
-from app.core.model_capabilities import clamp_temperature, reasoning_params
+from app.core.model_capabilities import (
+    accepts_temperature,
+    clamp_temperature,
+    reasoning_params,
+)
 from app.schemas.common import WireModel
 
 
@@ -152,14 +156,17 @@ class OpenAICompatibleProvider:
         return models
 
     async def test_connection(self) -> ModelConnectionResult:
-        payload = {
+        payload: dict[str, object] = {
             "model": self.config.model,
             "messages": [{"role": "user", "content": "请回复“连接成功”。"}],
-            # Probe with the lowest broadly-accepted temperature instead of
-            # absolute zero, which Zhipu rejects outright.
-            "temperature": CONNECTION_TEST_TEMPERATURE,
             "stream": False,
         }
+        # Same constraint as stream_chat: a model that rejects temperature would
+        # fail the probe with a 400 that looks like a bad key, not a bad field.
+        if accepts_temperature(self.config.preset, self.config.model):
+            # Probe with the lowest broadly-accepted temperature instead of
+            # absolute zero, which Zhipu rejects outright.
+            payload["temperature"] = CONNECTION_TEST_TEMPERATURE
         started = time.perf_counter()
         try:
             async with httpx.AsyncClient(timeout=self.config.timeout_seconds) as client:
@@ -178,12 +185,18 @@ class OpenAICompatibleProvider:
         return ModelConnectionResult(connected=True, latency_ms=round((time.perf_counter() - started) * 1000))
 
     async def stream_chat(self, request: ChatRequest) -> AsyncIterator[ChatDelta]:
-        payload = {
+        payload: dict[str, object] = {
             "model": self.config.model,
             "messages": [message.model_dump() for message in request.messages],
-            "temperature": clamp_temperature(request.temperature),
             "stream": True,
         }
+        # Not every model accepts temperature. OpenAI's reasoning family rejects
+        # it outright (gpt-5.5: "Unsupported parameter: 'temperature'"; the 5.6
+        # family accepts only the default 1; GPT-6 Astra requires omitting it),
+        # which is a 400 no matter what we do with reasoning_effort. Registered
+        # models keep it clamped into the range every vendor accepts.
+        if accepts_temperature(self.config.preset, self.config.model):
+            payload["temperature"] = clamp_temperature(request.temperature)
         # Only models whose docs confirm the field receive reasoning controls;
         # anything unregistered gets nothing extra, so a wrong field name can
         # never provoke a 400.
@@ -285,9 +298,27 @@ def model_label(model_id: str) -> str:
         "deepseek-v4-pro": "DeepSeek V4 Pro",
         "deepseek-chat": "DeepSeek Chat",
         "deepseek-reasoner": "DeepSeek Reasoner",
+        "qwen3.8-max": "通义千问 3.8 Max",
+        "qwen3.8-flash": "通义千问 3.8 Flash",
+        "qwen3.7-plus": "通义千问 3.7 Plus",
+        "qwen3.7-flash": "通义千问 3.7 Flash",
+        "qwen3.6-plus": "通义千问 3.6 Plus",
+        "qwen3.5-plus": "通义千问 3.5 Plus",
+        "qwen3.5-flash": "通义千问 3.5 Flash",
         "qwen-plus": "通义千问 Plus",
         "qwen-max": "通义千问 Max",
+        "gpt-6-astra": "GPT-6 Astra",
+        "gpt-6-luna": "GPT-6 Luna",
+        "gpt-6.1-sol": "GPT-6.1 Sol",
+        "gpt-5.6-sol": "GPT-5.6 Sol",
+        "gpt-5.6-terra": "GPT-5.6 Terra",
+        "gpt-5.6-luna": "GPT-5.6 Luna",
+        "gpt-5.5": "GPT-5.5",
+        "gpt-5.4": "GPT-5.4",
+        "gpt-5.4-mini": "GPT-5.4 mini",
+        "gpt-5.4-nano": "GPT-5.4 nano",
         "gpt-5-mini": "GPT-5 mini",
+        "big-pickle": "Big Pickle",
     }
     return friendly.get(model_id, model_id)
 
