@@ -14,6 +14,10 @@ const messages: Record<string, string> = {
   YUQUE_API_AUTH_FAILED: "语雀 API Token 无效或已过期",
   YUQUE_API_UNAVAILABLE: "无法连接语雀 API，请检查网络后重试",
   YUQUE_API_TOKEN_REQUIRED: "请先填写并保存语雀 API Token",
+  YUQUE_API_ERROR: "语雀 API 返回错误，请稍后重试",
+  YUQUE_API_NOT_FOUND: "语雀中找不到对应的知识库或文档",
+  YUQUE_LOGIN_IN_PROGRESS: "语雀登录正在进行，请稍候",
+  YUQUE_PAGE_CHANGED: "语雀页面结构已变化，请重新登录后重试",
   REMOTE_LOGIN_REQUIRED: "远程知识库登录已失效，请重新登录",
   REMOTE_OPERATION_FAILED: "远程知识库操作失败，请稍后重试",
   REMOTE_NOT_BOUND: "知识库未绑定远程来源",
@@ -21,10 +25,26 @@ const messages: Record<string, string> = {
   REMOTE_CAPABILITY_UNSUPPORTED: "该远程来源不支持此操作",
   REMOTE_DISCOVERY_FAILED: "无法发现远程文档，请检查网络后重试",
   REMOTE_NOT_FOUND: "远程知识库或文档不存在或已不可用",
+  REMOTE_CREDENTIAL_REQUIRED: "请先保存该来源的访问凭据",
+  REMOTE_CREDENTIALS_UNAVAILABLE: "远程凭据服务不可用，请稍后重试",
   FEISHU_AUTH_FAILED: "飞书 Webhook 无效或已失效",
   FEISHU_UNAVAILABLE: "无法连接飞书，请检查网络后重试",
   FEISHU_WEBHOOK_INVALID: "飞书 Webhook 地址格式无效",
   FEISHU_WEBHOOK_REQUIRED: "请先填写并保存飞书 Webhook",
+  // Feishu has no anonymous user authorization: the OAuth flow needs an
+  // app_id as client_id, so the app credentials are a hard prerequisite. This
+  // was unregistered, so the precise backend message was replaced by the
+  // generic "操作失败" fallback and users had no idea what to do.
+  FEISHU_APP_CREDENTIALS_REQUIRED: "飞书文档登录需要先配置自建应用凭据",
+  FEISHU_APP_CREDENTIALS_INVALID: "飞书自建应用凭据格式无效，应为 App ID:App Secret",
+  FEISHU_OAUTH_UNAVAILABLE: "无法启动飞书授权，请关闭占用端口的程序后重试",
+  FEISHU_OAUTH_TIMEOUT: "飞书授权超时，请重新点击登录",
+  FEISHU_OAUTH_FAILED: "飞书授权校验失败，请重新点击登录",
+  FEISHU_API_AUTH_FAILED: "飞书应用凭据无效或已失效",
+  FEISHU_API_NOT_FOUND: "飞书中找不到对应的知识库或文档",
+  FEISHU_API_UNAVAILABLE: "无法连接飞书接口，请检查网络后重试",
+  FEISHU_API_ERROR: "飞书接口返回错误，请稍后重试",
+  FEISHU_PROTOCOL_ERROR: "飞书返回的数据格式无法识别",
 };
 
 const actions: Record<string, string> = {
@@ -49,6 +69,9 @@ const actions: Record<string, string> = {
   REMOTE_NOT_FOUND: "重新选择远程来源",
   FEISHU_AUTH_FAILED: "更新飞书 Webhook",
   FEISHU_UNAVAILABLE: "检查网络后重试",
+  FEISHU_APP_CREDENTIALS_REQUIRED: "先在上方保存飞书自建应用凭据",
+  FEISHU_OAUTH_UNAVAILABLE: "关闭占用端口的程序后重试",
+  FEISHU_OAUTH_TIMEOUT: "重新点击登录",
   FEISHU_WEBHOOK_INVALID: "检查 Webhook 地址",
 };
 

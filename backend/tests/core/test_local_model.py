@@ -8,8 +8,8 @@ import pytest
 import respx
 
 from app.api.errors import DomainError
-from app.core.local_model import LocalModelProvider
 from app.core.llm import ChatRequest, LLMMessage
+from app.core.local_model import LocalModelProvider
 from app.schemas.local_model import LocalModelConfig
 
 BASE = "http://127.0.0.1:1234"

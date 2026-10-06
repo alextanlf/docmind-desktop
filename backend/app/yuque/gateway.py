@@ -6,6 +6,7 @@ import sys
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlparse
 from uuid import uuid4
@@ -45,6 +46,10 @@ from app.yuque.repository_page import RepositoryPage
 # 否则一次网络异常会长时间占住串行浏览器锁，拖死整个应用启动流程。
 _PAGE_NAVIGATION_TIMEOUT_MS = 15_000
 _PAGE_RENDER_TIMEOUT_MS = 8_000
+# 系统已装浏览器按此顺序尝试，都失败才回落 Playwright 自带的 Chromium。
+# 只取 Chrome 与 Edge —— 桌面端最常预装的两款；beta/canary 带实验特性，
+# 不适合作为自动化默认浏览器。
+_SYSTEM_BROWSER_CHANNELS = ("chrome", "msedge")
 _LOGIN_STATUS_NAV_TIMEOUT_MS = 6_000
 _LOGIN_STATUS_RENDER_TIMEOUT_MS = 3_000
 _LOGIN_STATUS_SETTLE_SECONDS = 1.5
@@ -487,11 +492,7 @@ class PlaywrightYuqueGateway:
                     profile.chmod(0o700)
                 if self._playwright is None:
                     self._playwright = await async_playwright().start()
-                context = await self._playwright.chromium.launch_persistent_context(
-                    str(profile),
-                    headless=not visible_login,
-                    args=["--disable-blink-features=AutomationControlled"],
-                )
+                context = await self._launch_browser(profile, visible_login)
                 await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
                 page = context.pages[0] if context.pages else await context.new_page()
                 setter = getattr(page, "set_default_navigation_timeout", None)
@@ -501,6 +502,32 @@ class PlaywrightYuqueGateway:
             finally:
                 if context is not None:
                     await context.close()
+
+    async def _launch_browser(self, profile: Path, visible_login: bool) -> BrowserContext:
+        """Open a persistent context on whatever browser the user already has.
+
+        Playwright's bundled Chromium is ~170 MB of download that most users
+        never need, because a desktop machine virtually always ships a browser
+        already. So the installed channels are tried first and the bundled
+        build is only the last resort — which is what the
+        ``browser_install`` capability in the UI is actually offering.
+        """
+        headless = not visible_login
+        args = ["--disable-blink-features=AutomationControlled"]
+        for channel in _SYSTEM_BROWSER_CHANNELS:
+            try:
+                return await self._playwright.chromium.launch_persistent_context(
+                    str(profile), headless=headless, args=args, channel=channel
+                )
+            except PlaywrightError:
+                # Channel not installed on this machine; try the next one.
+                continue
+        # Nothing system-wide was found. Let Playwright raise its own error so
+        # the existing YUQUE_BROWSER_UNAVAILABLE mapping and the install
+        # button keep working unchanged.
+        return await self._playwright.chromium.launch_persistent_context(
+            str(profile), headless=headless, args=args
+        )
 
 
 async def _wait_for_render(page: Any, timeout_ms: int) -> bool:

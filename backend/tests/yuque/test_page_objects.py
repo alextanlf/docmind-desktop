@@ -546,8 +546,16 @@ async def test_new_page_reuses_manager_serializes_contexts_and_closes_each_conte
             self.headless_values: list[bool] = []
 
         async def launch_persistent_context(
-            self, _profile: str, *, headless: bool, args: list[str]
+            self,
+            _profile: str,
+            *,
+            headless: bool,
+            args: list[str],
+            channel: str | None = None,
         ) -> FakeContext:
+            # This test covers reuse/serialization, not browser selection, so
+            # any channel is accepted here; the fallback order has its own test
+            # in TestBrowserSelectionPrefersSystemInstall.
             assert args == ["--disable-blink-features=AutomationControlled"]
             self.active_contexts += 1
             self.max_active_contexts = max(self.max_active_contexts, self.active_contexts)
@@ -1284,3 +1292,106 @@ async def test_delete_treats_already_gone_as_success(
 
     await gateway.delete_document("swiftui/state", "swiftui")
     assert page.clicked.count("[data-testid=confirm-delete]") >= 1
+
+
+class _FakeChromium:
+    """Records launch attempts so the channel fallback order is observable."""
+
+    def __init__(self, available: set[str]) -> None:
+        self._available = available
+        self.attempts: list[dict[str, Any]] = []
+
+    async def launch_persistent_context(self, user_data_dir: str, **kwargs: Any):
+        channel = kwargs.get("channel")
+        self.attempts.append({"dir": user_data_dir, **kwargs})
+        # ``channel=None`` is Playwright's own bundled build, which is the last
+        # resort and is therefore always considered present; a named channel
+        # only works when that browser is actually installed.
+        if channel is not None and channel not in self._available:
+            raise PlaywrightError(f"Chromium distribution '{channel}' is not installed")
+        return object()
+
+
+class _FakePlaywright:
+    def __init__(self, chromium: _FakeChromium) -> None:
+        self.chromium = chromium
+
+
+def _gateway_with_fake_browser(
+    tmp_path: Path, available: set[str]
+) -> tuple[PlaywrightYuqueGateway, _FakeChromium]:
+    settings = AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
+    gateway = PlaywrightYuqueGateway(settings)
+    chromium = _FakeChromium(available)
+    gateway._playwright = _FakePlaywright(chromium)  # type: ignore[assignment]
+    return gateway, chromium
+
+
+class TestBrowserSelectionPrefersSystemInstall:
+    """Regression: the gateway always asked for Playwright's bundled Chromium.
+
+    That made every Yuque browser login fail with YUQUE_BROWSER_UNAVAILABLE on
+    machines that already had Chrome, and pushed a ~170 MB download onto users
+    who did not need it.
+    """
+
+    async def test_uses_system_chrome_without_downloading_anything(
+        self, tmp_path: Path
+    ) -> None:
+        gateway, chromium = _gateway_with_fake_browser(tmp_path, {"chrome"})
+        profile = tmp_path / "profile"
+        profile.mkdir()
+
+        await gateway._launch_browser(profile, visible_login=True)
+
+        # Exactly one attempt, and it targeted the system browser.
+        assert len(chromium.attempts) == 1
+        assert chromium.attempts[0]["channel"] == "chrome"
+        assert chromium.attempts[0]["headless"] is False
+
+    async def test_falls_back_to_the_next_system_browser(self, tmp_path: Path) -> None:
+        gateway, chromium = _gateway_with_fake_browser(tmp_path, {"msedge"})
+        profile = tmp_path / "profile"
+        profile.mkdir()
+
+        await gateway._launch_browser(profile, visible_login=False)
+
+        # chrome is tried first, fails, then msedge succeeds.
+        assert [a.get("channel") for a in chromium.attempts] == ["chrome", "msedge"]
+        assert chromium.attempts[-1]["headless"] is True
+
+    async def test_last_resort_is_playwrights_own_build(self, tmp_path: Path) -> None:
+        """With no system browser installed, the bundled build takes over.
+
+        Dropping it would leave a machine with no Chrome/Edge unable to log in
+        at all, so it must stay as the final fallback.
+        """
+        gateway, chromium = _gateway_with_fake_browser(tmp_path, set())
+        profile = tmp_path / "profile"
+        profile.mkdir()
+
+        await gateway._launch_browser(profile, visible_login=False)
+
+        # Both channels attempted, then the channel-less bundled launch.
+        assert [a.get("channel") for a in chromium.attempts] == [
+            "chrome",
+            "msedge",
+            None,
+        ]
+
+    async def test_bundled_build_is_not_attempted_when_a_system_one_works(
+        self, tmp_path: Path
+    ) -> None:
+        """The regression's core claim: no fallback once a system browser opens.
+
+        The bundled build is modelled as always available here, so the only way
+        to prove the download is skipped is that it is never attempted.
+        """
+        gateway, chromium = _gateway_with_fake_browser(tmp_path, {"chrome"})
+        profile = tmp_path / "profile"
+        profile.mkdir()
+
+        await gateway._launch_browser(profile, visible_login=True)
+
+        assert len(chromium.attempts) == 1
+        assert chromium.attempts[0]["channel"] == "chrome"
