@@ -232,6 +232,37 @@ find "$runtime_dir" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/
 find "$site_dir" -name '*.pyc' -delete 2>/dev/null || true
 find "$runtime_dir/app" -name 'tests' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 
+# 6.05)剔除构建期工具（pip / ensurepip），共约 8MB。
+#
+# 它们的来源是第 3 步的 `uv pip install --target`：uv 把自己的 installer 一并落进
+# target，而 uv 托管的 CPython 本身并不自带 pip（~/.local/share/uv/python/*/
+# lib/python3.12/site-packages 里没有 pip），所以这是纯副产物，不是运行时地基。
+#
+# 🔴 删之前必须确认「没有任何运行路径需要 pip」，否则新用户直接崩：
+#   - backend/app 与 electron/ 全仓 grep `pip` / `ensurepip` / `pip install` 均 0 命中；
+#   - 唯一的后端子进程是 `python -m playwright install chromium`（yuque/gateway.py
+#     的 install_browser），它走 playwright 自带的 driver/node 二进制 + HTTP 下载，
+#     不经过 pip —— 实测删后 --dry-run 仍 exit=0；
+#   - 代码里没有 repair/doctor 类自修复接口，不存在「少包就现场补装」的路径。
+# 已实测（复制真产物删 pip后跑真实启动）：18 个 alembic 迁移全过、73 条路由注册、
+# 4 个真实 API 200、真实 bge-m3 model.onnx 加载 OK。
+#
+# 为什么连 ensurepip 一起删：它内置的 pip-*.whl 占 1.8MB，而它的唯一用途就是
+# 「把 pip 装回来」—— 装了 pip 又删 ensurepip 没有意义，两者是一对。
+# Windows 上没有 bin/ 目录，bin/pip* 那部分自然跳过。
+rm -rf "$site_dir/pip" 2>/dev/null || true
+find "$site_dir" -maxdepth 1 -name 'pip-*.dist-info' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+stdlib_dir="$(dirname "$site_dir")"
+rm -rf "$stdlib_dir/ensurepip" 2>/dev/null || true
+rm -f "$runtime_dir/bin/pip" "$runtime_dir/bin/pip3" "$runtime_dir/bin/pip${python_version}" 2>/dev/null || true
+
+# 反向断言：pip 必须真的不在了。删不掉却静默通过，等于白删；
+# 下次谁把 uv 的 installer 又带回来，这里会拦住。
+if "$runtime_python" -I -c "import pip" >/dev/null 2>&1; then
+  echo "pip 仍可被导入，剔除失败（是否被上游重新引入？）" >&2
+  exit 1
+fi
+
 # 6.1) 向量库真实链路自检。
 #
 # 🔴 必须用 -I（隔离模式）：它同时忽略 PYTHONPATH 与用户 site-packages。
@@ -245,6 +276,7 @@ find "$runtime_dir/app" -name 'tests' -type d -prune -exec rm -rf {} + 2>/dev/nu
 #   → 删除 → 删集合 → 查询不存在的集合
 # where 过滤用「放大候选集 + 回表筛」，与 app/storage/vectorstore.py::_search
 # 同一策略；UUID 仓库名走加引号标识符，覆盖生产里 repository_id 是 UUID 的事实。
+#
 if ! probe_out="$("$runtime_python" -I - <<'PY' 2>&1
 import sqlite3
 import sys
