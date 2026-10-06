@@ -234,11 +234,44 @@ fi
 #   "Node.js environment variables are disabled because this process is invoked by other apps."
 # 于是被误判成打包产物有问题。诊断时务必先 env | grep ELECTRON 确认。
 echo "验证应用可启动（清空 ELECTRON_* 注入）..."
+
+# 🔴 第二个坑（比签名问题更隐蔽）：验证必须只认「本次启动的新进程」。
+# pgrep -f 是纯路径匹配，若上一轮装好的实例还在跑（比如上一次验证失败后
+# 没退出、或用户自己开着），新 app 因为单实例锁可能根本没起来，而 pgrep
+# 立刻就会把那个旧 pid 报成「验证通过」——于是签名坏、秒退、缺 rpath 这些
+# 真故障全被这个假阳性盖过去，打包脚本一路绿灯到底。
+# 先清场：优雅退出 → 等 → 强杀残留，确保之后的 pid 只能是新进程。
+app_name="$(basename "$out_app" .app)"
+if pgrep -f "$out_app/Contents/MacOS/" >/dev/null 2>&1; then
+  echo "检测到旧实例在运行，先退出..."
+  osascript -e "quit app \"$app_name\"" >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5; do
+    sleep 1
+    pgrep -f "$out_app/Contents/MacOS/" >/dev/null 2>&1 || break
+  done
+  # 优雅退出没成功（卡在 before-quit、或后端还占着 18900）就强杀。
+  if pgrep -f "$out_app/Contents/MacOS/" >/dev/null 2>&1; then
+    echo "旧实例未响应退出，强制结束..."
+    pkill -f "$out_app/Contents/MacOS/" >/dev/null 2>&1 || true
+    sleep 1
+  fi
+fi
+
+# 记录基线：此刻已存在的 pid 集合。验证时用它把旧进程排除掉。
+baseline_pids="$(pgrep -f "$out_app/Contents/MacOS/" 2>/dev/null || true)"
+
 env -u ELECTRON_RUN_AS_NODE -u ELECTRON_ENABLE_LOGGING open -a "$out_app"
 verify_pid=""
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   sleep 1
-  verify_pid="$(pgrep -f "$out_app/Contents/MacOS/" 2>/dev/null | head -1 || true)"
+  # 只接受不在基线里的 pid —— 这才是本次真正拉起来的进程。
+  while read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    if ! grep -qxF "$candidate" <<<"$baseline_pids"; then
+      verify_pid="$candidate"
+      break
+    fi
+  done < <(pgrep -f "$out_app/Contents/MacOS/" 2>/dev/null || true)
   if [[ -n "$verify_pid" ]]; then
     break
   fi
