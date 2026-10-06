@@ -168,6 +168,32 @@ describe("设置", () => {
     expect(api.remote.testCredential).toHaveBeenCalledWith("yuque", "api");
   });
 
+  it("derives the connections summary from the registered providers", async () => {
+    installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
+    renderSettings();
+
+    // Regression: the description used to be a static sentence in SettingsView
+    // that named vendors, so it went stale the moment a provider was added or
+    // removed. It must now be built from the registry's own labels.
+    expect(
+      await screen.findByText("语雀、飞书文档均为可选连接，不影响 DocMind 启动"),
+    ).toBeVisible();
+  });
+
+  it("summary falls back to neutral copy when no provider is registered", async () => {
+    installDocMindApi({
+      remote: {
+        status: vi.fn().mockResolvedValue(loggedOutRemote),
+        listProviders: vi.fn().mockResolvedValue([]),
+      },
+    });
+    renderSettings();
+
+    expect(
+      await screen.findByText("远程来源均为可选连接，不影响 DocMind 启动"),
+    ).toBeVisible();
+  });
+
   it("renders channel-declared hints instead of inventing provider copy", async () => {
     installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
     renderSettings();

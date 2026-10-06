@@ -70,7 +70,7 @@ export function OnboardingDialog({ onComplete }: { onComplete: () => void }) {
       <header className="onboarding-header">
         <div>
           <h1 id="onboarding-title">开始使用 DocMind</h1>
-          <p>只需连接模型；远程知识库和飞书绑定都可以稍后在设置中完成</p>
+          <p>只需连接模型；远程知识库与集成都可以稍后在设置中完成</p>
         </div>
         <ol className="onboarding-steps" aria-label="设置步骤">
           <li className={modelConnected ? "is-complete" : "is-active"}>

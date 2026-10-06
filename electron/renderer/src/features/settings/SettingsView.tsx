@@ -19,7 +19,12 @@ function SettingsSection({
   children,
 }: {
   meta: SettingsSectionMeta;
-  description: string;
+  /**
+   * Optional because a section may own its own heading copy: the connections
+   * section derives its line from the registered providers at runtime, so a
+   * static string here would have to hard-code vendor names.
+   */
+  description?: string;
   children: ReactNode;
 }) {
   const titleId = settingsSectionTitleId(meta.id);
@@ -30,7 +35,7 @@ function SettingsSection({
         <Icon aria-hidden="true" size={18} />
         <div>
           <h2 id={titleId}>{meta.label}</h2>
-          <p>{description}</p>
+          {description ? <p>{description}</p> : null}
         </div>
       </div>
       {children}
@@ -79,10 +84,7 @@ export function SettingsView() {
           >
             <RuntimeModelSettings settings={settings.data} />
           </SettingsSection>
-          <SettingsSection
-            description="语雀网页、语雀 API 和飞书均为可选连接，不影响 DocMind 启动"
-            meta={SETTINGS_SECTIONS.connections}
-          >
+          <SettingsSection meta={SETTINGS_SECTIONS.connections}>
             <ConnectionSettings />
           </SettingsSection>
           <SettingsSection

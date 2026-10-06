@@ -1587,6 +1587,15 @@ input:disabled {
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 14px;
 }
+/* Spans the whole grid so the derived provider list reads as a caption
+   above the cards rather than as another card. */
+.connection-summary {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
 .connection-card {
   display: grid;
   min-width: 0;
