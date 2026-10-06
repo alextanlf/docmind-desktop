@@ -8,7 +8,7 @@ from app.core.llm import ChatDelta
 from app.core.model_router import RoutedStream
 from app.imports.events import InMemoryEventBroker
 from app.schemas.chat import ChatStreamRequest
-from app.schemas.ollama import GenerationRoute
+from app.schemas.local_model import GenerationRoute
 from app.schemas.retrieval import RetrievalHit, RetrievalResult
 
 
@@ -66,7 +66,7 @@ class RoutedProvider:
     async def open_stream(self, request):
         self.calls += 1
         route = GenerationRoute(
-            source="cloud", model="deepseek-chat", mode="automatic", fallback_reason="OLLAMA_UNAVAILABLE"
+            source="cloud", model="deepseek-chat", mode="automatic", fallback_reason="LOCAL_MODEL_UNAVAILABLE"
         )
 
         async def deltas():
@@ -107,4 +107,4 @@ async def test_chat_route_is_copied_to_error_event():
     )
     events = [event async for event in service.stream(request())]
     assert events[-1].type == "error"
-    assert events[-1].payload["route"]["fallbackReason"] == "OLLAMA_UNAVAILABLE"
+    assert events[-1].payload["route"]["fallbackReason"] == "LOCAL_MODEL_UNAVAILABLE"

@@ -291,7 +291,6 @@ async def test_list_models_maps_auth_failure(config: ModelConfig) -> None:
     "response",
     [
         httpx.Response(200, json={}),
-        httpx.Response(200, json={"data": []}),
         httpx.Response(200, json={"data": "not-a-list"}),
         httpx.Response(200, text="not-json"),
     ],
@@ -305,6 +304,27 @@ async def test_list_models_rejects_malformed_payload(
         await OpenAICompatibleProvider(config, "test-key").list_models()
 
     assert error.value.code == "MODEL_PROTOCOL_ERROR"
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(200, json={"data": []}),
+        httpx.Response(200, json={"object": "list", "data": None}),
+    ],
+)
+async def test_list_models_treats_empty_catalogue_as_no_models(
+    config: ModelConfig, response: httpx.Response
+) -> None:
+    """An empty catalogue is a state, not a fault.
+
+    A local server with nothing loaded answers `data: null`; reporting that as
+    a protocol error made a fresh install look broken.
+    """
+    respx.get("https://example.test/v1/models").mock(return_value=response)
+
+    assert await OpenAICompatibleProvider(config, "test-key").list_models() == []
 
 
 async def test_list_models_skips_request_when_base_url_is_empty() -> None:

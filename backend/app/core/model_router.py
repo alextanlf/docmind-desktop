@@ -7,10 +7,16 @@ from typing import Any
 
 from app.api.errors import DomainError
 from app.core.llm import ChatDelta, ChatRequest, LLMProvider
-from app.schemas.ollama import GenerationRoute, RuntimeSettingsInput
+from app.schemas.local_model import GenerationRoute, RuntimeSettingsInput
 
+# Codes that mean "the local path cannot serve this request" as opposed to a
+# hard failure. Only these trigger cloud fallback in `automatic` mode.
 FALLBACK_CODES = frozenset(
-    {"OLLAMA_UNAVAILABLE", "OLLAMA_MODEL_NOT_INSTALLED", "LOCAL_MODEL_UNAVAILABLE"}
+    {
+        "LOCAL_MODEL_UNAVAILABLE",
+        "LOCAL_MODEL_NOT_FOUND",
+        "LOCAL_MODEL_TIMEOUT",
+    }
 )
 
 
@@ -18,6 +24,10 @@ FALLBACK_CODES = frozenset(
 class RoutedStream:
     route: GenerationRoute
     deltas: AsyncIterator[ChatDelta]
+
+
+def _model_not_found() -> DomainError:
+    return DomainError("LOCAL_MODEL_NOT_FOUND", "该本地模型不可用，请检查模型名称", 503, True)
 
 
 class ModelRouter:
@@ -61,9 +71,14 @@ class ModelRouter:
         if value is None:
             return self._static_mode or "cloud_only", self.local_model
         routing = getattr(value, "routing", value)
-        mode = getattr(routing, "mode", None) or getattr(value, "mode", None) or self._static_mode or "cloud_only"
-        ollama = getattr(value, "ollama", None)
-        model = getattr(ollama, "model", None) if ollama is not None else None
+        mode = (
+            getattr(routing, "mode", None)
+            or getattr(value, "mode", None)
+            or self._static_mode
+            or "cloud_only"
+        )
+        local = getattr(value, "local", None)
+        model = getattr(local, "model", None) if local is not None else None
         return str(mode), model if isinstance(model, str) else self.local_model
 
     async def _call_preflight(self, model: str) -> None:
@@ -85,7 +100,7 @@ class ModelRouter:
             if inspect.isawaitable(result):
                 result = await result
             if result is False:
-                raise DomainError("OLLAMA_MODEL_NOT_INSTALLED", "选定模型尚未安装", 503, True)
+                raise _model_not_found()
             return
 
         if self._local_service is not None:
@@ -95,21 +110,19 @@ class ModelRouter:
                 if inspect.isawaitable(result):
                     await result
                 return
-            checker = getattr(self._local_service, "is_model_installed", None)
-            if checker is not None:
-                result = checker(model)
-                if inspect.isawaitable(result):
-                    result = await result
-                if result is False:
-                    raise DomainError("OLLAMA_MODEL_NOT_INSTALLED", "选定模型尚未安装", 503, True)
 
+        # Reachability and model presence are separate questions: a running
+        # server with the wrong model selected is a configuration mistake, not
+        # an outage, and the UI reports them with different codes.
         checker = getattr(self.local, "test_connection", None)
         if checker is not None:
             result = checker()
             if inspect.isawaitable(result):
                 result = await result
             if result is not None and getattr(result, "connected", True) is False:
-                raise DomainError("OLLAMA_UNAVAILABLE", "Ollama 未运行或暂时无法连接", 503, True)
+                raise DomainError(
+                    "LOCAL_MODEL_UNAVAILABLE", "本地模型服务未运行或暂时无法连接", 503, True
+                )
 
         checker = getattr(self.local, "is_model_installed", None)
         if checker is not None:
@@ -117,22 +130,28 @@ class ModelRouter:
             if inspect.isawaitable(result):
                 result = await result
             if result is False:
-                raise DomainError("OLLAMA_MODEL_NOT_INSTALLED", "选定模型尚未安装", 503, True)
+                raise _model_not_found()
 
     @staticmethod
-    async def _first_non_empty(stream: AsyncIterator[ChatDelta]) -> tuple[ChatDelta, AsyncIterator[ChatDelta]]:
+    async def _first_non_empty(
+        stream: AsyncIterator[ChatDelta],
+    ) -> tuple[ChatDelta, AsyncIterator[ChatDelta]]:
         try:
             while True:
                 delta = await stream.__anext__()
                 if not isinstance(delta, ChatDelta):
-                    raise DomainError("OLLAMA_PROTOCOL_ERROR", "Ollama 返回了无法识别的数据", 502)
+                    raise DomainError(
+                        "LOCAL_MODEL_PROTOCOL_ERROR", "本地模型服务返回了无法识别的数据", 502
+                    )
                 if delta.content:
                     return delta, stream
         except StopAsyncIteration as error:
             raise DomainError("LOCAL_MODEL_UNAVAILABLE", "本地模型未返回内容", 503, True) from error
 
     @staticmethod
-    async def _prepend(first: ChatDelta, stream: AsyncIterator[ChatDelta]) -> AsyncIterator[ChatDelta]:
+    async def _prepend(
+        first: ChatDelta, stream: AsyncIterator[ChatDelta]
+    ) -> AsyncIterator[ChatDelta]:
         yield first
         async for delta in stream:
             yield delta
@@ -153,6 +172,7 @@ class ModelRouter:
                 "ROUTING_CLOUD_UNAVAILABLE", "本地和云端都不可用", 503, retryable
             ) from error
         return RoutedStream(route, self._prepend(first, stream))
+
     async def open_stream(self, request: ChatRequest) -> RoutedStream:
         mode, local_model = await self._read_runtime()
         if mode not in {"local_only", "cloud_only", "automatic"}:
@@ -172,7 +192,10 @@ class ModelRouter:
                 return await self._open_fallback(request, mode, code)
             if mode == "local_only":
                 raise DomainError(
-                    "LOCAL_MODEL_UNAVAILABLE", "本地模型不可用", 503, getattr(error, "retryable", True)
+                    "LOCAL_MODEL_UNAVAILABLE",
+                    "本地模型不可用",
+                    503,
+                    getattr(error, "retryable", True),
                 ) from error
             raise
 

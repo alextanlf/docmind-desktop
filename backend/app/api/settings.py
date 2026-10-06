@@ -10,14 +10,19 @@ from fastapi import APIRouter, Request, Response
 from app.api.errors import DomainError
 from app.config import AppSettings
 from app.core.llm import AvailableModel, LLMProvider, ModelConfig, OpenAICompatibleProvider
+from app.core.local_model_validation import normalize_loopback_base_url
 from app.core.model_capabilities import (
     default_reasoning_effort,
     reasoning_levels,
 )
-from app.core.ollama_validation import normalize_loopback_base_url
 from app.core.secrets import SecretStore
 from app.remote.credentials import CredentialStore
-from app.schemas.ollama import OllamaConfig, RagSettings, RoutingSettings, RuntimeSettingsInput
+from app.schemas.local_model import (
+    LocalModelConfig,
+    RagSettings,
+    RoutingSettings,
+    RuntimeSettingsInput,
+)
 from app.schemas.settings import (
     MODEL_CATALOG,
     MODEL_PRESETS,
@@ -45,7 +50,10 @@ MODEL_SETUP_SKIPPED_KEY = "model.setup_skipped"
 MODEL_API_KEY_NAME = "model-api-key"
 WEB_SEARCH_CONFIG_KEY = "web-search.config"
 WEB_SEARCH_API_KEY_NAME = "web-search:tavily"
-OLLAMA_RUNTIME_CONFIG_KEY = "ollama.config"
+LOCAL_RUNTIME_CONFIG_KEY = "local-model.config"
+# Read-only: an install that saved runtime settings before the local-model
+# rename still holds its server address and model under this key.
+LEGACY_OLLAMA_RUNTIME_CONFIG_KEY = "ollama.config"
 MODEL_ROUTING_KEY = "model.routing"
 RAG_CONFIG_KEY = "rag.config"
 ProviderFactory = Callable[[ModelConfig, str], LLMProvider]
@@ -147,8 +155,12 @@ class SettingsService:
     async def test_model(self) -> ModelConnectionResult:
         api_key = self.secret_store.get(MODEL_API_KEY_NAME)
         if not api_key:
-            raise DomainError("MODEL_AUTH_FAILED", "请先配置 API Key", 400, False, "保存 API Key 后重试")
-        return await self.provider_factory(ModelConfig(**self.model().model_dump()), api_key).test_connection()
+            raise DomainError(
+                "MODEL_AUTH_FAILED", "请先配置 API Key", 400, False, "保存 API Key 后重试"
+            )
+        return await self.provider_factory(
+            ModelConfig(**self.model().model_dump()), api_key
+        ).test_connection()
 
     async def list_models(self, probe: ModelListProbe | None = None) -> ModelListView:
         """List models for the provider the form is currently describing.
@@ -242,32 +254,38 @@ class SettingsService:
         )
 
     def runtime(self) -> RuntimeSettingsInput:
-        raw_ollama = self.setting_store.get(OLLAMA_RUNTIME_CONFIG_KEY)
+        # The legacy key is read once so an existing Ollama setup keeps working
+        # after the rename; it is only ever written under the new key.
+        raw_local = self.setting_store.get(LOCAL_RUNTIME_CONFIG_KEY) or self.setting_store.get(
+            LEGACY_OLLAMA_RUNTIME_CONFIG_KEY
+        )
         raw_routing = self.setting_store.get(MODEL_ROUTING_KEY)
         raw_rag = self.setting_store.get(RAG_CONFIG_KEY)
         fallback = RuntimeSettingsInput()
         try:
-            ollama = OllamaConfig.model_validate_json(raw_ollama) if raw_ollama else fallback.ollama
-            routing = RoutingSettings.model_validate_json(raw_routing) if raw_routing else fallback.routing
+            local = LocalModelConfig.model_validate_json(raw_local) if raw_local else fallback.local
+            routing = (
+                RoutingSettings.model_validate_json(raw_routing)
+                if raw_routing
+                else fallback.routing
+            )
             rag = RagSettings.model_validate_json(raw_rag) if raw_rag else fallback.rag
         except ValueError as error:
             raise DomainError("SETTINGS_INVALID", "运行时设置无效，请重新配置", 500) from error
-        return RuntimeSettingsInput(ollama=ollama, routing=routing, rag=rag)
+        return RuntimeSettingsInput(local=local, routing=routing, rag=rag)
 
     async def save_runtime(self, update: RuntimeSettingsInput) -> RuntimeSettingsInput:
-        # Resolve/validate the complete update before touching either key so a
+        # Resolve/validate the complete update before touching any key so a
         # bad DNS answer cannot partially overwrite the previous runtime.
         normalized_base_url = await normalize_loopback_base_url(
-            update.ollama.base_url, self.resolver
+            update.local.base_url, self.resolver
         )
         normalized = update.model_copy(
-            update={
-                "ollama": update.ollama.model_copy(update={"base_url": normalized_base_url})
-            }
+            update={"local": update.local.model_copy(update={"base_url": normalized_base_url})}
         )
         self.setting_store.set_many(
             {
-                OLLAMA_RUNTIME_CONFIG_KEY: normalized.ollama.model_dump_json(),
+                LOCAL_RUNTIME_CONFIG_KEY: normalized.local.model_dump_json(),
                 MODEL_ROUTING_KEY: normalized.routing.model_dump_json(),
                 RAG_CONFIG_KEY: normalized.rag.model_dump_json(),
             }
@@ -319,9 +337,7 @@ class SettingsService:
                 has_api_key=False,
             )
         except ValueError as error:
-            raise DomainError(
-                "SEARCH_SETTINGS_INVALID", "SearXNG 实例地址无效", 422
-            ) from error
+            raise DomainError("SEARCH_SETTINGS_INVALID", "SearXNG 实例地址无效", 422) from error
         previous = self.secret_store.get(WEB_SEARCH_API_KEY_NAME)
         if update.api_key is not None:
             if update.api_key:
@@ -331,8 +347,10 @@ class SettingsService:
         try:
             self.setting_store.set_many({WEB_SEARCH_CONFIG_KEY: config.model_dump_json()})
         except Exception:
-            if previous is None: self.secret_store.delete(WEB_SEARCH_API_KEY_NAME)
-            else: self.secret_store.set(WEB_SEARCH_API_KEY_NAME, previous)
+            if previous is None:
+                self.secret_store.delete(WEB_SEARCH_API_KEY_NAME)
+            else:
+                self.secret_store.set(WEB_SEARCH_API_KEY_NAME, previous)
             raise
         return self.web_search()
 
@@ -376,9 +394,7 @@ def _screenshot_count(directory: Path) -> int:
 
 class _SettingsResolver:
     async def resolve(self, host: str):
-        rows = await asyncio.to_thread(
-            socket.getaddrinfo, host, 11434, type=socket.SOCK_STREAM
-        )
+        rows = await asyncio.to_thread(socket.getaddrinfo, host, 11434, type=socket.SOCK_STREAM)
         return sorted({row[4][0] for row in rows})
 
 
@@ -424,6 +440,7 @@ async def list_models(request: Request) -> ModelListView:
             raise DomainError("INVALID_REQUEST", "请求参数无效", 422) from error
     models = await _service(request).list_models(probe)
     return models
+
 
 @router.post("/runtime", response_model=SettingsView)
 async def save_runtime(update: RuntimeSettingsInput, request: Request) -> SettingsView:

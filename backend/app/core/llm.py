@@ -113,7 +113,13 @@ class OpenAICompatibleProvider:
 
     @property
     def _headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json"}
+        # An empty token means the provider needs no auth (local servers), and
+        # `Bearer ` with a blank credential is at best noise and at worst a
+        # rejected request on a server that does check.
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
 
     async def list_models(self) -> list[AvailableModel]:
         """List the models the configured provider offers.
@@ -142,6 +148,11 @@ class OpenAICompatibleProvider:
             entries = payload["data"]
         except (KeyError, TypeError, json.JSONDecodeError) as error:
             raise _model_error("MODEL_PROTOCOL_ERROR") from error
+        # `data: null` and `data: []` both mean "this provider currently offers
+        # nothing" — a normal state for a local server with no model loaded.
+        # Rejecting them as protocol errors made a fresh install look broken.
+        if entries is None:
+            return []
         if not isinstance(entries, list):
             raise _model_error("MODEL_PROTOCOL_ERROR")
         models: list[AvailableModel] = []
@@ -151,8 +162,6 @@ class OpenAICompatibleProvider:
                 continue
             trimmed = model_id.strip()
             models.append(AvailableModel(id=trimmed, label=model_label(trimmed)))
-        if not models:
-            raise _model_error("MODEL_PROTOCOL_ERROR")
         return models
 
     async def test_connection(self) -> ModelConnectionResult:
@@ -182,7 +191,9 @@ class OpenAICompatibleProvider:
             raise _model_error("MODEL_PROTOCOL_ERROR") from error
         if not isinstance(content, str) or not content:
             raise _model_error("MODEL_PROTOCOL_ERROR")
-        return ModelConnectionResult(connected=True, latency_ms=round((time.perf_counter() - started) * 1000))
+        return ModelConnectionResult(
+            connected=True, latency_ms=round((time.perf_counter() - started) * 1000)
+        )
 
     async def stream_chat(self, request: ChatRequest) -> AsyncIterator[ChatDelta]:
         payload: dict[str, object] = {
@@ -209,7 +220,11 @@ class OpenAICompatibleProvider:
                 client.stream("POST", self._url, json=payload, headers=self._headers) as response,
             ):
                 _raise_for_status(response)
-                if not response.headers.get("content-type", "").lower().startswith("text/event-stream"):
+                if (
+                    not response.headers.get("content-type", "")
+                    .lower()
+                    .startswith("text/event-stream")
+                ):
                     raise _model_error("MODEL_PROTOCOL_ERROR")
                 emitted_content = False
                 async for event in _sse_events(response):
@@ -365,7 +380,12 @@ def _raise_for_status(response: httpx.Response) -> None:
 
 def _model_error(code: str) -> DomainError:
     errors = {
-        "MODEL_AUTH_FAILED": ("模型服务认证失败，请检查 API Key", 401, False, "检查 API Key 后重试"),
+        "MODEL_AUTH_FAILED": (
+            "模型服务认证失败，请检查 API Key",
+            401,
+            False,
+            "检查 API Key 后重试",
+        ),
         "MODEL_NOT_FOUND": ("未找到指定模型，请检查模型名称", 404, False, "修改模型名称后重试"),
         "MODEL_RATE_LIMITED": ("模型服务请求过于频繁，请稍后重试", 429, True, "稍后重试"),
         "MODEL_TIMEOUT": ("模型服务响应超时，请稍后重试", 504, True, "检查网络或增大超时时间"),

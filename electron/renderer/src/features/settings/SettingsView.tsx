@@ -74,7 +74,7 @@ export function SettingsView() {
             <ModelSettingsForm settings={settings.data} />
           </SettingsSection>
           <SettingsSection
-            description="配置 Ollama 与云端回退策略"
+            description="配置本地模型与云端回退策略"
             meta={SETTINGS_SECTIONS.runtime}
           >
             <RuntimeModelSettings settings={settings.data} />

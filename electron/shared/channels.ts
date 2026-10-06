@@ -1,11 +1,6 @@
 export const IPC_CHANNELS = {
-  ollamaStatus: "ollama:status",
-  ollamaModels: "ollama:models",
-  ollamaPull: "ollama:pull",
-  ollamaGetPull: "ollama:getPull",
-  ollamaCancelPull: "ollama:cancelPull",
-  ollamaRetryPull: "ollama:retryPull",
-  ollamaSubscribePull: "ollama:subscribePull",
+  localModelStatus: "localModel:status",
+  localModelModels: "localModel:models",
   settingsGet: "settings:get",
   settingsSaveModel: "settings:saveModel",
   settingsTestModel: "settings:testModel",
@@ -94,15 +89,14 @@ export const streamEventChannel = (requestId: string) =>
  * `ipcMain.handle` 注册的处理器**永远不会被** `ipcRenderer.send` 触发
  * （send 只投递 `ipcMain.on` 的监听器），反之亦然。
  * 这份名单此前是 `ipc-handlers.ts` 里一个手写 if 白名单，新增通道时
- * 极易漏掉：`ollamaSubscribePull` 与 `batchesSubscribe` 就曾漏掉，
- * 导致 Ollama 拉取进度与批量导入进度**一个事件都收不到**，
+ * 极易漏掉：批量导入的 `batchesSubscribe` 就曾漏掉，
+ * 导致批量导入进度**一个事件都收不到**，
  * 而前端 `BatchProgress` 没有轮询兜底，进度条直接卡死在初始快照。
  *
  * 判据可验证：`electron/tests/main/ipc-handlers.test.ts` 断言
  * 「凡在 preload 里 send 的通道，都在本集合内」。
  */
 export const PUSH_CHANNELS: ReadonlySet<string> = new Set<string>([
-  IPC_CHANNELS.ollamaSubscribePull,
   IPC_CHANNELS.importsSubscribe,
   IPC_CHANNELS.batchesSubscribe,
   IPC_CHANNELS.chatStream,

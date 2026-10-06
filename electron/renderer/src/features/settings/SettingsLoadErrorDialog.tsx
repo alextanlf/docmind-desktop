@@ -1,7 +1,7 @@
 import { AlertTriangle, RefreshCw, RotateCw } from "lucide-react";
 import { useState } from "react";
 import { Modal } from "../../components/Modal";
-import { clientErrorMessage } from "../settings/ollama-errors";
+import { clientErrorMessage } from "../../lib/client-errors";
 
 /**
  * A renderer/backend contract mismatch is deterministic: refetching re-runs the

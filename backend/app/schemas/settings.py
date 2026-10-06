@@ -6,7 +6,7 @@ from pydantic import Field
 
 from app.core.llm import AvailableModel, ModelConfig, ModelConnectionResult, model_label
 from app.schemas.common import WireModel
-from app.schemas.ollama import RuntimeSettingsInput
+from app.schemas.local_model import RuntimeSettingsInput
 from app.schemas.web_search import WebSearchSettings
 
 MODEL_PRESETS = {
@@ -47,6 +47,7 @@ def is_free_model(preset: str, model_id: str) -> bool:
         return True
     normalized = model_id.strip().lower()
     return normalized.endswith("-free") or normalized in _FREE_MODEL_ALIASES
+
 
 # Curated per-preset model catalogue. Lets the settings form offer a real choice
 # before an API key exists (and when the provider has no `/models` endpoint),
@@ -208,9 +209,7 @@ class SettingsView(WireModel):
     # what SettingsService.view() builds: declaring the inner value as a bare
     # ModelPresetCapabilities makes pydantic silently drop every model's entry
     # and emit default-empty capabilities under each preset.
-    model_capabilities: dict[str, dict[str, ModelPresetCapabilities]] = Field(
-        default_factory=dict
-    )
+    model_capabilities: dict[str, dict[str, ModelPresetCapabilities]] = Field(default_factory=dict)
     # True once the user dismissed first-run setup, so it is not shown again.
     model_setup_skipped: bool = False
 

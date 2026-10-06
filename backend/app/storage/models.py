@@ -9,7 +9,6 @@ from sqlalchemy import (
     CheckConstraint,
     Enum,
     ForeignKey,
-    Index,
     Integer,
     String,
     Text,
@@ -43,7 +42,9 @@ class UTCDateTime(TypeDecorator[datetime]):
             raise ValueError("timestamps must be timezone-aware")
         return value.astimezone(UTC).isoformat(timespec="microseconds")
 
-    def process_result_value(self, value: str | datetime | None, dialect: Dialect) -> datetime | None:
+    def process_result_value(
+        self, value: str | datetime | None, dialect: Dialect
+    ) -> datetime | None:
         del dialect
         if value is None:
             return None
@@ -89,6 +90,7 @@ class BatchItemState(StrEnum):
     FAILED = "failed"
     CANCELLED = "cancelled"
 
+
 class CrawlEntryState(StrEnum):
     PENDING = "pending"
     FETCHING = "fetching"
@@ -96,22 +98,33 @@ class CrawlEntryState(StrEnum):
     REJECTED = "rejected"
     FAILED = "failed"
 
+
 class CrawlEntryRecord(Base):
     __tablename__ = "crawl_entries"
-    __table_args__ = (UniqueConstraint("batch_id", "canonical_url", name="uq_crawl_entries_batch_canonical_url"),)
+    __table_args__ = (
+        UniqueConstraint("batch_id", "canonical_url", name="uq_crawl_entries_batch_canonical_url"),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    batch_id: Mapped[str] = mapped_column(ForeignKey("batch_imports.id", ondelete="CASCADE"), index=True)
+    batch_id: Mapped[str] = mapped_column(
+        ForeignKey("batch_imports.id", ondelete="CASCADE"), index=True
+    )
     canonical_url: Mapped[str] = mapped_column(Text)
     depth: Mapped[int] = mapped_column(Integer, default=0)
-    state: Mapped[str] = mapped_column(String(16), default=CrawlEntryState.PENDING.value, server_default=text("'pending'"))
+    state: Mapped[str] = mapped_column(
+        String(16), default=CrawlEntryState.PENDING.value, server_default=text("'pending'")
+    )
     status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     etag: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_modified: Mapped[str | None] = mapped_column(Text, nullable=True)
     cache_ref_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default())
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
+    )
     fetched_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default())
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
+    )
 
 
 class BatchSourceKind(StrEnum):
@@ -140,7 +153,9 @@ def string_enum(enum: type[StrEnum], length: int) -> Enum:
 
 class RepositoryRecord(Base):
     __tablename__ = "repositories"
-    __table_args__ = (UniqueConstraint("provider", "remote_id", name="uq_repositories_provider_remote_id"),)
+    __table_args__ = (
+        UniqueConstraint("provider", "remote_id", name="uq_repositories_provider_remote_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     # Remote identity is scoped by provider: the pair (provider, remote_id) is
@@ -153,7 +168,9 @@ class RepositoryRecord(Base):
     remote_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Provider-native parent/container for newly created documents.
     remote_parent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    sync_status: Mapped[str] = mapped_column(String(64), default="unknown", server_default=text("'unknown'"))
+    sync_status: Mapped[str] = mapped_column(
+        String(64), default="unknown", server_default=text("'unknown'")
+    )
     document_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
@@ -177,15 +194,21 @@ class DocumentRecord(Base):
     source_url: Mapped[str | None] = mapped_column(Text, index=True, nullable=True)
     raw_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     markdown_path: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source_type: Mapped[str] = mapped_column(String(64), default="remote", server_default=text("'remote'"))
+    source_type: Mapped[str] = mapped_column(
+        String(64), default="remote", server_default=text("'remote'")
+    )
     content_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
-    status: Mapped[str] = mapped_column(String(64), default="pending", server_default=text("'pending'"))
+    status: Mapped[str] = mapped_column(
+        String(64), default="pending", server_default=text("'pending'")
+    )
     remote_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_identity: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
     remote_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
-    sync_state: Mapped[str] = mapped_column(String(32), default="synced", server_default=text("'synced'"))
+    sync_state: Mapped[str] = mapped_column(
+        String(32), default="synced", server_default=text("'synced'")
+    )
     local_dirty: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
@@ -269,12 +292,16 @@ class BatchImportRecord(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     source_kind: Mapped[BatchSourceKind] = mapped_column(string_enum(BatchSourceKind, 32))
-    source_descriptor_json: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
+    source_descriptor_json: Mapped[str] = mapped_column(
+        Text, default="{}", server_default=text("'{}'")
+    )
     repository_id: Mapped[str | None] = mapped_column(
         ForeignKey("repositories.id", ondelete="SET NULL"), nullable=True, index=True
     )
     state: Mapped[BatchState] = mapped_column(
-        string_enum(BatchState, 32), default=BatchState.DISCOVERING, server_default=text("'discovering'")
+        string_enum(BatchState, 32),
+        default=BatchState.DISCOVERING,
+        server_default=text("'discovering'"),
     )
     discovery_version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
     total_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
@@ -302,7 +329,9 @@ class BatchImportRecord(Base):
 class BatchItemRecord(Base):
     __tablename__ = "batch_items"
     __table_args__ = (
-        UniqueConstraint("batch_id", "source_identity", name="uq_batch_items_batch_source_identity"),
+        UniqueConstraint(
+            "batch_id", "source_identity", name="uq_batch_items_batch_source_identity"
+        ),
         UniqueConstraint("import_job_id", name="uq_batch_items_import_job_id"),
         CheckConstraint(
             "state IN ('discovered', 'queued', 'running', 'completed', 'skipped', 'failed', 'cancelled')",
@@ -329,7 +358,9 @@ class BatchItemRecord(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    batch_id: Mapped[str] = mapped_column(ForeignKey("batch_imports.id", ondelete="CASCADE"), index=True)
+    batch_id: Mapped[str] = mapped_column(
+        ForeignKey("batch_imports.id", ondelete="CASCADE"), index=True
+    )
     ordinal: Mapped[int] = mapped_column(Integer)
     source_identity: Mapped[str] = mapped_column(Text)
     source_revision: Mapped[str] = mapped_column(Text)
@@ -342,11 +373,17 @@ class BatchItemRecord(Base):
     existing_document_id: Mapped[str | None] = mapped_column(
         ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    allowed_actions_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
+    allowed_actions_json: Mapped[str] = mapped_column(
+        Text, default="[]", server_default=text("'[]'")
+    )
     selected: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
-    decision: Mapped[BatchItemDecision | None] = mapped_column(string_enum(BatchItemDecision, 32), nullable=True)
+    decision: Mapped[BatchItemDecision | None] = mapped_column(
+        string_enum(BatchItemDecision, 32), nullable=True
+    )
     state: Mapped[BatchItemState] = mapped_column(
-        string_enum(BatchItemState, 32), default=BatchItemState.DISCOVERED, server_default=text("'discovered'")
+        string_enum(BatchItemState, 32),
+        default=BatchItemState.DISCOVERED,
+        server_default=text("'discovered'"),
     )
     import_job_id: Mapped[str | None] = mapped_column(
         ForeignKey("import_jobs.id", ondelete="SET NULL"), nullable=True
@@ -367,7 +404,9 @@ class SessionRecord(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     title: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    repository_scope_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
+    repository_scope_json: Mapped[str] = mapped_column(
+        Text, default="[]", server_default=text("'[]'")
+    )
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
     )
@@ -377,15 +416,25 @@ class SessionRecord(Base):
     ended_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     summary_due_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
+
 class SessionSummaryRecord(Base):
     __tablename__ = "session_summaries"
-    __table_args__ = (CheckConstraint("state IN ('pending','generating','ready','stale','failed')", name="ck_session_summaries_state"),)
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('pending','generating','ready','stale','failed')",
+            name="ck_session_summaries_state",
+        ),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id", ondelete="CASCADE"), unique=True)
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("sessions.id", ondelete="CASCADE"), unique=True
+    )
     state: Mapped[str] = mapped_column(String(16), default="pending")
     content: Mapped[str | None] = mapped_column(Text)
     topics_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
-    repository_ids_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
+    repository_ids_json: Mapped[str] = mapped_column(
+        Text, default="[]", server_default=text("'[]'")
+    )
     error_code: Mapped[str | None] = mapped_column(String(128))
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
@@ -393,22 +442,37 @@ class SessionSummaryRecord(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
+
 class DistillationRecord(Base):
     __tablename__ = "distillations"
     __table_args__ = (
-        CheckConstraint("state IN ('generating','draft','saving','saved','saved_unindexed','failed')", name="ck_distillations_state"),
-        CheckConstraint("target IS NULL OR target IN ('local','remote')", name="ck_distillations_target"),
+        CheckConstraint(
+            "state IN ('generating','draft','saving','saved','saved_unindexed','failed')",
+            name="ck_distillations_state",
+        ),
+        CheckConstraint(
+            "target IS NULL OR target IN ('local','remote')", name="ck_distillations_target"
+        ),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     session_id: Mapped[str | None] = mapped_column(ForeignKey("sessions.id", ondelete="SET NULL"))
-    title: Mapped[str] = mapped_column(String(512)); content: Mapped[str] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(String(512))
+    content: Mapped[str] = mapped_column(Text)
     key_points_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
     sources_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
-    repository_ids_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
+    repository_ids_json: Mapped[str] = mapped_column(
+        Text, default="[]", server_default=text("'[]'")
+    )
     state: Mapped[str] = mapped_column(String(24), default="draft")
-    target: Mapped[str | None] = mapped_column(String(16)); created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now); updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-    target_repository_id: Mapped[str | None] = mapped_column(ForeignKey("repositories.id", ondelete="SET NULL"), nullable=True)
-    document_id: Mapped[str | None] = mapped_column(ForeignKey("documents.id", ondelete="SET NULL"), nullable=True)
+    target: Mapped[str | None] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    target_repository_id: Mapped[str | None] = mapped_column(
+        ForeignKey("repositories.id", ondelete="SET NULL"), nullable=True
+    )
+    document_id: Mapped[str | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="SET NULL"), nullable=True
+    )
     local_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     content_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     remote_document_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -419,21 +483,31 @@ class DistillationRecord(Base):
     saved_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     last_event_sequence: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
 
+
 class MemoryChunkRecord(Base):
     __tablename__ = "memory_chunks"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    summary_id: Mapped[str | None] = mapped_column(ForeignKey("session_summaries.id", ondelete="CASCADE"))
-    distillation_id: Mapped[str | None] = mapped_column(ForeignKey("distillations.id", ondelete="CASCADE"))
-    repository_id: Mapped[str] = mapped_column(ForeignKey("repositories.id", ondelete="CASCADE")); text: Mapped[str] = mapped_column(Text); chunk_index: Mapped[int] = mapped_column(Integer)
+    summary_id: Mapped[str | None] = mapped_column(
+        ForeignKey("session_summaries.id", ondelete="CASCADE")
+    )
+    distillation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("distillations.id", ondelete="CASCADE")
+    )
+    repository_id: Mapped[str] = mapped_column(ForeignKey("repositories.id", ondelete="CASCADE"))
+    text: Mapped[str] = mapped_column(Text)
+    chunk_index: Mapped[int] = mapped_column(Integer)
     vector_id: Mapped[str] = mapped_column(String(512), unique=True, index=True)
     token_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     indexed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
+
 class MemoryVectorCleanupRecord(Base):
     __tablename__ = "memory_vector_cleanups"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    collection: Mapped[str] = mapped_column(String(64)); vector_ids_json: Mapped[str] = mapped_column(Text); created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    collection: Mapped[str] = mapped_column(String(64))
+    vector_ids_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     source_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
     source_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
@@ -461,7 +535,9 @@ class MessageRecord(Base):
     __tablename__ = "messages"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("sessions.id", ondelete="CASCADE"), index=True
+    )
     role: Mapped[str] = mapped_column(String(32))
     content: Mapped[str] = mapped_column(Text)
     citations_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
@@ -480,7 +556,9 @@ class VectorCleanupRecord(Base):
     repository_id: Mapped[str] = mapped_column(String(36), nullable=False)
     document_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
     vector_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default())
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
+    )
 
 
 class DocumentMutationRecord(Base):
@@ -493,8 +571,12 @@ class DocumentMutationRecord(Base):
     repository_id: Mapped[str] = mapped_column(String(36), nullable=False)
     document_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     payload_json: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default())
-    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default())
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
+    )
 
 
 class SettingRecord(Base):
@@ -506,39 +588,6 @@ class SettingRecord(Base):
         UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
     )
 
-class OllamaPullRecord(Base):
-    __tablename__ = "ollama_pulls"
-    __table_args__ = (
-        CheckConstraint(
-            "state IN ('queued','running','completed','failed','cancelled')",
-            name="ck_ollama_pulls_state",
-        ),
-        CheckConstraint("progress >= 0 AND progress <= 100", name="ck_ollama_pulls_progress"),
-        CheckConstraint("last_event_sequence >= 0", name="ck_ollama_pulls_event_sequence"),
-        Index(
-            "uq_ollama_pulls_active_base_url",
-            "base_url",
-            unique=True,
-            sqlite_where=text("state IN ('queued','running')"),
-        ),
-    )
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    model_name: Mapped[str] = mapped_column(String(200), nullable=False)
-    base_url: Mapped[str] = mapped_column(String(512), nullable=False)
-    state: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
-    progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    status: Mapped[str | None] = mapped_column(String(256))
-    total_bytes: Mapped[int | None] = mapped_column(Integer)
-    completed_bytes: Mapped[int | None] = mapped_column(Integer)
-    error_code: Mapped[str | None] = mapped_column(String(128))
-    error_message: Mapped[str | None] = mapped_column(Text)
-    retryable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
-    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
-    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-    last_event_sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 class WebSearchRunRecord(Base):
     __tablename__ = "web_search_runs"
@@ -551,21 +600,32 @@ class WebSearchRunRecord(Base):
     provider: Mapped[str] = mapped_column(String(32), nullable=False, default="tavily")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default())
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
+    )
     completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
 
 class WebSearchResultRecord(Base):
     __tablename__ = "web_search_results"
-    __table_args__ = (UniqueConstraint("run_id", "canonical_url", name="uq_web_search_results_run_url"),)
+    __table_args__ = (
+        UniqueConstraint("run_id", "canonical_url", name="uq_web_search_results_run_url"),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    run_id: Mapped[str] = mapped_column(ForeignKey("web_search_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("web_search_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
     canonical_url: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     snippet: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    selected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("0"))
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default())
+    selected: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("0")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
+    )
 
 
 class RepositorySyncStateRecord(Base):
@@ -639,7 +699,8 @@ class ProviderCredentialRecord(Base):
     provider: Mapped[str] = mapped_column(String(32), primary_key=True)
     channel: Mapped[str] = mapped_column(String(32), primary_key=True)
     state: Mapped[str] = mapped_column(
-        String(16), default=ProviderCredentialState.UNVERIFIED.value,
+        String(16),
+        default=ProviderCredentialState.UNVERIFIED.value,
         server_default=text("'unverified'"),
     )
     account_label: Mapped[str | None] = mapped_column(Text, nullable=True)

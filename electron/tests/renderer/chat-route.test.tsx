@@ -41,7 +41,7 @@ describe("chat route presentation", () => {
             source: "cloud",
             model: "deepseek-chat",
             mode: "automatic",
-            fallbackReason: "OLLAMA_UNAVAILABLE",
+            fallbackReason: "LOCAL_MODEL_UNAVAILABLE",
           },
         },
       }),
@@ -65,10 +65,10 @@ describe("chat route presentation", () => {
         requestId: stream.requestId,
         type: "error",
         sequence: 1,
-        payload: { code: "OLLAMA_MODEL_NOT_INSTALLED" },
+        payload: { code: "LOCAL_MODEL_NOT_FOUND" },
       }),
     );
-    expect(screen.getByRole("alert")).toHaveTextContent("选定模型尚未安装");
-    expect(screen.getByRole("button", { name: "打开设置并拉取模型" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("该模型未在本地服务中加载");
+    expect(screen.getByRole("button", { name: "打开设置选择模型" })).toBeInTheDocument();
   });
 });

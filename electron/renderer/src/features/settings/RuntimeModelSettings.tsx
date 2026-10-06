@@ -1,11 +1,15 @@
 import { useState } from "react";
 import type { RuntimeSettingsInput, SettingsView } from "../../../../shared/contracts";
-import { clientErrorMessage, useSaveRuntimeMutation } from "./settings.queries";
-import { OllamaStatusCard } from "./OllamaStatusCard";
-import { OllamaPullForm } from "./OllamaPullForm";
+import { clientErrorMessage, useLocalModelsQuery, useSaveRuntimeMutation } from "./settings.queries";
+import { LocalModelStatusCard } from "./LocalModelStatusCard";
 
 const fallback: RuntimeSettingsInput = {
-  ollama: { baseUrl: "http://127.0.0.1:11434", model: "llama3.2", timeoutSeconds: 60 },
+  local: {
+    baseUrl: "http://127.0.0.1:11434",
+    model: "",
+    apiKey: "",
+    timeoutSeconds: 120,
+  },
   routing: { mode: "automatic" },
   rag: { maxSources: 5, memoryRecallMinSimilarity: 0.65 },
 };
@@ -20,6 +24,13 @@ export function RuntimeModelSettings({ settings }: { settings: SettingsView }) {
     // only applies on the wire, so fill it in here to keep the inputs controlled.
     rag: initial.rag ?? fallback.rag,
   });
+  // The catalogue is what the configured server currently has loaded. It is
+  // fetched rather than typed: the model id is chosen by which weights the user
+  // loaded in their own tool, so a free-text box asked for something only that
+  // tool can answer.
+  const local = draft.local;
+  const modelsQuery = useLocalModelsQuery(Boolean(local.baseUrl));
+  const catalogue = modelsQuery.data?.models ?? [];
   const update = (patch: Partial<RuntimeSettingsInput>) =>
     setDraft((value) => ({ ...value, ...patch }));
   const save = () => mutation.mutate(draft);
@@ -57,18 +68,51 @@ export function RuntimeModelSettings({ settings }: { settings: SettingsView }) {
         <p role="status">{modeCopy[draft.routing.mode]}</p>
       </fieldset>
       <label>
-        Ollama 地址
+        本地服务地址
         <input
           type="url"
-          value={draft.ollama.baseUrl}
-          onChange={(e) => update({ ollama: { ...draft.ollama, baseUrl: e.target.value } })}
+          value={local.baseUrl}
+          onChange={(e) => update({ local: { ...local, baseUrl: e.target.value } })}
         />
       </label>
+      <p className="runtime-hint">
+        支持任意 OpenAI 兼容的本机服务：Ollama 默认 11434，LM Studio 默认 1234。
+      </p>
       <label>
         本地模型
+        {catalogue.length ? (
+          <select
+            aria-label="本地模型"
+            value={local.model}
+            onChange={(e) => update({ local: { ...local, model: e.target.value } })}
+          >
+            {local.model && !catalogue.some((item) => item.id === local.model) ? (
+              // Keep a saved value visible rather than silently dropping it, but
+              // mark it so the user knows it is not currently offered.
+              <option value={local.model}>{local.model}（未在服务中加载）</option>
+            ) : null}
+            {catalogue.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            aria-label="本地模型"
+            value={local.model}
+            onChange={(e) => update({ local: { ...local, model: e.target.value } })}
+            placeholder="服务未加载模型，可先手动填写"
+          />
+        )}
+      </label>
+      <label>
+        访问凭据（可选）
         <input
-          value={draft.ollama.model}
-          onChange={(e) => update({ ollama: { ...draft.ollama, model: e.target.value } })}
+          type="password"
+          autoComplete="off"
+          value={local.apiKey}
+          onChange={(e) => update({ local: { ...local, apiKey: e.target.value } })}
         />
       </label>
       <fieldset>
@@ -115,8 +159,7 @@ export function RuntimeModelSettings({ settings }: { settings: SettingsView }) {
       </button>
       {mutation.isError && <p role="alert">{clientErrorMessage(mutation.error)}</p>}
       {mutation.isSuccess && <p role="status">运行设置已保存</p>}
-      <OllamaStatusCard />
-      <OllamaPullForm />
+      <LocalModelStatusCard />
     </div>
   );
 }

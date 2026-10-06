@@ -23,8 +23,8 @@ from app.api.errors import DomainError, domain_error_handler, request_validation
 from app.api.graph import router as graph_router
 from app.api.import_batches import router as import_batches_router
 from app.api.imports import router as imports_router
+from app.api.local_model import router as local_model_router
 from app.api.memory import router as memory_router
-from app.api.ollama import router as ollama_router
 from app.api.remote import router as remote_router
 from app.api.repositories import router as repositories_router
 from app.api.request_limits import RequestBodyLimitMiddleware
@@ -45,9 +45,9 @@ from app.core.llm import (
     ModelConnectionResult,
     OpenAICompatibleProvider,
 )
+from app.core.local_model import LocalModelProvider
+from app.core.local_model_service import LocalModelService
 from app.core.model_router import ModelRouter
-from app.core.ollama import OllamaProvider
-from app.core.ollama_service import OllamaService, run_pull_worker
 from app.core.retrieval import HybridRetriever
 from app.core.secrets import KeyringSecretStore, MemorySecretStore, SecretStore
 from app.document.chunker import SemanticChunker
@@ -99,7 +99,6 @@ from app.storage.repositories import (
     GraphStore,
     ImportJobStore,
     MemoryStore,
-    OllamaPullStore,
     RepositoryStore,
     RepositorySyncStateStore,
     SettingStore,
@@ -122,9 +121,7 @@ SYNC_STARTUP_DELAY_SECONDS = 5.0
 
 
 class _RuntimeLLMProvider:
-    def __init__(
-        self, settings_service: SettingsService, secret_store: SecretStore
-    ) -> None:
+    def __init__(self, settings_service: SettingsService, secret_store: SecretStore) -> None:
         self.settings_service = settings_service
         self.secret_store = secret_store
 
@@ -149,16 +146,23 @@ class _RuntimeLLMProvider:
             ModelConfig(**self.settings_service.model().model_dump()), api_key
         )
 
+
 class _RoutedLLMProvider:
-    def __init__(self, router: ModelRouter) -> None: self.router, self.last_route = router, None
-    async def test_connection(self): return await self.router.cloud.test_connection()
+    def __init__(self, router: ModelRouter) -> None:
+        self.router, self.last_route = router, None
+
+    async def test_connection(self):
+        return await self.router.cloud.test_connection()
+
     async def open_stream(self, request):
         routed = await self.router.open_stream(request)
         self.last_route = routed.route
         return routed
+
     async def stream_chat(self, request):
         routed = await self.open_stream(request)
-        async for delta in routed.deltas: yield delta
+        async for delta in routed.deltas:
+            yield delta
 
 
 def _assemble_production_registry(
@@ -231,7 +235,9 @@ def create_app(
             FakeRemoteProvider,
         )
 
-        e2e_control = E2EControl(runtime_settings.data_dir) if os.getenv("DOCMIND_E2E") == "1" else None
+        e2e_control = (
+            E2EControl(runtime_settings.data_dir) if os.getenv("DOCMIND_E2E") == "1" else None
+        )
         runtime_secret_store = secret_store or MemorySecretStore(str(runtime_settings.data_dir))
         runtime_embedding_provider = embedding_provider or (
             E2EControlledFakeEmbeddingProvider(
@@ -253,27 +259,18 @@ def create_app(
         database_path = Path(runtime_settings.data_dir) / "database" / "docmind.sqlite3"
         database = Database(f"sqlite+pysqlite:///{database_path}")
         database.upgrade()
-        ollama_pull_store = OllamaPullStore(database)
-        ollama_pull_store.recover_interrupted()
 
-        def _configured_ollama_base_url() -> str:
+        def _configured_local_base_url() -> str:
             # Read lazily: this service is constructed before SettingsService, and
             # the user can change the address at any time. Resolving per access
-            # keeps pulls and preflight on the same host as inference
-            # (OllamaProvider is built from the same value in _chat_router).
+            # keeps status/preflight on the same host as inference.
             service = getattr(app.state, "settings_service", None)
             if service is None:
                 return ""
-            return service.runtime().ollama.base_url
+            return service.runtime().local.base_url
 
-        app.state.ollama_service = OllamaService(
-            base_url_provider=_configured_ollama_base_url, store=ollama_pull_store
-        )
-        ollama_stop_event = asyncio.Event()
-        ollama_worker_task = (
-            asyncio.create_task(run_pull_worker(app.state.ollama_service, ollama_stop_event))
-            if runtime_settings.environment != "test"
-            else None
+        app.state.local_model_service = LocalModelService(
+            base_url_provider=_configured_local_base_url
         )
         ImportJobStore(database).recover_interrupted()
         app.state.database = database
@@ -281,7 +278,8 @@ def create_app(
         app.state.credential_store = credential_store
         if fake_llm_provider is None:
             app.state.settings_service = SettingsService(
-                SettingStore(database), runtime_secret_store,
+                SettingStore(database),
+                runtime_secret_store,
                 credential_store=credential_store,
             )
         else:
@@ -308,9 +306,7 @@ def create_app(
         # business code can announce a finished import without naming a vendor.
         notifications = NotificationHub()
         if not fake_services:
-            notifications.register(
-                build_feishu_notification_target(credential_store)
-            )
+            notifications.register(build_feishu_notification_target(credential_store))
         app.state.notifications = notifications
         conversation_store = ConversationStore(database)
         vector_store = PersistentVectorStore(runtime_settings.vectorstore_settings)
@@ -330,10 +326,14 @@ def create_app(
             notifications=notifications,
         )
         app.state.batch_store = BatchImportStore(database)
+
         class _SystemResolver:
             async def resolve(self, host: str):
-                infos = await asyncio.to_thread(socket.getaddrinfo, host, None, type=socket.SOCK_STREAM)
+                infos = await asyncio.to_thread(
+                    socket.getaddrinfo, host, None, type=socket.SOCK_STREAM
+                )
                 return list({info[4][0] for info in infos})
+
         safe_http_client = SafeHttpClient(
             resolver=_SystemResolver(), transport=httpx.AsyncHTTPTransport()
         )
@@ -342,9 +342,7 @@ def create_app(
             runtime_settings.staging_dir,
             frontier=CrawlEntryStore(database),
         )
-        remote_discovery = RemoteDiscovery(
-            registry, repository_store, runtime_settings.staging_dir
-        )
+        remote_discovery = RemoteDiscovery(registry, repository_store, runtime_settings.staging_dir)
         app.state.batch_service = BatchService(
             store=app.state.batch_store,
             import_service=app.state.import_service,
@@ -357,6 +355,7 @@ def create_app(
             remote_discovery=remote_discovery,
         )
         app.state.batch_service.recover_on_startup()
+
         def _read_secret(name: str) -> str | None:
             try:
                 return runtime_secret_store.get(name)
@@ -444,18 +443,30 @@ def create_app(
             app.state.settings_service,
             runtime_secret_store,
         )
-        runtime_config = app.state.settings_service.runtime()
-        if runtime_config.routing.mode == "cloud_only":
+
+        def _current_local_config():
+            return app.state.settings_service.runtime().local
+
+        def _current_local_provider() -> LLMProvider:
+            return LocalModelProvider(config=_current_local_config())
+
+        if app.state.settings_service.runtime().routing.mode == "cloud_only":
             runtime_llm_provider = cloud_llm_provider
         else:
-            runtime_llm_provider = _RoutedLLMProvider(ModelRouter(
-                runtime_config.routing.mode,
-                OllamaProvider(runtime_config.ollama.base_url, runtime_config.ollama.model, runtime_config.ollama.timeout_seconds),
-                cloud_llm_provider,
-                runtime_config.ollama.model,
-                app.state.settings_service.model().model,
-                local_service=app.state.ollama_service,
-            ))
+            # `runtime_reader` matters here: without it the router keeps the
+            # routing mode and model captured at construction, so switching from
+            # "only cloud" to "only local" in settings had no effect until the
+            # app was restarted. The local provider is resolved per request for
+            # the same reason — the server address is editable at runtime.
+            runtime_llm_provider = _RoutedLLMProvider(
+                ModelRouter(
+                    local=_current_local_provider(),
+                    cloud=cloud_llm_provider,
+                    cloud_model=app.state.settings_service.model().model,
+                    runtime_reader=_current_local_config,
+                    local_service=app.state.local_model_service,
+                )
+            )
         search_enricher = ContentEnricher(safe_http_client)
         app.state.search_service = SearchService(
             FallbackSearchProvider(
@@ -530,7 +541,9 @@ def create_app(
             llm=runtime_llm_provider,
             conversation_store=conversation_store,
             event_broker=InMemoryEventBroker(retention=None),
-            message_activity_callback=lambda session_id: summary_service.record_message_activity(session_id),
+            message_activity_callback=lambda session_id: summary_service.record_message_activity(
+                session_id
+            ),
             memory_retriever=memory_retriever,
             search_service=app.state.search_service,
             settings_service=app.state.settings_service,
@@ -620,9 +633,6 @@ def create_app(
             if embedding_warmup_task is not None and not embedding_warmup_task.done():
                 embedding_warmup_task.cancel()
                 await asyncio.gather(embedding_warmup_task, return_exceptions=True)
-            if ollama_worker_task is not None:
-                ollama_stop_event.set()
-                await asyncio.gather(ollama_worker_task, return_exceptions=True)
             tasks = list(app.state.import_tasks)
             for task in tasks:
                 task.cancel()
@@ -665,7 +675,7 @@ def create_app(
     app.include_router(search_router)
     app.include_router(web_search_router)
     app.include_router(memory_router)
-    app.include_router(ollama_router)
+    app.include_router(local_model_router)
     app.include_router(sync_router)
     app.include_router(graph_router)
 

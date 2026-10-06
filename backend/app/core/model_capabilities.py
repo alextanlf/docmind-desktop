@@ -96,7 +96,12 @@ _DEEPSEEK = {
 #   kimi-k2.5      同 K2.6
 _KIMI_MODELS = {
     # 始终推理、不可关，故没有 off/on 两档。
-    "kimi-k3": {"style": "effort", "levels": ("low", "high", "max"), "default": "max", "temp": "omit"},
+    "kimi-k3": {
+        "style": "effort",
+        "levels": ("low", "high", "max"),
+        "default": "max",
+        "temp": "omit",
+    },
     # 固定 enabled：连开关都没有，等于无档位可选。
     "kimi-k2.7-code": {"style": "none", "levels": (), "default": "", "temp": "omit"},
     "kimi-k2.6": {"style": "thinking", "levels": ("off", "on"), "default": "on", "temp": "omit"},
@@ -112,7 +117,12 @@ _KIMI_MODELS = {
 #   GLM-4.6 / GLM-4.5    只有 thinking.type 自动判断，即开/关两档
 # temperature 区间 [0, 1] 且拒绝 0，由 clamp_temperature 统一处理。
 _GLM_MODELS = {
-    "glm-5.3": {"style": "effort", "levels": ("low", "high", "max"), "default": "max", "temp": "allow"},
+    "glm-5.3": {
+        "style": "effort",
+        "levels": ("low", "high", "max"),
+        "default": "max",
+        "temp": "allow",
+    },
     "glm-5.3-flash": {
         "style": "effort",
         "levels": ("low", "high", "max"),
@@ -155,17 +165,72 @@ _MIMO = {"style": "thinking", "levels": ("off", "on"), "default": "on", "temp": 
 # 取更保守的一份：多给 none 的风险是 400，少给只是少一个选项）。
 # 5.5 与 5.6 家族拒绝非默认 temperature，5.4/5.2/5.1 接受。
 _OPENAI_REASONING = {
-    "gpt-6-astra": {"style": "effort", "levels": ("low", "medium", "high", "xhigh"), "default": "medium", "temp": "omit"},
-    "gpt-6.1-sol": {"style": "effort", "levels": ("low", "medium", "high", "xhigh"), "default": "medium", "temp": "omit"},
-    "gpt-6-sol": {"style": "effort", "levels": ("none", "low", "medium", "high", "xhigh"), "default": "medium", "temp": "omit"},
-    "gpt-6-luna": {"style": "effort", "levels": ("none", "low", "medium", "high", "xhigh"), "default": "medium", "temp": "omit"},
-    "gpt-5.6-sol": {"style": "effort", "levels": ("none", "low", "medium", "high", "xhigh"), "default": "medium", "temp": "omit"},
-    "gpt-5.6-terra": {"style": "effort", "levels": ("none", "low", "medium", "high", "xhigh"), "default": "medium", "temp": "omit"},
-    "gpt-5.6-luna": {"style": "effort", "levels": ("none", "low", "medium", "high", "xhigh"), "default": "medium", "temp": "omit"},
-    "gpt-5.5": {"style": "effort", "levels": ("none", "low", "medium", "high", "xhigh"), "default": "low", "temp": "omit"},
-    "gpt-5.4": {"style": "effort", "levels": ("low", "medium", "high", "xhigh"), "default": "medium", "temp": "allow"},
-    "gpt-5.4-mini": {"style": "effort", "levels": ("low", "medium", "high", "xhigh"), "default": "medium", "temp": "allow"},
-    "gpt-5.4-nano": {"style": "effort", "levels": ("low", "medium", "high", "xhigh"), "default": "medium", "temp": "allow"},
+    "gpt-6-astra": {
+        "style": "effort",
+        "levels": ("low", "medium", "high", "xhigh"),
+        "default": "medium",
+        "temp": "omit",
+    },
+    "gpt-6.1-sol": {
+        "style": "effort",
+        "levels": ("low", "medium", "high", "xhigh"),
+        "default": "medium",
+        "temp": "omit",
+    },
+    "gpt-6-sol": {
+        "style": "effort",
+        "levels": ("none", "low", "medium", "high", "xhigh"),
+        "default": "medium",
+        "temp": "omit",
+    },
+    "gpt-6-luna": {
+        "style": "effort",
+        "levels": ("none", "low", "medium", "high", "xhigh"),
+        "default": "medium",
+        "temp": "omit",
+    },
+    "gpt-5.6-sol": {
+        "style": "effort",
+        "levels": ("none", "low", "medium", "high", "xhigh"),
+        "default": "medium",
+        "temp": "omit",
+    },
+    "gpt-5.6-terra": {
+        "style": "effort",
+        "levels": ("none", "low", "medium", "high", "xhigh"),
+        "default": "medium",
+        "temp": "omit",
+    },
+    "gpt-5.6-luna": {
+        "style": "effort",
+        "levels": ("none", "low", "medium", "high", "xhigh"),
+        "default": "medium",
+        "temp": "omit",
+    },
+    "gpt-5.5": {
+        "style": "effort",
+        "levels": ("none", "low", "medium", "high", "xhigh"),
+        "default": "low",
+        "temp": "omit",
+    },
+    "gpt-5.4": {
+        "style": "effort",
+        "levels": ("low", "medium", "high", "xhigh"),
+        "default": "medium",
+        "temp": "allow",
+    },
+    "gpt-5.4-mini": {
+        "style": "effort",
+        "levels": ("low", "medium", "high", "xhigh"),
+        "default": "medium",
+        "temp": "allow",
+    },
+    "gpt-5.4-nano": {
+        "style": "effort",
+        "levels": ("low", "medium", "high", "xhigh"),
+        "default": "medium",
+        "temp": "allow",
+    },
     # 4.1 / 4o 是非推理模型，官方枚举里没有 reasoning_effort —— 不登记。
 }
 
@@ -189,6 +254,10 @@ _PRESET_FALLBACK: dict[str, dict[str, object]] = {
     "custom": dict(_NO_CONTROL),
     "opencode_zen": dict(_NO_CONTROL),
     "opencode_go": dict(_NO_CONTROL),
+    # 本地推理服务（Ollama / LM Studio / llama.cpp / vLLM / Jan…）的模型 id
+    # 由用户自选，后端运行的是哪张卡上加载的哪个权重无法预知，因此不下发任何
+    # 厂商专属推理字段。temperature 照常下发：本地服务普遍接受它。
+    "local": dict(_NO_CONTROL),
 }
 
 # temperature 的合法区间与"确定性"下限。

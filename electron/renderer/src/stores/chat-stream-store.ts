@@ -5,7 +5,7 @@ import {
   type EventEnvelope,
   type StreamSubscription,
 } from "../../../shared/contracts";
-import { clientErrorMessage } from "../features/settings/ollama-errors";
+import { clientErrorMessage } from "../lib/client-errors";
 
 export type RouteView = {
   source: "local" | "cloud";
@@ -26,10 +26,10 @@ type ChatStreamState = {
   status: ChatStreamStatus;
   error: string | null;
   /**
-   * 原始错误码（如 `OLLAMA_MODEL_NOT_INSTALLED`）。
+   * 原始错误码（如 `LOCAL_MODEL_NOT_FOUND`）。
    *
    * 🔴 不能从 `error`（已被翻译成中文）里反推：ChatPanel 需要按码决定
-   * 是否显示「打开设置并拉取模型」这类**可操作**的按钮，而中文文案会随
+   * 是否显示「打开设置并选择模型」这类**可操作**的按钮，而中文文案会随
    * 翻译表变化，按字符串匹配等于把 UI 行为绑死在文案上。
    */
   errorCode: string | null;

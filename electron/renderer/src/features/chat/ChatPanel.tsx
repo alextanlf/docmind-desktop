@@ -142,10 +142,13 @@ export function ChatPanel({
     ? `${route.source === "local" ? "本地" : "云端"} · ${route.model}${route.fallbackReason ? "（本地不可用，已回退）" : ""}`
     : null;
   // 🔴 按原始错误码判定，不是按已翻译的中文 error 串做 .includes()。
-  // 后端 core/ollama_service.py:279 抛的码是 OLLAMA_MODEL_NOT_INSTALLED，
+  // 后端 core/local_model.py 抛的码是 LOCAL_MODEL_NOT_FOUND，
   // 文案会随翻译表变化 —— 用文案匹配等于把可操作 UI 绑死在文案上，
   // 结果是按钮几乎永不出现（此前还漏了 onClick，点不动）。
-  const needsModelSetup = activeStream?.errorCode === "OLLAMA_MODEL_NOT_INSTALLED";
+  // A backend predating the local-model rename still reports the old code.
+  const needsModelSetup = ["LOCAL_MODEL_NOT_FOUND", "OLLAMA_MODEL_NOT_INSTALLED"].includes(
+    activeStream?.errorCode ?? "",
+  );
   return (
     <section className="chat-panel" aria-label="对话">
       {routeLabel ? (
@@ -182,11 +185,11 @@ export function ChatPanel({
             <button
               type="button"
               className="button button-secondary"
-              aria-label="打开设置并拉取模型"
+              aria-label="打开设置选择模型"
               onClick={onOpenSettings}
               disabled={!onOpenSettings}
             >
-              打开设置并拉取模型
+              打开设置选择模型
             </button>
           ) : null}
           {activeStream.status === "error" ? (

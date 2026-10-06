@@ -68,7 +68,11 @@ API Key 只保存在系统凭据存储中（macOS Keychain / Windows 凭据管�
 
 ## 使用本地模型
 
-如果你希望使用本地模型，可以自行安装并运行 [Ollama](https://ollama.com/)，然后在 DocMind 的设置中选择本地模型。Ollama 只允许通过本机回环地址访问。
+DocMind 支持任意 OpenAI 兼容的本机推理服务，例如 [Ollama](https://ollama.com/)（默认端口 11434）、[LM Studio](https://lmstudio.ai/)（默认端口 1234）以及 llama.cpp、vLLM、Jan 等。
+
+在设置中填入服务地址，本地模型会从该服务已加载的模型列表中选择。DocMind 不提供模型下载，请先用相应的工具把模型加载到服务里。
+
+出于安全考虑，本地服务只允许通过本机回环地址（`localhost`、`127.0.0.1`、`::1`）访问，且不校验其名称是否合法。
 
 ## 联网搜索
 

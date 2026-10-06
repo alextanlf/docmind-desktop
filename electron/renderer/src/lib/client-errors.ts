@@ -3,13 +3,11 @@ type ClientError = { code?: string; retryable?: boolean };
 const messages: Record<string, string> = {
   BACKEND_PROTOCOL_ERROR: "应用与本地服务的数据格式不一致",
   APP_RESTART_UNAVAILABLE: "无法自动重启，请手动退出后重新打开应用",
-  OLLAMA_UNAVAILABLE: "Ollama 未运行或暂时无法连接",
-  OLLAMA_MODEL_NOT_INSTALLED: "选定模型尚未安装",
-  OLLAMA_PULL_FAILED: "模型拉取失败",
-  OLLAMA_PULL_CANCELLED: "模型拉取已取消",
-  OLLAMA_PULL_INTERRUPTED: "应用退出时中断了模型拉取",
-  OLLAMA_PROTOCOL_ERROR: "本地模型服务返回了无法识别的数据",
-  LOCAL_MODEL_UNAVAILABLE: "本地模型暂时不可用",
+  LOCAL_MODEL_UNAVAILABLE: "本地模型服务未运行或暂时无法连接",
+  LOCAL_MODEL_NOT_FOUND: "该模型未在本地服务中加载，请检查模型名称",
+  LOCAL_MODEL_PROTOCOL_ERROR: "本地模型服务返回了无法识别的数据",
+  LOCAL_MODEL_AUTH_FAILED: "本地模型服务拒绝了该凭据",
+  LOCAL_MODEL_TIMEOUT: "本地模型服务响应超时",
   ROUTING_CLOUD_UNAVAILABLE: "本地和云端都不可用",
   YUQUE_BROWSER_UNAVAILABLE: "本机尚未安装语雀登录浏览器，暂无法打开登录窗口",
   YUQUE_PAGE_UNAVAILABLE: "语雀页面加载超时，请检查网络后重试",
@@ -30,13 +28,11 @@ const messages: Record<string, string> = {
 };
 
 const actions: Record<string, string> = {
-  OLLAMA_UNAVAILABLE: "重新检查 Ollama",
-  OLLAMA_MODEL_NOT_INSTALLED: "打开设置并拉取模型",
-  OLLAMA_PULL_FAILED: "重试拉取",
-  OLLAMA_PULL_CANCELLED: "重新拉取",
-  OLLAMA_PULL_INTERRUPTED: "重新拉取",
-  OLLAMA_PROTOCOL_ERROR: "重新检查 Ollama",
-  LOCAL_MODEL_UNAVAILABLE: "重试或切换模式",
+  LOCAL_MODEL_UNAVAILABLE: "重新检查本地服务",
+  LOCAL_MODEL_NOT_FOUND: "打开设置并选择已加载的模型",
+  LOCAL_MODEL_PROTOCOL_ERROR: "检查地址与模型名称",
+  LOCAL_MODEL_AUTH_FAILED: "检查访问凭据",
+  LOCAL_MODEL_TIMEOUT: "重试或调大超时时间",
   ROUTING_CLOUD_UNAVAILABLE: "检查设置并重试",
   YUQUE_BROWSER_UNAVAILABLE: "安装后重试",
   YUQUE_PAGE_UNAVAILABLE: "检查网络后重试",
@@ -67,10 +63,13 @@ export function errorAction(code: string | null | undefined): string {
 
 /**
  * Codes kept for compatibility with older backend builds. Lives at module level
- * with `messages`/`actions` so `clientErrorMessage` does not rebuild these 18
+ * with `messages`/`actions` so `clientErrorMessage` does not rebuild these
  * entries on every call.
  */
 const legacyMessages: Record<string, string> = {
+  OLLAMA_UNAVAILABLE: "本地模型服务未运行或暂时无法连接",
+  OLLAMA_MODEL_NOT_INSTALLED: "该模型未在本地服务中加载，请检查模型名称",
+  OLLAMA_PROTOCOL_ERROR: "本地模型服务返回了无法识别的数据",
   MODEL_AUTH_FAILED: "API Key 无效，请更新密钥后重试",
   MODEL_NOT_FOUND: "未找到指定模型，请检查模型名称",
   MODEL_PRESET_INVALID: "模型预设无效，请重新选择",

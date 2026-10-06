@@ -3,7 +3,7 @@ import pytest
 from app.api.errors import DomainError
 from app.core.llm import ChatDelta, ChatRequest
 from app.core.model_router import ModelRouter
-from app.schemas.ollama import OllamaConfig, RoutingSettings, RuntimeSettingsInput
+from app.schemas.local_model import LocalModelConfig, RoutingSettings, RuntimeSettingsInput
 
 
 class Fake:
@@ -18,12 +18,12 @@ class PartialFailure(Fake):
     async def stream_chat(self, request):
         self.calls += 1
         yield ChatDelta(content="local")
-        raise DomainError("OLLAMA_UNAVAILABLE", "x", 503, True)
+        raise DomainError("LOCAL_MODEL_UNAVAILABLE", "x", 503, True)
 
 
 def runtime(mode: str, model: str = "local"):
     return RuntimeSettingsInput(
-        ollama=OllamaConfig(model=model), routing=RoutingSettings(mode=mode)
+        local=LocalModelConfig(model=model), routing=RoutingSettings(mode=mode)
     )
 
 @pytest.mark.asyncio
@@ -42,9 +42,9 @@ async def test_local_only_rejects_missing_local_model_before_provider_call():
 
 @pytest.mark.asyncio
 async def test_automatic_falls_back_before_output():
-    local = Fake(error=DomainError("OLLAMA_UNAVAILABLE", "x", 503, True)); cloud = Fake(["c"])
+    local = Fake(error=DomainError("LOCAL_MODEL_UNAVAILABLE", "x", 503, True)); cloud = Fake(["c"])
     result = await ModelRouter("automatic", local, cloud, "m", "c").open_stream(ChatRequest(messages=[]))
-    assert result.route.fallback_reason == "OLLAMA_UNAVAILABLE"
+    assert result.route.fallback_reason == "LOCAL_MODEL_UNAVAILABLE"
 
 @pytest.mark.asyncio
 async def test_automatic_ignores_empty_delta_before_first_non_empty_output():
@@ -80,7 +80,7 @@ async def test_runtime_constructor_runs_local_preflight_before_stream():
 
 @pytest.mark.asyncio
 async def test_automatic_maps_cloud_secondary_failure_to_routing_error():
-    local = Fake(error=DomainError("OLLAMA_UNAVAILABLE", "offline", 503, True))
+    local = Fake(error=DomainError("LOCAL_MODEL_UNAVAILABLE", "offline", 503, True))
     cloud = Fake(error=DomainError("MODEL_UNAVAILABLE", "cloud down", 503, True))
     router = ModelRouter(runtime=runtime("automatic"), local=local, cloud=cloud)
     with pytest.raises(DomainError) as raised:
@@ -91,7 +91,7 @@ async def test_automatic_maps_cloud_secondary_failure_to_routing_error():
 
 @pytest.mark.asyncio
 async def test_local_preflight_failure_is_not_sent_to_cloud_in_local_only():
-    local = Fake(error=DomainError("OLLAMA_MODEL_NOT_INSTALLED", "missing", 503, True))
+    local = Fake(error=DomainError("LOCAL_MODEL_NOT_FOUND", "missing", 503, True))
     cloud = Fake(["cloud"])
     router = ModelRouter(runtime=runtime("local_only"), local=local, cloud=cloud)
     with pytest.raises(DomainError) as raised:
@@ -101,10 +101,10 @@ async def test_local_preflight_failure_is_not_sent_to_cloud_in_local_only():
 
 
 @pytest.mark.asyncio
-async def test_automatic_preserves_ollama_unavailable_reason_from_service_preflight():
+async def test_automatic_preserves_local_unavailable_reason_from_service_preflight():
     class Service:
         async def preflight_model(self, model):
-            raise DomainError("OLLAMA_UNAVAILABLE", "offline", 503, True)
+            raise DomainError("LOCAL_MODEL_UNAVAILABLE", "offline", 503, True)
 
     local, cloud = Fake(["local"]), Fake(["cloud"])
     router = ModelRouter(
@@ -114,4 +114,4 @@ async def test_automatic_preserves_ollama_unavailable_reason_from_service_prefli
         local_service=Service(),
     )
     routed = await router.open_stream(ChatRequest(messages=[]))
-    assert routed.route.fallback_reason == "OLLAMA_UNAVAILABLE"
+    assert routed.route.fallback_reason == "LOCAL_MODEL_UNAVAILABLE"
