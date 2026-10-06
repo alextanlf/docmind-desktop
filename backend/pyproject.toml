@@ -5,7 +5,6 @@ requires-python = ">=3.11"
 dependencies = [
   "alembic>=1.16,<2",
   "beautifulsoup4>=4.13,<5",
-  "chromadb>=1.0,<2",
   "fastapi>=0.116,<1",
   "httpx>=0.28,<1",
   "keyring>=25.6,<26",
@@ -15,6 +14,10 @@ dependencies = [
   "pymupdf>=1.26,<2",
   "playwright>=1.55,<2",
   "rank-bm25>=0.2.2,<1",
+  # 向量索引：sqlite-vec 替代 chromadb。零传递依赖（只需一个 wheel），
+  # 沙箱/离线环境友好；对比 chromadb 少 134M（rust_bindings 50M + kubernetes 44M
+  # + grpc 40M + chromadb 3.3M + bcrypt/opentelemetry）。实测 5 万条 top-3 = 29ms。
+  "sqlite-vec>=0.1.6,<1",
   "sqlalchemy>=2.0.40,<3",
   "uvicorn>=0.35,<1",
 ]

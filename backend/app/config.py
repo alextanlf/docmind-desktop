@@ -20,6 +20,9 @@ class EmbeddingSettings(BaseModel):
 
 class VectorStoreSettings(BaseModel):
     directory: Path
+    # sqlite-vec 建表时维度必须写死，运行时无法 ALTER。取自 embedding_dimension，
+    # 让换模型时索引重建能被显式触发（见 core/query_intent 之外的 embedding_rebuild 表）。
+    dimension: int = Field(default=1024, gt=0)
 
 
 class AppSettings(BaseSettings):
@@ -109,7 +112,9 @@ class AppSettings(BaseSettings):
 
     @property
     def vectorstore_settings(self) -> VectorStoreSettings:
-        return VectorStoreSettings(directory=self.vectorstore_dir)
+        return VectorStoreSettings(
+            directory=self.vectorstore_dir, dimension=self.embedding_dimension
+        )
 
 
 def get_settings() -> AppSettings:

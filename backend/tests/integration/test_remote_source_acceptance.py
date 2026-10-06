@@ -75,12 +75,10 @@ async def assert_index_and_citations(harness, repository_id, expected_ids):
         assert Path(document.markdown_path).is_file()
         chunks = harness.app.state.document_store.list_chunks(document.id)
         assert len(chunks) == document.chunk_count > 0
-    vectors = harness.app.state.vector_store
-    collection = vectors.client.get_collection(vectors.collection_name(repository_id))
-    stored = collection.get(include=["metadatas", "documents"])
-    assert {metadata["doc_id"] for metadata in stored["metadatas"]} == expected_ids
-    assert len(stored["ids"]) == sum(document.chunk_count for document in documents)
-    assert set(stored["ids"]) == {
+    stored = harness.app.state.vector_store.list_stored(repository_id)
+    assert {entry["metadata"]["doc_id"] for entry in stored} == expected_ids
+    assert len(stored) == sum(document.chunk_count for document in documents)
+    assert {entry["id"] for entry in stored} == {
         vector_id for document in documents
         for vector_id in harness.app.state.document_store.vector_ids(document.id)
     }

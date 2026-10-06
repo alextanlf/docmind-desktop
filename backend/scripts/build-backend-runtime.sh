@@ -177,7 +177,7 @@ uv pip install \
 # keyring 的 Windows 后端需要 pywin32-ctypes（keyring 自带 win32 marker 会自动装上）。
 # 这里显式导入一次，把「构建期就发现缺依赖」变成硬失败，而不是等到用户点保存 API Key
 # 才在运行期看到「未配置」。
-probe_imports="import fastapi, uvicorn, sqlalchemy, onnxruntime, pymupdf, keyring, rank_bm25, chromadb, alembic"
+probe_imports="import fastapi, uvicorn, sqlalchemy, onnxruntime, pymupdf, keyring, rank_bm25, sqlite_vec, alembic"
 if [ "$is_windows" = 1 ]; then
   probe_imports="${probe_imports}, win32ctypes.pywin32"
 fi
@@ -231,6 +231,123 @@ PY
 find "$runtime_dir" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 find "$site_dir" -name '*.pyc' -delete 2>/dev/null || true
 find "$runtime_dir/app" -name 'tests' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+
+# 6.1) 向量库真实链路自检。
+#
+# 🔴 必须用 -I（隔离模式）：它同时忽略 PYTHONPATH 与用户 site-packages。
+#    否则解释器会从别的路径兜底 import 到开发机上的包，探针「通过」却是假的
+#    —— 上一版就是这么静默失效的（已实测：删掉 chromadb_rust_bindings 后
+#    探针仍返回 OK，因为它加载的是 runtime 之外的真包）。
+#    断言 __file__ 属于 sys.prefix 是第二道保险。
+#
+# 探针覆盖真实使用到的每一条路径，缺一条就可能在用户导入文档时才炸：
+#   建集合 → 写入 → 无过滤查询 → where 过滤查询 → 维度不匹配拦截
+#   → 删除 → 删集合 → 查询不存在的集合
+# where 过滤用「放大候选集 + 回表筛」，与 app/storage/vectorstore.py::_search
+# 同一策略；UUID 仓库名走加引号标识符，覆盖生产里 repository_id 是 UUID 的事实。
+if ! probe_out="$("$runtime_python" -I - <<'PY' 2>&1
+import sqlite3
+import sys
+import tempfile
+import uuid
+from pathlib import Path
+
+import sqlite_vec
+
+# 必须是本次构建产出的那份，不能是开发机上的。
+assert sqlite_vec.__file__.startswith(sys.prefix), (
+    "sqlite_vec 来自 runtime 之外：" + sqlite_vec.__file__
+)
+assert sqlite3.sqlite_version_info >= (3, 41, 0), (
+    f"sqlite3 过旧（{sqlite3.sqlite_version}），sqlite-vec 扩展无法加载"
+)
+
+# -I 同时把 cwd 也踢出 sys.path，所以要手动把 runtime 根（app/ 的父目录）加回来。
+# 这不破坏隔离性：加的是本次构建产物自己的目录，仍是「只认本次产物」。
+sys.path.insert(0, str(Path.cwd()))
+
+from app.storage.vectorstore import PersistentVectorStore  # noqa: E402
+from app.config import VectorStoreSettings  # noqa: E402
+
+store = PersistentVectorStore(
+    VectorStoreSettings(directory=Path(tempfile.mkdtemp()) / "vectors")
+)
+
+# repository_id 在生产里是 UUID → 集合名含连字符，必须加引号才不被解析成减法。
+repository_id = str(uuid.uuid4())
+ids = [str(uuid.uuid4()) for _ in range(3)]
+embeddings = [[1.0] * 1024, [0.9] + [0.0] * 1023, [0.0] * 1023 + [1.0]]
+store.upsert(
+    repository_id,
+    ids,
+    ["A", "B", "C"],
+    embeddings,
+    [{"doc_id": "d1"}, {"doc_id": "d2"}, {"doc_id": "d1"}],
+)
+
+hits = store.query(repository_id, embeddings[0], top_k=3)
+assert hits[0].id == ids[0], hits
+assert abs(hits[0].similarity - 1.0) < 1e-5, hits[0]
+
+filtered = store.query(repository_id, embeddings[0], top_k=3, where={"doc_id": "d1"})
+assert {h.id for h in filtered} == {ids[0], ids[2]}, filtered
+
+# 🔴 低选择性过滤不得漏召回。曾经的实现是「取 top_k×10 再在 Python 里筛」，
+# 匹配项排在窗口外时返回空且**无任何报错** —— 概览块注入会悄悄失效。
+#
+# 场景要足够极端，否则探针自己也会假通过（第一版就栽在这）：
+# 唯一匹配项的相似度必须**低于**全部干扰项，且干扰项数量要超过放大窗口
+# （top_k=3 × 10 = 30），才能确保它落在窗口之外。
+sparse_repo = str(uuid.uuid4())
+unit = [0.0] * 1024
+probe_query = [1.0] + unit[1:]
+low = unit[:1] + [0.1] + unit[2:]      # 与查询相似度 0.1 —— 唯一匹配项
+high = unit[:1] + [0.9] + unit[2:]     # 与查询相似度 0.9 —— 99 个干扰项
+store.upsert(
+    sparse_repo,
+    ["target"] + [f"noise-{index}" for index in range(99)],
+    ["t"] * 100,
+    [low] + [high] * 99,
+    [{"source_type": "WANTED"}] + [{"source_type": "OTHER"} for _ in range(99)],
+)
+sparse_hits = store.query(sparse_repo, probe_query, top_k=3, where={"source_type": "WANTED"})
+assert [h.id for h in sparse_hits] == ["target"], sparse_hits
+
+# 记忆索引走的是另一组方法与另一套集合名。
+store.upsert_memory(
+    "probe_mem",
+    ["m1"],
+    [[0.3] * 1024],
+    ["memory"],
+    [{"repository_id": repository_id, "source_id": "s1", "kind": "note"}],
+)
+assert [h.id for h in store.query_memory("probe_mem", [0.3] * 1024, 5)] == ["m1"]
+assert store.query_memory("probe_mem", [0.3] * 1024, 5, repository_id="other") == []
+store.delete_memory("probe_mem", ["m1"])
+assert store.query_memory("probe_mem", [0.3] * 1024, 5) == []
+
+# 维度不匹配必须给出「重建索引」而不是裸 sqlite 错误。
+try:
+    store.query(repository_id, [1.0] * 768, top_k=1)
+except Exception as error:
+    assert getattr(error, "code", "") == "INDEX_FAILED", error
+else:
+    raise AssertionError("维度不匹配未抛错")
+
+store.delete(repository_id, [ids[0]])
+assert len(store.query(repository_id, embeddings[0], top_k=3)) == 2
+store.delete_collection(repository_id)
+assert store.query(repository_id, embeddings[0], top_k=3) == []
+assert store.query(str(uuid.uuid4()), embeddings[0], top_k=3) == []
+
+print("OK")
+PY
+)"; then
+  echo "sqlite-vec 向量库自检失败（构建产物不可用）" >&2
+  echo "${probe_out}" | tail -12 >&2
+  exit 1
+fi
+echo "  向量库自检通过（隔离模式，已确认用的是本次构建产物）"
 
 size="$(du -sh "$runtime_dir" 2>/dev/null | cut -f1 || echo '?')"
 # 注意：变量名后紧跟全角标点时必须写成 ${var}，否则 bash 会把全角字符并入变量名。

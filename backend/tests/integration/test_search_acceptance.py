@@ -348,10 +348,7 @@ async def test_explicit_w_citation_then_partial_second_confirmation(search_app, 
     before_jobs = {row.id for row in rows(context, ImportJobRecord)}
     before_docs = {row.id for row in rows(context, DocumentRecord)}
     before_chunks = {row.id for row in rows(context, DocumentChunkRecord)}
-    collection = context.state.vector_store.client.get_collection(
-        context.state.vector_store.collection_name(context.repository.id)
-    )
-    before_vectors = set(collection.get()["ids"])
+    before_vectors = {entry["id"] for entry in context.state.vector_store.list_stored(context.repository.id)}
     run_id, results = await explicit_results(context)
     response = await context.harness.client.post(
         f"/api/web-search/runs/{run_id}/import-batch",
@@ -369,7 +366,7 @@ async def test_explicit_w_citation_then_partial_second_confirmation(search_app, 
     assert {row.id for row in rows(context, ImportJobRecord)} == before_jobs
     assert {row.id for row in rows(context, DocumentRecord)} == before_docs
     assert {row.id for row in rows(context, DocumentChunkRecord)} == before_chunks
-    assert set(collection.get()["ids"]) == before_vectors
+    assert {entry["id"] for entry in context.state.vector_store.list_stored(context.repository.id)} == before_vectors
     chosen = next(item for item in items.items if item.title == "SelectedQuasar")
     response = await context.harness.client.post(
         f"/api/import-batches/{batch['id']}/confirm",
@@ -392,14 +389,11 @@ async def test_explicit_w_citation_then_partial_second_confirmation(search_app, 
         row for row in rows(context, DocumentChunkRecord) if row.document_id == documents[0].id
     ]
     assert chunks and all("SelectedQuasar" in chunk.text for chunk in chunks)
-    collection = context.state.vector_store.client.get_collection(
-        context.state.vector_store.collection_name(context.repository.id)
-    )
-    indexed = collection.get(include=["documents"])
-    assert {chunk.id for chunk in chunks}.issubset(set(indexed["ids"]))
-    assert "SelectedQuasar" in "\n".join(indexed["documents"])
-    assert "SkippedNebula" not in "\n".join(indexed["documents"])
-    assert "UnpickedPulsar" not in "\n".join(indexed["documents"])
+    indexed = context.state.vector_store.list_stored(context.repository.id)
+    assert {chunk.id for chunk in chunks}.issubset({entry["id"] for entry in indexed})
+    assert "SelectedQuasar" in "\n".join(entry["text"] for entry in indexed)
+    assert "SkippedNebula" not in "\n".join(entry["text"] for entry in indexed)
+    assert "UnpickedPulsar" not in "\n".join(entry["text"] for entry in indexed)
     assert len(context.wire.calls) == 1
     assert_no_secrets(context, caplog)
 
