@@ -28,6 +28,9 @@ artifacts/
 # whole directory rather than naming entries — a stray "Electron 2.app" from a
 # re-download previously slipped past the explicit rules.
 build/electron-dist/
+# Ad-hoc UI demo harnesses built from a live component dump. Regenerable from
+# the components themselves, so it is a scratch artifact rather than an asset.
+build/settings-demo/
 build/embedding-models/
 backend/build/
 

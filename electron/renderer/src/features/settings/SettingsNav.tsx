@@ -1,92 +1,41 @@
-import { useEffect, useRef, useState } from "react";
 import { clsx } from "clsx";
-import { SETTINGS_SECTION_ORDER } from "./settings-sections";
+import { settingsModules } from "./settings-modules";
 
-const ACTIVE_OFFSET = 24;
-
-function findScrollContainer(element: HTMLElement | null) {
-  let node = element?.parentElement ?? null;
-  while (node) {
-    const { overflowY } = window.getComputedStyle(node);
-    if (overflowY === "auto" || overflowY === "scroll") return node;
-    node = node.parentElement;
-  }
-  return null;
-}
-
-function prefersReducedMotion() {
+/**
+ * The settings navigation: one entry per registered module.
+ *
+ * This used to be a scroll-spy — it walked the DOM looking for the section
+ * whose top edge had crossed a 24px threshold, listened for `scroll` and
+ * `resize`, and re-measured on every animation frame to work out which entry to
+ * highlight. All of that existed because the page was one long column that you
+ * moved *through*.
+ *
+ * Now that only one module is shown at a time, the nav is a plain list of
+ * buttons over a controlled `activeId`. The measurement code is gone rather than
+ * merely bypassed: there is no scroll position left for it to interpret.
+ */
+export function SettingsNav({
+  activeId,
+  onSelect,
+}: {
+  activeId: string | null;
+  onSelect: (id: string) => void;
+}) {
   return (
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
-}
-
-export function SettingsNav() {
-  const navRef = useRef<HTMLElement>(null);
-  const [activeId, setActiveId] = useState<string>(SETTINGS_SECTION_ORDER[0].id);
-
-  useEffect(() => {
-    const scroller = findScrollContainer(navRef.current);
-    const sections = SETTINGS_SECTION_ORDER.map((section) =>
-      document.getElementById(section.id),
-    ).filter((element): element is HTMLElement => element !== null);
-    if (sections.length === 0) return;
-
-    let frame = 0;
-    const measure = () => {
-      frame = 0;
-      const rootTop = scroller ? scroller.getBoundingClientRect().top : 0;
-      let next = sections[0].id;
-      for (const section of sections) {
-        if (section.getBoundingClientRect().top - rootTop <= ACTIVE_OFFSET) next = section.id;
-        else break;
-      }
-      const atBottom = scroller
-        ? scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 2
-        : false;
-      if (atBottom) next = sections[sections.length - 1].id;
-      setActiveId((current) => (current === next ? current : next));
-    };
-    const schedule = () => {
-      if (frame !== 0) return;
-      frame = window.requestAnimationFrame(measure);
-    };
-
-    measure();
-    const target: EventTarget = scroller ?? window;
-    target.addEventListener("scroll", schedule, { passive: true });
-    window.addEventListener("resize", schedule);
-    return () => {
-      if (frame !== 0) window.cancelAnimationFrame(frame);
-      target.removeEventListener("scroll", schedule);
-      window.removeEventListener("resize", schedule);
-    };
-  }, []);
-
-  return (
-    <nav aria-label="设置分区" className="settings-subnav" ref={navRef}>
-      {SETTINGS_SECTION_ORDER.map((section) => {
-        const Icon = section.icon;
-        const active = section.id === activeId;
+    <nav aria-label="设置分区" className="settings-subnav">
+      {settingsModules().map((module) => {
+        const Icon = module.icon;
+        const active = module.id === activeId;
         return (
           <button
             aria-current={active ? "true" : undefined}
             className={clsx("settings-subnav-item", active && "is-active")}
-            key={section.id}
-            onClick={() => {
-              setActiveId(section.id);
-              const target = document.getElementById(section.id);
-              if (!target) return;
-              target.focus({ preventScroll: true });
-              target.scrollIntoView({
-                behavior: prefersReducedMotion() ? "auto" : "smooth",
-                block: "start",
-              });
-            }}
+            key={module.id}
+            onClick={() => onSelect(module.id)}
             type="button"
           >
             <Icon aria-hidden="true" size={16} />
-            <span>{section.label}</span>
+            <span>{module.label}</span>
           </button>
         );
       })}

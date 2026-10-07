@@ -19,6 +19,22 @@ function renderSettings() {
 }
 
 /**
+ * Open a settings page by its nav label.
+ *
+ * The settings screen used to be one long column with every section visible at
+ * once, so a test could assert against any of them without navigating. It is now
+ * a set of separate pages, one visible at a time, so a test that cares about a
+ * page has to go there — the same way a user does. Content on a page that is
+ * not open is `hidden`, and a hidden element is correctly not "visible".
+ */
+async function openSection(label: string) {
+  // The nav does not exist until the settings snapshot resolves, so wait for
+  // the page chrome rather than assuming a synchronous first paint.
+  const nav = await screen.findByRole("navigation", { name: "设置分区" });
+  fireEvent.click(within(nav).getByRole("button", { name: label }));
+}
+
+/**
  * A plugin's card, located by its title.
  *
  * Every card is labelled by its own heading, so a bare `getByLabelText("语雀
@@ -100,21 +116,94 @@ describe("设置", () => {
     expect(clientErrorMessage(new Error(raw))).not.toContain("/Users/private");
   });
 
-  it("jumps between settings sections from the section navigation", async () => {
+  it("shows exactly one settings page at a time, chosen from the section nav", async () => {
     installDocMindApi();
     renderSettings();
 
-    await screen.findByRole("option", { name: /deepseek-flash/ });
-    const nav = screen.getByRole("navigation", { name: "设置分区" });
+    // One nav entry per registered module — the nav and the page are derived
+    // from the same registry, so a page that exists must be reachable and a
+    // page that is reachable must exist.
+    const nav = await screen.findByRole("navigation", { name: "设置分区" });
     expect(within(nav).getAllByRole("button")).toHaveLength(5);
+
+    const sections = document.querySelectorAll(".settings-section");
+    expect(sections).toHaveLength(5);
+    // The opening page is the first registered module, not a hard-coded id.
+    // Inactive pages are `hidden`, and a role query skips hidden nodes by
+    // design, so asserting on them needs the explicit flag.
+    expect(screen.getByRole("heading", { name: "对话模型" }).closest("section")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "插件", hidden: true }).closest("section")).not.toBeVisible();
 
     const target = within(nav).getByRole("button", { name: "本地数据与诊断" });
     fireEvent.click(target);
 
     expect(target).toHaveAttribute("aria-current", "true");
+    const opened = screen.getByRole("heading", { name: "本地数据与诊断" }).closest("section")!;
+    expect(opened).toBeVisible();
+    expect(opened).toHaveFocus();
+    // Switching pages leaves exactly one visible — this is the behaviour that
+    // distinguishes separate pages from one long scrolled column.
     expect(
-      screen.getByRole("heading", { name: "本地数据与诊断" }).closest("section"),
-    ).toHaveFocus();
+      Array.from(document.querySelectorAll(".settings-section")).filter(
+        (section) => !section.hasAttribute("hidden"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("keeps an unsaved draft alive while the user visits another page and returns", async () => {
+    const api = installDocMindApi();
+    renderSettings();
+
+    const key = await screen.findByLabelText("API Key");
+    fireEvent.change(key, { target: { value: "sk-not-saved-yet" } });
+
+    await openSection("插件");
+    await openSection("对话模型");
+
+    // Unmounting on switch would silently discard a half-entered key, which is
+    // the one thing a settings form must never do.
+    expect(screen.getByLabelText("API Key")).toHaveValue("sk-not-saved-yet");
+    // And nothing was saved by looking around.
+    expect(api.settings.saveModel).not.toHaveBeenCalled();
+  });
+
+  it("carries a module's own copy rather than renderer-supplied wording", async () => {
+    installDocMindApi();
+    renderSettings();
+
+    // Each page declares its own description, so the view holds no per-page
+    // strings that a new module would have to be added to. Hidden pages are
+    // queried with `{ hidden: true }` because a role query deliberately skips
+    // them — which is the a11y behaviour we want, not an obstacle to it.
+    await screen.findByRole("heading", { name: "对话模型" });
+    const modelPage = screen.getByRole("heading", { name: "对话模型" }).closest("section")!;
+    const pluginPage = screen.getByRole("heading", { name: "插件", hidden: true }).closest(
+      "section",
+    )!;
+
+    expect(modelPage).toHaveTextContent("使用 OpenAI 兼容接口连接模型服务");
+    expect(pluginPage).not.toHaveTextContent("使用 OpenAI 兼容接口连接模型服务");
+    // The plugin page declares no description of its own, so it renders no
+    // subtitle line at all rather than inheriting another module's.
+    expect(pluginPage.querySelector(".section-heading p")).toBeNull();
+  });
+
+  it("keeps the nav and the pages in the same order", async () => {
+    installDocMindApi();
+    renderSettings();
+
+    await screen.findByRole("navigation", { name: "设置分区" });
+    const nav = screen.getByRole("navigation", { name: "设置分区" });
+    const navLabels = within(nav)
+      .getAllByRole("button")
+      .map((button) => button.textContent);
+    const pageLabels = Array.from(document.querySelectorAll(".settings-section h2")).map(
+      (heading) => heading.textContent,
+    );
+
+    // If these ever diverge, the nav points at pages in a different order than
+    // they appear — the classic symptom of two hand-maintained lists.
+    expect(navLabels).toEqual(pageLabels);
   });
 
   it("shows remote login controls without any embedding panel", async () => {
@@ -122,6 +211,7 @@ describe("设置", () => {
       remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
     });
     renderSettings();
+    await openSection("插件");
 
     // 嵌入模型随应用分发且启动即自动预热，设置页不再暴露它的状态/加载入口。
     expect(screen.queryByText("Embedding 模型")).not.toBeInTheDocument();
@@ -140,6 +230,7 @@ describe("设置", () => {
       remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
     });
     renderSettings();
+    await openSection("插件");
 
     // One card per credential channel — 「语雀网页登录」 and 「语雀 API」 are
     // two things a user chooses between, so they are two cards rather than one
@@ -184,6 +275,7 @@ describe("设置", () => {
   it("searches plugins by label, owner, summary and declared keywords", async () => {
     installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
     renderSettings();
+    await openSection("插件");
 
     await screen.findByRole("heading", { name: "语雀网页登录", level: 3 });
     const search = screen.getByLabelText("搜索插件");
@@ -224,6 +316,7 @@ describe("设置", () => {
   it("presents an installed third-party plugin with no vendor-specific code", async () => {
     installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
     renderSettings();
+    await openSection("插件");
 
     //「acme」 exists nowhere in DocMind's own source. If this card renders, the
     // page really is driven by the catalogue rather than by a hard-coded list.
@@ -244,6 +337,7 @@ describe("设置", () => {
       },
     });
     renderSettings();
+    await openSection("插件");
 
     // A plugin that silently failed is indistinguishable from one that was
     // never installed, so the user could not tell "broken" from "does not exist".
@@ -256,6 +350,7 @@ describe("设置", () => {
       remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
     });
     renderSettings();
+    await openSection("插件");
 
     // Located through the card, not by index: the grid order is whatever the
     // catalogue returned, and an index would silently start pointing at a
@@ -286,6 +381,7 @@ describe("设置", () => {
   it("derives the plugin count from the catalogue", async () => {
     installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
     renderSettings();
+    await openSection("插件");
 
 // Regression: the description used to be a static sentence naming vendors,
 // so it went stale the moment a plugin was added or removed. The count has to
@@ -300,6 +396,7 @@ expect(screen.getByText(/均为可选连接/)).toBeVisible();
       plugins: { list: vi.fn().mockResolvedValue([]) },
     });
     renderSettings();
+    await openSection("插件");
 
     expect(await screen.findByText("当前没有可用插件。")).toBeVisible();
     // The search box stays: an empty catalogue is a state, not a dead page.
@@ -309,6 +406,7 @@ expect(screen.getByText(/均为可选连接/)).toBeVisible();
   it("renders channel-declared hints instead of inventing provider copy", async () => {
     installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
     renderSettings();
+    await openSection("插件");
 
     // A URL-shaped credential must not be labelled "… Token", and the form
     // has to surface the plugin's own placeholder and help link.
@@ -332,6 +430,7 @@ expect(screen.getByText(/均为可选连接/)).toBeVisible();
     // being handed an empty text box it cannot use.
     installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
     renderSettings();
+    await openSection("插件");
 
     await screen.findByRole("heading", { name: "语雀 API", level: 3 });
     // The login affordance appears only after the plugin's status query lands,
@@ -364,6 +463,7 @@ expect(screen.getByText(/均为可选连接/)).toBeVisible();
       },
     });
     renderSettings();
+    await openSection("插件");
 
     // The affordance exists because the manifest declares browserInstall plus
     // the error code its absence raises — not because the vendor is recognised.
@@ -390,6 +490,7 @@ expect(screen.getByText(/均为可选连接/)).toBeVisible();
       },
     });
     renderSettings();
+    await openSection("插件");
 
     // browserInstall is false for every Feishu channel, so the button must not
     // appear even when login fails — a vendor-name check would have shown it.
@@ -401,6 +502,7 @@ expect(screen.getByText(/均为可选连接/)).toBeVisible();
     const get = vi.fn().mockResolvedValue(readySettings);
     const api = installDocMindApi({ settings: { get } });
     renderSettings();
+    await openSection("本地数据与诊断");
 
     expect(await screen.findByText(readySettings.dataPath)).toBeVisible();
     expect(screen.getByText("失败截图 2 张")).toBeVisible();
@@ -416,6 +518,7 @@ expect(screen.getByText(/均为可选连接/)).toBeVisible();
   it("traps confirmation focus, closes on Escape, and restores the trigger", async () => {
     installDocMindApi();
     renderSettings();
+    await openSection("本地数据与诊断");
 
     const trigger = await screen.findByRole("button", { name: "清理失败截图" });
     trigger.focus();
@@ -686,6 +789,7 @@ expect(screen.getByText(/均为可选连接/)).toBeVisible();
       .mockResolvedValue(readySettings);
     installDocMindApi({ settings: { get: retryableGet } });
     renderSettings();
+    await openSection("本地数据与诊断");
     expect(await screen.findByText(readySettings.dataPath)).toBeVisible();
     expect(retryableGet).toHaveBeenCalledTimes(2);
 

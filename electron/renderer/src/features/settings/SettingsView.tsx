@@ -1,50 +1,73 @@
-import type { ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
-import { DiagnosticsSection } from "./DiagnosticsSection";
-import { ModelSettingsForm } from "./ModelSettingsForm";
-import { PluginSettings } from "./PluginSettings";
+import { useCallback, useEffect, useState } from "react";
 import { SettingsNav } from "./SettingsNav";
-import { WebSearchSettings } from "./WebSearchSettings";
-import { RuntimeModelSettings } from "./RuntimeModelSettings";
-import {
-  SETTINGS_SECTIONS,
-  settingsSectionTitleId,
-  type SettingsSectionMeta,
-} from "./settings-sections";
 import { clientErrorMessage, useSettingsQuery } from "./settings.queries";
+import {
+  defaultSettingsModule,
+  settingsModuleTitleId,
+  settingsModules,
+  type SettingsModule,
+} from "./settings-modules";
+// Imported for its side effect: this is what populates the registry with the
+// built-in pages. The view must not enumerate them itself.
+import "./builtin-settings-modules";
 
-function SettingsSection({
-  meta,
-  description,
-  children,
-}: {
-  meta: SettingsSectionMeta;
-  /**
-   * Optional because a section may own its own heading copy: the plugin
-   * section derives its line from whatever is installed at runtime, so a
-   * static string here would have to hard-code vendor names.
-   */
-  description?: string;
-  children: ReactNode;
-}) {
-  const titleId = settingsSectionTitleId(meta.id);
-  const Icon = meta.icon;
+/**
+ * One module's body, plus the heading it owns.
+ *
+ * `hidden` rather than unmounting is load-bearing. The model form holds a dozen
+ * `useState` drafts — an API key typed but not yet saved, a half-chosen preset.
+ * Unmounting on switch would drop them, so a user who typed a key, went to look
+ * at another page and came back would find the field empty. Keeping every
+ * mounted module in the DOM preserves that state and keeps `plugins.list` to a
+ * single request, while `hidden` takes the inactive ones out of the tab order
+ * and the accessibility tree.
+ */
+function ModulePanel({ module, active }: { module: SettingsModule; active: boolean }) {
+  const titleId = settingsModuleTitleId(module.id);
+  const Icon = module.icon;
   return (
-    <section aria-labelledby={titleId} className="settings-section" id={meta.id} tabIndex={-1}>
+    <section
+      aria-labelledby={titleId}
+      className="settings-section"
+      hidden={!active}
+      id={module.id}
+      tabIndex={-1}
+    >
       <div className="section-heading">
         <Icon aria-hidden="true" size={18} />
         <div>
-          <h2 id={titleId}>{meta.label}</h2>
-          {description ? <p>{description}</p> : null}
+          <h2 id={titleId}>{module.label}</h2>
+          {module.description ? <p>{module.description}</p> : null}
         </div>
       </div>
-      {children}
+      {module.render()}
     </section>
   );
 }
 
 export function SettingsView() {
   const settings = useSettingsQuery();
+  const modules = settingsModules();
+  const [activeId, setActiveId] = useState<string | null>(null);
+
+  // Default to the first registered module rather than hard-coding an id, so a
+  // page inserted at the front becomes the landing page without an edit here.
+  useEffect(() => {
+    if (activeId !== null && modules.some((module) => module.id === activeId)) return;
+    setActiveId(defaultSettingsModule()?.id ?? null);
+  }, [activeId, modules]);
+
+  // Re-anchor after a page switch so a keyboard user lands on the new heading
+  // instead of wherever they were in the previous panel.
+  const focusActive = useCallback(() => {
+    if (activeId === null) return;
+    document.getElementById(activeId)?.focus({ preventScroll: true });
+  }, [activeId]);
+
+  useEffect(() => {
+    focusActive();
+  }, [focusActive]);
 
   if (settings.isPending) return <div className="settings-loading">正在读取设置…</div>;
   if (settings.isError) {
@@ -59,6 +82,8 @@ export function SettingsView() {
     );
   }
 
+  const active = modules.find((module) => module.id === activeId) ?? modules[0];
+
   return (
     <div className="settings-view">
       <header className="view-header">
@@ -69,36 +94,12 @@ export function SettingsView() {
       </header>
       <div className="settings-body">
         <div className="settings-subnav-column">
-          <SettingsNav />
+          <SettingsNav activeId={active?.id ?? null} onSelect={setActiveId} />
         </div>
         <div className="settings-sections">
-          <SettingsSection
-            description="使用 OpenAI 兼容接口连接模型服务"
-            meta={SETTINGS_SECTIONS.model}
-          >
-            <ModelSettingsForm settings={settings.data} />
-          </SettingsSection>
-          <SettingsSection
-            description="配置本地模型与云端回退策略"
-            meta={SETTINGS_SECTIONS.runtime}
-          >
-            <RuntimeModelSettings settings={settings.data} />
-          </SettingsSection>
-          <SettingsSection meta={SETTINGS_SECTIONS.plugins}>
-            <PluginSettings />
-          </SettingsSection>
-          <SettingsSection
-            description="本地证据不足时按模型内置联网、Tavily、免费兜底的顺序搜索"
-            meta={SETTINGS_SECTIONS.webSearch}
-          >
-            <WebSearchSettings settings={settings.data} />
-          </SettingsSection>
-          <SettingsSection
-            description="查看数据位置并管理失败截图"
-            meta={SETTINGS_SECTIONS.diagnostics}
-          >
-            <DiagnosticsSection settings={settings.data} />
-          </SettingsSection>
+          {modules.map((module) => (
+            <ModulePanel active={module.id === active?.id} key={module.id} module={module} />
+          ))}
         </div>
       </div>
     </div>
