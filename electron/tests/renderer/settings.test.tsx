@@ -5,9 +5,11 @@ import { appQueryClient } from "../../renderer/src/app/query-client";
 import { SettingsView } from "../../renderer/src/features/settings/SettingsView";
 import { clientErrorMessage } from "../../renderer/src/features/settings/settings.queries";
 import {
+  feishuCredentialChannels,
   installDocMindApi,
   loggedOutRemote,
   readySettings,
+  yuqueCredentialChannels,
 } from "./test-docmind-api";
 
 function renderSettings() {
@@ -119,47 +121,59 @@ describe("设置", () => {
     expect(api.remote.login).toHaveBeenCalledWith("yuque");
   });
 
-  it("shows one card per provider, each rendering its own credential channels", async () => {
+  it("groups channels by purpose, keeping the bot webhook out of the sources", async () => {
     const api = installDocMindApi({
       remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
     });
     renderSettings();
 
-    // One card per registered provider (from remote.listProviders). Every
-    // channel a provider declares — including the Feishu bot webhook and the
-    // Yuque API token — is rendered by the generic, data-driven path.
-    expect(await screen.findByRole("heading", { name: "语雀" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "飞书文档" })).toBeVisible();
-    // The hard-coded Feishu card is gone: the webhook is a channel on the
-    // Feishu provider card now, so no second binding card may appear.
-    expect(screen.queryByRole("heading", { name: "飞书绑定" })).not.toBeInTheDocument();
+    // Both groups exist immediately, but their cards only once the channel
+    // queries land, so wait for a card before scoping any assertion to a group.
+    await screen.findByRole("heading", { name: "语雀", level: 3 });
+    const sources = screen.getByRole("region", { name: "知识库来源" });
+    const notify = screen.getByRole("region", { name: "通知" });
+
+    // Each provider appears once per group it has something for. Yuque has no
+    // notification channel, so it must not get a second card.
+    expect(within(sources).getByRole("heading", { name: "语雀" })).toBeVisible();
+    expect(within(sources).getByRole("heading", { name: "飞书文档" })).toBeVisible();
+    expect(within(notify).getByRole("heading", { name: "飞书文档" })).toBeVisible();
+    expect(within(notify).queryByRole("heading", { name: "语雀" })).toBeNull();
+
+    // The regression this grouping exists for: a bot webhook is a notification
+    // target, and under the old vendor-only grouping it sat among the document
+    // sources looking like a third way to import them.
+    expect(within(sources).queryByLabelText("飞书机器人")).toBeNull();
+    expect(within(notify).getByLabelText("飞书机器人")).toBeVisible();
+
+    // Every channel is still rendered by the generic, data-driven path.
     expect(api.remote.listProviders).toHaveBeenCalledTimes(1);
     expect(api.remote.listCredentials).toHaveBeenCalledWith("yuque");
     expect(api.remote.listCredentials).toHaveBeenCalledWith("feishu");
-    // Wait for the credential channel forms before counting badges.
-    expect(await screen.findByLabelText("语雀 API")).toBeVisible();
-    expect(await screen.findByLabelText("飞书自建应用")).toBeVisible();
-    expect(await screen.findByLabelText("飞书机器人")).toBeVisible();
+    expect(await within(sources).findByLabelText("语雀 API")).toBeVisible();
+    expect(within(sources).getByLabelText("飞书自建应用")).toBeVisible();
     // 语雀 API、飞书自建应用、飞书机器人（webhook）三张 secret 表单初始均为未绑定。
     expect(screen.getAllByText("未绑定")).toHaveLength(3);
     // 飞书 user 通道是 OAuth 授权入口，无安装浏览器按钮。
     expect(screen.getByRole("button", { name: "登录飞书文档" })).toBeVisible();
 
-    // 飞书自建应用通道（第二张“保存并验证”按钮属于飞书卡片）。
-    fireEvent.change(screen.getByLabelText("飞书自建应用"), {
-      target: { value: "cli_a1b2:s3cret" },
-    });
-    fireEvent.click(screen.getAllByRole("button", { name: "保存并验证" })[1]);
-    await screen.findByText("语雀 API 已连接");
-    expect(api.remote.saveCredential).toHaveBeenCalledWith("feishu", "app", {
-      secret: "cli_a1b2:s3cret",
-    });
+    // Each channel saves under its own provider. The buttons are located
+    // through the channel's own form rather than by index: the grouped layout
+    // decides the order, and an index would silently start pointing at the
+    // neighbouring vendor's form.
+    const feishuApp = within(sources).getByLabelText("飞书自建应用");
+    fireEvent.change(feishuApp, { target: { value: "cli_a1b2:s3cret" } });
+    fireEvent.click(feishuApp.closest("section")!.querySelector("button")!);
+    await waitFor(() =>
+      expect(api.remote.saveCredential).toHaveBeenCalledWith("feishu", "app", {
+        secret: "cli_a1b2:s3cret",
+      }),
+    );
     expect(api.remote.testCredential).toHaveBeenCalledWith("feishu", "app");
 
-    fireEvent.change(screen.getByLabelText("语雀 API"), {
-      target: { value: "yuque-token" },
-    });
-    fireEvent.click(screen.getAllByRole("button", { name: "保存并验证" })[0]);
+    const yuqueApi = within(sources).getByLabelText("语雀 API");
+    fireEvent.change(yuqueApi, { target: { value: "yuque-token" } });
+    fireEvent.click(yuqueApi.closest("section")!.querySelector("button")!);
     await waitFor(() =>
       expect(api.remote.saveCredential).toHaveBeenCalledWith("yuque", "api", {
         secret: "yuque-token",
@@ -216,29 +230,36 @@ describe("设置", () => {
   });
 
   it("falls back to generic copy when a channel declares no hint", async () => {
+    // The Yuque API channel is the one that declares a placeholder and a help
+    // link; the browser-login channel declares neither, so it must render the
+    // generic wording rather than borrowing the other channel's copy.
     installDocMindApi({
       remote: {
         status: vi.fn().mockResolvedValue(loggedOutRemote),
-        listCredentials: vi.fn().mockResolvedValue([
-          {
-            provider: "acme",
-            channel: "api",
-            label: "Acme API",
-            configured: false,
-            state: "disconnected",
-            accountLabel: null,
-            hasSecret: true,
-          },
-        ]),
+        listCredentials: vi.fn().mockImplementation((provider: string) =>
+          Promise.resolve(
+            provider === "feishu" ? feishuCredentialChannels : yuqueCredentialChannels,
+          ),
+        ),
       },
     });
     renderSettings();
 
-    expect(await screen.findByLabelText("Acme API")).toHaveAttribute(
+    expect(
+      await screen.findByLabelText("语雀 API"),
+    ).toBeVisible();
+    const sources = screen.getByRole("region", { name: "知识库来源" });
+    expect(within(sources).getByLabelText("语雀 API")).toHaveAttribute(
       "placeholder",
-      "输入访问凭据",
+      "粘贴语雀个人访问令牌",
     );
-    expect(screen.queryByRole("link", { name: /获取凭据/ })).toBeNull();
+    // The browser-login channel declares no placeholder, so it renders as the
+    // login entry rather than a credential form — and it borrows no copy from
+    // the API channel sitting next to it.
+    expect(within(sources).getByText("语雀网页登录")).toBeVisible();
+    expect(within(sources).queryByLabelText("语雀网页登录")).toBeNull();
+    // The help link belongs to the API channel alone.
+    expect(within(sources).getAllByRole("link", { name: /获取令牌/ })).toHaveLength(1);
   });
 
   it("installs the Yuque browser when login reports a missing browser", async () => {

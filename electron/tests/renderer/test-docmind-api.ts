@@ -127,11 +127,13 @@ export const yuqueCredentialChannels: RemoteCredentialChannel[] = [
   {
     provider: "yuque",
     channel: "web",
-    label: "语雀网页",
+    label: "语雀网页登录",
     configured: false,
     state: "disconnected",
     accountLabel: null,
     hasSecret: false,
+    purpose: "source",
+    hint: "浏览器里直接登录，不用申请令牌；导入与同步时会打开 Chrome。",
   },
   {
     provider: "yuque",
@@ -144,6 +146,8 @@ export const yuqueCredentialChannels: RemoteCredentialChannel[] = [
     secretPlaceholder: "粘贴语雀个人访问令牌",
     helpUrl: "https://www.yuque.com/yuque/developer/api",
     helpLabel: "获取令牌",
+    purpose: "source",
+    hint: "更快更稳，但要先去语雀后台申请一个个人访问令牌。",
   },
 ];
 
@@ -156,6 +160,8 @@ export const feishuCredentialChannels: RemoteCredentialChannel[] = [
     state: "disconnected",
     accountLabel: null,
     hasSecret: true,
+    purpose: "source",
+    hint: "填入 App ID 与 App Secret 后才能授权账号；这是飞书开放平台的要求。",
   },
   {
     provider: "feishu",
@@ -165,6 +171,8 @@ export const feishuCredentialChannels: RemoteCredentialChannel[] = [
     state: "disconnected",
     accountLabel: null,
     hasSecret: false,
+    purpose: "source",
+    hint: "在浏览器里同意授权，让 DocMind 读取你的飞书文档。",
   },
   {
     provider: "feishu",
@@ -177,6 +185,10 @@ export const feishuCredentialChannels: RemoteCredentialChannel[] = [
     secretPlaceholder: "https://open.feishu.cn/open-apis/bot/v2/hook/…",
     helpUrl: "https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot",
     helpLabel: "添加机器人",
+    // A notification target, not a document source. The settings page groups
+    // on this, so getting it wrong here would hide the grouping under test.
+    purpose: "notify",
+    hint: "导入完成或失败时，往群里发一条通知。不影响文档读取。",
   },
 ];
 

@@ -1582,10 +1582,51 @@ input:disabled {
   font-size: 13px;
 }
 
+.connection-sections {
+  display: grid;
+  gap: 22px;
+}
+.connection-group {
+  display: grid;
+  gap: 10px;
+}
+.connection-group > h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+.connection-group-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
 .connection-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 14px;
+}
+/* One channel inside a card. The heading is what makes the choice legible:
+   without it the two ways of connecting to a vendor look interchangeable. */
+.connection-channel {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.connection-channel:first-of-type {
+  padding-top: 0;
+  border-top: none;
+}
+.connection-channel-heading strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+.connection-channel-heading p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
 }
 /* Spans the whole grid so the derived provider list reads as a caption
    above the cards rather than as another card. */

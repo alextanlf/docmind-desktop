@@ -61,6 +61,9 @@ describe("preload bridge", () => {
       state: "unverified",
       accountLabel: null,
       hasSecret: true,
+      // The contract defaults it so a backend that predates the field still
+      // yields a usable channel rather than failing the whole list.
+      purpose: "source",
     };
     invoke.mockResolvedValueOnce({ ok: true, value: [] });
     await expect(api.remote.listProviders()).resolves.toEqual([]);

@@ -61,11 +61,15 @@ FEISHU_CREDENTIAL_SPEC = ProviderCredentialSpec(
             has_secret=True,
             default_secret_ref=FEISHU_APP_SECRET_REF,
             tester=test_feishu_app_credentials,
+            purpose="source",
+            hint="填入 App ID 与 App Secret 后才能授权账号；这是飞书开放平台的要求。",
         ),
         CredentialChannelSpec(
             name="user",
             label="飞书账号授权",
             has_secret=False,
+            purpose="source",
+            hint="在浏览器里同意授权，让 DocMind 读取你的飞书文档。",
         ),
         CredentialChannelSpec(
             name="webhook",
@@ -80,6 +84,12 @@ FEISHU_CREDENTIAL_SPEC = ProviderCredentialSpec(
             secret_placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/…",
             help_url="https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot",
             help_label="添加机器人",
+            # Not a knowledge-base source: this one only pushes import results
+            # to a chat. Declaring it keeps it out of the source list in the UI,
+            # which is the whole point — grouped by vendor it used to sit among
+            # the document sources and read as one of them.
+            purpose="notify",
+            hint="导入完成或失败时，往群里发一条通知。不影响文档读取。",
         ),
     ),
     login_channel="user",

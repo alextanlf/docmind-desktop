@@ -1,5 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  RemoteCredentialChannel,
   RuntimeSettingsInput,
   SaveRemoteCredentialInput,
   WebSearchSettingsInput,
@@ -51,6 +52,33 @@ export function useRemoteCredentialsQuery(provider: string) {
     queryKey: settingsKeys.remoteCredentials(provider),
     queryFn: () => window.docmind.remote.listCredentials(provider),
   });
+}
+
+/**
+ * Every provider's channels in one shot, keyed by provider name.
+ *
+ * The settings page has to know all channels before it can group them, and it
+ * needs the answer to decide which cards to render at all — so issuing the
+ * requests from here keeps that decision in the query layer instead of making
+ * the component fan out. The per-provider hook stays for the single-provider
+ * mutations that invalidate these keys.
+ */
+export function useRemoteCredentialsQueries(providers: string[]) {
+  const results = useQueries({
+    queries: providers.map((provider) => ({
+      queryKey: settingsKeys.remoteCredentials(provider),
+      queryFn: () => window.docmind.remote.listCredentials(provider),
+    })),
+  });
+  const data: Record<string, RemoteCredentialChannel[]> = {};
+  providers.forEach((provider, index) => {
+    const channels = results[index]?.data;
+    if (channels) data[provider] = channels;
+  });
+  return {
+    data: Object.keys(data).length > 0 ? data : undefined,
+    isPending: results.some((result) => result.isPending),
+  };
 }
 
 export function useSaveRemoteCredentialMutation(provider: string, channel: string) {

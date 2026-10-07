@@ -24,8 +24,10 @@ YUQUE_CREDENTIAL_SPEC = ProviderCredentialSpec(
     channels=(
         CredentialChannelSpec(
             name="web",
-            label="语雀网页",
+            label="语雀网页登录",
             has_secret=False,
+            purpose="source",
+            hint="浏览器里直接登录，不用申请令牌；导入与同步时会打开 Chrome。",
         ),
         CredentialChannelSpec(
             name="api",
@@ -36,6 +38,8 @@ YUQUE_CREDENTIAL_SPEC = ProviderCredentialSpec(
             secret_placeholder="粘贴语雀个人访问令牌",
             help_url="https://www.yuque.com/yuque/developer/api",
             help_label="获取令牌",
+            purpose="source",
+            hint="更快更稳，但要先去语雀后台申请一个个人访问令牌。",
         ),
     ),
 )

@@ -88,6 +88,12 @@ class CredentialChannelView(WireModel):
     secret_placeholder: str | None = None
     help_url: str | None = None
     help_label: str | None = None
+    # What this channel is for. ``source`` channels provide documents;
+    # ``notify`` channels only deliver notifications. The client groups on
+    # this so a bot webhook does not sit among the document sources.
+    purpose: str = "source"
+    # One line explaining the trade-off of choosing this channel.
+    hint: str | None = None
 
 
 class SaveCredentialRequest(WireModel):

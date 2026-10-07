@@ -230,6 +230,14 @@ export const RemoteCredentialChannelSchema = z.object({
   secretPlaceholder: z.string().nullable().optional(),
   helpUrl: z.string().nullable().optional(),
   helpLabel: z.string().nullable().optional(),
+  /**
+   * What the channel is for. `source` provides documents; `notify` only
+   * delivers notifications. The settings page groups on this so a bot webhook
+   * is not listed among the knowledge-base sources.
+   */
+  purpose: z.enum(["source", "notify"]).default("source"),
+  /** Channel-declared trade-off, e.g. "opens a browser" / "needs a token". */
+  hint: z.string().nullable().optional(),
 });
 export const RemoteCredentialTestResultSchema = z.object({
   connected: z.boolean(),

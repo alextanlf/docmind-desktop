@@ -66,6 +66,8 @@ def _channel_view(
         secret_placeholder=spec.secret_placeholder,
         help_url=spec.help_url,
         help_label=spec.help_label,
+        purpose=spec.purpose,
+        hint=spec.hint,
     )
 
 

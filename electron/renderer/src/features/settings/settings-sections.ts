@@ -9,7 +9,7 @@ export interface SettingsSectionMeta {
 export const SETTINGS_SECTIONS = {
   model: { id: "settings-model", label: "对话模型", icon: KeyRound },
   runtime: { id: "settings-runtime", label: "本地运行与路由", icon: Cpu },
-  connections: { id: "settings-connections", label: "连接与绑定", icon: Link2 },
+  connections: { id: "settings-connections", label: "远程来源", icon: Link2 },
   webSearch: { id: "settings-web-search", label: "联网搜索", icon: Globe },
   diagnostics: { id: "settings-diagnostics", label: "本地数据与诊断", icon: HardDrive },
 } as const satisfies Record<string, SettingsSectionMeta>;
