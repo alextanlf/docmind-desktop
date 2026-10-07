@@ -37,16 +37,18 @@ _WARMUP_SLACK_SECONDS = 5.0
 logger = logging.getLogger(__name__)
 
 # Chrome flags shared by every session. ``--no-sandbox`` is required because
-# the app ships a standalone runtime without the usual user namespaces, and
-# automation is already opt-in per driver.
+# the app ships a standalone runtime without the usual user namespaces.
 _BASE_ARGS = (
     "--no-sandbox",
     "--disable-dev-shm-usage",
     "--disable-blink-features=AutomationControlled",
-    # Yuque renders behind a service worker; without this the automation
-    # banner can swallow the first click on a freshly opened page.
-    "--disable-features=Translate,MediaRouter",
 )
+
+# Returning as soon as the document is parsed rather than waiting for every
+# subresource matters here: Yuque's shell waits on blocking CDN scripts, and
+# the status probe has a hard budget it must not overrun. Measured on a page
+# that took 12s to "load" with the default strategy and 0.8s with this one.
+_PAGE_LOAD_STRATEGY = "eager"
 
 
 class YuqueBrowserUnavailableError(DomainError):
@@ -219,6 +221,7 @@ def _launch(driver_path: Path, browser_path: str, visible: bool) -> Any:
         # The branded browsers only support the "new" headless, which is a
         # real window rather than the old headless shell.
         options.add_argument("--headless=new")
+    options.page_load_strategy = _PAGE_LOAD_STRATEGY
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
     service = Service(str(driver_path))

@@ -213,3 +213,46 @@ class TestBrowserCallsStayOffTheEventLoop:
         # Both the lookup and the element's own click must leave the loop;
         # a single blocking call would freeze the whole app.
         assert seen == ["find_element", "click"]
+
+
+class TestWaitFor:
+    """``BasePage.wait_for_any`` is built on this, so its failure type decides
+    whether the loop moves on to the next candidate selector or gives up."""
+
+    async def test_returns_once_the_element_appears(self) -> None:
+        """Must actually resolve the element, not just return.
+
+        A stub that skipped the lookup would pass a presence-only test, so the
+        driver is asserted to have been queried.
+        """
+        driver = _FakeDriver([_FakeElement()])
+        locator = AsyncLocator(driver, "text=x")
+
+        await locator.wait_for(timeout=500)
+
+        assert driver.lookups, "wait_for must resolve the element before returning"
+
+    async def test_raises_a_retryable_error_on_timeout(self) -> None:
+        locator = AsyncLocator(_FakeDriver([]), "text=missing")
+
+        with pytest.raises(NoSuchElementException):
+            await locator.wait_for(timeout=120)
+
+    async def test_a_missing_element_keeps_being_polled_until_the_deadline(
+        self,
+    ) -> None:
+        """It has to retry: a page mid-render is the common case."""
+        driver = _FakeDriver([])
+        locator = AsyncLocator(driver, "text=late")
+
+        with pytest.raises(NoSuchElementException):
+            await locator.wait_for(timeout=300)
+
+        # More than one attempt means the loop actually polled.
+        assert len(driver.lookups) > 1
+
+    async def test_the_timeout_error_is_in_the_retryable_tuple(self) -> None:
+        """If this were not retryable, a page mid-render would fail the op."""
+        from app.yuque.wd_locator import _RETRYABLE
+
+        assert NoSuchElementException in _RETRYABLE

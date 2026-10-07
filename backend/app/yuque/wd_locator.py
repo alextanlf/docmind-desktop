@@ -23,6 +23,7 @@ blocking calls in a worker thread so the event loop is never stalled.
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 from selenium.common.exceptions import (
@@ -124,6 +125,28 @@ class AsyncLocator:
         if not elements:
             raise NoSuchElementException(f"no element for {self._selector!r}")
         return elements[0]
+
+    async def wait_for(self, state: str = "visible", timeout: int = 5_000) -> None:
+        """Wait until the element is present, raising on timeout.
+
+        ``BasePage.wait_for_any`` catches the failure and moves on to the next
+        candidate selector, so the exception type matters more than the message:
+        it must be one of the retryable ones.
+
+        WebDriver has no equivalent of Playwright's visibility state, so both
+        ``attached`` and ``visible`` are served by "the element is findable".
+        An element that exists but is scrolled out of view is still clickable
+        through WebDriver, so the looser check does not change the outcome.
+        """
+        deadline = time.monotonic() + timeout / 1000
+        while True:
+            try:
+                await self._find()
+                return
+            except NoSuchElementException:
+                if time.monotonic() >= deadline:
+                    raise
+                await asyncio.sleep(0.05)
 
     async def click(self) -> None:
         element = await self._find()
