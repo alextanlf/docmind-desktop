@@ -248,10 +248,6 @@ button:disabled {
   color: var(--muted);
   font-size: 12px;
 }
-.settings-nav {
-  flex: 0 0 36px;
-  margin-bottom: 12px;
-}
 
 .repository-tree {
   display: grid;
@@ -659,8 +655,7 @@ button:disabled {
   display: none;
 }
 .workspace-sidebar.is-collapsed .new-chat-button,
-.workspace-sidebar.is-collapsed .nav-list button,
-.workspace-sidebar.is-collapsed .settings-nav {
+.workspace-sidebar.is-collapsed .nav-list button {
   width: 36px;
   min-width: 36px;
   justify-content: center;
@@ -2395,8 +2390,7 @@ progress::-webkit-progress-bar {
     display: none;
   }
   .workspace-sidebar .new-chat-button,
-  .workspace-sidebar .nav-list button,
-  .workspace-sidebar .settings-nav {
+  .workspace-sidebar .nav-list button {
     width: 36px;
     min-width: 36px;
     justify-content: center;

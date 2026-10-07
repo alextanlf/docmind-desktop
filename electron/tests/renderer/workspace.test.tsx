@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Component, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ErrorBoundary } from "../../renderer/src/app/ErrorBoundary";
@@ -79,6 +79,46 @@ describe("Workspace", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "设置" }));
     expect(screen.queryByLabelText("引用资料")).not.toBeInTheDocument();
+  });
+
+  it("treats settings as a peer page rather than a toggle back to the workspace", async () => {
+    renderWorkspace();
+
+    const nav = screen.getByRole("navigation", { name: "功能导航" });
+    const settingsNav = within(nav).getByRole("button", { name: "设置" });
+    // A peer of 知识库 / 导入文档 / 记忆, not a pinned footer action.
+    expect(settingsNav).toBeInTheDocument();
+    expect(settingsNav).not.toHaveAttribute("aria-current");
+
+    fireEvent.click(settingsNav);
+    expect(await screen.findByRole("heading", { name: "设置", level: 1 })).toBeVisible();
+    expect(settingsNav).toHaveAttribute("aria-current", "page");
+
+    // Clicking it again must NOT bounce back to the conversation. It used to,
+    // which made settings feel like a mode you could fall out of rather than a
+    // page you stay on. The main region stays labelled as the settings page
+    // rather than flipping back to the conversation workspace.
+    fireEvent.click(settingsNav);
+    expect(screen.getByRole("heading", { name: "设置", level: 1 })).toBeVisible();
+    expect(screen.getByLabelText("设置内容")).toBeInTheDocument();
+    expect(screen.queryByLabelText("对话工作区")).not.toBeInTheDocument();
+  });
+
+  it("switches cleanly from settings back to a workspace page", async () => {
+    renderWorkspace();
+
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    await screen.findByRole("heading", { name: "设置", level: 1 });
+
+    // Scoped to the nav: "记忆" names both the nav button and the page section
+    // it opens, so an unscoped query would be ambiguous by design.
+    const nav = screen.getByRole("navigation", { name: "功能导航" });
+    fireEvent.click(within(nav).getByRole("button", { name: "记忆" }));
+
+    // Leaving settings is an explicit choice, so the previous page must be gone
+    // and the memory page shown instead.
+    expect(screen.queryByRole("heading", { name: "设置", level: 1 })).not.toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "记忆" })).toBeInTheDocument();
   });
 
   it("supports keyboard sidebar controls with accessible icon labels", () => {
