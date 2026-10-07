@@ -66,11 +66,14 @@ const actions: Record<string, string> = {
   YUQUE_LOGIN_REQUIRED: "重新登录语雀",
   FEISHU_LOGIN_REQUIRED: "重新配置飞书凭证",
   REMOTE_OPERATION_FAILED: "重试远程操作",
-  REMOTE_NOT_BOUND: "绑定远程来源",
-  REMOTE_PROVIDER_UNKNOWN: "检查远程来源设置",
-  REMOTE_CAPABILITY_UNSUPPORTED: "更换远程来源",
+  // These are action labels pointing at the settings page, so they name what
+  // the page is now called. The messages above (「知识库未绑定远程来源」) stay:
+  // they state a fact about a knowledge base, not a place to go.
+  REMOTE_NOT_BOUND: "绑定插件",
+  REMOTE_PROVIDER_UNKNOWN: "检查插件设置",
+  REMOTE_CAPABILITY_UNSUPPORTED: "更换插件",
   REMOTE_DISCOVERY_FAILED: "检查网络后重试",
-  REMOTE_NOT_FOUND: "重新选择远程来源",
+  REMOTE_NOT_FOUND: "重新选择插件",
   FEISHU_AUTH_FAILED: "更新飞书 Webhook",
   FEISHU_UNAVAILABLE: "检查网络后重试",
   FEISHU_APP_CREDENTIALS_REQUIRED: "先在上方保存飞书自建应用凭据",

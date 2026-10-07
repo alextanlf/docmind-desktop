@@ -231,6 +231,13 @@ class YuqueProvider:
     identity = ProviderIdentity(
         name="yuque",
         label="语雀",
+        # Declared here rather than assembled in the UI: a plugin's own words
+        # are the only ones that stay correct when it is replaced by a
+        # third-party one.
+        summary="把语雀知识库与文档导入 DocMind",
+        icon="library",
+        keywords=("yuque", "语雀", "wiki", "知识库"),
+        homepage="https://www.yuque.com/yuque/developer/api",
         capabilities=ProviderCapabilities(
             browser_install=True,
             marker_lookup=True,

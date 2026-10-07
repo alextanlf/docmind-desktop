@@ -38,6 +38,7 @@ import {
   RemoteCredentialChannelSchema,
   RemoteCredentialTestResultSchema,
   SaveRemoteCredentialInputSchema,
+  PluginManifestSchema,
   BatchImportSchema,
   BatchItemPageSchema,
   BrowserInstallResultSchema,
@@ -208,6 +209,19 @@ const api: DocMindApi = {
         RemoteCredentialChannelSchema,
         providerName(provider),
         providerName(channel),
+      ),
+  },
+  plugins: {
+    list: (query) =>
+      invoke(
+        IPC_CHANNELS.pluginsList,
+        PluginManifestSchema.array(),
+        typeof query === "string" && query.trim() ? query.trim().slice(0, 200) : undefined,
+      ),
+    diagnostics: () =>
+      invoke(
+        IPC_CHANNELS.pluginsDiagnostics,
+        z.array(z.object({ name: z.string(), error: z.string() })),
       ),
   },
   repositories: {

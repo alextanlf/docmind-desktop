@@ -1,11 +1,10 @@
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
-  RemoteCredentialChannel,
   RuntimeSettingsInput,
   SaveRemoteCredentialInput,
   WebSearchSettingsInput,
 } from "../../../../shared/contracts";
-import { isRetryable } from "../../lib/client-errors";
+import { clientErrorMessage, isRetryable } from "../../lib/client-errors";
 
 export { clientErrorMessage, errorAction, isRetryable } from "../../lib/client-errors";
 
@@ -15,6 +14,10 @@ export const settingsKeys = {
   remote: (provider: string) => ["remote", "status", provider] as const,
   remoteProviders: ["remote", "providers"] as const,
   remoteCredentials: (provider: string) => ["remote", "credentials", provider] as const,
+  // The plugin catalogue is invalidated by any credential write, since that is
+  // what changes a card's connection state.
+  plugins: ["plugins"] as const,
+  pluginDiagnostics: ["plugins", "diagnostics"] as const,
 };
 export const localModelKeys = {
   status: ["localModel", "status"] as const,
@@ -55,30 +58,35 @@ export function useRemoteCredentialsQuery(provider: string) {
 }
 
 /**
- * Every provider's channels in one shot, keyed by provider name.
+ * The plugin catalogue, loaded once and filtered client-side.
  *
- * The settings page has to know all channels before it can group them, and it
- * needs the answer to decide which cards to render at all — so issuing the
- * requests from here keeps that decision in the query layer instead of making
- * the component fan out. The per-provider hook stays for the single-provider
- * mutations that invalidate these keys.
+ * This replaces the old per-provider fan-out (`useRemoteCredentialsQueries`),
+ * which existed only so the page could group channels by purpose before
+ * rendering. The page no longer groups, and one manifest already carries
+ * everything a card needs — including whether to draw a login button or a
+ * secret field — so a second round of per-provider requests would be pure
+ * overhead.
  */
-export function useRemoteCredentialsQueries(providers: string[]) {
-  const results = useQueries({
-    queries: providers.map((provider) => ({
-      queryKey: settingsKeys.remoteCredentials(provider),
-      queryFn: () => window.docmind.remote.listCredentials(provider),
-    })),
-  });
-  const data: Record<string, RemoteCredentialChannel[]> = {};
-  providers.forEach((provider, index) => {
-    const channels = results[index]?.data;
-    if (channels) data[provider] = channels;
+export function usePluginsQuery() {
+  const query = useQuery({
+    queryKey: settingsKeys.plugins,
+    queryFn: () => window.docmind.plugins.list(),
   });
   return {
-    data: Object.keys(data).length > 0 ? data : undefined,
-    isPending: results.some((result) => result.isPending),
+    ...query,
+    errorMessage: query.error ? clientErrorMessage(query.error) : null,
   };
+}
+
+/**
+ * Third-party plugins that failed to load. Surfaced in the UI because a plugin
+ * that silently failed is indistinguishable from one that was never installed.
+ */
+export function usePluginDiagnosticsQuery() {
+  return useQuery({
+    queryKey: settingsKeys.pluginDiagnostics,
+    queryFn: () => window.docmind.plugins.diagnostics(),
+  });
 }
 
 export function useSaveRemoteCredentialMutation(provider: string, channel: string) {
@@ -89,6 +97,9 @@ export function useSaveRemoteCredentialMutation(provider: string, channel: strin
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: settingsKeys.remoteCredentials(provider) });
       void client.invalidateQueries({ queryKey: settingsKeys.remoteProviders });
+      // The card's connection badge is derived state, so it has to be refetched
+      // or a successful save leaves the card reading "未连接".
+      void client.invalidateQueries({ queryKey: settingsKeys.plugins });
     },
   });
 }
@@ -101,6 +112,7 @@ export function useTestRemoteCredentialMutation(provider: string, channel: strin
       void client.invalidateQueries({ queryKey: settingsKeys.remoteCredentials(provider) });
       void client.invalidateQueries({ queryKey: settingsKeys.remoteProviders });
       void client.invalidateQueries({ queryKey: settingsKeys.remote(provider) });
+      void client.invalidateQueries({ queryKey: settingsKeys.plugins });
     },
   });
 }
@@ -113,6 +125,7 @@ export function useDeleteRemoteCredentialMutation(provider: string, channel: str
       void client.invalidateQueries({ queryKey: settingsKeys.remoteCredentials(provider) });
       void client.invalidateQueries({ queryKey: settingsKeys.remoteProviders });
       void client.invalidateQueries({ queryKey: settingsKeys.remote(provider) });
+      void client.invalidateQueries({ queryKey: settingsKeys.plugins });
     },
   });
 }

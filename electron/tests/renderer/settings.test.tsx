@@ -5,11 +5,9 @@ import { appQueryClient } from "../../renderer/src/app/query-client";
 import { SettingsView } from "../../renderer/src/features/settings/SettingsView";
 import { clientErrorMessage } from "../../renderer/src/features/settings/settings.queries";
 import {
-  feishuCredentialChannels,
   installDocMindApi,
   loggedOutRemote,
   readySettings,
-  yuqueCredentialChannels,
 } from "./test-docmind-api";
 
 function renderSettings() {
@@ -18,6 +16,22 @@ function renderSettings() {
       <SettingsView />
     </AppProviders>,
   );
+}
+
+/**
+ * A plugin's card, located by its title.
+ *
+ * Every card is labelled by its own heading, so a bare `getByLabelText("语雀
+ * API")` also matches the `<article>` and not just the credential input —
+ * scoping to the card first is what makes "the input inside this plugin's card"
+ * unambiguous.
+ */
+function pluginCard(title: string): HTMLElement {
+  return screen.getByRole("heading", { name: title, level: 3 }).closest("article")!;
+}
+
+function pluginInput(title: string): HTMLElement {
+  return within(pluginCard(title)).getByLabelText(title);
 }
 
 describe("设置", () => {
@@ -116,54 +130,141 @@ describe("设置", () => {
     expect(api.embedding.prepare).not.toHaveBeenCalled();
     expect(screen.queryByRole("progressbar", { name: "Embedding 加载进度" })).not.toBeInTheDocument();
 
-    expect(await screen.findByRole("button", { name: "登录语雀" })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "登录语雀" }));
+    expect(await screen.findByRole("button", { name: "登录语雀网页登录" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "登录语雀网页登录" }));
     expect(api.remote.login).toHaveBeenCalledWith("yuque");
   });
 
-  it("groups channels by purpose, keeping the bot webhook out of the sources", async () => {
+  it("renders one flat card per plugin with no grouping and no vendor list", async () => {
     const api = installDocMindApi({
       remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
     });
     renderSettings();
 
-    // Both groups exist immediately, but their cards only once the channel
-    // queries land, so wait for a card before scoping any assertion to a group.
-    await screen.findByRole("heading", { name: "语雀", level: 3 });
-    const sources = screen.getByRole("region", { name: "知识库来源" });
-    const notify = screen.getByRole("region", { name: "通知" });
+    // One card per credential channel — 「语雀网页登录」 and 「语雀 API」 are
+    // two things a user chooses between, so they are two cards rather than one
+    // vendor card with two rows in it.
+    await screen.findByRole("heading", { name: "语雀网页登录", level: 3 });
+    for (const label of ["语雀 API", "飞书自建应用", "飞书账号授权", "飞书机器人"]) {
+      expect(screen.getByRole("heading", { name: label, level: 3 })).toBeVisible();
+    }
 
-    // Each provider appears once per group it has something for. Yuque has no
-    // notification channel, so it must not get a second card.
-    expect(within(sources).getByRole("heading", { name: "语雀" })).toBeVisible();
-    expect(within(sources).getByRole("heading", { name: "飞书文档" })).toBeVisible();
-    expect(within(notify).getByRole("heading", { name: "飞书文档" })).toBeVisible();
-    expect(within(notify).queryByRole("heading", { name: "语雀" })).toBeNull();
+    // The regression this page exists to prevent: cards used to be partitioned
+    // into 「知识库来源」/「通知」, which made a bot webhook read as a third way
+    // to import documents. There must be no such sections anywhere on the page.
+    expect(screen.queryByRole("region", { name: "知识库来源" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "通知" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "知识库来源" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "通知" })).toBeNull();
+    // And no sub-headings inside the plugin page itself: every card is a peer,
+    // with nothing above it but the search box. Scoped to the section because
+    // other settings pages legitimately have their own sub-headings.
+    const plugins = screen.getByRole("heading", { name: "插件" }).closest("section")!;
+    expect(within(plugins).queryAllByRole("heading", { level: 4 })).toHaveLength(0);
+    expect(within(plugins).queryAllByRole("region")).toHaveLength(0);
 
-    // The regression this grouping exists for: a bot webhook is a notification
-    // target, and under the old vendor-only grouping it sat among the document
-    // sources looking like a third way to import them.
-    expect(within(sources).queryByLabelText("飞书机器人")).toBeNull();
-    expect(within(notify).getByLabelText("飞书机器人")).toBeVisible();
+    // A single request for the whole catalogue. The old layout needed one
+    // credential request per provider just to decide its groupings.
+    expect(api.plugins.list).toHaveBeenCalledTimes(1);
+    expect(api.remote.listProviders).not.toHaveBeenCalled();
 
-    // Every channel is still rendered by the generic, data-driven path.
-    expect(api.remote.listProviders).toHaveBeenCalledTimes(1);
-    expect(api.remote.listCredentials).toHaveBeenCalledWith("yuque");
-    expect(api.remote.listCredentials).toHaveBeenCalledWith("feishu");
-    expect(await within(sources).findByLabelText("语雀 API")).toBeVisible();
-    expect(within(sources).getByLabelText("飞书自建应用")).toBeVisible();
-    // 语雀 API、飞书自建应用、飞书机器人（webhook）三张 secret 表单初始均为未绑定。
-    expect(screen.getAllByText("未绑定")).toHaveLength(3);
-    // 飞书 user 通道是 OAuth 授权入口，无安装浏览器按钮。
-    expect(screen.getByRole("button", { name: "登录飞书文档" })).toBeVisible();
+    // Each card says which integration it plugs into. Without the owner a card
+    // titled 「机器人」 or 「网页登录」 identifies nothing.
+    const card = screen.getByRole("heading", { name: "飞书机器人", level: 3 }).closest("article")!;
+    expect(within(card).getByText("飞书文档")).toBeVisible();
 
-    // Each channel saves under its own provider. The buttons are located
-    // through the channel's own form rather than by index: the grouped layout
-    // decides the order, and an index would silently start pointing at the
-    // neighbouring vendor's form.
-    const feishuApp = within(sources).getByLabelText("飞书自建应用");
-    fireEvent.change(feishuApp, { target: { value: "cli_a1b2:s3cret" } });
-    fireEvent.click(feishuApp.closest("section")!.querySelector("button")!);
+    // Purpose survives as a tag, not as a section divider.
+    expect(within(card).getByText("通知")).toBeVisible();
+    const sourceCard = screen
+      .getByRole("heading", { name: "语雀 API", level: 3 })
+      .closest("article")!;
+    expect(within(sourceCard).getByText("知识库")).toBeVisible();
+  });
+
+  it("searches plugins by label, owner, summary and declared keywords", async () => {
+    installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
+    renderSettings();
+
+    await screen.findByRole("heading", { name: "语雀网页登录", level: 3 });
+    const search = screen.getByLabelText("搜索插件");
+
+    // All three Feishu channels match on the owner alone, across all three
+    // cards — the owner is searchable, not just the title.
+    fireEvent.change(search, { target: { value: "飞书" } });
+    expect(screen.getByRole("heading", { name: "飞书机器人", level: 3 })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "飞书自建应用", level: 3 })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "语雀 API", level: 3 })).toBeNull();
+
+    // An alias only the plugin declares:「lark」appears in no label at all.
+    fireEvent.change(search, { target: { value: "lark" } });
+    expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(3);
+
+    // The summary is searchable, which is why a plugin whose summary mentions a
+    // token matches on it too — 「语雀 API」 declares「用个人访问令牌读取…」.
+    fireEvent.change(search, { target: { value: "访问令牌" } });
+    expect(screen.getByRole("heading", { name: "Acme 访问令牌", level: 3 })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "语雀 API", level: 3 })).toBeVisible();
+    // A summary that mentions no plugin at all — nothing to match.
+    expect(screen.queryByRole("heading", { name: "飞书机器人", level: 3 })).toBeNull();
+
+    // Terms are ANDed, so a second word narrows instead of widening.
+    fireEvent.change(search, { target: { value: "语雀 令牌" } });
+    expect(screen.getByRole("heading", { name: "语雀 API", level: 3 })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "语雀网页登录", level: 3 })).toBeNull();
+
+    // A miss explains itself instead of showing an empty page.
+    fireEvent.change(search, { target: { value: "不存在的东西" } });
+    expect(screen.queryAllByRole("heading", { level: 3 })).toHaveLength(0);
+    expect(screen.getByText(/换个关键词试试/)).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "清除搜索" }));
+    expect(screen.getAllByRole("heading", { level: 3 }).length).toBeGreaterThan(3);
+  });
+
+  it("presents an installed third-party plugin with no vendor-specific code", async () => {
+    installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
+    renderSettings();
+
+    //「acme」 exists nowhere in DocMind's own source. If this card renders, the
+    // page really is driven by the catalogue rather than by a hard-coded list.
+    const card = await screen.findByRole("article", { name: /Acme 访问令牌/ });
+    expect(within(card).getByText("Acme Wiki")).toBeVisible();
+    expect(within(card).getByText("用个人访问令牌读取 Acme Wiki")).toBeVisible();
+    // Declared version and homepage both surface.
+    expect(within(card).getByText("v0.1.0")).toBeVisible();
+    expect(within(card).getByRole("link", { name: "了解更多" })).toBeVisible();
+  });
+
+  it("reports plugins that failed to load instead of hiding them", async () => {
+    installDocMindApi({
+      plugins: {
+        diagnostics: vi
+          .fn()
+          .mockResolvedValue([{ name: "acme", error: "ImportError: no module" }]),
+      },
+    });
+    renderSettings();
+
+    // A plugin that silently failed is indistinguishable from one that was
+    // never installed, so the user could not tell "broken" from "does not exist".
+    expect(await screen.findByText("以下插件加载失败")).toBeVisible();
+    expect(screen.getByText(/no module/)).toBeVisible();
+  });
+
+  it("saves a plugin credential under its own provider and channel", async () => {
+    const api = installDocMindApi({
+      remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
+    });
+    renderSettings();
+
+    // Located through the card, not by index: the grid order is whatever the
+    // catalogue returned, and an index would silently start pointing at a
+    // different plugin's form the moment one is added or removed.
+    await screen.findByRole("heading", { name: "飞书自建应用", level: 3 });
+    const field = pluginInput("飞书自建应用");
+    fireEvent.change(field, { target: { value: "cli_a1b2:s3cret" } });
+    fireEvent.click(field.closest("article")!.querySelector("button")!);
+
     await waitFor(() =>
       expect(api.remote.saveCredential).toHaveBeenCalledWith("feishu", "app", {
         secret: "cli_a1b2:s3cret",
@@ -171,9 +272,9 @@ describe("设置", () => {
     );
     expect(api.remote.testCredential).toHaveBeenCalledWith("feishu", "app");
 
-    const yuqueApi = within(sources).getByLabelText("语雀 API");
+    const yuqueApi = pluginInput("语雀 API");
     fireEvent.change(yuqueApi, { target: { value: "yuque-token" } });
-    fireEvent.click(yuqueApi.closest("section")!.querySelector("button")!);
+    fireEvent.click(yuqueApi.closest("article")!.querySelector("button")!);
     await waitFor(() =>
       expect(api.remote.saveCredential).toHaveBeenCalledWith("yuque", "api", {
         secret: "yuque-token",
@@ -182,30 +283,27 @@ describe("设置", () => {
     expect(api.remote.testCredential).toHaveBeenCalledWith("yuque", "api");
   });
 
-  it("derives the connections summary from the registered providers", async () => {
+  it("derives the plugin count from the catalogue", async () => {
     installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
     renderSettings();
 
-    // Regression: the description used to be a static sentence in SettingsView
-    // that named vendors, so it went stale the moment a provider was added or
-    // removed. It must now be built from the registry's own labels.
-    expect(
-      await screen.findByText("语雀、飞书文档均为可选连接，不影响 DocMind 启动"),
-    ).toBeVisible();
+// Regression: the description used to be a static sentence naming vendors,
+// so it went stale the moment a plugin was added or removed. The count has to
+// come from the catalogue — six plugins here, five of them built in.
+expect(await screen.findByText(/共 6 个插件/)).toBeVisible();
+expect(screen.getByText(/均为可选连接/)).toBeVisible();
   });
 
-  it("summary falls back to neutral copy when no provider is registered", async () => {
+  it("falls back to neutral copy when no plugin is installed", async () => {
     installDocMindApi({
-      remote: {
-        status: vi.fn().mockResolvedValue(loggedOutRemote),
-        listProviders: vi.fn().mockResolvedValue([]),
-      },
+      remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
+      plugins: { list: vi.fn().mockResolvedValue([]) },
     });
     renderSettings();
 
-    expect(
-      await screen.findByText("远程来源均为可选连接，不影响 DocMind 启动"),
-    ).toBeVisible();
+    expect(await screen.findByText("当前没有可用插件。")).toBeVisible();
+    // The search box stays: an empty catalogue is a state, not a dead page.
+    expect(screen.getByLabelText("搜索插件")).toBeVisible();
   });
 
   it("renders channel-declared hints instead of inventing provider copy", async () => {
@@ -213,56 +311,48 @@ describe("设置", () => {
     renderSettings();
 
     // A URL-shaped credential must not be labelled "… Token", and the form
-    // has to surface the provider's own placeholder and help link.
-    const webhookInput = await screen.findByLabelText("飞书机器人");
+    // has to surface the plugin's own placeholder and help link.
+    await screen.findByRole("heading", { name: "飞书机器人", level: 3 });
+    const webhookInput = pluginInput("飞书机器人");
     expect(webhookInput).toHaveAttribute(
       "placeholder",
       "https://open.feishu.cn/open-apis/bot/v2/hook/…",
     );
-    // The webhook channel supplies the help link itself; the copy comes from
-    // the channel descriptor rather than any hard-coded vendor string.
+    // The help link comes from the plugin manifest rather than any hard-coded
+    // vendor string, so a third-party plugin's link renders the same way.
     expect(screen.getAllByRole("link", { name: /添加机器人/ })).toHaveLength(1);
-    // Channels supply their own placeholder too, instead of the generic copy.
-    expect(await screen.findByLabelText("语雀 API")).toHaveAttribute(
-      "placeholder",
-      "粘贴语雀个人访问令牌",
-    );
+    // Plugins supply their own placeholder too, instead of the generic copy.
+    expect(pluginInput("语雀 API")).toHaveAttribute("placeholder", "粘贴语雀个人访问令牌");
   });
 
-  it("falls back to generic copy when a channel declares no hint", async () => {
-    // The Yuque API channel is the one that declares a placeholder and a help
-    // link; the browser-login channel declares neither, so it must render the
-    // generic wording rather than borrowing the other channel's copy.
-    installDocMindApi({
-      remote: {
-        status: vi.fn().mockResolvedValue(loggedOutRemote),
-        listCredentials: vi.fn().mockImplementation((provider: string) =>
-          Promise.resolve(
-            provider === "feishu" ? feishuCredentialChannels : yuqueCredentialChannels,
-          ),
-        ),
-      },
-    });
+  it("picks the right form per plugin from its own hasSecret declaration", async () => {
+    // A plugin needing a secret renders a credential field; one that does not
+    // renders the login entry. Deciding this in the renderer from a per-plugin
+    // flag keeps a plugin with no secret form (an OAuth-only integration) from
+    // being handed an empty text box it cannot use.
+    installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
     renderSettings();
 
+    await screen.findByRole("heading", { name: "语雀 API", level: 3 });
+    // The login affordance appears only after the plugin's status query lands,
+    // so it is awaited rather than assumed.
     expect(
-      await screen.findByLabelText("语雀 API"),
+      await screen.findByRole("button", { name: "登录语雀网页登录" }),
     ).toBeVisible();
-    const sources = screen.getByRole("region", { name: "知识库来源" });
-    expect(within(sources).getByLabelText("语雀 API")).toHaveAttribute(
-      "placeholder",
-      "粘贴语雀个人访问令牌",
-    );
-    // The browser-login channel declares no placeholder, so it renders as the
-    // login entry rather than a credential form — and it borrows no copy from
-    // the API channel sitting next to it.
-    expect(within(sources).getByText("语雀网页登录")).toBeVisible();
-    expect(within(sources).queryByLabelText("语雀网页登录")).toBeNull();
-    // The help link belongs to the API channel alone.
-    expect(within(sources).getAllByRole("link", { name: /获取令牌/ })).toHaveLength(1);
+    expect(
+      await screen.findByRole("button", { name: "登录飞书账号授权" }),
+    ).toBeVisible();
+    // hasSecret: false → no credential field at all. Scoped to the card so the
+    // query cannot accidentally hit a different plugin's input.
+    expect(within(pluginCard("语雀网页登录")).queryByLabelText("语雀网页登录")).toBeNull();
+    // hasSecret: true → the field, no login button.
+    expect(screen.queryByRole("button", { name: /登录飞书自建应用/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /登录飞书机器人/ })).toBeNull();
+    // The help link belongs to the API plugin alone.
+    expect(screen.getAllByRole("link", { name: /获取令牌/ })).toHaveLength(1);
   });
 
-  it("installs the Yuque browser when login reports a missing browser", async () => {
+  it("installs the browser when a plugin declares it and login reports it missing", async () => {
     const api = installDocMindApi({
       remote: {
         status: vi.fn().mockResolvedValue(loggedOutRemote),
@@ -275,11 +365,36 @@ describe("设置", () => {
     });
     renderSettings();
 
-    fireEvent.click(await screen.findByRole("button", { name: "登录语雀" }));
+    // The affordance exists because the manifest declares browserInstall plus
+    // the error code its absence raises — not because the vendor is recognised.
+    fireEvent.click(await screen.findByRole("button", { name: "登录语雀网页登录" }));
     fireEvent.click(await screen.findByRole("button", { name: "安装浏览器" }));
 
     expect(await screen.findByText("语雀浏览器已安装")).toBeVisible();
     expect(api.remote.installBrowser).toHaveBeenCalledWith("yuque");
+  });
+
+  it("offers no browser install to a plugin that did not declare it", async () => {
+    installDocMindApi({
+      remote: {
+        status: vi.fn().mockRejectedValue({
+          code: "SOMETHING_ELSE",
+          message: "不可用",
+          retryable: false,
+        }),
+        login: vi.fn().mockRejectedValue({
+          code: "SOMETHING_ELSE",
+          message: "不可用",
+          retryable: false,
+        }),
+      },
+    });
+    renderSettings();
+
+    // browserInstall is false for every Feishu channel, so the button must not
+    // appear even when login fails — a vendor-name check would have shown it.
+    expect((await screen.findAllByRole("button", { name: "重新检查" })).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "安装浏览器" })).toBeNull();
   });
 
   it("confirms and clears only diagnostic screenshots, then refetches settings", async () => {

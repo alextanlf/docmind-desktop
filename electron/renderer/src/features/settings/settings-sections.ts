@@ -1,4 +1,4 @@
-import { Cpu, Globe, HardDrive, KeyRound, Link2, type LucideIcon } from "lucide-react";
+import { Cpu, Globe, HardDrive, KeyRound, Puzzle, type LucideIcon } from "lucide-react";
 
 export interface SettingsSectionMeta {
   id: string;
@@ -9,7 +9,7 @@ export interface SettingsSectionMeta {
 export const SETTINGS_SECTIONS = {
   model: { id: "settings-model", label: "对话模型", icon: KeyRound },
   runtime: { id: "settings-runtime", label: "本地运行与路由", icon: Cpu },
-  connections: { id: "settings-connections", label: "远程来源", icon: Link2 },
+  plugins: { id: "settings-plugins", label: "插件", icon: Puzzle },
   webSearch: { id: "settings-web-search", label: "联网搜索", icon: Globe },
   diagnostics: { id: "settings-diagnostics", label: "本地数据与诊断", icon: HardDrive },
 } as const satisfies Record<string, SettingsSectionMeta>;
@@ -17,7 +17,7 @@ export const SETTINGS_SECTIONS = {
 export const SETTINGS_SECTION_ORDER = [
   SETTINGS_SECTIONS.model,
   SETTINGS_SECTIONS.runtime,
-  SETTINGS_SECTIONS.connections,
+  SETTINGS_SECTIONS.plugins,
   SETTINGS_SECTIONS.webSearch,
   SETTINGS_SECTIONS.diagnostics,
 ] satisfies SettingsSectionMeta[];

@@ -19,6 +19,8 @@ export const IPC_CHANNELS = {
   remoteSaveCredential: "remote:saveCredential",
   remoteTestCredential: "remote:testCredential",
   remoteDeleteCredential: "remote:deleteCredential",
+  pluginsList: "plugins:list",
+  pluginsDiagnostics: "plugins:diagnostics",
   repositoriesList: "repositories:list",
   repositoriesCreate: "repositories:create",
   repositoriesUpdate: "repositories:update",

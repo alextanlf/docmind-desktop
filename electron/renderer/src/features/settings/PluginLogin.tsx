@@ -1,37 +1,36 @@
 import { ExternalLink, LoaderCircle, LogIn } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { RemoteProviderCapabilities } from "../../../../shared/contracts";
+import type { PluginManifest } from "../../../../shared/contracts";
 import { appQueryClient } from "../../app/query-client";
 import { StatusBadge } from "../../components/StatusBadge";
 import { clientErrorMessage, settingsKeys, useRemoteStatusQuery } from "./settings.queries";
 
-export function RemoteStatus({
-  provider,
-  displayName,
-  loginLabel,
-  capabilities,
-}: {
-  provider: string;
-  displayName: string;
-  loginLabel?: string;
-  capabilities?: RemoteProviderCapabilities;
-}) {
-  const query = useRemoteStatusQuery(provider);
+/**
+ * The interactive-login entry for a plugin that has no stored secret — browser
+ * login or OAuth, whichever the plugin implements behind the same two calls.
+ *
+ * Whether the "install browser" affordance appears, and which error code means
+ * "the browser is missing", are both declared by the plugin. Matching a vendor
+ * code here made this component wrong for every other plugin, including ones
+ * nobody had written yet.
+ */
+export function PluginLogin({ plugin }: { plugin: PluginManifest }) {
+  const query = useRemoteStatusQuery(plugin.provider);
   const [loggingIn, setLoggingIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [browserUnavailable, setBrowserUnavailable] = useState(false);
   const [installingBrowser, setInstallingBrowser] = useState(false);
   const [installMessage, setInstallMessage] = useState<string | null>(null);
-  // Whether an install button makes sense is declared by the provider, and so
-  // is the error code it raises when the browser is missing. Hard-coding a
-  // vendor code here made this component wrong for every other provider.
-  const canInstallBrowser = capabilities?.browserInstall ?? false;
-  const browserUnavailableCode = capabilities?.browserUnavailableCode ?? null;
-  const isBrowserMissing = (error: unknown): boolean =>
+  const canInstallBrowser = plugin.browserInstall;
+  const browserUnavailableCode = plugin.browserUnavailableCode ?? null;
+  const isBrowserMissing = (value: unknown): boolean =>
     browserUnavailableCode !== null &&
-    (error as { code?: string }).code === browserUnavailableCode;
+    (value as { code?: string }).code === browserUnavailableCode;
 
   useEffect(() => {
+    // Logging in changes what repositories exist, so any open picker has to
+    // refetch — otherwise the newly reachable knowledge bases stay invisible
+    // until the user restarts.
     if (query.data?.loggedIn) {
       void appQueryClient.invalidateQueries({ queryKey: ["repositories"] });
     }
@@ -41,8 +40,8 @@ export function RemoteStatus({
     setLoggingIn(true);
     setError(null);
     try {
-      const result = await window.docmind.remote.login(provider);
-      appQueryClient.setQueryData(settingsKeys.remote(provider), result);
+      const result = await window.docmind.remote.login(plugin.provider);
+      appQueryClient.setQueryData(settingsKeys.remote(plugin.provider), result);
       await appQueryClient.invalidateQueries({ queryKey: ["repositories"] });
       setBrowserUnavailable(false);
     } catch (loginError) {
@@ -57,7 +56,7 @@ export function RemoteStatus({
     setInstallingBrowser(true);
     setInstallMessage(null);
     try {
-      const result = await window.docmind.remote.installBrowser(provider);
+      const result = await window.docmind.remote.installBrowser(plugin.provider);
       setInstallMessage(result.message);
       setBrowserUnavailable(false);
       await query.refetch();
@@ -68,7 +67,10 @@ export function RemoteStatus({
     }
   }
 
-  if (query.isPending) return <p className="muted-row">正在检查{displayName}登录状态…</p>;
+  if (query.isPending) {
+    return <p className="muted-row">正在检查{plugin.label}登录状态…</p>;
+  }
+
   if (query.isError) {
     const unavailable = isBrowserMissing(query.error);
     return (
@@ -97,21 +99,30 @@ export function RemoteStatus({
   }
 
   return (
-    <div className="status-row">
-      <div className="status-copy">
-        <div className="status-title-line">
-          <strong>{query.data.accountLabel ?? `${displayName}账号`}</strong>
-          <StatusBadge
-            label={query.data.loggedIn ? "已登录" : "未登录"}
-            tone={query.data.loggedIn ? "success" : "pending"}
-          />
-        </div>
-        <p>{query.data.loggedIn ? "可同步知识库与文档" : "将在可见浏览器窗口中完成登录"}</p>
-        {error ? (
-          <p className="error-copy" role="alert">
-            {error}
-          </p>
-        ) : null}
+    <div className="plugin-form">
+      <div className="status-title-line">
+        <strong>{query.data.accountLabel ?? `${plugin.label}账号`}</strong>
+        <StatusBadge
+          label={query.data.loggedIn ? "已登录" : "未登录"}
+          tone={query.data.loggedIn ? "success" : "pending"}
+        />
+      </div>
+      {error ? (
+        <p className="error-copy" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className="connection-actions">
+        <button className="button button-secondary" disabled={loggingIn} onClick={login}>
+          {loggingIn ? (
+            <LoaderCircle aria-hidden="true" className="spin" size={16} />
+          ) : query.data.loggedIn ? (
+            <ExternalLink aria-hidden="true" size={16} />
+          ) : (
+            <LogIn aria-hidden="true" size={16} />
+          )}
+          {query.data.loggedIn ? `重新登录${plugin.label}` : `登录${plugin.label}`}
+        </button>
         {browserUnavailable && canInstallBrowser ? (
           <button
             className="button button-secondary"
@@ -121,22 +132,12 @@ export function RemoteStatus({
             {installingBrowser ? "正在安装…" : "安装浏览器"}
           </button>
         ) : null}
-        {installMessage ? (
-          <p className="error-copy" role="status">
-            {installMessage}
-          </p>
-        ) : null}
       </div>
-      <button className="button button-secondary" disabled={loggingIn} onClick={login}>
-        {loggingIn ? (
-          <LoaderCircle aria-hidden="true" className="spin" size={16} />
-        ) : query.data.loggedIn ? (
-          <ExternalLink aria-hidden="true" size={16} />
-        ) : (
-          <LogIn aria-hidden="true" size={16} />
-        )}
-        {loginLabel ?? (query.data.loggedIn ? "重新登录" : `登录${displayName}`)}
-      </button>
+      {installMessage ? (
+        <p className="error-copy" role="status">
+          {installMessage}
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -46,6 +46,10 @@ class FeishuProvider:
     identity = ProviderIdentity(
         name="feishu",
         label="飞书文档",
+        summary="把飞书云文档导入 DocMind",
+        icon="library",
+        keywords=("feishu", "飞书", "lark", "云文档"),
+        homepage="https://open.feishu.cn/document/",
         capabilities=ProviderCapabilities(
             browser_install=False,
             marker_lookup=True,

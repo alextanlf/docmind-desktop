@@ -40,6 +40,7 @@ import {
   RemoteCredentialChannelSchema,
   RemoteCredentialTestResultSchema,
   SaveRemoteCredentialInputSchema,
+  PluginManifestSchema,
   BatchImportSchema,
   BatchItemPageSchema,
   BrowserInstallResultSchema,
@@ -110,6 +111,12 @@ export interface IpcDependencies {
 export type IpcHandlerMap = Record<string, Handler>;
 
 const UUID = z.string().uuid();
+/**
+ * A plugin search box must not be able to smuggle anything into the query
+ * string. Bounded to the same length the backend accepts, and encoded on the
+ * way out; the value is user input, so it is validated like any other.
+ */
+const PLUGIN_QUERY = z.string().trim().max(200);
 const REMOTE_PROVIDER = z
   .string()
   .trim()
@@ -242,6 +249,18 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         )}/credentials/${encodeURIComponent(parse(REMOTE_PROVIDER, channel))}`,
         jsonInit("DELETE"),
         RemoteCredentialChannelSchema,
+      ),
+    [IPC_CHANNELS.pluginsList]: (_event, query) =>
+      proxy.requestJson(
+        `/api/plugins${query ? `?q=${encodeURIComponent(parse(PLUGIN_QUERY, query))}` : ""}`,
+        {},
+        z.array(PluginManifestSchema),
+      ),
+    [IPC_CHANNELS.pluginsDiagnostics]: () =>
+      proxy.requestJson(
+        "/api/plugins/diagnostics",
+        {},
+        z.array(z.object({ name: z.string(), error: z.string() })),
       ),
     [IPC_CHANNELS.repositoriesList]: () =>
       proxy.requestJson("/api/repositories", {}, z.array(RepositorySchema)),

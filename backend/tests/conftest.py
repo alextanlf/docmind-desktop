@@ -82,6 +82,12 @@ def app_secret_store(client: TestClient) -> MemorySecretStore:
 
 
 @pytest.fixture
+def store(client: TestClient):
+    """The app's live credential store, for tests that assert on plugin state."""
+    return client.app.state.credential_store
+
+
+@pytest.fixture
 def database() -> Iterator[Database]:
     database = Database("sqlite+pysqlite:///:memory:")
     database.upgrade()

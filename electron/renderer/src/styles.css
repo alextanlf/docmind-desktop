@@ -1582,109 +1582,7 @@ input:disabled {
   font-size: 13px;
 }
 
-.connection-sections {
-  display: grid;
-  gap: 22px;
-}
-.connection-group {
-  display: grid;
-  gap: 10px;
-}
-.connection-group > h4 {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 500;
-}
-.connection-group-hint {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
-.connection-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 14px;
-}
-/* One channel inside a card. The heading is what makes the choice legible:
-   without it the two ways of connecting to a vendor look interchangeable. */
-.connection-channel {
-  display: grid;
-  gap: 8px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-}
-.connection-channel:first-of-type {
-  padding-top: 0;
-  border-top: none;
-}
-.connection-channel-heading strong {
-  font-size: 13px;
-  font-weight: 500;
-}
-.connection-channel-heading p {
-  margin: 2px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
-/* Spans the whole grid so the derived provider list reads as a caption
-   above the cards rather than as another card. */
-.connection-summary {
-  grid-column: 1 / -1;
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
-.connection-card {
-  display: grid;
-  min-width: 0;
-  align-content: start;
-  gap: 14px;
-  padding: 15px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface-subtle);
-}
-.connection-card > header {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-}
-.connection-card > header > svg {
-  flex: 0 0 auto;
-  margin-top: 2px;
-  color: var(--blue);
-}
-.connection-card > header div {
-  min-width: 0;
-}
-.connection-card h3 {
-  margin: 0;
-  font-size: 14px;
-}
-.connection-card header p,
-.connection-binding-form > p {
-  margin: 3px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-.connection-card .status-row {
-  align-items: stretch;
-  flex-direction: column;
-  gap: 12px;
-}
-.connection-card .status-row > .button {
-  align-self: flex-start;
-}
-.connection-binding-form {
-  display: grid;
-  min-width: 0;
-  align-content: start;
-  gap: 10px;
-}
-.connection-field {
+/* --- Plugin page ---------------------------------------------------------
   display: grid;
   min-width: 0;
   gap: 6px;
@@ -1697,6 +1595,167 @@ input:disabled {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+/* --- Plugin page ---------------------------------------------------------
+   The page is deliberately flat: no section wrappers, because the app has no
+   business deciding how a user should group their own integrations. */
+.plugin-settings {
+  display: grid;
+  gap: 14px;
+}
+/* The search box is the primary control on this page — the catalogue grows with
+   installed plugins, so scanning by eye stops working past a handful. */
+.plugin-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  color: var(--muted);
+}
+.plugin-search:focus-within {
+  border-color: var(--blue);
+}
+.plugin-search input {
+  min-width: 0;
+  flex: 1;
+  padding: 9px 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+.plugin-search-clear {
+  display: grid;
+  place-items: center;
+  padding: 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.plugin-search-clear:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.plugin-toolbar-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.plugin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+}
+.plugin-card {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 10px;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+}
+.plugin-card > header {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+.plugin-card > header > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--blue);
+}
+.plugin-card-heading {
+  min-width: 0;
+  flex: 1;
+}
+.plugin-card h3 {
+  margin: 0;
+  font-size: 14px;
+}
+/* Which integration this plugs into. A card titled「机器人」or「网页登录」
+   says nothing on its own, so the owner is always shown. */
+.plugin-card-owner {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.plugin-card-summary {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.plugin-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+.plugin-tag {
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.plugin-tag-link {
+  cursor: pointer;
+  text-decoration: none;
+}
+.plugin-tag-link:hover {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+.plugin-card-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.plugin-card-body {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.plugin-form {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 10px;
+}
+/* A plugin that failed to load must be visibly different from one that was
+   never installed, or the two are indistinguishable to the user. */
+.plugin-load-failures {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.plugin-load-failures strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+}
+.plugin-load-failures ul {
+  margin: 0;
+  padding-left: 18px;
 }
 .connection-help-link {
   display: inline-flex;

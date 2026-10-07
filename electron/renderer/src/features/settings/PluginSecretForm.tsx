@@ -1,6 +1,6 @@
 import { ExternalLink, LoaderCircle, ShieldCheck, Unlink } from "lucide-react";
 import { useState } from "react";
-import type { RemoteCredentialChannel } from "../../../../shared/contracts";
+import type { PluginManifest } from "../../../../shared/contracts";
 import { StatusBadge } from "../../components/StatusBadge";
 import {
   clientErrorMessage,
@@ -10,22 +10,22 @@ import {
 } from "./settings.queries";
 
 /**
- * Generic secret-credential form for any remote provider channel
- * (API token, app secret, ...). Driven entirely by the channel descriptor
- * returned by `GET /api/remote/providers/{provider}/credentials`.
+ * The secret-credential form for a plugin that needs one (an API token, an app
+ * secret, a bot webhook URL).
+ *
+ * Everything on screen comes from the plugin's own manifest — label,
+ * placeholder, help link, and the copy explaining the trade-off. A
+ * URL-shaped credential must not be labelled "… Token", and a generic string
+ * would have to name vendors to stay accurate for a third-party plugin.
  */
-export function RemoteSecretChannel({ channel }: { channel: RemoteCredentialChannel }) {
-  const save = useSaveRemoteCredentialMutation(channel.provider, channel.channel);
-  const test = useTestRemoteCredentialMutation(channel.provider, channel.channel);
-  const remove = useDeleteRemoteCredentialMutation(channel.provider, channel.channel);
+export function PluginSecretForm({ plugin }: { plugin: PluginManifest }) {
+  const save = useSaveRemoteCredentialMutation(plugin.provider, plugin.channel);
+  const test = useTestRemoteCredentialMutation(plugin.provider, plugin.channel);
+  const remove = useDeleteRemoteCredentialMutation(plugin.provider, plugin.channel);
   const [secret, setSecret] = useState("");
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const busy = save.isPending || test.isPending || remove.isPending;
-  const verified = channel.state === "verified";
-  // A channel whose secret is a URL (a bot webhook) would read as "… Token",
-  // so the label comes from the channel and only gains a "Token" suffix when
-  // the provider did not supply its own wording.
-  const secretLabel = channel.label;
+  const verified = plugin.state === "verified";
 
   async function saveAndVerify() {
     setMessage(null);
@@ -44,37 +44,32 @@ export function RemoteSecretChannel({ channel }: { channel: RemoteCredentialChan
     try {
       await remove.mutateAsync();
       setSecret("");
-      setMessage({ tone: "success", text: `已解除${channel.label}绑定` });
+      setMessage({ tone: "success", text: `已解除${plugin.label}绑定` });
     } catch (error) {
       setMessage({ tone: "error", text: clientErrorMessage(error) });
     }
   }
 
   return (
-    <div className="connection-binding-form">
+    <div className="plugin-form">
       <div className="status-title-line">
-        <strong>{channel.accountLabel ?? channel.label}</strong>
+        <strong>{plugin.accountLabel ?? plugin.label}</strong>
         <StatusBadge
-          label={verified ? "使用中" : channel.configured ? "待验证" : "未绑定"}
-          tone={verified ? "success" : channel.configured ? "pending" : "neutral"}
+          label={verified ? "使用中" : plugin.configured ? "待验证" : "未绑定"}
+          tone={verified ? "success" : plugin.configured ? "pending" : "neutral"}
         />
       </div>
-      <p>
-        {verified
-          ? `已通过凭据连接，${channel.label}通道可用`
-          : "保存凭据后需通过连接测试才会启用"}
-      </p>
       <label className="connection-field">
-        <span>{secretLabel}</span>
+        <span>{plugin.label}</span>
         <input
-          aria-label={secretLabel}
+          aria-label={plugin.label}
           autoComplete="off"
           disabled={busy}
           onChange={(event) => setSecret(event.target.value)}
           placeholder={
-            channel.configured
+            plugin.configured
               ? "已保存，留空则保留"
-              : (channel.secretPlaceholder ?? "输入访问凭据")
+              : (plugin.secretPlaceholder ?? "输入访问凭据")
           }
           type="password"
           value={secret}
@@ -83,7 +78,7 @@ export function RemoteSecretChannel({ channel }: { channel: RemoteCredentialChan
       <div className="connection-actions">
         <button
           className="button button-primary"
-          disabled={busy || (!secret.trim() && !channel.configured)}
+          disabled={busy || (!secret.trim() && !plugin.configured)}
           onClick={() => void saveAndVerify()}
           type="button"
         >
@@ -92,9 +87,9 @@ export function RemoteSecretChannel({ channel }: { channel: RemoteCredentialChan
           ) : (
             <ShieldCheck aria-hidden="true" size={16} />
           )}
-          {channel.configured ? "验证并启用" : "保存并验证"}
+          {plugin.configured ? "验证并启用" : "保存并验证"}
         </button>
-        {channel.configured ? (
+        {plugin.configured ? (
           <button
             className="button button-danger-quiet"
             disabled={busy}
@@ -105,16 +100,16 @@ export function RemoteSecretChannel({ channel }: { channel: RemoteCredentialChan
             解除绑定
           </button>
         ) : null}
-        {channel.helpUrl ? (
+        {plugin.helpUrl ? (
           <a
             className="connection-help-link"
-            href={channel.helpUrl}
+            href={plugin.helpUrl}
             onClick={(event) => {
               event.preventDefault();
-              void window.docmind.shell.openExternal(channel.helpUrl!);
+              void window.docmind.shell.openExternal(plugin.helpUrl!);
             }}
           >
-            {channel.helpLabel ?? "获取凭据"}
+            {plugin.helpLabel ?? "获取凭据"}
             <ExternalLink aria-hidden="true" size={14} />
           </a>
         ) : null}

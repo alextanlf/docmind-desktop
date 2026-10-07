@@ -191,7 +191,7 @@ export function BatchSourceStep({
         <div className="remote-source-form">
           <p role="note">仅拉取，不会修改远程知识库</p>
           {remoteRepositories.length === 0 ? (
-            <p role="note">暂无已绑定的远程知识库，请先在设置中连接远程来源</p>
+            <p role="note">暂无已绑定的远程知识库，请先在设置的插件页连接一个</p>
           ) : (
             <button
               className="button button-primary"

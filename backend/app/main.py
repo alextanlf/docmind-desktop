@@ -25,6 +25,7 @@ from app.api.import_batches import router as import_batches_router
 from app.api.imports import router as imports_router
 from app.api.local_model import router as local_model_router
 from app.api.memory import router as memory_router
+from app.api.plugins import router as plugins_router
 from app.api.remote import router as remote_router
 from app.api.repositories import router as repositories_router
 from app.api.request_limits import RequestBodyLimitMiddleware
@@ -68,6 +69,8 @@ from app.memory.distillation import DistillationService
 from app.memory.indexer import MemoryIndexer
 from app.memory.persistence import LocalKnowledgeStore
 from app.memory.retriever import MemoryRetriever
+from app.plugins.catalog import PluginCatalog
+from app.plugins.loader import load_plugins
 from app.memory.summary import SummaryScheduler, SummaryService
 from app.remote.credentials import CredentialStore
 from app.remote.discovery import RemoteDiscovery
@@ -307,7 +310,24 @@ def create_app(
         notifications = NotificationHub()
         if not fake_services:
             notifications.register(build_feishu_notification_target(credential_store))
-        app.state.notifications = notifications
+            # Third-party plugins register onto the *same* registry and hub, so
+            # they flow through identical credential / discovery / notification
+            # paths. A plugin that fails to load is recorded and skipped: one
+            # broken integration must not stop the app from starting.
+            app.state.notifications = notifications
+        if not fake_services:
+            # Third-party plugins register onto the *same* registry and hub, so
+            # they flow through identical credential / discovery / notification
+            # paths. A plugin that fails to load is recorded and skipped: one
+            # broken integration must not stop the app from starting. Fake mode
+            # skips discovery entirely so tests see a deterministic catalogue.
+            app.state.plugin_diagnostics = load_plugins(registry, notifications)
+        else:
+            app.state.plugin_diagnostics = None
+        # The plugin page is a read model over the registry plus credential
+        # state, so there is no second catalogue to keep in sync — registering a
+        # provider is enough to make its card appear.
+        app.state.plugin_catalog = PluginCatalog(registry, credential_store)
         conversation_store = ConversationStore(database)
         vector_store = PersistentVectorStore(runtime_settings.vectorstore_settings)
         document_store = DocumentStore(database)
@@ -666,6 +686,7 @@ def create_app(
     app.include_router(settings_router)
     app.include_router(embedding_router)
     app.include_router(remote_router)
+    app.include_router(plugins_router)
     app.include_router(imports_router)
     app.include_router(import_batches_router)
     app.include_router(repositories_router)

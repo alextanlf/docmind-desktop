@@ -61,6 +61,15 @@ class CredentialChannelSpec:
     # One line telling the user what choosing this gets them, including the
     # trade-off they are making ("opens a browser", "needs a token first").
     hint: str | None = None
+    # What this single channel does, in the user's terms ("把语雀知识库导入
+    # DocMind"). Distinct from ``hint``, which explains the cost of picking it;
+    # this explains the effect. The plugin card pairs them.
+    summary: str | None = None
+    # Icon key overriding the provider's own, for a channel that is a different
+    # kind of thing from the rest of its plugin (a bot webhook is not a library).
+    icon: str | None = None
+    # Extra search terms for this channel on its own card.
+    keywords: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

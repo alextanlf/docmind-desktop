@@ -6,6 +6,7 @@ import type {
   ImportJob,
   Message,
   ModelStatus,
+  PluginManifest,
   RemoteCredentialChannel,
   RemoteProviderSummary,
   Repository,
@@ -192,6 +193,158 @@ export const feishuCredentialChannels: RemoteCredentialChannel[] = [
   },
 ];
 
+/**
+ * The plugin catalogue, mirroring what the backend derives from the provider
+ * registry: one card per credential channel, five in total.
+ *
+ * `acme` stands in for an installed third-party plugin — it has no counterpart
+ * in DocMind's own source, which is the point: the renderer must present it
+ * with no vendor-specific code.
+ */
+export const pluginManifests: PluginManifest[] = [
+  {
+    id: "yuque:web",
+    provider: "yuque",
+    channel: "web",
+    label: "语雀网页登录",
+    providerLabel: "语雀",
+    summary: "在浏览器里登录语雀，直接读取你的知识库",
+    hint: "浏览器里直接登录，不用申请令牌；导入与同步时会打开 Chrome。",
+    icon: "login",
+    keywords: ["yuque", "语雀", "wiki", "浏览器", "扫码", "web"],
+    purpose: "source",
+    homepage: "https://www.yuque.com/yuque/developer/api",
+    version: null,
+    hasSecret: false,
+    secretPlaceholder: null,
+    helpUrl: null,
+    helpLabel: null,
+    configured: false,
+    state: "disconnected",
+    accountLabel: null,
+    browserInstall: true,
+    browserUnavailableCode: "YUQUE_BROWSER_UNAVAILABLE",
+  },
+  {
+    id: "yuque:api",
+    provider: "yuque",
+    channel: "api",
+    label: "语雀 API",
+    providerLabel: "语雀",
+    summary: "用个人访问令牌读取语雀知识库",
+    hint: "更快更稳，但要先去语雀后台申请一个个人访问令牌。",
+    icon: "key",
+    keywords: ["yuque", "语雀", "wiki", "令牌", "token", "api", "个人访问令牌"],
+    purpose: "source",
+    homepage: "https://www.yuque.com/yuque/developer/api",
+    version: null,
+    hasSecret: true,
+    secretPlaceholder: "粘贴语雀个人访问令牌",
+    helpUrl: "https://www.yuque.com/yuque/developer/api",
+    helpLabel: "获取令牌",
+    configured: false,
+    state: "disconnected",
+    accountLabel: null,
+    browserInstall: true,
+    browserUnavailableCode: "YUQUE_BROWSER_UNAVAILABLE",
+  },
+  {
+    id: "feishu:app",
+    provider: "feishu",
+    channel: "app",
+    label: "飞书自建应用",
+    providerLabel: "飞书文档",
+    summary: "用自建应用的 App ID 与 App Secret 读取飞书文档",
+    hint: "填入 App ID 与 App Secret 后才能授权账号；这是飞书开放平台的要求。",
+    icon: "key",
+    keywords: ["feishu", "飞书", "lark", "云文档", "应用", "app id", "app secret", "自建"],
+    purpose: "source",
+    homepage: "https://open.feishu.cn/document/",
+    version: null,
+    hasSecret: true,
+    secretPlaceholder: null,
+    helpUrl: null,
+    helpLabel: null,
+    configured: false,
+    state: "disconnected",
+    accountLabel: null,
+    browserInstall: false,
+    browserUnavailableCode: null,
+  },
+  {
+    id: "feishu:user",
+    provider: "feishu",
+    channel: "user",
+    label: "飞书账号授权",
+    providerLabel: "飞书文档",
+    summary: "用你的飞书账号授权，让 DocMind 读取你有权访问的文档",
+    hint: "在浏览器里同意授权，让 DocMind 读取你的飞书文档。",
+    icon: "login",
+    keywords: ["feishu", "飞书", "lark", "云文档", "oauth", "授权", "账号", "user"],
+    purpose: "source",
+    homepage: "https://open.feishu.cn/document/",
+    version: null,
+    hasSecret: false,
+    secretPlaceholder: null,
+    helpUrl: null,
+    helpLabel: null,
+    configured: false,
+    state: "disconnected",
+    accountLabel: null,
+    browserInstall: false,
+    browserUnavailableCode: null,
+  },
+  {
+    id: "feishu:webhook",
+    provider: "feishu",
+    channel: "webhook",
+    label: "飞书机器人",
+    providerLabel: "飞书文档",
+    summary: "导入完成或失败时，往群里发一条通知",
+    hint: "导入完成或失败时，往群里发一条通知。不影响文档读取。",
+    icon: "bell",
+    keywords: ["feishu", "飞书", "lark", "云文档", "机器人", "webhook", "群", "通知", "bot"],
+    // Declared metadata, rendered as a tag. The page must NOT group on this —
+    // a bot webhook used to sit in a「通知」section that read as a third way to
+    // import documents.
+    purpose: "notify",
+    homepage: "https://open.feishu.cn/document/",
+    version: null,
+    hasSecret: true,
+    secretPlaceholder: "https://open.feishu.cn/open-apis/bot/v2/hook/…",
+    helpUrl: "https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot",
+    helpLabel: "添加机器人",
+    configured: false,
+    state: "disconnected",
+    accountLabel: null,
+    browserInstall: false,
+    browserUnavailableCode: null,
+  },
+  {
+    id: "acme:token",
+    provider: "acme",
+    channel: "token",
+    label: "Acme 访问令牌",
+    providerLabel: "Acme Wiki",
+    summary: "用个人访问令牌读取 Acme Wiki",
+    hint: "在 Acme 后台生成一个访问令牌。",
+    icon: "key",
+    keywords: ["acme", "wiki", "token", "令牌"],
+    purpose: "source",
+    homepage: "https://acme.test",
+    version: "0.1.0",
+    hasSecret: true,
+    secretPlaceholder: null,
+    helpUrl: null,
+    helpLabel: null,
+    configured: false,
+    state: "disconnected",
+    accountLabel: null,
+    browserInstall: false,
+    browserUnavailableCode: null,
+  },
+];
+
 export const repository: Repository = {
   id: "00000000-0000-0000-0000-000000000021",
   provider: "yuque",
@@ -283,6 +436,7 @@ export function installDocMindApi(overrides?: {
   settings?: Partial<typeof window.docmind.settings>;
   embedding?: Partial<typeof window.docmind.embedding>;
   remote?: Partial<typeof window.docmind.remote>;
+  plugins?: Partial<typeof window.docmind.plugins>;
   repositories?: Partial<DocMindApi["repositories"]>;
   sync?: Partial<DocMindApi["sync"]>;
   conflicts?: Partial<DocMindApi["conflicts"]>;
@@ -374,6 +528,14 @@ export function installDocMindApi(overrides?: {
         state: "disconnected",
       }),
       ...overrides?.remote,
+    },
+    plugins: {
+      // One call for the whole catalogue. The renderer filters locally, so the
+      // query argument stays unused here — it exists for a catalogue too large
+      // to ship wholesale.
+      list: vi.fn().mockResolvedValue(pluginManifests),
+      diagnostics: vi.fn().mockResolvedValue([]),
+      ...overrides?.plugins,
     },
     repositories: {
       list: vi.fn().mockResolvedValue([repository]),

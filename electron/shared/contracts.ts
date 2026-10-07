@@ -248,6 +248,46 @@ export const SaveRemoteCredentialInputSchema = z.object({
   secret: z.string().max(4_000),
 });
 
+/**
+ * One plugin card. The unit is a *credential channel*, not a provider:
+ * 「语雀网页登录」 and 「语雀 API」 are two things a user chooses between, so
+ * they are two cards.
+ *
+ * Everything rendered here is plugin-declared (label, summary, icon, keywords,
+ * providerLabel). The renderer holds no list of its own and names no vendor —
+ * installing a third-party plugin needs no change on this side.
+ */
+export const PluginManifestSchema = z.object({
+  id: z.string(),
+  provider: z.string(),
+  channel: z.string(),
+  label: z.string(),
+  /** Which integration this plugin plugs into; shown as the card subtitle. */
+  providerLabel: z.string(),
+  summary: z.string().nullable().optional(),
+  hint: z.string().nullable().optional(),
+  /** Glyph key resolved by the renderer's icon table; unknown keys fall back. */
+  icon: z.string().nullable().optional(),
+  /** Alias terms a user might type that the labels don't contain. */
+  keywords: z.array(z.string()).default([]),
+  /**
+   * Declared metadata, rendered as a tag. It is deliberately NOT a grouping:
+   * the page neither sorts nor partitions on it.
+   */
+  purpose: z.enum(["source", "notify"]).default("source"),
+  homepage: z.string().nullable().optional(),
+  version: z.string().nullable().optional(),
+  hasSecret: z.boolean(),
+  secretPlaceholder: z.string().nullable().optional(),
+  helpUrl: z.string().nullable().optional(),
+  helpLabel: z.string().nullable().optional(),
+  configured: z.boolean(),
+  state: z.enum(["verified", "unverified", "disconnected"]),
+  accountLabel: z.string().nullable().optional(),
+  browserInstall: z.boolean(),
+  browserUnavailableCode: z.string().nullable().optional(),
+});
+
 export const RepositorySchema = z.object({
   id,
   provider: z.string().max(32).nullable().optional(),
@@ -731,6 +771,7 @@ export type RemoteProviderSummary = z.infer<typeof RemoteProviderSummarySchema>;
 export type RemoteCredentialChannel = z.infer<typeof RemoteCredentialChannelSchema>;
 export type RemoteCredentialTestResult = z.infer<typeof RemoteCredentialTestResultSchema>;
 export type SaveRemoteCredentialInput = z.infer<typeof SaveRemoteCredentialInputSchema>;
+export type PluginManifest = z.infer<typeof PluginManifestSchema>;
 export type Repository = z.infer<typeof RepositorySchema>;
 export type CreateRepositoryInput = z.infer<typeof CreateRepositoryInputSchema>;
 export type UpdateRepositoryInput = z.infer<typeof UpdateRepositoryInputSchema>;
@@ -837,6 +878,16 @@ export interface DocMindApi {
     ): Promise<RemoteCredentialChannel>;
     testCredential(provider: string, channel: string): Promise<RemoteCredentialTestResult>;
     deleteCredential(provider: string, channel: string): Promise<RemoteCredentialChannel>;
+  };
+  /**
+   * The plugin catalogue. Read-only and vendor-agnostic: the response is
+   * derived from the backend's provider registry, so a newly installed
+   * third-party plugin shows up here with no client change. `query` is matched
+   * server-side against each plugin's own declared text; empty returns all.
+   */
+  plugins: {
+    list(query?: string): Promise<PluginManifest[]>;
+    diagnostics(): Promise<{ name: string; error: string }[]>;
   };
   repositories: {
     list(): Promise<Repository[]>;

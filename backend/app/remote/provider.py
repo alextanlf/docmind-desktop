@@ -44,6 +44,24 @@ class ProviderIdentity:
     name: str
     label: str
     capabilities: ProviderCapabilities = field(default_factory=ProviderCapabilities)
+    # One line saying what this integration is for. It is shown on the plugin
+    # card and searched over, so it has to be provider-supplied: a generic
+    # string would either name vendors in the UI layer or go stale the moment a
+    # third-party plugin is installed.
+    summary: str | None = None
+    # Icon key the client maps to a glyph ("library", "bell", ...). A key rather
+    # than a component or an icon font name, because plugins ship as data and
+    # the renderer owns the glyph table.
+    icon: str | None = None
+    # Extra search terms beyond label/summary, for the names users actually type
+    # ("wiki", " Lark", "飞书文档"). Case-insensitive on both ends.
+    keywords: tuple[str, ...] = ()
+    # Where to read more about the integration. Opaque to the app; the client
+    # only opens it externally.
+    homepage: str | None = None
+    # Free-form version string for the plugin itself, surfaced in the UI so a
+    # user can tell two builds of the same provider apart when reporting bugs.
+    version: str | None = None
 
 
 @runtime_checkable

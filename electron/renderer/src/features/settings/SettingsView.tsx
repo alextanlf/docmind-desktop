@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
-import { ConnectionSettings } from "./ConnectionSettings";
 import { DiagnosticsSection } from "./DiagnosticsSection";
 import { ModelSettingsForm } from "./ModelSettingsForm";
+import { PluginSettings } from "./PluginSettings";
 import { SettingsNav } from "./SettingsNav";
 import { WebSearchSettings } from "./WebSearchSettings";
 import { RuntimeModelSettings } from "./RuntimeModelSettings";
@@ -20,8 +20,8 @@ function SettingsSection({
 }: {
   meta: SettingsSectionMeta;
   /**
-   * Optional because a section may own its own heading copy: the connections
-   * section derives its line from the registered providers at runtime, so a
+   * Optional because a section may own its own heading copy: the plugin
+   * section derives its line from whatever is installed at runtime, so a
    * static string here would have to hard-code vendor names.
    */
   description?: string;
@@ -84,8 +84,8 @@ export function SettingsView() {
           >
             <RuntimeModelSettings settings={settings.data} />
           </SettingsSection>
-          <SettingsSection meta={SETTINGS_SECTIONS.connections}>
-            <ConnectionSettings />
+          <SettingsSection meta={SETTINGS_SECTIONS.plugins}>
+            <PluginSettings />
           </SettingsSection>
           <SettingsSection
             description="本地证据不足时按模型内置联网、Tavily、免费兜底的顺序搜索"
