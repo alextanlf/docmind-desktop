@@ -45,7 +45,8 @@ describe("Workspace", () => {
     const workspace = screen.getByLabelText("工作台");
     expect(workspace).toHaveClass("workspace-grid");
     expect(workspace).toHaveClass("reference-is-closed");
-    expect(screen.getByLabelText("主导航")).toHaveClass("w-[248px]");
+    expect(workspace.style.getPropertyValue("--sidebar-width")).toBe("248px");
+    expect(workspace.style.getPropertyValue("--reference-width")).toBe("0px");
     expect(screen.getByLabelText("主导航")).toHaveClass("workspace-sidebar");
     expect(screen.queryByLabelText("引用资料")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "打开引用资料" })).not.toBeInTheDocument();
@@ -59,7 +60,7 @@ describe("Workspace", () => {
     const workspace = screen.getByLabelText("工作台");
     expect(workspace).not.toHaveClass("reference-is-closed");
     expect(screen.getByLabelText("引用资料")).toHaveClass("workspace-reference");
-    expect(screen.getByLabelText("引用资料")).toHaveClass("w-[320px]");
+    expect(workspace.style.getPropertyValue("--reference-width")).toBe("320px");
 
     fireEvent.click(screen.getByRole("button", { name: `展开 ${repository.name}` }));
     fireEvent.click(await screen.findByRole("button", { name: document.title }));

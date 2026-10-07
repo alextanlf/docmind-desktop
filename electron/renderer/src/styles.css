@@ -101,22 +101,88 @@ button:disabled {
 }
 
 .workspace-grid {
+  --sidebar-width: 248px;
+  --reference-width: 320px;
   display: grid;
-  grid-template-columns: 248px minmax(480px, 1fr) 320px;
+  grid-template-columns: var(--sidebar-width) minmax(480px, 1fr) var(--reference-width);
+  position: relative;
   width: 100%;
   height: 100%;
   background: var(--workspace);
   overflow: hidden;
 }
 .workspace-grid.sidebar-is-collapsed {
-  grid-template-columns: 64px minmax(480px, 1fr) 320px;
+  --sidebar-width: 64px;
+  grid-template-columns: var(--sidebar-width) minmax(480px, 1fr) var(--reference-width);
 }
 .workspace-grid.reference-is-closed {
-  grid-template-columns: 248px minmax(480px, 1fr) 0;
+  grid-template-columns: var(--sidebar-width) minmax(480px, 1fr) 0;
 }
 .workspace-grid.sidebar-is-collapsed.reference-is-closed {
-  grid-template-columns: 64px minmax(480px, 1fr) 0;
+  --sidebar-width: 64px;
+  grid-template-columns: var(--sidebar-width) minmax(480px, 1fr) 0;
 }
+
+/* Resizing must track the pointer exactly; a width transition would lag behind
+   the cursor and make the sidebar feel like it is sliding on its own. */
+.workspace-grid.is-resizing .workspace-sidebar,
+.workspace-grid.is-resizing .workspace-reference {
+  transition: none;
+}
+
+.panel-resizer {
+  position: absolute;
+  z-index: 30;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+  outline: none;
+}
+.panel-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 1px;
+  background: transparent;
+  transition:
+    background 120ms ease,
+    left 120ms ease,
+    width 120ms ease;
+}
+.panel-resizer-sidebar {
+  left: calc(var(--sidebar-width) - 5px);
+}
+.panel-resizer-reference {
+  right: calc(var(--reference-width) - 5px);
+}
+.panel-resizer:hover::after,
+.panel-resizer:focus-visible::after,
+.panel-resizer.is-dragging::after {
+  left: 3px;
+  width: 3px;
+  background: var(--blue);
+}
+.panel-resizer:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+/* Overlapping the 1px panel border is what makes the 9px hit area feel aligned. */
+.panel-resizer-sidebar {
+  margin-left: -4px;
+}
+.panel-resizer-reference {
+  margin-right: -4px;
+}
+.workspace-grid.reference-is-closed .panel-resizer-reference,
+.workspace-grid.sidebar-is-collapsed .panel-resizer-sidebar {
+  display: none;
+}
+
 .workspace-sidebar,
 .workspace-reference,
 .workspace-main {
@@ -138,7 +204,7 @@ button:disabled {
 
 .workspace-sidebar {
   display: flex;
-  width: 248px;
+  width: var(--sidebar-width, 248px);
   flex-direction: column;
   border-right: 1px solid var(--line);
   background: var(--surface);
@@ -708,7 +774,7 @@ button:disabled {
 }
 
 .workspace-reference {
-  width: 320px;
+  width: var(--reference-width, 320px);
   overflow: hidden;
   border-left: 1px solid var(--line);
   background: var(--surface);
@@ -1296,6 +1362,9 @@ button:disabled {
   .workspace-grid.sidebar-is-collapsed.reference-is-closed {
     grid-template-columns: 64px minmax(0, 1fr);
   }
+  .workspace-sidebar {
+    width: 248px;
+  }
   .workspace-reference {
     position: fixed;
     z-index: 20;
@@ -1308,6 +1377,11 @@ button:disabled {
   .reference-is-closed .workspace-reference {
     visibility: hidden;
     transform: translateX(100%);
+  }
+  /* Drawer mode and the forced icon rail both drop the custom widths, so the
+     handles must go with them or they would drag a column that is not there. */
+  .panel-resizer {
+    display: none;
   }
 }
 

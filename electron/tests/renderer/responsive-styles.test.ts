@@ -93,7 +93,29 @@ describe("responsive workspace styles", () => {
 
   it("keeps the desktop workspace in its three-column grid", () => {
     expect(stylesAt(1440, "workspace-grid")["grid-template-columns"]).toBe(
-      "248px minmax(480px, 1fr) 320px",
+      "var(--sidebar-width) minmax(480px, 1fr) var(--reference-width)",
     );
+  });
+
+  it("drives both panel widths from custom properties the resizer writes", () => {
+    const grid = stylesAt(1440, "workspace-grid");
+    expect(grid["--sidebar-width"]).toBe("248px");
+    expect(grid["--reference-width"]).toBe("320px");
+    expect(stylesAt(1440, "workspace-grid", "sidebar-is-collapsed")["--sidebar-width"]).toBe("64px");
+    // The collapsed rail is a fixed 64px: a remembered width must not leak back in.
+    expect(stylesAt(1440, "workspace-sidebar", "is-collapsed")["width"]).toBe("64px");
+  });
+
+  it("removes the width transition while a panel is being dragged", () => {
+    expect(stylesAt(1440, "workspace-grid", "is-resizing", "workspace-sidebar")["transition"]).toBe(
+      "none",
+    );
+  });
+
+  it("hides the resizers once the drawer and forced-rail breakpoints take over", () => {
+    expect(stylesAt(1100, "panel-resizer")["display"]).toBe("none");
+    expect(
+      stylesAt(1440, "workspace-grid", "reference-is-closed", "panel-resizer-reference")["display"],
+    ).toBe("none");
   });
 });

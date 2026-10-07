@@ -11,8 +11,10 @@ import {
 } from "lucide-react";
 import { clsx } from "clsx";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import type { SessionSummary } from "../../../shared/contracts";
 import { IconButton } from "../components/IconButton";
+import { PanelResizer } from "../components/PanelResizer";
 import { ChatPanel } from "../features/chat/ChatPanel";
 import { RepositoryScope } from "../features/chat/RepositoryScope";
 import { SessionList } from "../features/chat/SessionList";
@@ -37,6 +39,7 @@ import {
 import { SettingsView } from "../features/settings/SettingsView";
 import { MemoryView } from "../features/memory/MemoryView";
 import { useChatStreamStore } from "../stores/chat-stream-store";
+import { usePanelSizeStore } from "../stores/panel-size-store";
 import { useUiStore } from "../stores/ui-store";
 
 const FORCED_RAIL_QUERY = "(max-width: 1000px)";
@@ -69,6 +72,9 @@ export function Workspace() {
   const referencePanelOpen = useUiStore((state) => state.referencePanelOpen);
   const setReferencePanelOpen = useUiStore((state) => state.setReferencePanelOpen);
   const openDistillation = useUiStore((state) => state.openDistillation);
+  const panelSizes = usePanelSizeStore((state) => state.sizes);
+  const gridRef = useRef<HTMLElement>(null);
+  const [resizing, setResizing] = useState(false);
   const sidebarToggleRef = useRef<HTMLButtonElement>(null);
   const sidebarLibraryRef = useRef<HTMLDivElement>(null);
   const importNavigationRef = useRef<HTMLButtonElement>(null);
@@ -173,12 +179,20 @@ export function Workspace() {
         "workspace-grid",
         sidebarCollapsed && "sidebar-is-collapsed",
         !referencePanelVisible && "reference-is-closed",
+        resizing && "is-resizing",
       )}
       data-reference-layout={forcedIconRail ? "drawer" : "grid"}
+      ref={gridRef}
+      style={
+        {
+          "--sidebar-width": `${sidebarCollapsed ? 64 : panelSizes.sidebar}px`,
+          "--reference-width": `${referencePanelVisible ? panelSizes.reference : 0}px`,
+        } as CSSProperties
+      }
     >
       <aside
         aria-label="主导航"
-        className={clsx("workspace-sidebar w-[248px]", sidebarCollapsed && "is-collapsed")}
+        className={clsx("workspace-sidebar", sidebarCollapsed && "is-collapsed")}
       >
         <div className="brand-row">
           <strong>DocMind</strong>
@@ -258,6 +272,14 @@ export function Workspace() {
           <span>设置</span>
         </button>
       </aside>
+      {sidebarCollapsed || forcedIconRail ? null : (
+        <PanelResizer
+          containerRef={gridRef}
+          onDragStateChange={setResizing}
+          siblingWidth={referencePanelVisible ? panelSizes.reference : 0}
+          side="sidebar"
+        />
+      )}
       <section
         className="workspace-main"
         aria-label={activeView === "settings" ? "设置内容" : "对话工作区"}
@@ -372,18 +394,26 @@ export function Workspace() {
         ) : null}
       </section>
       {referencePanelVisible ? (
-        <aside aria-label="引用资料" className="workspace-reference w-[320px]">
-          <ReferencePanel
-            citations={citations}
-            onBatchCreated={(id) => {
-              setBatchId(id);
-              setOpenBatchConfirmation(true);
-              setImportOpen(true);
-            }}
-            repositoryId={selectedRepositoryIds[0] ?? null}
-            sessionId={selectedSession?.id ?? null}
+        <>
+          <PanelResizer
+            containerRef={gridRef}
+            onDragStateChange={setResizing}
+            siblingWidth={sidebarCollapsed ? 64 : panelSizes.sidebar}
+            side="reference"
           />
-        </aside>
+          <aside aria-label="引用资料" className="workspace-reference">
+            <ReferencePanel
+              citations={citations}
+              onBatchCreated={(id) => {
+                setBatchId(id);
+                setOpenBatchConfirmation(true);
+                setImportOpen(true);
+              }}
+              repositoryId={selectedRepositoryIds[0] ?? null}
+              sessionId={selectedSession?.id ?? null}
+            />
+          </aside>
+        </>
       ) : null}
       <ImportDialog
         onClose={() => {
