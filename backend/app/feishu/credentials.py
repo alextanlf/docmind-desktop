@@ -62,6 +62,7 @@ FEISHU_CREDENTIAL_SPEC = ProviderCredentialSpec(
             default_secret_ref=FEISHU_APP_SECRET_REF,
             tester=test_feishu_app_credentials,
             purpose="source",
+            tag="知识库",
             summary="用自建应用的 App ID 与 App Secret 读取飞书文档",
             icon="key",
             keywords=("应用", "app id", "app secret", "自建"),
@@ -72,6 +73,7 @@ FEISHU_CREDENTIAL_SPEC = ProviderCredentialSpec(
             label="飞书账号授权",
             has_secret=False,
             purpose="source",
+            tag="知识库",
             summary="用你的飞书账号授权，让 DocMind 读取你有权访问的文档",
             icon="login",
             keywords=("oauth", "授权", "账号", "user"),
@@ -95,6 +97,7 @@ FEISHU_CREDENTIAL_SPEC = ProviderCredentialSpec(
             # which is the whole point — grouped by vendor it used to sit among
             # the document sources and read as one of them.
             purpose="notify",
+            tag="通知",
             summary="导入完成或失败时，往群里发一条通知",
             icon="bell",
             keywords=("机器人", "webhook", "群", "通知", "bot"),

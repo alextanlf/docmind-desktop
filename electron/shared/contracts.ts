@@ -249,21 +249,28 @@ export const SaveRemoteCredentialInputSchema = z.object({
 });
 
 /**
- * One plugin card. The unit is a *credential channel*, not a provider:
- * 「语雀网页登录」 and 「语雀 API」 are two things a user chooses between, so
- * they are two cards.
+ * One plugin card. What a plugin contributes varies — a credential channel for
+ * a remote knowledge base, a document format, something not invented yet — so
+ * `kind` is the discriminator the renderer uses to pick a card *body*. It
+ * selects a body, never a vendor: an unknown kind falls back to a neutral card.
  *
- * Everything rendered here is plugin-declared (label, summary, icon, keywords,
- * providerLabel). The renderer holds no list of its own and names no vendor —
- * installing a third-party plugin needs no change on this side.
+ * Everything rendered here is plugin-declared (label, providerLabel, summary,
+ * icon, keywords, tag). The renderer holds no list of its own and names no
+ * vendor — installing a third-party plugin needs no change on this side.
  */
 export const PluginManifestSchema = z.object({
   id: z.string(),
+  /** Which kind of capability this card configures; picks the card body. */
+  kind: z.string(),
   provider: z.string(),
   channel: z.string(),
   label: z.string(),
-  /** Which integration this plugin plugs into; shown as the card subtitle. */
-  providerLabel: z.string(),
+  /**
+   * Which integration this plugin plugs into; shown as the card subtitle.
+   * `null` for a contribution that plugs into nothing (a format), where a
+   * subtitle would be noise rather than orientation.
+   */
+  providerLabel: z.string().nullable().optional(),
   summary: z.string().nullable().optional(),
   hint: z.string().nullable().optional(),
   /** Glyph key resolved by the renderer's icon table; unknown keys fall back. */
@@ -271,12 +278,15 @@ export const PluginManifestSchema = z.object({
   /** Alias terms a user might type that the labels don't contain. */
   keywords: z.array(z.string()).default([]),
   /**
-   * Declared metadata, rendered as a tag. It is deliberately NOT a grouping:
-   * the page neither sorts nor partitions on it.
+   * The category tag's display text ("知识库" / "通知" / "文档格式"), declared by
+   * the plugin. Rendered verbatim — the page must not know what a category is
+   * called, and must not use it to group: it is a tag, not a section heading.
    */
-  purpose: z.enum(["source", "notify"]).default("source"),
+  tag: z.string().nullable().optional(),
   homepage: z.string().nullable().optional(),
   version: z.string().nullable().optional(),
+  /** Suffixes this card adds ("支持 .tex"); empty for anything but a format. */
+  extensions: z.array(z.string()).default([]),
   hasSecret: z.boolean(),
   secretPlaceholder: z.string().nullable().optional(),
   helpUrl: z.string().nullable().optional(),

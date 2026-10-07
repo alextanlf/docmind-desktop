@@ -11,10 +11,13 @@ import type { PluginManifest } from "../../../../shared/contracts";
 /**
  * Free-text filter over each plugin's own declared text.
  *
- * The haystack is exactly what the backend searches (label, provider label,
- * summary, id, keywords), so typing here and typing in the backend's `q`
- * endpoint agree — a card that `GET /api/plugins?q=令牌` returns must not be
- * one this hides. AND semantics: every term must match, so extra words narrow.
+ * The haystack is exactly what the backend searches (`PluginCatalog._matches`),
+ * so typing here and typing in the backend's `q` endpoint agree — a card that
+ * `GET /api/plugins?q=令牌` returns must not be one this hides. AND semantics:
+ * every term must match, so extra words narrow.
+ *
+ * The two field lists cannot be shared across the process boundary, so they are
+ * kept identical by hand and asserted from both sides.
  */
 export function filterPlugins(plugins: PluginManifest[], query: string): PluginManifest[] {
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -22,9 +25,14 @@ export function filterPlugins(plugins: PluginManifest[], query: string): PluginM
   return plugins.filter((plugin) => {
     const haystack = [
       plugin.label,
-      plugin.providerLabel,
+      plugin.providerLabel ?? "",
       plugin.summary ?? "",
       plugin.id,
+      plugin.provider,
+      plugin.channel,
+      plugin.kind,
+      plugin.tag ?? "",
+      ...plugin.extensions,
       ...plugin.keywords,
     ]
       .join(" ")

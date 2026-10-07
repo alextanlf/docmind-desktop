@@ -7,6 +7,7 @@ import { clientErrorMessage } from "../../renderer/src/features/settings/setting
 import {
   installDocMindApi,
   loggedOutRemote,
+  pluginManifests,
   readySettings,
 } from "./test-docmind-api";
 
@@ -272,6 +273,39 @@ describe("设置", () => {
     expect(within(sourceCard).getByText("知识库")).toBeVisible();
   });
 
+  it("renders a card for a contributed document format", async () => {
+    installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
+    renderSettings();
+    await openSection("插件");
+
+    const card = (
+      await screen.findByRole("heading", { name: "TeX 文档", level: 3 })
+    ).closest("article")!;
+
+    // A format card states what it adds rather than offering a credential form.
+    expect(within(card).getByText("文档格式")).toBeVisible();
+    expect(within(card).getByText(".tex")).toBeVisible();
+    expect(within(card).getByText(".latex")).toBeVisible();
+    // It stores no credential, so neither a secret field nor a login button
+    // belongs on it — the old two-way body would have drawn a login button.
+    expect(within(card).queryByRole("button", { name: /登录/ })).toBeNull();
+    expect(within(card).queryByRole("textbox")).toBeNull();
+    // And it reports no connection, because there is nothing to connect.
+    expect(within(card).queryByText("未连接")).toBeNull();
+  });
+
+  it("finds a format card through the search box by its extension", async () => {
+    installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
+    renderSettings();
+    await openSection("插件");
+
+    await screen.findByRole("heading", { name: "语雀网页登录", level: 3 });
+    fireEvent.change(screen.getByLabelText("搜索插件"), { target: { value: ".latex" } });
+
+    expect(screen.getByRole("heading", { name: "TeX 文档", level: 3 })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "语雀 API", level: 3 })).toBeNull();
+  });
+
   it("searches plugins by label, owner, summary and declared keywords", async () => {
     installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
     renderSettings();
@@ -383,11 +417,15 @@ describe("设置", () => {
     renderSettings();
     await openSection("插件");
 
-// Regression: the description used to be a static sentence naming vendors,
-// so it went stale the moment a plugin was added or removed. The count has to
-// come from the catalogue — six plugins here, five of them built in.
-expect(await screen.findByText(/共 6 个插件/)).toBeVisible();
-expect(screen.getByText(/均为可选连接/)).toBeVisible();
+    // Regression: the description used to be a static sentence naming vendors,
+    // so it went stale the moment a plugin was added or removed. The count is
+    // read off the fixture rather than written out, so this asserts the count
+    // is derived and not that the catalogue happens to hold a particular
+    // number today.
+    expect(
+      await screen.findByText(new RegExp(`共 ${pluginManifests.length} 个插件`)),
+    ).toBeVisible();
+    expect(screen.getByText(/均为可选连接/)).toBeVisible();
   });
 
   it("falls back to neutral copy when no plugin is installed", async () => {

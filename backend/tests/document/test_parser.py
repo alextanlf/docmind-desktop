@@ -171,7 +171,7 @@ def test_parser_survives_a_subclass_that_replaces_init() -> None:
     # otherwise instrumenting the parser breaks it in a way that only shows up
     # at import time.
     class Wrapper(DocumentParser):
-        def __init__(self) -> None:  # noqa: D107 - deliberately does not chain
+        def __init__(self) -> None:
             self.calls = 0
 
     wrapped = Wrapper()

@@ -1,12 +1,14 @@
-"""Plugin catalogue: derivation from the registry, and third-party discovery.
+"""Plugin catalogue: derivation from contributions, and third-party discovery.
 
-Two things are locked here:
+What is locked here:
 
-* the catalogue is *derived*, so registering a provider is the only step needed
-  for its card to exist — there is no second list anywhere;
+* the catalogue is *derived*, so installing a contribution is the only step
+  needed for its card to exist — there is no second list anywhere;
 * the page is flat. Grouping by vendor or by purpose is exactly the behaviour
   that was removed, and a test asserting "no section headings" is the cheapest
-  way to keep it from creeping back.
+  way to keep it from creeping back;
+* a contribution kind the catalogue has never seen still produces a card,
+  which is what "the plugin layer is a distribution mechanism" has to mean.
 """
 
 from __future__ import annotations
@@ -14,18 +16,28 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from app.document.builtin_formats import builtin_registry
+from app.document.formats import DocumentFormat, FormatConflictError
 from app.plugins import loader
 from app.plugins.catalog import PluginCatalog
-from app.plugins.loader import PluginContribution, load_plugins
-from app.plugins.manifest import PluginManifest
+from app.plugins.contributions import (
+    KIND_DOCUMENT_FORMAT,
+    KIND_REMOTE_SOURCE,
+    DocumentFormatContribution,
+    PluginHost,
+    RemoteSourceContribution,
+    install_contribution,
+)
+from app.plugins.loader import load_plugins
+from app.plugins.manifest import PluginManifest, merge_keywords
 from app.remote.credentials import (
     CredentialChannelSpec,
     CredentialStore,
     ProviderCredentialSpec,
 )
+from app.remote.notifications import NotificationHub, NotificationTarget
 from app.remote.provider import ProviderCapabilities, ProviderIdentity
 from app.remote.registry import ProviderRegistry
-from app.remote.notifications import NotificationHub, NotificationTarget
 
 
 class _DocsProvider:
@@ -45,7 +57,9 @@ class _DocsProvider:
 
 
 class _ChattyProvider:
-    identity = ProviderIdentity(name="acme-chat", label="Acme Chat", icon="bell")
+    identity = ProviderIdentity(
+        name="acme-chat", label="Acme Chat", icon="bell", tag="通知"
+    )
 
     async def close(self) -> None:
         return None
@@ -62,6 +76,7 @@ def _spec() -> ProviderCredentialSpec:
                 summary="浏览器里登录 Acme",
                 icon="login",
                 keywords=("浏览器",),
+                tag="知识库",
             ),
             CredentialChannelSpec(
                 name="api",
@@ -71,16 +86,39 @@ def _spec() -> ProviderCredentialSpec:
                 summary="用令牌读取 Acme",
                 icon="key",
                 keywords=("token",),
+                tag="知识库",
             ),
         ),
     )
 
 
+def _host(*contributions, store: CredentialStore) -> PluginHost:
+    """A host with the given contributions installed, exactly as the app does.
+
+    Built through ``install_contribution`` rather than by registering directly,
+    so the tests exercise the same path a plugin takes.
+    """
+    host = PluginHost(
+        providers=ProviderRegistry(store),
+        formats=builtin_registry(),
+        credentials=store,
+        notifications=NotificationHub(),
+    )
+    for contribution in contributions:
+        install_contribution(host, contribution)
+    return host
+
+
+def _remote(provider, *, spec: ProviderCredentialSpec | None = None) -> RemoteSourceContribution:
+    return RemoteSourceContribution(
+        provider=provider,
+        credential_spec=spec if spec is not None else _spec(),
+        always_configured=True,
+    )
+
+
 def _catalog(*providers, store: CredentialStore) -> PluginCatalog:
-    registry = ProviderRegistry(store)
-    for provider in providers:
-        registry.register(provider, always_configured=True, credential_spec=_spec())
-    return PluginCatalog(registry, store)
+    return PluginCatalog(_host(*(_remote(provider) for provider in providers), store=store))
 
 
 # -- derivation -------------------------------------------------------------
@@ -91,11 +129,12 @@ def test_one_card_per_channel_not_per_provider(store: CredentialStore) -> None:
 
     manifests = catalog.manifests()
 
-    # The whole point of the redesign: 「Acme 网页登录」 and 「Acme API」 are two
+    # The whole point of the design: 「Acme 网页登录」 and 「Acme API」 are two
     # things a user chooses between, so they are two cards.
     assert [m.id for m in manifests] == ["acme:web", "acme:api"]
     assert [m.label for m in manifests] == ["Acme 网页登录", "Acme API"]
     assert {m.provider_label for m in manifests} == {"Acme Docs"}
+    assert {m.kind for m in manifests} == {KIND_REMOTE_SOURCE}
 
 
 def test_card_carries_its_own_copy_and_search_terms(store: CredentialStore) -> None:
@@ -113,18 +152,28 @@ def test_card_carries_its_own_copy_and_search_terms(store: CredentialStore) -> N
     assert set(manifest.keywords) >= {"浏览器", "acme", "wiki"}
 
 
-def test_provider_without_credential_channels_still_gets_a_card(store: CredentialStore) -> None:
-    registry = ProviderRegistry(store)
-    registry.register(_ChattyProvider(), always_configured=True)
-    catalog = PluginCatalog(registry, store)
+def test_tag_is_declared_by_the_channel_not_derived_from_purpose(store: CredentialStore) -> None:
+    manifests = _catalog(_DocsProvider(), store=store).manifests()
 
-    manifests = catalog.manifests()
+    # The display text is copy the plugin owns; the page must not have to know
+    # what a purpose is called.
+    assert [m.tag for m in manifests] == ["知识库", "知识库"]
+
+
+def test_provider_without_credential_channels_still_gets_a_card(store: CredentialStore) -> None:
+    host = _host(
+        RemoteSourceContribution(provider=_ChattyProvider(), always_configured=True),
+        store=store,
+    )
+
+    manifests = PluginCatalog(host).manifests()
 
     # Otherwise a plugin needing no stored secret would be invisible in settings
     # even though it works — and the user could not log into it from the UI.
     assert [m.id for m in manifests] == ["acme-chat:core"]
     assert manifests[0].has_secret is False
     assert manifests[0].icon == "bell"
+    assert manifests[0].tag == "通知"
 
 
 def test_a_channel_may_override_the_providers_icon(store: CredentialStore) -> None:
@@ -134,16 +183,13 @@ def test_a_channel_may_override_the_providers_icon(store: CredentialStore) -> No
         provider="acme",
         channels=(
             CredentialChannelSpec(
-                name="bot", label="Acme 机器人", has_secret=False, icon="bell"
+                name="bot", label="Acme 机器人", has_secret=False, icon="bell", tag="通知"
             ),
         ),
     )
-    registry = ProviderRegistry(store)
-    registry.register(_DocsProvider(), always_configured=True, credential_spec=spec)
+    catalog = PluginCatalog(_host(_remote(_DocsProvider(), spec=spec), store=store))
 
-    manifest = PluginCatalog(registry, store).manifests()[0]
-
-    assert manifest.icon == "bell"
+    assert catalog.manifests()[0].icon == "bell"
 
 
 def test_channel_without_icon_falls_back_to_the_provider(store: CredentialStore) -> None:
@@ -151,10 +197,12 @@ def test_channel_without_icon_falls_back_to_the_provider(store: CredentialStore)
         provider="acme",
         channels=(CredentialChannelSpec(name="plain", label="Acme", has_secret=False),),
     )
-    registry = ProviderRegistry(store)
-    registry.register(_DocsProvider(), always_configured=True, credential_spec=spec)
+    catalog = PluginCatalog(_host(_remote(_DocsProvider(), spec=spec), store=store))
+    manifest = catalog.manifests()[0]
 
-    assert PluginCatalog(registry, store).manifests()[0].icon == "library"
+    assert manifest.icon == "library"
+    # A channel that declares no tag renders none — no fallback invents copy.
+    assert manifest.tag is None
 
 
 def test_card_reflects_live_credential_state(store: CredentialStore) -> None:
@@ -168,6 +216,132 @@ def test_card_reflects_live_credential_state(store: CredentialStore) -> None:
     assert manifest.configured is True
     assert manifest.state == "verified"
     assert manifest.account_label == "alice"
+
+
+# -- the document_format kind -----------------------------------------------
+
+
+def _tex_format() -> DocumentFormat:
+    return DocumentFormat(
+        name="tex",
+        label="TeX 文档",
+        media_type="text/x-tex",
+        extensions=(".tex", ".latex"),
+        parse=lambda document: document,  # type: ignore[arg-type,return-value]
+    )
+
+
+def _tex_contribution() -> DocumentFormatContribution:
+    return DocumentFormatContribution(
+        format=_tex_format(),
+        label="TeX 文档",
+        summary="把 TeX 源文件导入 DocMind",
+        tag="文档格式",
+        icon="library",
+        version="0.1.0",
+    )
+
+
+def test_a_format_contribution_installs_into_the_format_registry(store: CredentialStore) -> None:
+    host = _host(_tex_contribution(), store=store)
+
+    # Installing is all it takes for the importer to accept the format.
+    assert host.formats.for_extension(".tex").name == "tex"
+    assert ".tex" in host.formats.pickable_extensions()
+
+
+def test_a_format_contribution_produces_a_card(store: CredentialStore) -> None:
+    manifest = PluginCatalog(_host(_tex_contribution(), store=store)).manifests()[0]
+
+    assert manifest.kind == KIND_DOCUMENT_FORMAT
+    assert manifest.id == "tex:core"
+    assert manifest.label == "TeX 文档"
+    assert manifest.tag == "文档格式"
+    assert manifest.version == "0.1.0"
+    # The suffixes are carried so the card can say what it adds.
+    assert manifest.extensions == (".tex", ".latex")
+    # A format plugs into nothing, so there is no owner to name.
+    assert manifest.provider_label is None
+    # And it stores no credential, so the credential fields stay at defaults.
+    assert manifest.has_secret is False
+    assert manifest.state == "disconnected"
+
+
+def test_a_format_conflict_fails_the_installation_and_records_nothing(
+    store: CredentialStore,
+) -> None:
+    """A plugin must not be able to take a suffix the user already relies on."""
+    squatter = DocumentFormatContribution(
+        format=DocumentFormat(
+            name="evil",
+            label="Evil PDF",
+            media_type="text/x-evil",
+            extensions=(".pdf",),
+            parse=lambda document: document,  # type: ignore[arg-type,return-value]
+        ),
+        label="Evil PDF",
+    )
+    host = _host(store=store)
+
+    with pytest.raises(FormatConflictError):
+        install_contribution(host, squatter)
+
+    # Nothing half-applied: the built-in still wins and no card was recorded.
+    assert host.formats.for_extension(".pdf").name == "pdf"
+    assert PluginCatalog(host).manifests() == []
+
+
+def test_contributions_of_both_kinds_share_one_flat_catalogue(store: CredentialStore) -> None:
+    catalog = PluginCatalog(_host(_remote(_DocsProvider()), _tex_contribution(), store=store))
+
+    manifests = catalog.manifests()
+
+    # Two cards from the remote provider, one from the format — and no grouping
+    # between them, because `kind` is metadata rather than a section.
+    assert [m.id for m in manifests] == ["acme:web", "acme:api", "tex:core"]
+    assert [m.kind for m in manifests] == [
+        KIND_REMOTE_SOURCE,
+        KIND_REMOTE_SOURCE,
+        KIND_DOCUMENT_FORMAT,
+    ]
+
+
+def test_the_catalogue_never_branches_on_kind(store: CredentialStore) -> None:
+    """A contribution kind this codebase has never seen still yields a card.
+
+    If the catalogue (or the manifest) needed a matching edit for a new kind,
+    the extensibility claim would be false and this test is what noticed.
+    """
+    from dataclasses import dataclass
+
+    @dataclass(frozen=True)
+    class _Invented:
+        label: str
+
+        kind = "invented_kind"
+
+        def install(self, host: PluginHost) -> None:
+            return None
+
+        def cards(self, host: PluginHost) -> list[PluginManifest]:
+            return [
+                PluginManifest(
+                    id=f"invented:{self.label}",
+                    kind=self.kind,
+                    provider="invented",
+                    channel=self.label,
+                    label=f"发明的 {self.label}",
+                )
+            ]
+
+    catalog = PluginCatalog(_host(_Invented(label="widget"), store=store))
+
+    manifests = catalog.manifests()
+
+    assert [m.kind for m in manifests] == ["invented_kind"]
+    assert manifests[0].label == "发明的 widget"
+    # And it is searchable by its own declared text, like any other card.
+    assert [m.id for m in catalog.search("发明的")] == ["invented:widget"]
 
 
 # -- search -----------------------------------------------------------------
@@ -207,6 +381,21 @@ def test_search_looks_at_the_summary_too(store: CredentialStore) -> None:
     assert [m.id for m in catalog.search("令牌")] == ["acme:api"]
 
 
+def test_search_finds_a_format_by_its_extension(store: CredentialStore) -> None:
+    # A user looking for "latex" must find the card that adds .latex; the suffix
+    # is declared data and belongs in the haystack.
+    catalog = PluginCatalog(_host(_tex_contribution(), store=store))
+
+    assert [m.id for m in catalog.search(".tex")] == ["tex:core"]
+    assert [m.id for m in catalog.search("latex")] == ["tex:core"]
+    assert [m.id for m in catalog.search("文档格式")] == ["tex:core"]
+    # The card's id, kind and provider are searchable too, which is what keeps
+    # this side of the rule identical to `plugin-filter.ts` rather than merely
+    # similar — the two lists are hand-kept and this is what notices a drift.
+    assert [m.id for m in catalog.search("document_format")] == ["tex:core"]
+    assert [m.id for m in catalog.search("tex:core")] == ["tex:core"]
+
+
 # -- API --------------------------------------------------------------------
 
 
@@ -223,6 +412,8 @@ def test_plugin_endpoint_lists_the_whole_catalogue(
     # camelCase over the wire; the renderer never sees snake_case.
     assert body[0]["providerLabel"] == "Acme Docs"
     assert body[0]["browserInstall"] is True
+    assert body[0]["kind"] == KIND_REMOTE_SOURCE
+    assert body[0]["tag"] == "知识库"
 
 
 def test_plugin_endpoint_filters_via_q(client: TestClient, auth_headers, store) -> None:
@@ -261,18 +452,17 @@ def _notification_target(name: str) -> NotificationTarget:
     return NotificationTarget(name=name, send=_send, is_ready=lambda: False)
 
 
-def test_third_party_plugin_registers_onto_the_shared_registry(
+def test_third_party_plugin_registers_onto_the_shared_host(
     store: CredentialStore, monkeypatch
 ) -> None:
-    registry = ProviderRegistry(store)
-    hub = NotificationHub()
+    host = _host(store=store)
     monkeypatch.setattr(
         loader,
         "_iter_entry_points",
         lambda: (
             _FakeEntryPoint(
                 "acme",
-                PluginContribution(
+                RemoteSourceContribution(
                     provider=_DocsProvider(),
                     credential_spec=_spec(),
                     notifications=(_notification_target("acme:bot"),),
@@ -281,39 +471,86 @@ def test_third_party_plugin_registers_onto_the_shared_registry(
         ),
     )
 
-    diagnostics = load_plugins(registry, hub)
+    diagnostics = load_plugins(host)
 
     assert diagnostics.failed == []
-    assert registry.names() == ["acme"]
+    assert host.providers.names() == ["acme"]
     # A plugin's notification target lands in the same hub as the built-in ones,
     # so business code never learns where it came from.
-    assert "acme:bot" in set(hub.names())
+    assert "acme:bot" in set(host.notifications.names())
     # And its card appears with no UI change at all.
-    assert [m.id for m in PluginCatalog(registry, store).manifests()] == ["acme:web", "acme:api"]
+    assert [m.id for m in PluginCatalog(host).manifests()] == ["acme:web", "acme:api"]
+
+
+def test_a_plugin_may_return_several_contributions(store: CredentialStore, monkeypatch) -> None:
+    """One package adding two different kinds is the case the layer exists for."""
+    host = _host(store=store)
+    monkeypatch.setattr(
+        loader,
+        "_iter_entry_points",
+        lambda: (_FakeEntryPoint("multi", [_remote(_DocsProvider()), _tex_contribution()]),),
+    )
+
+    diagnostics = load_plugins(host)
+
+    assert diagnostics.failed == []
+    assert host.providers.names() == ["acme"]
+    assert host.formats.for_extension(".tex").name == "tex"
+    assert [m.id for m in PluginCatalog(host).manifests()] == ["acme:web", "acme:api", "tex:core"]
 
 
 def test_a_broken_plugin_is_reported_and_skipped(store: CredentialStore, monkeypatch) -> None:
-    registry = ProviderRegistry(store)
+    host = _host(store=store)
     monkeypatch.setattr(
         loader,
         "_iter_entry_points",
         lambda: (
             _FakeEntryPoint("broken", None, raises=True),
             _FakeEntryPoint("wrong-shape", ["not a contribution"]),
-            _FakeEntryPoint(
-                "ok",
-                PluginContribution(provider=_DocsProvider(), credential_spec=_spec()),
-            ),
+            _FakeEntryPoint("ok", _remote(_DocsProvider())),
         ),
     )
 
-    diagnostics = load_plugins(registry)
+    diagnostics = load_plugins(host)
 
     # A missing integration is a degraded feature; refusing to boot is not an
     # acceptable response to one. The good plugin still loads.
     assert [item["name"] for item in diagnostics.failed] == ["broken", "wrong-shape"]
-    assert registry.names() == ["acme"]
-    assert PluginCatalog(registry, store).manifests()
+    assert host.providers.names() == ["acme"]
+    assert PluginCatalog(host).manifests()
+
+
+def test_a_plugin_whose_format_conflicts_is_reported_not_ignored(
+    store: CredentialStore, monkeypatch
+) -> None:
+    """Silently losing a suffix is indistinguishable from never installing."""
+    host = _host(store=store)
+    monkeypatch.setattr(
+        loader,
+        "_iter_entry_points",
+        lambda: (
+            _FakeEntryPoint(
+                "squatter",
+                DocumentFormatContribution(
+                    format=DocumentFormat(
+                        name="evil",
+                        label="Evil PDF",
+                        media_type="text/x-evil",
+                        extensions=(".pdf",),
+                        parse=lambda document: document,  # type: ignore[arg-type,return-value]
+                    ),
+                    label="Evil PDF",
+                ),
+            ),
+        ),
+    )
+
+    diagnostics = load_plugins(host)
+
+    assert [item["name"] for item in diagnostics.failed] == ["squatter"]
+    assert ".pdf" in next(item["error"] for item in diagnostics.failed)
+    assert host.formats.for_extension(".pdf").name == "pdf"
+    assert PluginCatalog(host).manifests() == []
 
 
 def test_diagnostics_endpoint_exposes_failures(client: TestClient, auth_headers) -> None:
@@ -337,17 +574,17 @@ def test_manifest_view_is_the_wire_contract(store: CredentialStore) -> None:
     view = manifest.view()
 
     assert view.id == "acme:web"
+    assert view.kind == KIND_REMOTE_SOURCE
     assert view.provider_label == "Acme Docs"
     assert view.keywords
 
 
-@pytest.mark.parametrize("returned", [0, None])
-def test_no_plugins_yields_an_empty_catalogue(store: CredentialStore, returned) -> None:
-    registry = ProviderRegistry(store)
-    registry.register(_ChattyProvider(), always_configured=bool(returned))
+def test_no_plugins_yields_an_empty_catalogue(store: CredentialStore) -> None:
+    host = _host(store=store)
 
-    assert len(PluginCatalog(registry, store).manifests()) == 1
+    assert PluginCatalog(host).manifests() == []
     assert PluginManifest is not None
+
 
 # -- extensibility: the contract a new plugin author relies on --------------
 
@@ -355,7 +592,7 @@ def test_no_plugins_yields_an_empty_catalogue(store: CredentialStore, returned) 
 def test_a_vendor_absent_from_this_codebase_gets_a_full_card(store: CredentialStore) -> None:
     """The one promise the settings page makes to a plugin author.
 
-    A provider invented here — named nowhere in this repository, registered the
+    A provider invented here — named nowhere in this repository, installed the
     only way a third party can — must produce a complete, searchable card. If
     this ever needs a matching edit in ``catalog.py`` or the renderer, the
     extensibility claim is false and this test is the thing that noticed.
@@ -375,25 +612,29 @@ def test_a_vendor_absent_from_this_codebase_gets_a_full_card(store: CredentialSt
         async def close(self) -> None:
             return None
 
-    registry = ProviderRegistry(store)
-    registry.register(
-        _Zenith(),
-        always_configured=True,
-        credential_spec=ProviderCredentialSpec(
-            provider="zenith",
-            channels=(
-                CredentialChannelSpec(
-                    name="api",
-                    label="Zenith API",
-                    has_secret=True,
-                    default_secret_ref="zenith:token",
-                    summary="用令牌读取 Zenith",
+    host = _host(
+        RemoteSourceContribution(
+            provider=_Zenith(),
+            always_configured=True,
+            credential_spec=ProviderCredentialSpec(
+                provider="zenith",
+                channels=(
+                    CredentialChannelSpec(
+                        name="api",
+                        label="Zenith API",
+                        has_secret=True,
+                        default_secret_ref="zenith:token",
+                        summary="用令牌读取 Zenith",
+                        tag="知识库",
+                    ),
                 ),
             ),
         ),
+        store=store,
     )
+    catalog = PluginCatalog(host)
 
-    manifests = PluginCatalog(registry, store).manifests()
+    manifests = catalog.manifests()
 
     # Every string the card renders is plugin-declared, so the renderer needs no
     # per-vendor knowledge to draw it.
@@ -404,7 +645,7 @@ def test_a_vendor_absent_from_this_codebase_gets_a_full_card(store: CredentialSt
     assert manifests[0].icon == "key"
     assert manifests[0].version == "9.9.9"
     # And it is findable by a term that appears in no label.
-    assert [m.id for m in PluginCatalog(registry, store).search("工单")] == ["zenith:api"]
+    assert [m.id for m in catalog.search("工单")] == ["zenith:api"]
 
 
 def test_keywords_are_merged_without_duplicates(store: CredentialStore) -> None:
@@ -416,27 +657,30 @@ def test_keywords_are_merged_without_duplicates(store: CredentialStore) -> None:
     inflate the search haystack, where they cost a redundant substring check per
     keystroke.
     """
-    registry = ProviderRegistry(store)
     # Dirty input on purpose: the name appears in the provider keywords AND in
     # the channel keywords AND is prepended by the catalogue.
-    registry.register(
-        _DocsProvider(),
-        always_configured=True,
-        credential_spec=ProviderCredentialSpec(
-            provider="acme",
-            channels=(
-                CredentialChannelSpec(
-                    name="api",
-                    label="Acme API",
-                    has_secret=True,
-                    default_secret_ref="acme:token",
-                    keywords=("acme", "ACME", "token"),
+    host = _host(
+        RemoteSourceContribution(
+            provider=_DocsProvider(),
+            always_configured=True,
+            credential_spec=ProviderCredentialSpec(
+                provider="acme",
+                channels=(
+                    CredentialChannelSpec(
+                        name="api",
+                        label="Acme API",
+                        has_secret=True,
+                        default_secret_ref="acme:token",
+                        keywords=("acme", "ACME", "token"),
+                    ),
                 ),
             ),
         ),
+        store=store,
     )
+    catalog = PluginCatalog(host)
 
-    keywords = PluginCatalog(registry, store).manifests()[0].keywords
+    keywords = catalog.manifests()[0].keywords
 
     # Order preserved and first spelling kept: the channel's own aliases lead,
     # the provider-wide ones follow, and the name — prepended by the catalogue —
@@ -444,15 +688,13 @@ def test_keywords_are_merged_without_duplicates(store: CredentialStore) -> None:
     # shouty "ACME" cannot sneak past as a second term.
     assert keywords == ("acme", "token", "wiki")
     # Every term still searchable — merging must not drop anything.
-    assert [m.id for m in PluginCatalog(registry, store).search("wiki")] == ["acme:api"]
-    assert [m.id for m in PluginCatalog(registry, store).search("ACME")] == ["acme:api"]
+    assert [m.id for m in catalog.search("wiki")] == ["acme:api"]
+    assert [m.id for m in catalog.search("ACME")] == ["acme:api"]
 
 
 def test_merging_keywords_tolerates_missing_and_empty_groups() -> None:
-    from app.plugins.catalog import _merge_keywords
-
-    assert _merge_keywords((), ()) == ()
-    assert _merge_keywords(("a",), ()) == ("a",)
-    assert _merge_keywords((), ("b",)) == ("b",)
-    assert _merge_keywords(None, ("c",)) == ("c",)
-    assert _merge_keywords(("a", "a"), ("A", "b")) == ("a", "b")
+    assert merge_keywords((), ()) == ()
+    assert merge_keywords(("a",), ()) == ("a",)
+    assert merge_keywords((), ("b",)) == ("b",)
+    assert merge_keywords(None, ("c",)) == ("c",)
+    assert merge_keywords(("a", "a"), ("A", "b")) == ("a", "b")

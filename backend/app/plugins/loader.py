@@ -1,23 +1,19 @@
 """Third-party plugin discovery via Python entry points.
 
-DocMind does not maintain a list of integrations. Built-in providers are
-registered explicitly in ``app.main``; anything else is discovered at startup
+DocMind does not maintain a list of integrations. Built-in contributions are
+installed explicitly in ``app.main``; anything else is discovered at startup
 from the ``docmind.plugins`` entry point group. A third party ships a plugin by
 declaring it in their own ``pyproject.toml``:
 
 .. code-block:: toml
 
     [project.entry-points."docmind.plugins"]
-    my-integration = "my_package.docmind:plugin"
+    my-plugin = "my_package.docmind:plugin"
 
-The referenced callable returns a ``PluginContribution`` (or an iterable of
-them). DocMind then:
-
-* registers the provider and its credential spec on the shared registry, so it
-  flows through the exact same credential / discovery / import paths as a
-  built-in one — there is no second code path for third-party plugins;
-* registers any notification targets it declares;
-* derives its plugin card from the manifest, with no UI change.
+The referenced callable returns a contribution — or an iterable of them, since
+one plugin may add several capabilities. DocMind hands each to the host, which
+is all ``install`` needs: the loader never asks what kind a contribution is, so
+a new kind needs no change here.
 
 Design rules:
 
@@ -37,7 +33,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from importlib.metadata import entry_points
 
-from app.plugins.manifest import PluginContribution
+from app.plugins.contributions import PluginHost, install_contribution
 
 logger = logging.getLogger(__name__)
 
@@ -46,31 +42,25 @@ PLUGIN_ENTRY_POINT_GROUP = "docmind.plugins"
 
 
 class PluginLoadError(Exception):
-    """Raised by :func:`load_plugins` callers that want a hard failure.
-
-    Only tests and the diagnostic endpoint use it; startup uses the collected
-    form below.
-    """
+    """Raised when an entry point returns something that cannot be installed."""
 
 
 @dataclass
 class PluginDiagnostics:
     """What happened while discovering third-party plugins."""
 
-    loaded: list[str] = field(default_factory=list)
+    loaded: list[dict[str, str]] = field(default_factory=list)
     failed: list[dict[str, str]] = field(default_factory=list)
 
     def as_dicts(self) -> list[dict[str, str]]:
         return [dict(item) for item in self.loaded] + [dict(item) for item in self.failed]
 
 
-def load_plugins(registry, notification_hub=None) -> PluginDiagnostics:
-    """Register every discoverable plugin onto ``registry``.
+def load_plugins(host: PluginHost) -> PluginDiagnostics:
+    """Install every discoverable plugin onto ``host``.
 
-    ``registry`` is a ``ProviderRegistry``; ``notification_hub`` an optional
-    ``NotificationHub``. Both are duck-typed on purpose so this module stays
-    importable without pulling in the remote stack (which matters for tests
-    that only care about discovery semantics).
+    The host carries the registries a contribution installs into, so this
+    function never needs to know which ones exist.
     """
     diagnostics = PluginDiagnostics()
     for entry_point in _iter_entry_points():
@@ -83,7 +73,7 @@ def load_plugins(registry, notification_hub=None) -> PluginDiagnostics:
             continue
         for contribution in contributions:
             try:
-                _register(registry, notification_hub, contribution)
+                install_contribution(host, contribution)
             except Exception as error:  # noqa: BLE001 - see above
                 logger.warning("plugin %s failed to register: %s", name, error)
                 diagnostics.failed.append(
@@ -98,41 +88,38 @@ def load_plugins(registry, notification_hub=None) -> PluginDiagnostics:
 def _iter_entry_points() -> Iterable:
     try:
         found = entry_points(group=PLUGIN_ENTRY_POINT_GROUP)
-    except Exception:  # noqa: BLE001 - a broken environment must not block boot
+    except Exception:
         logger.warning("plugin entry points unavailable", exc_info=True)
         return ()
     return tuple(found)
 
 
-def _resolve(entry_point) -> list[PluginContribution]:
+def _resolve(entry_point) -> list[object]:
     """Call the entry point and normalise its return shape.
 
     Accepts a single contribution, an iterable of them, or a callable factory
     returning either — the last form lets a plugin defer expensive setup until
     DocMind asks for it.
+
+    Whether an item is a valid contribution is decided by
+    ``install_contribution``, so this stays independent of what one must
+    implement.
     """
     produced = entry_point.load()
-    if callable(produced) and not isinstance(produced, PluginContribution):
+    if callable(produced) and not _looks_like_contribution(produced):
         produced = produced()
-    if isinstance(produced, PluginContribution):
+    if _looks_like_contribution(produced):
         return [produced]
-    items = list(produced)
-    for item in items:
-        if not isinstance(item, PluginContribution):
-            raise PluginLoadError(
-                f"entry point {entry_point.name} returned {type(item).__name__}, "
-                "expected PluginContribution"
-            )
-    return items
+    try:
+        return list(produced)
+    except TypeError:
+        raise PluginLoadError(
+            f"entry point {entry_point.name} returned {type(produced).__name__}, "
+            "expected a plugin contribution"
+        ) from None
 
 
-def _register(registry, notification_hub, contribution: PluginContribution) -> None:
-    registry.register(
-        contribution.provider,
-        contribution.is_configured,
-        credential_spec=contribution.credential_spec,
+def _looks_like_contribution(value: object) -> bool:
+    return callable(getattr(value, "install", None)) and callable(
+        getattr(value, "cards", None)
     )
-    if notification_hub is None:
-        return
-    for target in contribution.notifications or ():
-        notification_hub.register(target)

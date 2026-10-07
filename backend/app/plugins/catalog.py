@@ -1,177 +1,78 @@
-"""Derives the plugin catalogue from the provider registry.
+"""Derives the plugin catalogue from the installed contributions.
 
-There is exactly one source of truth: whatever is registered in
-``ProviderRegistry``. A plugin card is not stored, configured or listed
-anywhere — it is computed per request from the provider's identity, its
-credential channels, and the live credential state. So a newly installed
-third-party plugin appears in the settings page without a single line changing
-in this file or in the renderer.
+There is exactly one source of truth: the contributions ``load_plugins``
+recorded on the host. A plugin card is not stored, configured or listed
+anywhere — it is computed per request from the contribution's own declaration
+and the live credential state. So a newly installed third-party plugin appears
+in the settings page without a single line changing in this file or in the
+renderer.
+
+This class deliberately knows no kinds. It asks each contribution for its cards
+and concatenates; the contributions own the differences between a credential
+channel and a document format. Adding a kind therefore means adding a class and
+never editing the catalogue — which is what "the plugin layer is a distribution
+mechanism, not a remote-KB integration" has to mean in code.
 """
 from __future__ import annotations
 
+from app.plugins.contributions import PluginHost
 from app.plugins.manifest import PluginManifest
-from app.remote.credentials import CredentialStore
-from app.remote.provider import ProviderCapabilities
-from app.remote.registry import ProviderRegistry
 
 
 class PluginCatalog:
-    """Read model over ``ProviderRegistry`` + ``CredentialStore``."""
+    """Read model over the contributions installed on a ``PluginHost``."""
 
-    def __init__(self, registry: ProviderRegistry, credential_store: CredentialStore) -> None:
-        self.registry = registry
-        self.credential_store = credential_store
+    def __init__(self, host: PluginHost) -> None:
+        self.host = host
 
     def manifests(self) -> list[PluginManifest]:
-        """One manifest per credential channel, in registration order.
+        """One manifest per card, in install order.
 
-        Providers that declare no credential spec still deserve a card (a plugin
-        whose login needs no credential at all), so they contribute a single
-        manifest keyed by the ``core`` channel rather than disappearing.
+        A contribution reports as many cards as it has things to configure — a
+        remote provider contributes one per credential channel, a format
+        contributes one. Concatenation is the whole algorithm.
         """
         manifests: list[PluginManifest] = []
-        for name in self.registry.names():
-            provider = self.registry.get(name)
-            identity = getattr(provider, "identity", None)
-            provider_label = getattr(identity, "label", None) or name
-            spec = self.registry.credential_spec(name)
-            if spec is None:
-                manifests.append(self._synthetic_manifest(name, provider_label))
-                continue
-            for channel in spec.channels:
-                manifests.append(self._channel_manifest(name, provider_label, channel))
+        for contribution in self.host.contributions:
+            manifests.extend(contribution.cards(self.host))
         return manifests
 
     def search(self, query: str) -> list[PluginManifest]:
         """Filter manifests by a free-text query.
 
-        Matching is done here rather than in the renderer so the rule is
+        Matching happens here rather than in the renderer so the rule is
         testable and identical everywhere: every whitespace-separated term must
-        match somewhere in the plugin's searchable text, case- and
-        accent-insensitively via plain lowercasing. An empty query returns
-        everything, which is what the page shows before the user types.
+        match somewhere in the plugin's searchable text, case-insensitively via
+        plain lowercasing. An empty query returns everything, which is what the
+        page shows before the user types.
         """
         manifests = self.manifests()
         terms = [term for term in query.strip().lower().split() if term]
         if not terms:
             return manifests
-        return [m for m in manifests if _matches(m, terms)]
-
-    # -- internals --------------------------------------------------------
-
-    def _channel_manifest(self, provider: str, provider_label: str, channel) -> PluginManifest:
-        state = self.credential_store.channel_state(provider, channel.name, channel)
-        capabilities = self._capabilities(provider)
-        return PluginManifest(
-            id=f"{provider}:{channel.name}",
-            provider=provider,
-            channel=channel.name,
-            label=channel.label,
-            provider_label=provider_label,
-            summary=channel.summary,
-            hint=channel.hint,
-            icon=channel.icon or getattr(self._identity(provider), "icon", None),
-            keywords=_merge_keywords(channel.keywords, self._identity_keywords(provider)),
-            purpose=channel.purpose,
-            homepage=getattr(self._identity(provider), "homepage", None),
-            version=getattr(self._identity(provider), "version", None),
-            has_secret=channel.has_secret,
-            secret_placeholder=channel.secret_placeholder,
-            help_url=channel.help_url,
-            help_label=channel.help_label,
-            configured=state.configured,
-            state=state.state,
-            account_label=state.account_label,
-            browser_install=capabilities.browser_install,
-            browser_unavailable_code=capabilities.browser_unavailable_code,
-        )
-
-    def _synthetic_manifest(self, provider: str, provider_label: str) -> PluginManifest:
-        """A provider with no credential channels still gets one card.
-
-        Without this a plugin whose integration needs no stored secret would be
-        invisible in settings despite being fully functional — and the user
-        would have no way to log into it from the UI.
-        """
-        capabilities = self._capabilities(provider)
-        identity = self._identity(provider)
-        return PluginManifest(
-            id=f"{provider}:core",
-            provider=provider,
-            channel="core",
-            label=getattr(identity, "label", None) or provider,
-            provider_label=provider_label,
-            summary=getattr(identity, "summary", None),
-            icon=getattr(identity, "icon", None),
-            keywords=self._identity_keywords(provider),
-            homepage=getattr(identity, "homepage", None),
-            version=getattr(identity, "version", None),
-            browser_install=capabilities.browser_install,
-            browser_unavailable_code=capabilities.browser_unavailable_code,
-        )
-
-    def _identity(self, provider: str):
-        """The provider's declared metadata, by name.
-
-        Takes a name rather than the object because that is what every caller
-        has: a provider object would make ``getattr(obj, "identity")`` the
-        obvious spelling, which then silently yields ``None`` the moment a
-        caller passes the name it already has — and the card quietly loses its
-        icon, summary and keywords instead of raising.
-        """
-        return getattr(self.registry.get(provider), "identity", None)
-
-    def _identity_keywords(self, provider: str) -> tuple[str, ...]:
-        identity = self._identity(provider)
-        keywords = getattr(identity, "keywords", ()) if identity is not None else ()
-        # The provider's own name is always searchable: "yuque" must find 语雀
-        # even though no label contains the latin spelling.
-        return _merge_keywords((provider,), keywords)
-
-    def _capabilities(self, provider: str):
-        identity = self._identity(provider)
-        capabilities = getattr(identity, "capabilities", None) if identity is not None else None
-        # A plugin may expose no capabilities view at all (the protocol only
-        # requires ``identity.name``). Falling back to the neutral default keeps
-        # the manifest builder total instead of AttributeError-ing on a
-        # half-implemented third-party plugin.
-        return capabilities if capabilities is not None else ProviderCapabilities()
-
-
-def _merge_keywords(*groups: tuple[str, ...] | object) -> tuple[str, ...]:
-    """Concatenate keyword groups, dropping case-insensitive duplicates.
-
-    The provider name is prepended to every manifest's keywords, and a provider
-    whose own ``keywords`` already mention its name (a natural thing to write)
-    would otherwise ship that term twice. Duplicates are invisible in the UI but
-    leak into the search haystack, where they cost a redundant ``in`` check per
-    keystroke and make the manifest harder to assert on.
-
-    Order is preserved and the first spelling wins, so a channel's own aliases
-    keep priority over the provider-wide ones.
-    """
-    merged: list[str] = []
-    seen: set[str] = set()
-    for group in groups:
-        for keyword in group or ():  # type: ignore[union-attr]
-            text = str(keyword)
-            folded = text.casefold()
-            if folded in seen:
-                continue
-            seen.add(folded)
-            merged.append(text)
-    return tuple(merged)
+        return [manifest for manifest in manifests if _matches(manifest, terms)]
 
 
 def _matches(manifest: PluginManifest, terms: list[str]) -> bool:
+    """Whether every term appears somewhere in the card's searchable text.
+
+    The field list is duplicated in ``plugin-filter.ts`` and the two must stay
+    in step: the renderer filters what it already has, the backend serves
+    ``?q=``, and a card one of them finds while the other hides would be
+    indistinguishable from a bug in the other.
+    """
     haystack = " ".join(
         part
         for part in (
             manifest.label,
-            manifest.provider_label,
+            manifest.provider_label or "",
             manifest.summary or "",
+            manifest.id,
             manifest.provider,
             manifest.channel,
+            manifest.kind,
+            manifest.tag or "",
+            " ".join(manifest.extensions),
             " ".join(manifest.keywords),
         )
         if part

@@ -195,14 +195,6 @@ export const feishuCredentialChannels: RemoteCredentialChannel[] = [
 ];
 
 /**
- * The plugin catalogue, mirroring what the backend derives from the provider
- * registry: one card per credential channel, five in total.
- *
- * `acme` stands in for an installed third-party plugin — it has no counterpart
- * in DocMind's own source, which is the point: the renderer must present it
- * with no vendor-specific code.
- */
-/**
  * The formats the backend serves for the import dialog.
  *
  * Mirrors `GET /api/imports/formats`, including the docx entry: the source
@@ -233,8 +225,20 @@ export const sourceFormats: SourceFormat[] = [
   },
 ];
 
+/**
+ * The plugin catalogue, mirroring what the backend derives from the installed
+ * contributions: one card per credential channel, plus one per contributed
+ * document format.
+ *
+ * `acme` stands in for an installed third-party plugin — it has no counterpart
+ * in DocMind's own source, which is the point: the renderer must present it
+ * with no vendor-specific code. `tex:core` covers the other kind: a card whose
+ * body is a static description rather than a credential form, and which
+ * therefore reports no connection state.
+ */
 export const pluginManifests: PluginManifest[] = [
   {
+    kind: "remote_source",
     id: "yuque:web",
     provider: "yuque",
     channel: "web",
@@ -244,7 +248,8 @@ export const pluginManifests: PluginManifest[] = [
     hint: "浏览器里直接登录，不用申请令牌；导入与同步时会打开 Chrome。",
     icon: "login",
     keywords: ["yuque", "语雀", "wiki", "浏览器", "扫码", "web"],
-    purpose: "source",
+    tag: "知识库",
+    extensions: [],
     homepage: "https://www.yuque.com/yuque/developer/api",
     version: null,
     hasSecret: false,
@@ -258,6 +263,7 @@ export const pluginManifests: PluginManifest[] = [
     browserUnavailableCode: "YUQUE_BROWSER_UNAVAILABLE",
   },
   {
+    kind: "remote_source",
     id: "yuque:api",
     provider: "yuque",
     channel: "api",
@@ -267,7 +273,8 @@ export const pluginManifests: PluginManifest[] = [
     hint: "更快更稳，但要先去语雀后台申请一个个人访问令牌。",
     icon: "key",
     keywords: ["yuque", "语雀", "wiki", "令牌", "token", "api", "个人访问令牌"],
-    purpose: "source",
+    tag: "知识库",
+    extensions: [],
     homepage: "https://www.yuque.com/yuque/developer/api",
     version: null,
     hasSecret: true,
@@ -281,6 +288,7 @@ export const pluginManifests: PluginManifest[] = [
     browserUnavailableCode: "YUQUE_BROWSER_UNAVAILABLE",
   },
   {
+    kind: "remote_source",
     id: "feishu:app",
     provider: "feishu",
     channel: "app",
@@ -290,7 +298,8 @@ export const pluginManifests: PluginManifest[] = [
     hint: "填入 App ID 与 App Secret 后才能授权账号；这是飞书开放平台的要求。",
     icon: "key",
     keywords: ["feishu", "飞书", "lark", "云文档", "应用", "app id", "app secret", "自建"],
-    purpose: "source",
+    tag: "知识库",
+    extensions: [],
     homepage: "https://open.feishu.cn/document/",
     version: null,
     hasSecret: true,
@@ -304,6 +313,7 @@ export const pluginManifests: PluginManifest[] = [
     browserUnavailableCode: null,
   },
   {
+    kind: "remote_source",
     id: "feishu:user",
     provider: "feishu",
     channel: "user",
@@ -313,7 +323,8 @@ export const pluginManifests: PluginManifest[] = [
     hint: "在浏览器里同意授权，让 DocMind 读取你的飞书文档。",
     icon: "login",
     keywords: ["feishu", "飞书", "lark", "云文档", "oauth", "授权", "账号", "user"],
-    purpose: "source",
+    tag: "知识库",
+    extensions: [],
     homepage: "https://open.feishu.cn/document/",
     version: null,
     hasSecret: false,
@@ -327,6 +338,7 @@ export const pluginManifests: PluginManifest[] = [
     browserUnavailableCode: null,
   },
   {
+    kind: "remote_source",
     id: "feishu:webhook",
     provider: "feishu",
     channel: "webhook",
@@ -339,7 +351,8 @@ export const pluginManifests: PluginManifest[] = [
     // Declared metadata, rendered as a tag. The page must NOT group on this —
     // a bot webhook used to sit in a「通知」section that read as a third way to
     // import documents.
-    purpose: "notify",
+    tag: "通知",
+    extensions: [],
     homepage: "https://open.feishu.cn/document/",
     version: null,
     hasSecret: true,
@@ -353,6 +366,7 @@ export const pluginManifests: PluginManifest[] = [
     browserUnavailableCode: null,
   },
   {
+    kind: "remote_source",
     id: "acme:token",
     provider: "acme",
     channel: "token",
@@ -362,10 +376,36 @@ export const pluginManifests: PluginManifest[] = [
     hint: "在 Acme 后台生成一个访问令牌。",
     icon: "key",
     keywords: ["acme", "wiki", "token", "令牌"],
-    purpose: "source",
+    tag: "知识库",
+    extensions: [],
     homepage: "https://acme.test",
     version: "0.1.0",
     hasSecret: true,
+    secretPlaceholder: null,
+    helpUrl: null,
+    helpLabel: null,
+    configured: false,
+    state: "disconnected",
+    accountLabel: null,
+    browserInstall: false,
+    browserUnavailableCode: null,
+  },
+  {
+    kind: "document_format",
+    id: "tex:core",
+    provider: "tex",
+    channel: "core",
+    label: "TeX 文档",
+    providerLabel: null,
+    summary: "把 TeX 源文件导入 DocMind",
+    hint: null,
+    icon: "library",
+    keywords: ["tex", "latex", "论文"],
+    tag: "文档格式",
+    extensions: [".tex", ".latex"],
+    homepage: "https://example.test/tex-plugin",
+    version: "0.1.0",
+    hasSecret: false,
     secretPlaceholder: null,
     helpUrl: null,
     helpLabel: null,

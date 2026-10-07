@@ -43,4 +43,19 @@ describe("插件搜索过滤", () => {
   it("searches the summary, not just the title", () => {
     expect(ids("浏览器里登录")).toEqual(["yuque:web"]);
   });
+  it("matches a format card by its extension and its declared category", () => {
+    // The suffix is declared data, so a user who knows the extension they have
+    // must find the card that adds it. Both of these come from fields the
+    // backend also searches, so the two sides cannot disagree.
+    expect(ids(".tex")).toEqual(["tex:core"]);
+    expect(ids("latex")).toEqual(["tex:core"]);
+    expect(ids("文档格式")).toEqual(["tex:core"]);
+    // And the kind is searchable, so "document_format" finds format cards.
+    expect(ids("document_format")).toEqual(["tex:core"]);
+  });
+
+  it("does not leak a format card into unrelated queries", () => {
+    expect(ids("飞书")).not.toContain("tex:core");
+    expect(ids("令牌")).not.toContain("tex:core");
+  });
 });

@@ -55,9 +55,14 @@ class CredentialChannelSpec:
     help_label: str | None = None
     # What this channel is *for*, which is not derivable from its name: a
     # ``web`` channel imports a knowledge base, a ``webhook`` channel only
-    # receives notifications. The UI groups on this, because grouping by vendor
-    # alone puts unrelated things side by side and reads as one blob.
+    # receives notifications. Machine-readable, and the only thing the
+    # credential API reports it as.
     purpose: str = "source"
+    # How that purpose is *named on the card* ("知识库" / "通知"). Declared, not
+    # mapped from `purpose` in the renderer: the mapping is copy, the plugin owns
+    # the copy, and a third party needs to be able to say something we did not
+    # anticipate. ``None`` renders no tag at all.
+    tag: str | None = None
     # One line telling the user what choosing this gets them, including the
     # trade-off they are making ("opens a browser", "needs a token first").
     hint: str | None = None

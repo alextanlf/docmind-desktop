@@ -14,8 +14,8 @@ from io import BytesIO
 import pytest
 
 from app.api.errors import DomainError
-from app.document.docx import parse_docx
 from app.document.builtin_formats import DOCX_MEDIA_TYPE
+from app.document.docx import parse_docx
 from app.schemas.imports import DownloadedDocument
 
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"

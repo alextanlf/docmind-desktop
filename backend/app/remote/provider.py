@@ -56,6 +56,12 @@ class ProviderIdentity:
     # Extra search terms beyond label/summary, for the names users actually type
     # ("wiki", " Lark", "飞书文档"). Case-insensitive on both ends.
     keywords: tuple[str, ...] = ()
+    # The category tag's display text ("知识库"), declared rather than derived
+    # from `purpose` by the client. Deriving it in the renderer meant the page
+    # had to know what the purposes were called, which is copy the plugin owns.
+    # Only used by a provider that declares no credential channels, since a
+    # channel carries its own.
+    tag: str | None = None
     # Where to read more about the integration. Opaque to the app; the client
     # only opens it externally.
     homepage: str | None = None

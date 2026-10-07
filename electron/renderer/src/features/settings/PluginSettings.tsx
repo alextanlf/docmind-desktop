@@ -1,5 +1,5 @@
 import { Bell, Blocks, KeyRound, LogIn, Puzzle, Search, X } from "lucide-react";
-import { useDeferredValue, useId, useMemo, useState } from "react";
+import { useDeferredValue, useId, useMemo, useState, type ReactNode } from "react";
 import type { PluginManifest } from "../../../../shared/contracts";
 import { StatusBadge } from "../../components/StatusBadge";
 import { PluginSecretForm } from "./PluginSecretForm";
@@ -10,17 +10,21 @@ import { usePluginDiagnosticsQuery, usePluginsQuery } from "./settings.queries";
 /**
  * The plugin page: a flat, searchable grid of plugin cards.
  *
- * Two deliberate non-decisions, both of which used to be the wrong behaviour:
+ * Three deliberate non-decisions, each of which used to be the wrong behaviour:
  *
  * - **No grouping.** Cards used to be partitioned into 「知识库来源 / 通知」 and
  *   before that grouped by vendor. Both were the app's opinion about how the
  *   user should think about its own integrations, and both made a bot webhook
- *   read as a third way to import documents. `purpose` is still shown, but as a
- *   tag on the card — metadata, not a section heading.
+ *   read as a third way to import documents. The category is still shown, but as
+ *   a tag the plugin declares — not a section heading, and not copy this file
+ *   makes up.
  * - **No vendor list here.** Every card comes from `GET /api/plugins`, which
- *   derives them from the backend's provider registry. The plugin count, their
- *   names, and their searchability all follow from what is installed; nothing
- *   in this file has to change when a plugin is added.
+ *   derives them from what is installed. The plugin count, their names, and
+ *   their searchability all follow from that; nothing in this file has to change
+ *   when a plugin is added.
+ * - **No fixed set of capabilities.** `kind` selects a card *body*, so a plugin
+ *   contributing something this build has never seen still renders as a card
+ *   rather than disappearing.
  */
 export function PluginSettings() {
   const [query, setQuery] = useState("");
@@ -29,7 +33,7 @@ export function PluginSettings() {
   // rather than round-tripping to the backend per keystroke: the response is
   // small, and a local filter keeps typing instant. The backend's `q` endpoint
   // exists for the case where the catalogue grows past what is worth shipping
-  // wholesale.
+  // wholesale, and both apply the same rule.
   const plugins = usePluginsQuery();
   const deferredQuery = useDeferredValue(query);
   const diagnostics = usePluginDiagnosticsQuery();
@@ -120,8 +124,9 @@ function PluginLoadFailures({ diagnostics }: { diagnostics: { name: string; erro
 
 function PluginCard({ plugin }: { plugin: PluginManifest }) {
   const Icon = iconFor(plugin.icon);
-  const connected = plugin.state === "verified";
   const verified = plugin.state === "verified";
+  // Only a card backed by a live credential has a connection to report.
+  const tracksCredential = CREDENTIAL_KINDS.has(plugin.kind);
 
   return (
     <article className="plugin-card" aria-labelledby={`plugin-${plugin.id}-title`}>
@@ -131,49 +136,78 @@ function PluginCard({ plugin }: { plugin: PluginManifest }) {
           <h3 id={`plugin-${plugin.id}-title`}>{plugin.label}</h3>
           {/* Which integration this plugs into. Without it a card titled
               「机器人」 or 「网页登录」 says nothing about what it connects. */}
-          <p className="plugin-card-owner">{plugin.providerLabel}</p>
+          {plugin.providerLabel ? (
+            <p className="plugin-card-owner">{plugin.providerLabel}</p>
+          ) : null}
         </div>
-        <StatusBadge
-          label={connected ? "已连接" : verified ? "待验证" : "未连接"}
-          tone={connected ? "success" : verified ? "pending" : "neutral"}
-        />
+        {tracksCredential ? (
+          <StatusBadge
+            label={verified ? "已连接" : plugin.configured ? "待验证" : "未连接"}
+            tone={verified ? "success" : plugin.configured ? "pending" : "neutral"}
+          />
+        ) : null}
       </header>
 
       {plugin.summary ? <p className="plugin-card-summary">{plugin.summary}</p> : null}
 
-      {/* Purpose is a tag, not a heading: it is useful next to the title and
-          actively harmful as a section divider. */}
-      <p className="plugin-card-tags">
-        <span className="plugin-tag">
-          {plugin.purpose === "notify" ? "通知" : "知识库"}
-        </span>
-        {plugin.version ? <span className="plugin-tag">v{plugin.version}</span> : null}
-        {plugin.homepage ? (
-          <a
-            className="plugin-tag plugin-tag-link"
-            href={plugin.homepage}
-            onClick={(event) => {
-              event.preventDefault();
-              void window.docmind.shell.openExternal(plugin.homepage!);
-            }}
-          >
-            了解更多
-          </a>
-        ) : null}
-      </p>
+      {/* The category is a tag, not a heading: it is useful next to the title and
+          actively harmful as a section divider. Its text is declared by the
+          plugin, so this file never has to know what a category is called. */}
+      {plugin.tag || plugin.version || plugin.homepage ? (
+        <p className="plugin-card-tags">
+          {plugin.tag ? <span className="plugin-tag">{plugin.tag}</span> : null}
+          {plugin.version ? <span className="plugin-tag">v{plugin.version}</span> : null}
+          {plugin.homepage ? (
+            <a
+              className="plugin-tag plugin-tag-link"
+              href={plugin.homepage}
+              onClick={(event) => {
+                event.preventDefault();
+                void window.docmind.shell.openExternal(plugin.homepage!);
+              }}
+            >
+              了解更多
+            </a>
+          ) : null}
+        </p>
+      ) : null}
 
       {plugin.hint ? <p className="plugin-card-hint">{plugin.hint}</p> : null}
 
-      <div className="plugin-card-body">
-        {plugin.hasSecret ? (
-          <PluginSecretForm plugin={plugin} />
-        ) : (
-          <PluginLogin plugin={plugin} />
-        )}
-      </div>
+      <div className="plugin-card-body">{cardBody(plugin)}</div>
     </article>
   );
 }
+
+/**
+ * Card bodies by contribution kind.
+ *
+ * The renderer owns this vocabulary for the same reason it owns the glyph
+ * table: a plugin ships as data, so it cannot ship a component. An unknown kind
+ * simply gets no body — the card still renders with its declared copy, which
+ * beats hiding a plugin that did install.
+ */
+const CARD_BODIES: Record<string, (plugin: PluginManifest) => ReactNode> = {
+  remote_source: (plugin) =>
+    plugin.hasSecret ? <PluginSecretForm plugin={plugin} /> : <PluginLogin plugin={plugin} />,
+  document_format: (plugin) =>
+    plugin.extensions.length === 0 ? null : (
+      <p className="plugin-format-extensions">
+        <span>支持的文件类型</span>
+        {plugin.extensions.map((extension) => (
+          <code key={extension}>{extension}</code>
+        ))}
+      </p>
+    ),
+};
+
+function cardBody(plugin: PluginManifest): ReactNode {
+  const render = CARD_BODIES[plugin.kind];
+  return render ? render(plugin) : null;
+}
+
+/** Kinds whose card tracks a live credential, and so reports a connection. */
+const CREDENTIAL_KINDS = new Set(["remote_source"]);
 
 /**
  * Icon keys are declared by plugins as data, so the renderer owns the glyph

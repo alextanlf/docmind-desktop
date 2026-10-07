@@ -70,9 +70,14 @@ from app.memory.distillation import DistillationService
 from app.memory.indexer import MemoryIndexer
 from app.memory.persistence import LocalKnowledgeStore
 from app.memory.retriever import MemoryRetriever
-from app.plugins.catalog import PluginCatalog
-from app.plugins.loader import load_plugins
 from app.memory.summary import SummaryScheduler, SummaryService
+from app.plugins.catalog import PluginCatalog
+from app.plugins.contributions import (
+    PluginHost,
+    RemoteSourceContribution,
+    install_contribution,
+)
+from app.plugins.loader import load_plugins
 from app.remote.credentials import CredentialStore
 from app.remote.discovery import RemoteDiscovery
 from app.remote.notifications import NotificationHub
@@ -169,12 +174,16 @@ class _RoutedLLMProvider:
             yield delta
 
 
-def _assemble_production_registry(
-    registry: ProviderRegistry,
+def _production_contributions(
     credential_store: CredentialStore,
     runtime_settings: AppSettings,
-) -> ProviderRegistry:
-    """Register the real remote providers with their configuration probes."""
+) -> tuple[RemoteSourceContribution, ...]:
+    """The built-in contributions, with their configuration probes.
+
+    Declared as contributions rather than registered directly, so the built-ins
+    and third-party plugins go through the identical install path — there is no
+    "already registered" shortcut for our own integrations.
+    """
 
     def _yuque_api_token() -> str | None:
         record = credential_store.get("yuque", "api")
@@ -185,22 +194,23 @@ def _assemble_production_registry(
     def _yuque_configured() -> bool:
         return credential_store.any_verified("yuque", ("web", "api"))
 
-    registry.register(
-        YuqueProvider(
-            WebDriverYuqueGateway(runtime_settings),
-            YuqueApiGateway(_yuque_api_token),
-            lambda: _yuque_api_token() is not None,
+    return (
+        RemoteSourceContribution(
+            provider=YuqueProvider(
+                WebDriverYuqueGateway(runtime_settings),
+                YuqueApiGateway(_yuque_api_token),
+                lambda: _yuque_api_token() is not None,
+            ),
+            credential_spec=YUQUE_CREDENTIAL_SPEC,
+            is_configured=_yuque_configured,
         ),
-        _yuque_configured,
-        credential_spec=YUQUE_CREDENTIAL_SPEC,
+        # Feishu: availability is derived from the credential spec (app or user
+        # channel verified) by the registry's default probe.
+        RemoteSourceContribution(
+            provider=FeishuProvider(FeishuTokenManager(credential_store)),
+            credential_spec=FEISHU_CREDENTIAL_SPEC,
+        ),
     )
-    # Feishu: availability is derived from the credential spec (app or user
-    # channel verified) by the registry's default probe.
-    registry.register(
-        FeishuProvider(FeishuTokenManager(credential_store)),
-        credential_spec=FEISHU_CREDENTIAL_SPEC,
-    )
-    return registry
 
 
 def _injected_registry(
@@ -294,50 +304,63 @@ def create_app(
                 credential_store=credential_store,
             )
         repository_store = RepositoryStore(database)
-        registry = app.state.remote_registry
-        if registry is None:
-            registry = ProviderRegistry(credential_store)
-            if fake_services:
-                registry.register(
-                    FakeRemoteProvider(runtime_settings.data_dir), always_configured=True
-                )
-            else:
-                registry = _assemble_production_registry(
-                    registry, credential_store, runtime_settings
-                )
-            app.state.remote_registry = registry
-        # Notification targets are declared by the providers themselves, so
-        # business code can announce a finished import without naming a vendor.
-        notifications = NotificationHub()
-        if not fake_services:
-            notifications.register(build_feishu_notification_target(credential_store))
-            # Third-party plugins register onto the *same* registry and hub, so
-            # they flow through identical credential / discovery / notification
-            # paths. A plugin that fails to load is recorded and skipped: one
-            # broken integration must not stop the app from starting.
-            app.state.notifications = notifications
-        if not fake_services:
-            # Third-party plugins register onto the *same* registry and hub, so
-            # they flow through identical credential / discovery / notification
-            # paths. A plugin that fails to load is recorded and skipped: one
-            # broken integration must not stop the app from starting. Fake mode
-            # skips discovery entirely so tests see a deterministic catalogue.
-            app.state.plugin_diagnostics = load_plugins(registry, notifications)
-        else:
-            app.state.plugin_diagnostics = None
-        # The plugin page is a read model over the registry plus credential
-        # state, so there is no second catalogue to keep in sync — registering a
-        # provider is enough to make its card appear.
-        app.state.plugin_catalog = PluginCatalog(registry, credential_store)
-        conversation_store = ConversationStore(database)
-        vector_store = PersistentVectorStore(runtime_settings.vectorstore_settings)
-        document_store = DocumentStore(database)
         # One format registry for the whole process: the import service, the
         # directory scanner, the downloader and the standalone parser all read
         # it, so a format a plugin contributes is importable everywhere at once
         # instead of only on the path that happened to be handed the registry.
         formats = builtin_registry()
         app.state.format_registry = formats
+        notifications = NotificationHub()
+        if not fake_services:
+            notifications.register(build_feishu_notification_target(credential_store))
+            # Built-ins and third-party plugins install onto the *same* host, so
+            # they flow through identical credential / discovery / notification
+            # paths and the settings page cannot tell them apart. A plugin that
+            # fails to install is recorded and skipped: one broken integration
+            # must not stop the app from starting.
+            app.state.notifications = notifications
+
+        registry = app.state.remote_registry
+        # A pre-built registry means providers were injected by a test or a
+        # harness; installing the built-ins on top of it would collide with
+        # whatever it was assembled from.
+        registry_injected = registry is not None
+        if registry is None:
+            registry = ProviderRegistry(credential_store)
+            if fake_services:
+                registry.register(
+                    FakeRemoteProvider(runtime_settings.data_dir), always_configured=True
+                )
+            app.state.remote_registry = registry
+
+        host = PluginHost(
+            providers=registry,
+            formats=formats,
+            credentials=credential_store,
+            notifications=None if fake_services else notifications,
+        )
+        if fake_services:
+            # Fake mode installs no built-ins and skips discovery, so tests see
+            # a deterministic catalogue.
+            app.state.plugin_diagnostics = None
+        else:
+            if not registry_injected:
+                for contribution in _production_contributions(
+                    credential_store, runtime_settings
+                ):
+                    install_contribution(host, contribution)
+            app.state.plugin_diagnostics = load_plugins(host)
+        host_notifications = host.notifications
+        app.state.plugin_host = host
+        # The plugin page is a read model over the installed contributions, so
+        # there is no second catalogue to keep in sync — installing one is
+        # enough to make its card appear.
+        app.state.plugin_catalog = PluginCatalog(host)
+        if host_notifications is not None:
+            app.state.notifications = host_notifications
+        conversation_store = ConversationStore(database)
+        vector_store = PersistentVectorStore(runtime_settings.vectorstore_settings)
+        document_store = DocumentStore(database)
         document_parser = DocumentParser(formats)
         app.state.document_parser = document_parser
         app.state.import_service = ImportService(
