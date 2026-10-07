@@ -428,7 +428,17 @@ class ImportService:
             await self._fail(job_id, error.code, error.message, error.retryable)
             return False
         try:
-            parsed = self.parser.parse(downloaded)
+            # Off the loop on purpose: a format may shell out to something slow
+            # (converting a `.pages` drives Pages.app for a few seconds), and a
+            # blocking parse would freeze every stream in the process for that
+            # long — not just this import.
+            parsed = await asyncio.to_thread(self.parser.parse, downloaded)
+        except DomainError as error:
+            # A parser is allowed to know *why* it failed — the PDF parser
+            # reports a bad signature this way. Folding that into the generic
+            # message below would tell the user "文档解析失败" and nothing else.
+            await self._fail(job_id, error.code, error.message, error.retryable)
+            return False
         except Exception:  # noqa: BLE001 - parser implementations cross a library boundary
             await self._fail(job_id, "PARSE_FAILED", "文档解析失败", False)
             return False

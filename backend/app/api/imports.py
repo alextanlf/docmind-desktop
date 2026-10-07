@@ -50,7 +50,9 @@ async def list_source_formats(request: Request) -> list[SourceFormatView]:
 
     The client builds its file dialog from this — filters, size ceiling and the
     label on the button — so a format plugin widens what can be imported
-    without a matching edit in the renderer or the main process.
+    without a matching edit in the renderer or the main process. Formats this
+    machine cannot use are left out, so the picker never offers a button that
+    can only fail.
     """
     registry: FormatRegistry = request.app.state.format_registry
     settings: AppSettings = request.app.state.settings
@@ -66,8 +68,7 @@ async def list_source_formats(request: Request) -> list[SourceFormatView]:
                 text_max_bytes=settings.html_markdown_max_bytes,
             ),
         )
-        for format in registry.formats()
-        if format.single_file
+        for format in registry.pickable_formats()
     ]
 
 

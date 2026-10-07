@@ -294,3 +294,47 @@ def test_formats_endpoint_follows_a_plugin_registered_format(client, auth_header
 
 def test_formats_endpoint_requires_a_token(client) -> None:
     assert client.get("/api/imports/formats").status_code == 401
+
+
+def test_formats_endpoint_omits_a_format_this_machine_cannot_use(client, auth_headers) -> None:
+    """The picker is built from this list, so nothing unusable may be in it.
+
+    A format plugin that needs something the machine does not have (Pages.app, a
+    different OS) declares that; leaving it in would offer a button whose only
+    possible outcome is an error, which reads as a broken application rather than
+    a missing capability.
+    """
+    registry = client.app.state.format_registry
+    registry.register(
+        DocumentFormat(
+            name="pages",
+            label="Pages 文档",
+            media_type="application/vnd.apple.pages",
+            extensions=(".pages",),
+            parse=lambda document: document,  # type: ignore[arg-type,return-value]
+            availability=lambda: "未找到 Pages.app",
+        )
+    )
+
+    body = client.get("/api/imports/formats", headers=auth_headers).json()
+
+    assert [entry["name"] for entry in body] == ["pdf", "markdown", "docx"]
+
+
+def test_formats_endpoint_lists_a_usable_plugin_format(client, auth_headers) -> None:
+    """The other half: a declaration that reports no problem keeps the format."""
+    registry = client.app.state.format_registry
+    registry.register(
+        DocumentFormat(
+            name="pages",
+            label="Pages 文档",
+            media_type="application/vnd.apple.pages",
+            extensions=(".pages",),
+            parse=lambda document: document,  # type: ignore[arg-type,return-value]
+            availability=lambda: None,
+        )
+    )
+
+    body = client.get("/api/imports/formats", headers=auth_headers).json()
+
+    assert [entry["name"] for entry in body] == ["pdf", "markdown", "docx", "pages"]

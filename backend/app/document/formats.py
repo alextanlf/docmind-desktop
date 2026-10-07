@@ -50,6 +50,16 @@ class DocumentFormat:
     builtin: bool = True
     single_file: bool = True
     binary_payload: bool = False
+    #: Returns ``None`` when this format can be used on this machine, or a short
+    #: reason it cannot. A format that needs something outside the application —
+    #: an operating system, an installed editor to convert with — has no other
+    #: way to say so, and the client builds its file picker out of what is
+    #: offered. Leaving it out would mean offering a button that always fails.
+    #:
+    #: This is a *capability* declaration, not a probe: it must stay cheap and
+    #: side-effect free, because the picker asks for it every time the import
+    #: dialog opens.
+    availability: Callable[[], str | None] | None = None
     #: Additional HTTP content types that resolve to this format. The media
     #: type itself always resolves; this is for the aliases a server may send
     #: instead (``text/x-markdown`` for markdown, ``application/xhtml+xml`` for
@@ -74,6 +84,19 @@ class DocumentFormat:
                     f"format {self.name!r} has a malformed extension {extension!r}; "
                     "extensions are lowercase and leading-dot ('.docx')"
                 )
+
+    def unavailable_reason(self) -> str | None:
+        """Why this format cannot be used here, or ``None`` when it can."""
+        return None if self.availability is None else self.availability()
+
+    def is_pickable(self) -> bool:
+        """Whether a user may hand over one of this format's files, here and now.
+
+        Both halves matter and they are not the same question: ``single_file`` is
+        about the format (HTML parses but is not offered alone), availability is
+        about the machine (a `.pages` on Linux).
+        """
+        return self.single_file and self.unavailable_reason() is None
 
 
 class FormatConflictError(ValueError):
@@ -133,11 +156,12 @@ class FormatRegistry:
 
         The staging store resolves one file the user chose by hand, so a format
         that is parsable but not offered as a standalone document (HTML) must
-        not be accepted here. Two lookups rather than a flag on the result, so
-        a caller cannot forget to check it.
+        not be accepted here, and neither must one this machine cannot use. Two
+        lookups rather than a flag on the result, so a caller cannot forget to
+        check it.
         """
         format = self._by_extension.get(extension.lower())
-        return format if format is not None and format.single_file else None
+        return format if format is not None and format.is_pickable() else None
 
     def for_media_type(self, media_type: str) -> DocumentFormat | None:
         return self._by_media_type.get(media_type)
@@ -172,6 +196,15 @@ class FormatRegistry:
     def formats(self) -> tuple[DocumentFormat, ...]:
         return tuple(self._formats)
 
+    def pickable_formats(self) -> tuple[DocumentFormat, ...]:
+        """Formats a user may hand over as a file, in registry order.
+
+        The single answer to "what does the file picker offer". It used to be
+        two: this method's sibling and a filter inside the endpoint that served
+        the picker, which is the shape where one of them gets updated.
+        """
+        return tuple(format for format in self._formats if format.is_pickable())
+
     def media_types(self) -> tuple[str, ...]:
         return tuple(self._by_media_type)
 
@@ -183,9 +216,7 @@ class FormatRegistry:
         side being edited.
         """
         return tuple(
-            extension
-            for extension, format in self._by_extension.items()
-            if format.single_file
+            extension for extension, format in self._by_extension.items() if format.is_pickable()
         )
 
 

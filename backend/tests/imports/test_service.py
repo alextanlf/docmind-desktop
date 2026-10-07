@@ -1776,3 +1776,81 @@ async def test_concurrent_second_runner_returns_import_already_running(database,
 
     source.release_load.set()
     await first
+
+
+# -- how parsing is scheduled ------------------------------------------------
+
+
+class ThreadRecordingParser(DocumentParser):
+    """Records the thread ``parse`` was called on."""
+
+    def __init__(self) -> None:
+        self.identifiers: list[int] = []
+
+    def parse(self, document: DownloadedDocument):  # type: ignore[no-untyped-def]
+        self.identifiers.append(threading.get_ident())
+        return super().parse(document)
+
+
+async def test_parsing_runs_off_the_event_loop(database, tmp_path: Path) -> None:
+    """A format may call out to something slow.
+
+    Converting a ``.pages`` drives Pages.app for two to four seconds. Parsed on
+    the loop, that would freeze every event stream and every request in the
+    process for the duration — not just this one import.
+    """
+    service, source, _, _ = make_service(database, tmp_path)
+    parser = ThreadRecordingParser()
+    service.parser = parser
+    job = await create_job(service, source)
+
+    await service.run(job.id)
+
+    assert parser.identifiers, "解析器没有被调用，断言就没在检查任何东西"
+    assert parser.identifiers[0] != threading.get_ident()
+
+
+async def test_a_parser_that_explains_itself_is_believed(database, tmp_path: Path) -> None:
+    """A parser knows why it failed, and that is the only account of it there is.
+
+    The PDF parser already reports a bad signature this way, and a format plugin
+    reports what the user has to install. Folding those into 「文档解析失败」 leaves
+    them with nothing to act on.
+    """
+    service, source, _, _ = make_service(database, tmp_path)
+
+    class RefusingParser(DocumentParser):
+        def parse(self, document: DownloadedDocument):  # type: ignore[no-untyped-def]
+            raise DomainError("SOURCE_UNSUPPORTED", "未找到 Pages.app，请先安装 Pages", 400, False)
+
+    service.parser = RefusingParser()
+    job = await create_job(service, source)
+
+    await service.run(job.id)
+
+    failed = service.job_store.get(job.id)
+    assert failed.state == ImportStatus.FAILED  # type: ignore[union-attr]
+    assert failed.error_code == "SOURCE_UNSUPPORTED"  # type: ignore[union-attr]
+    assert failed.error_message == "未找到 Pages.app，请先安装 Pages"  # type: ignore[union-attr]
+    assert failed.retryable is False  # type: ignore[union-attr]
+
+
+async def test_an_unexpected_parser_failure_stays_generic(database, tmp_path: Path) -> None:
+    """The broad catch is still there for everything that is not a report.
+
+    A crash inside a parser is a bug, not a message for the user, and it must not
+    put internal text in front of them.
+    """
+    service, source, _, _ = make_service(database, tmp_path)
+
+    class ExplodingParser(DocumentParser):
+        def parse(self, document: DownloadedDocument):  # type: ignore[no-untyped-def]
+            raise RuntimeError("内部细节不该外泄")
+
+    service.parser = ExplodingParser()
+    job = await create_job(service, source)
+
+    await service.run(job.id)
+
+    failed = service.job_store.get(job.id)
+    assert (failed.error_code, failed.error_message) == ("PARSE_FAILED", "文档解析失败")  # type: ignore[union-attr]

@@ -188,3 +188,79 @@ def test_empty_registry_answers_every_lookup_with_none() -> None:
     assert registry.for_content_type("application/pdf") is None
     assert registry.pickable_extensions() == ()
     assert registry.binary_formats() == ()
+
+
+# -- availability: what this machine can actually do -------------------------
+
+
+def test_an_unavailable_format_is_not_pickable() -> None:
+    """A format that cannot run here must not be offered here.
+
+    Offering it means a button whose only outcome is an error, which is worse
+    than no button: the user cannot tell a missing capability from a broken app.
+    """
+    registry = FormatRegistry()
+    registry.register(
+        _format(
+            "pages",
+            media_type="application/vnd.apple.pages",
+            extensions=(".pages",),
+            availability=lambda: "未找到 Pages.app",
+        )
+    )
+
+    assert registry.pickable_formats() == ()
+    assert registry.pickable_extensions() == ()
+    assert registry.for_pickable_extension(".pages") is None
+
+
+def test_an_unavailable_format_still_resolves_by_suffix() -> None:
+    """Availability decides what is *offered*, not what exists.
+
+    The lookup the directory scanner uses is a different question from the one the
+    file picker asks: a user who imported a folder containing a `.pages` should
+    get a clear per-file failure, not a file that quietly vanished.
+    """
+    registry = FormatRegistry()
+    format = _format(
+        "pages",
+        media_type="application/vnd.apple.pages",
+        extensions=(".pages",),
+        availability=lambda: "未找到 Pages.app",
+    )
+    registry.register(format)
+
+    assert registry.for_extension(".pages") is format
+    assert registry.for_media_type("application/vnd.apple.pages") is format
+
+
+def test_availability_is_asked_each_time_not_remembered() -> None:
+    """It is a capability check, not a cached fact.
+
+    Pages can be installed while the application is running, and the answer has
+    to change when it is.
+    """
+    installed = False
+    registry = FormatRegistry()
+    registry.register(
+        _format(
+            "pages",
+            media_type="application/vnd.apple.pages",
+            extensions=(".pages",),
+            availability=lambda: None if installed else "未找到 Pages.app",
+        )
+    )
+
+    assert registry.pickable_extensions() == ()
+
+    installed = True
+
+    assert registry.pickable_extensions() == (".pages",)
+
+
+def test_a_format_that_declares_nothing_is_available() -> None:
+    # The common case must not require a declaration: every built-in format works
+    # wherever the application runs.
+    assert builtin_registry().pickable_formats() == tuple(
+        format for format in builtin_registry().formats() if format.single_file
+    )
