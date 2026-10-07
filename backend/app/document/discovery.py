@@ -7,6 +7,9 @@ from pathlib import Path
 from uuid import UUID
 
 from app.api.errors import DomainError
+from app.document.builtin_formats import builtin_registry
+from app.document.formats import FormatRegistry, size_limit_for
+from app.document.markdown_sections import title_from_markdown
 from app.document.staging_manifest import (
     ManifestFile,
     load_manifest,
@@ -41,6 +44,7 @@ def read_cached_source(
     cache_ref: CachedSourceRef,
     staging_root: Path | None = None,
     collection_id: str | None = None,
+    formats: FormatRegistry | None = None,
 ) -> Path:
     """Verify and resolve a staged source under a configured root.
 
@@ -48,13 +52,15 @@ def read_cached_source(
     immediately because a later path replacement cannot be prevented after
     this function returns.
     """
+    registry = formats if formats is not None else builtin_registry()
     if staging_root is None:
         raise DomainError("BATCH_SOURCE_CHANGED", "暂存根目录未配置", 409, False)
     if not isinstance(cache_ref, CachedSourceRef) or collection_id is None:
         raise DomainError("BATCH_SOURCE_CHANGED", "暂存文件引用无效", 409, False)
     collection_uuid = _uuid_segment(collection_id, "暂存集合标识无效")
     cache_uuid = _uuid_segment(str(cache_ref.cache_id), "暂存文件标识无效")
-    if cache_ref.media_type not in {"text/markdown", "text/html", "application/pdf"}:
+    format = registry.for_media_type(cache_ref.media_type)
+    if format is None:
         raise DomainError("BATCH_SOURCE_CHANGED", "暂存文件类型无效", 409, False)
     root = Path(staging_root).resolve()
     path = root / "collections" / collection_uuid / "items" / cache_uuid
@@ -62,7 +68,9 @@ def read_cached_source(
         path.resolve().relative_to(root)
     except ValueError:
         raise DomainError("BATCH_SOURCE_CHANGED", "暂存文件路径无效", 409, False) from None
-    max_bytes = 100 * 1024 * 1024 if cache_ref.media_type == "application/pdf" else 20 * 1024 * 1024
+    max_bytes = size_limit_for(
+        format, binary_max_bytes=100 * 1024 * 1024, text_max_bytes=20 * 1024 * 1024
+    )
     read_file_snapshot(
         path,
         expected_size=cache_ref.byte_size,
@@ -73,9 +81,15 @@ def read_cached_source(
 
 
 class DirectoryDiscovery:
-    def __init__(self, staging_root: Path, manifest_max_bytes: int = 2 * 1024 * 1024) -> None:
+    def __init__(
+        self,
+        staging_root: Path,
+        manifest_max_bytes: int = 2 * 1024 * 1024,
+        formats: FormatRegistry | None = None,
+    ) -> None:
         self.root = Path(staging_root).resolve()
         self.manifest_max_bytes = manifest_max_bytes
+        self.formats = formats if formats is not None else builtin_registry()
 
     def _manifest_path(self, collection_id: str) -> Path:
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", collection_id):
@@ -95,7 +109,7 @@ class DirectoryDiscovery:
             raise DomainError("BATCH_SOURCE_CHANGED", "暂存集合标识无效", 409, False)
         collection_root = self._manifest_path(collection_id).parent
         manifest = load_manifest(self._manifest_path(collection_id), max_bytes=self.manifest_max_bytes)
-        entries = validate_manifest(manifest, collection_root)
+        entries = validate_manifest(manifest, collection_root, self.formats)
         entries.sort(key=lambda entry: (entry.ordinal if entry.ordinal is not None else 1_000_000, entry.relative_path))
         sources = [self._candidate(entry, manifest.root_id, collection_root) for entry in entries]
         event = DiscoveryProgress(
@@ -123,33 +137,30 @@ class DirectoryDiscovery:
         collection_root: Path,
     ) -> DiscoveredSource:
         path = collection_root / "items" / str(entry.staged_id)
+        format = self.formats.for_media_type(entry.media_type)
+        if format is None:
+            raise DomainError("BATCH_SOURCE_CHANGED", "暂存文件类型无效", 409, False)
         # Derive every candidate field from one securely opened descriptor.
-        max_bytes = 100 * 1024 * 1024 if entry.media_type == "application/pdf" else 20 * 1024 * 1024
+        max_bytes = size_limit_for(
+            format, binary_max_bytes=100 * 1024 * 1024, text_max_bytes=20 * 1024 * 1024
+        )
         snapshot = read_file_snapshot(
             path,
             expected_size=entry.size_bytes,
             expected_hash=entry.sha256,
             max_bytes=max_bytes,
-            collect_bytes=entry.media_type in {"text/markdown", "text/html"},
+            collect_bytes=format.validate is not None,
         )
         verify_file_snapshot(path, snapshot)
         revision = snapshot.digest
         title = Path(entry.relative_path).name
+        if format.validate is not None:
+            problem = format.validate(snapshot.raw_bytes or b"")
+            if problem is not None:
+                raise DomainError("BATCH_SOURCE_CHANGED", problem, 409, False)
         if entry.media_type == "text/markdown":
-            try:
-                text = (snapshot.raw_bytes or b"").decode("utf-8-sig")
-            except UnicodeDecodeError:
-                raise DomainError("BATCH_SOURCE_CHANGED", "暂存文件编码无效", 409, False) from None
-            for line in text.splitlines():
-                match = re.match(r"^#\s+(.+?)\s*$", line)
-                if match and match.group(1).strip():
-                    title = match.group(1).strip().rstrip("#").strip()
-                    break
-        elif entry.media_type == "text/html":
-            try:
-                (snapshot.raw_bytes or b"").decode("utf-8")
-            except UnicodeDecodeError:
-                raise DomainError("BATCH_SOURCE_CHANGED", "暂存文件编码无效", 409, False) from None
+            text = (snapshot.raw_bytes or b"").decode("utf-8-sig")
+            title = title_from_markdown(text) or title
         return DiscoveredSource(
             source_identity=f"folder:{root_id}:{entry.relative_path}",
             source_revision=revision,

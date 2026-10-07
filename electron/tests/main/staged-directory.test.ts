@@ -11,8 +11,47 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, extname, join } from "node:path";
 import { StagedFileService, stageDirectoryForTest } from "../../main/staged-files";
+
+/**
+ * Format declarations standing in for what the backend serves.
+ *
+ * The directory scanner decides what to copy and how to label it entirely from
+ * this list, so the test names the formats rather than relying on any built-in
+ * set. Note the ceilings are per format — there is no "pdf limit" and "text
+ * limit" in the implementation any more.
+ */
+const FORMATS = [
+  {
+    name: "pdf",
+    label: "PDF",
+    extensions: [".pdf"],
+    mediaType: "application/pdf",
+    maxBytes: 100 * 1024 * 1024,
+  },
+  {
+    name: "markdown",
+    label: "Markdown",
+    extensions: [".md", ".markdown"],
+    mediaType: "text/markdown",
+    maxBytes: 20 * 1024 * 1024,
+  },
+  {
+    name: "docx",
+    label: "Word 文档",
+    extensions: [".docx"],
+    mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    maxBytes: 20 * 1024 * 1024,
+  },
+  {
+    name: "html",
+    label: "网页",
+    extensions: [".html", ".htm"],
+    mediaType: "text/html",
+    maxBytes: 20 * 1024 * 1024,
+  },
+];
 
 type StagingManifest = {
   rootId: string;
@@ -55,7 +94,7 @@ describe("staged directories", () => {
     await writeFile(join(fixtureRoot, "index.html"), "<h1>Index</h1>\n");
     await writeFile(join(fixtureRoot, "ignored.txt"), "not supported\n");
 
-    const result = await stageDirectoryForTest({ selectedPath: fixtureRoot, dataDir });
+    const result = await stageDirectoryForTest({ selectedPath: fixtureRoot, dataDir, formats: FORMATS });
 
     expect(result).toMatchObject({
       displayName: "fixture",
@@ -94,7 +133,7 @@ describe("staged directories", () => {
       },
     });
 
-    await expect(service.stageDirectory()).resolves.toBeNull();
+    await expect(service.stageDirectory(FORMATS)).resolves.toBeNull();
     expect(receivedOptions).toEqual({ properties: ["openDirectory"] });
   });
 
@@ -107,7 +146,7 @@ describe("staged directories", () => {
       ),
     );
     await expect(
-      stageDirectoryForTest({ selectedPath: tooManyFiles, dataDir }),
+      stageDirectoryForTest({ selectedPath: tooManyFiles, dataDir, formats: FORMATS }),
     ).rejects.toMatchObject({ code: "BATCH_LIMIT_EXCEEDED" });
 
     const symlinkFixture = join(workspace, "links");
@@ -117,7 +156,7 @@ describe("staged directories", () => {
     await symlink(join(workspace, "outside.md"), join(symlinkFixture, "linked.md"));
     await symlink(workspace, join(symlinkFixture, "linked-directory"));
     await expect(
-      stageDirectoryForTest({ selectedPath: symlinkFixture, dataDir }),
+      stageDirectoryForTest({ selectedPath: symlinkFixture, dataDir, formats: FORMATS }),
     ).resolves.toMatchObject({ itemCount: 1 });
   });
 
@@ -126,8 +165,8 @@ describe("staged directories", () => {
     await mkdir(fixtureRoot);
     await writeFile(join(fixtureRoot, "one.md"), "one");
 
-    const first = await stageDirectoryForTest({ selectedPath: fixtureRoot, dataDir });
-    const second = await stageDirectoryForTest({ selectedPath: fixtureRoot, dataDir });
+    const first = await stageDirectoryForTest({ selectedPath: fixtureRoot, dataDir, formats: FORMATS });
+    const second = await stageDirectoryForTest({ selectedPath: fixtureRoot, dataDir, formats: FORMATS });
     const firstManifest = await readManifest(dataDir, first.collectionId);
     const secondManifest = await readManifest(dataDir, second.collectionId);
     const rootsPath = join(dataDir, "imports", "source-roots.json");
@@ -150,6 +189,7 @@ describe("staged directories", () => {
       stageDirectoryForTest({
         selectedPath: fixtureRoot,
         dataDir,
+        formats: FORMATS,
         maxTotalBytes: 4,
       }),
     ).rejects.toMatchObject({ code: "BATCH_LIMIT_EXCEEDED" });
@@ -160,19 +200,27 @@ describe("staged directories", () => {
   });
 
   it.each([
-    ["markdown", "guide.md", "maxMarkdownBytes"],
-    ["html", "index.html", "maxMarkdownBytes"],
-    ["pdf", "guide.pdf", "maxPdfBytes"],
-  ] as const)("rejects an oversized %s file before copying", async (_kind, filename, limitKey) => {
+    ["markdown", "guide.md"],
+    ["html", "index.html"],
+    ["pdf", "guide.pdf"],
+    ["docx", "report.docx"],
+  ] as const)("rejects an oversized %s file before copying", async (_kind, filename) => {
     const fixtureRoot = join(workspace, `oversized-${_kind}`);
     await mkdir(fixtureRoot);
     await writeFile(join(fixtureRoot, filename), "12345");
+
+    // Shrink only the ceiling of the format under test, leaving the others
+    // untouched: this asserts the per-format limit is what is enforced, not a
+    // single global one that happens to be small.
+    const formats = FORMATS.map((format) =>
+      format.extensions.includes(extname(filename)) ? { ...format, maxBytes: 4 } : format,
+    );
 
     await expect(
       stageDirectoryForTest({
         selectedPath: fixtureRoot,
         dataDir,
-        [limitKey]: 4,
+        formats,
       }),
     ).rejects.toMatchObject({ code: "BATCH_LIMIT_EXCEEDED" });
 
@@ -192,6 +240,7 @@ describe("staged directories", () => {
       stageDirectoryForTest({
         selectedPath: fixtureRoot,
         dataDir,
+        formats: FORMATS,
         beforeSourceRecheck: async (path) => {
           await rename(path, backupPath);
           await writeFile(path, "replacement");

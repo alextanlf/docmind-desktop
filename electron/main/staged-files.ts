@@ -5,10 +5,34 @@ import { basename, extname, isAbsolute, join, relative, sep } from "node:path";
 
 const MAX_DIRECTORY_FILES = 1_000;
 const MAX_DIRECTORY_BYTES = 2 * 1024 ** 3;
-const MAX_MARKDOWN_HTML_BYTES = 20 * 1024 * 1024;
-const MAX_PDF_BYTES = 100 * 1024 * 1024;
+/**
+ * Absolute ceiling for one file, whatever a format declares.
+ *
+ * The per-format limit comes from the backend (`SourceFormat.maxBytes`); this
+ * is the outer bound that keeps a malformed or hostile format declaration from
+ * asking the main process to buffer something absurd. It is defence in depth,
+ * not the policy — the policy is the backend's.
+ */
+const MAX_SINGLE_FILE_BYTES = 100 * 1024 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+
+/**
+ * An importable format, as declared by the backend.
+ *
+ * The main process holds no list of these; it is handed one when the user
+ * picks a file. `extensions` carry a leading dot (`.docx`), matching how the
+ * backend declares them; the dialog wants them bare, so the conversion happens
+ * at the one place that talks to the dialog.
+ */
+export type ImportFormat = {
+  name: string;
+  label: string;
+  extensions: string[];
+  mediaType: string;
+  maxBytes: number;
+};
+
 
 type DirectoryDialogOptions = { properties: ["openDirectory"] };
 type FileDialogOptions = {
@@ -48,10 +72,9 @@ type ManifestEntry = {
 
 type DirectoryStagingOptions = {
   dataDir: string;
+  formats: ImportFormat[];
   maxFileCount?: number;
   maxTotalBytes?: number;
-  maxPdfBytes?: number;
-  maxMarkdownBytes?: number;
   beforeSourceRecheck?: (sourcePath: string) => Promise<void> | void;
 };
 
@@ -87,8 +110,6 @@ export class StagedFileService {
   constructor(
     private opts: {
       dataDir: string;
-      maxPdfBytes?: number;
-      maxMarkdownBytes?: number;
       maxDirectoryFiles?: number;
       maxDirectoryBytes?: number;
       showOpenDialog?: ShowOpenDialog;
@@ -101,29 +122,40 @@ export class StagedFileService {
     const { dialog } = await import("electron");
     return dialog.showOpenDialog(options);
   }
-  async chooseAndStage(kind: "pdf" | "markdown"): Promise<StagedSource | null> {
+  /**
+   * Open the picker for one format and stage whatever the user chose.
+   *
+   * The format is passed in rather than selected from a list held here: it
+   * comes from the backend, which is the only thing that knows what it can
+   * parse. A closed set of kinds in this file would silently exclude every
+   * format a plugin contributes.
+   */
+  async chooseAndStage(format: ImportFormat): Promise<StagedSource | null> {
     const result = await this.showOpenDialog({
       properties: ["openFile"],
-      filters:
-        kind === "pdf"
-          ? [{ name: "PDF", extensions: ["pdf"] }]
-          : [{ name: "Markdown", extensions: ["md", "markdown"] }],
+      filters: [
+        {
+          name: format.label,
+          // The dialog wants bare extensions; the backend declares them
+          // leading-dot, so the one conversion lives here.
+          extensions: format.extensions.map((extension) => extension.replace(/^\./, "")),
+        },
+      ],
     });
     if (result.canceled || result.filePaths.length !== 1) return null;
-    return this.stageSelected(result.filePaths[0], kind);
+    return this.stageSelected(result.filePaths[0], format);
   }
-  async stageDirectory(): Promise<StagedCollection | null> {
+  async stageDirectory(formats: ImportFormat[]): Promise<StagedCollection | null> {
     const result = await this.showOpenDialog({ properties: ["openDirectory"] });
     if (result.canceled || result.filePaths.length !== 1) return null;
     return stageSelectedDirectory(result.filePaths[0], {
       dataDir: this.opts.dataDir,
+      formats,
       maxFileCount: this.opts.maxDirectoryFiles,
       maxTotalBytes: this.opts.maxDirectoryBytes,
-      maxPdfBytes: this.opts.maxPdfBytes,
-      maxMarkdownBytes: this.opts.maxMarkdownBytes,
     });
   }
-  async stageSelected(source: string, kind: "pdf" | "markdown"): Promise<StagedSource> {
+  async stageSelected(source: string, format: ImportFormat): Promise<StagedSource> {
     const noFollow = (constants as NodeJS.Dict<number>).O_NOFOLLOW;
     if (typeof noFollow !== "number") {
       throw new StagedFileError("SOURCE_UNSUPPORTED", "Secure file access unavailable");
@@ -133,13 +165,11 @@ export class StagedFileService {
     });
     if (!stat.isFile()) throw new StagedFileError("SOURCE_UNSUPPORTED", "Regular file required");
     const extension = extname(source).toLowerCase();
-    const extensions = kind === "pdf" ? [".pdf"] : [".md", ".markdown"];
-    if (!extensions.includes(extension))
+    if (!format.extensions.includes(extension))
       throw new StagedFileError("SOURCE_UNSUPPORTED", "Unsupported extension");
-    const limit =
-      kind === "pdf"
-        ? (this.opts.maxPdfBytes ?? 100 * 1024 * 1024)
-        : (this.opts.maxMarkdownBytes ?? 20 * 1024 * 1024);
+    // The declared ceiling, clamped by the absolute outer bound so a bad
+    // declaration cannot ask this process to buffer something absurd.
+    const limit = Math.min(format.maxBytes, MAX_SINGLE_FILE_BYTES);
     if (stat.size > limit)
       throw new StagedFileError("SOURCE_TOO_LARGE", "Source exceeds size limit");
     const id = randomUUID();
@@ -207,7 +237,7 @@ export class StagedFileService {
       stagedSourceId: id,
       kind: "staged_file",
       name: basename(source),
-      mediaType: kind === "pdf" ? "application/pdf" : "text/markdown",
+      mediaType: format.mediaType,
       sizeBytes: stat.size,
     };
   }
@@ -216,10 +246,9 @@ export class StagedFileService {
 export async function stageDirectoryForTest(options: {
   selectedPath: string;
   dataDir: string;
+  formats: ImportFormat[];
   maxFileCount?: number;
   maxTotalBytes?: number;
-  maxPdfBytes?: number;
-  maxMarkdownBytes?: number;
   beforeSourceRecheck?: (sourcePath: string) => Promise<void> | void;
 }): Promise<StagedCollection> {
   return stageSelectedDirectory(options.selectedPath, options);
@@ -250,29 +279,20 @@ async function stageSelectedDirectory(
 
   const maxFileCount = options.maxFileCount ?? MAX_DIRECTORY_FILES;
   const maxTotalBytes = options.maxTotalBytes ?? MAX_DIRECTORY_BYTES;
-  const maxPdfBytes = options.maxPdfBytes ?? MAX_PDF_BYTES;
-  const maxMarkdownBytes = options.maxMarkdownBytes ?? MAX_MARKDOWN_HTML_BYTES;
   if (
     !Number.isInteger(maxFileCount) ||
     maxFileCount < 0 ||
     maxFileCount > MAX_DIRECTORY_FILES ||
     !Number.isSafeInteger(maxTotalBytes) ||
     maxTotalBytes < 0 ||
-    maxTotalBytes > MAX_DIRECTORY_BYTES ||
-    !Number.isSafeInteger(maxPdfBytes) ||
-    maxPdfBytes < 0 ||
-    maxPdfBytes > MAX_PDF_BYTES ||
-    !Number.isSafeInteger(maxMarkdownBytes) ||
-    maxMarkdownBytes < 0 ||
-    maxMarkdownBytes > MAX_MARKDOWN_HTML_BYTES
+    maxTotalBytes > MAX_DIRECTORY_BYTES
   )
     throw batchLimitExceeded();
   const candidates = await collectCandidates(
     canonicalRoot,
+    options.formats,
     maxFileCount,
     maxTotalBytes,
-    maxPdfBytes,
-    maxMarkdownBytes,
   );
   const totalBytes = candidates.reduce((total, candidate) => total + candidate.sizeBytes, 0);
   const rootId = await getOrCreateRootId(options.dataDir, canonicalRoot).catch((error) => {
@@ -304,7 +324,7 @@ async function stageSelectedDirectory(
         sha256,
       });
     }
-    validateManifestEntries(files, maxFileCount, maxTotalBytes);
+    validateManifestEntries(files, maxFileCount, maxTotalBytes, options.formats);
     await atomicWriteJson(join(partialCollection, "manifest.json"), { rootId, files });
     await rename(partialCollection, finalCollection);
   } catch (error) {
@@ -323,10 +343,9 @@ async function stageSelectedDirectory(
 
 async function collectCandidates(
   canonicalRoot: string,
+  formats: ImportFormat[],
   maxFileCount: number,
   maxTotalBytes: number,
-  maxPdfBytes: number,
-  maxMarkdownBytes: number,
 ): Promise<DirectoryCandidate[]> {
   const candidates: DirectoryCandidate[] = [];
   let totalBytes = 0;
@@ -349,20 +368,19 @@ async function collectCandidates(
         continue;
       }
       if (!stat.isFile()) continue;
-      const mediaType = classifyMediaType(sourcePath);
-      if (mediaType === null) continue;
+      const format = formatForPath(sourcePath, formats);
+      if (format === null) continue;
       const relativePath = safeRelativePath(canonicalRoot, sourcePath);
       const sizeBytes = Number(stat.size);
       if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) throw batchLimitExceeded();
-      const maxFileBytes = mediaType === "application/pdf" ? maxPdfBytes : maxMarkdownBytes;
-      if (sizeBytes > maxFileBytes) throw batchLimitExceeded();
+      if (sizeBytes > Math.min(format.maxBytes, MAX_SINGLE_FILE_BYTES)) throw batchLimitExceeded();
       totalBytes += sizeBytes;
       if (candidates.length + 1 > maxFileCount || totalBytes > maxTotalBytes)
         throw batchLimitExceeded();
       candidates.push({
         sourcePath,
         relativePath,
-        mediaType,
+        mediaType: format.mediaType,
         sizeBytes,
         device: stat.dev,
         inode: stat.ino,
@@ -379,19 +397,17 @@ async function collectCandidates(
   return candidates;
 }
 
-function classifyMediaType(sourcePath: string): string | null {
-  switch (extname(sourcePath).toLowerCase()) {
-    case ".pdf":
-      return "application/pdf";
-    case ".md":
-    case ".markdown":
-      return "text/markdown";
-    case ".html":
-    case ".htm":
-      return "text/html";
-    default:
-      return null;
-  }
+/**
+ * The format owning one path's extension, or ``null`` if nothing claims it.
+ *
+ * Unknown files are skipped rather than rejected: an imported folder routinely
+ * holds assets, and one unreadable file is not a reason to refuse the whole
+ * directory.
+ */
+function formatForPath(sourcePath: string, formats: ImportFormat[]): ImportFormat | null {
+  const extension = extname(sourcePath).toLowerCase();
+  if (!extension) return null;
+  return formats.find((format) => format.extensions.includes(extension)) ?? null;
 }
 
 function safeRelativePath(root: string, sourcePath: string): string {
@@ -526,16 +542,19 @@ function validateManifestEntries(
   files: ManifestEntry[],
   maxFileCount: number,
   maxTotalBytes: number,
+  formats: ImportFormat[],
 ): void {
   if (files.length > maxFileCount) throw batchLimitExceeded();
   let totalBytes = 0;
   const stagedIds = new Set<string>();
   for (const entry of files) {
     const segments = entry.relativePath.split("/");
+    const format = formatForPath(entry.relativePath, formats);
     if (
       isAbsolute(entry.relativePath) ||
       segments.some((segment) => segment === "" || segment === "." || segment === "..") ||
-      classifyMediaType(entry.relativePath) !== entry.mediaType ||
+      format === null ||
+      format.mediaType !== entry.mediaType ||
       !UUID_PATTERN.test(entry.stagedId) ||
       stagedIds.has(entry.stagedId) ||
       !SHA256_PATTERN.test(entry.sha256)

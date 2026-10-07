@@ -51,6 +51,7 @@ from app.core.local_model_service import LocalModelService
 from app.core.model_router import ModelRouter
 from app.core.retrieval import HybridRetriever
 from app.core.secrets import KeyringSecretStore, MemorySecretStore, SecretStore
+from app.document.builtin_formats import builtin_registry
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
 from app.document.safe_http import SafeHttpClient
@@ -331,10 +332,18 @@ def create_app(
         conversation_store = ConversationStore(database)
         vector_store = PersistentVectorStore(runtime_settings.vectorstore_settings)
         document_store = DocumentStore(database)
+        # One format registry for the whole process: the import service, the
+        # directory scanner, the downloader and the standalone parser all read
+        # it, so a format a plugin contributes is importable everywhere at once
+        # instead of only on the path that happened to be handed the registry.
+        formats = builtin_registry()
+        app.state.format_registry = formats
+        document_parser = DocumentParser(formats)
+        app.state.document_parser = document_parser
         app.state.import_service = ImportService(
             settings=runtime_settings,
-            source_inspector=SourceInspector(runtime_settings),
-            parser=DocumentParser(),
+            source_inspector=SourceInspector(runtime_settings, formats=formats),
+            parser=document_parser,
             chunker=SemanticChunker(),
             embedding_provider=runtime_embedding_provider,
             vector_store=vector_store,
@@ -373,6 +382,7 @@ def create_app(
             batch_max_items=runtime_settings.batch_max_items,
             web_discovery=web_discovery,
             remote_discovery=remote_discovery,
+            formats=formats,
         )
         app.state.batch_service.recover_on_startup()
 
@@ -508,7 +518,7 @@ def create_app(
         app.state.vector_cleanup_store = VectorCleanupStore(database)
         app.state.document_mutation_store = DocumentMutationStore(database)
         app.state.vector_store = vector_store
-        app.state.document_parser = DocumentParser()
+        app.state.document_parser = DocumentParser(formats)
         app.state.document_chunker = SemanticChunker()
         await recover_document_mutations(app)
         for cleanup in app.state.vector_cleanup_store.list():
@@ -584,7 +594,7 @@ def create_app(
         rebuild_store = EmbeddingRebuildStore(database)
         refresher = DocumentRefresher(
             document_store=document_store,
-            parser=DocumentParser(),
+            parser=DocumentParser(formats),
             chunker=SemanticChunker(),
             embedding_provider=runtime_embedding_provider,
             vector_store=vector_store,

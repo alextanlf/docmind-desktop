@@ -11,6 +11,8 @@ from uuid import UUID
 
 from app.api.errors import DomainError
 from app.config import AppSettings
+from app.document.builtin_formats import builtin_registry
+from app.document.formats import FormatRegistry, size_limit_for
 from app.document.staging_manifest import (
     ManifestFile,
     StagingManifest,
@@ -24,8 +26,6 @@ from app.schemas.imports import DownloadedDocument, SourcePreview, SourceRef
 
 if TYPE_CHECKING:
     from app.document.downloader import DocumentDownloader
-
-_SUPPORTED_STAGED_SUFFIXES = {".md", ".markdown", ".pdf"}
 
 
 def _unsupported(message: str = "不支持的文档来源") -> DomainError:
@@ -100,10 +100,11 @@ def _inet_number(value: str) -> int:
 
 
 class StagedFileStore:
-    def __init__(self, settings: AppSettings) -> None:
+    def __init__(self, settings: AppSettings, formats: FormatRegistry | None = None) -> None:
         self.staging_dir = settings.staging_dir
         self.html_markdown_max_bytes = settings.html_markdown_max_bytes
         self.pdf_max_bytes = settings.pdf_max_bytes
+        self.formats = formats if formats is not None else builtin_registry()
 
     def resolve(self, staged_id: str) -> Path:
         try:
@@ -117,7 +118,7 @@ class StagedFileStore:
         matches = [path for path in self.staging_dir.glob(f"{canonical_id}.*") if path.parent == self.staging_dir]
         if len(matches) != 1:
             raise _unsupported("暂存文件不存在或不唯一")
-        if matches[0].suffix.lower() not in _SUPPORTED_STAGED_SUFFIXES:
+        if self.formats.for_pickable_extension(matches[0].suffix) is None:
             raise _unsupported()
         resolved = matches[0].resolve()
         try:
@@ -130,23 +131,26 @@ class StagedFileStore:
 
     def load(self, staged_id: str) -> DownloadedDocument:
         path = self.resolve(staged_id)
-        media_type = self._media_type(path)
-        size_limit = self.pdf_max_bytes if media_type == "application/pdf" else self.html_markdown_max_bytes
+        format = self.formats.for_pickable_extension(path.suffix)
+        if format is None:
+            raise _unsupported()
+        size_limit = size_limit_for(
+            format,
+            binary_max_bytes=self.pdf_max_bytes,
+            text_max_bytes=self.html_markdown_max_bytes,
+        )
         raw_bytes = self._read_limited(path, size_limit)
-        if media_type == "application/pdf" and not raw_bytes.startswith(b"%PDF-"):
-            raise _unsupported("PDF 文件签名无效")
-        if media_type == "text/markdown":
-            try:
-                raw_bytes.decode("utf-8-sig")
-            except UnicodeDecodeError:
-                raise _unsupported("Markdown 必须使用 UTF-8 编码") from None
+        if format.validate is not None:
+            problem = format.validate(raw_bytes)
+            if problem is not None:
+                raise _unsupported(problem)
         return DownloadedDocument(
             title=path.name,
             # Preserve only the opaque staged identifier across the backend
             # boundary; never expose the absolute staging path in previews,
             # persisted chunks, or later chat citations.
             source_url=f"staged://{staged_id.lower()}",
-            media_type=media_type,
+            media_type=format.media_type,
             raw_bytes=raw_bytes,
             local_path=path,
         )
@@ -178,24 +182,16 @@ class StagedFileStore:
         finally:
             os.close(descriptor)
 
-    @staticmethod
-    def _media_type(path: Path) -> str:
-        suffix = path.suffix.lower()
-        if suffix == ".pdf":
-            return "application/pdf"
-        if suffix in {".md", ".markdown"}:
-            return "text/markdown"
-        raise _unsupported()
-
 
 class CollectionCacheStore:
     """Internal reader for immutable Phase 2 collection snapshots."""
 
-    def __init__(self, settings: AppSettings) -> None:
+    def __init__(self, settings: AppSettings, formats: FormatRegistry | None = None) -> None:
         self.staging_dir = settings.staging_dir
         self.manifest_max_bytes = settings.staging_manifest_max_bytes
         self.html_markdown_max_bytes = settings.html_markdown_max_bytes
         self.pdf_max_bytes = settings.pdf_max_bytes
+        self.formats = formats if formats is not None else builtin_registry()
 
     def load_many(
         self,
@@ -273,10 +269,13 @@ class CollectionCacheStore:
         request: CollectionCacheRequest,
     ) -> DownloadedDocument:
         path = collection_root / "items" / entry.staged_id
-        size_limit = (
-            self.pdf_max_bytes
-            if entry.media_type == "application/pdf"
-            else self.html_markdown_max_bytes
+        format = self.formats.for_media_type(entry.media_type)
+        if format is None:
+            raise _batch_source_changed("暂存文件类型无效")
+        size_limit = size_limit_for(
+            format,
+            binary_max_bytes=self.pdf_max_bytes,
+            text_max_bytes=self.html_markdown_max_bytes,
         )
         snapshot = read_file_snapshot(
             path,
@@ -287,13 +286,10 @@ class CollectionCacheStore:
         )
         verify_file_snapshot(path, snapshot)
         raw_bytes = snapshot.raw_bytes or b""
-        if entry.media_type == "application/pdf" and not raw_bytes.startswith(b"%PDF-"):
-            raise _batch_source_changed("PDF 文件签名无效")
-        if entry.media_type in {"text/markdown", "text/html"}:
-            try:
-                raw_bytes.decode("utf-8-sig" if entry.media_type == "text/markdown" else "utf-8")
-            except UnicodeDecodeError:
-                raise _batch_source_changed("暂存文件编码无效") from None
+        if format.validate is not None:
+            problem = format.validate(raw_bytes)
+            if problem is not None:
+                raise _batch_source_changed(problem)
         return DownloadedDocument(
             title=request.title,
             source_url=f"staged-collection://{collection_id}/{entry.staged_id}",
@@ -304,9 +300,16 @@ class CollectionCacheStore:
 
 
 class SourceInspector:
-    def __init__(self, settings: AppSettings, downloader: DocumentDownloader | None = None) -> None:
-        self.staged_store = StagedFileStore(settings)
-        self.collection_store = CollectionCacheStore(settings)
+    def __init__(
+        self,
+        settings: AppSettings,
+        downloader: DocumentDownloader | None = None,
+        formats: FormatRegistry | None = None,
+    ) -> None:
+        registry = formats if formats is not None else builtin_registry()
+        self.formats = registry
+        self.staged_store = StagedFileStore(settings, registry)
+        self.collection_store = CollectionCacheStore(settings, registry)
         if downloader is None:
             from app.document.downloader import DocumentDownloader
 
@@ -342,10 +345,13 @@ class SourceInspector:
             path = (staging_root / "remote" / str(batch_id) / str(cache_id)).resolve()
             if staging_root not in path.parents:
                 raise DomainError("SOURCE_NOT_FOUND", "远程缓存路径无效", 404, False)
-            size_limit = (
-                self.collection_store.pdf_max_bytes
-                if cache_ref.media_type == "application/pdf"
-                else self.collection_store.html_markdown_max_bytes
+            format = self.formats.for_media_type(cache_ref.media_type)
+            if format is None:
+                raise DomainError("SOURCE_NOT_FOUND", "远程缓存类型无效", 404, False)
+            size_limit = size_limit_for(
+                format,
+                binary_max_bytes=self.collection_store.pdf_max_bytes,
+                text_max_bytes=self.collection_store.html_markdown_max_bytes,
             )
             snapshot = read_file_snapshot(
                 path,

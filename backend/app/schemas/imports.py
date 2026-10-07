@@ -15,6 +15,22 @@ class SourceRef(WireModel):
     value: str
 
 
+class SourceFormatView(WireModel):
+    """One importable format, as the client needs to render a file picker.
+
+    Declared by the backend so the dialog's filters, its size ceiling and the
+    label on the button all follow from what is actually installed — including
+    formats a plugin contributes. The client holds no list of its own.
+    """
+
+    name: str
+    label: str
+    extensions: list[str]
+    media_type: str
+    #: Ceiling in bytes for a single file of this format, from configuration.
+    max_bytes: int
+
+
 class SourcePreview(WireModel):
     title: str
     source_kind: Literal["url", "staged_file"]

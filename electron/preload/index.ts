@@ -33,6 +33,7 @@ import {
   SourceRefSchema,
   StagedCollectionSchema,
   StagedSourceSchema,
+  SourceFormatSchema,
   RemoteStatusSchema,
   RemoteProviderSummarySchema,
   RemoteCredentialChannelSchema,
@@ -397,15 +398,16 @@ const api: DocMindApi = {
     },
   },
   dialogs: {
-    chooseSource: (kind) => {
-      if (kind !== "pdf" && kind !== "markdown")
+    chooseSource: (format) => {
+      if (typeof format !== "string" || format.length === 0 || format.length > 64)
         return Promise.reject(new Error("INVALID_REQUEST"));
-      return invoke(IPC_CHANNELS.dialogsChooseSource, StagedSourceSchema.nullable(), kind);
+      return invoke(IPC_CHANNELS.dialogsChooseSource, StagedSourceSchema.nullable(), format);
     },
   },
   sources: {
     stageDirectory: () =>
       invoke(IPC_CHANNELS.sourcesStageDirectory, StagedCollectionSchema.nullable()),
+    listFormats: () => invoke(IPC_CHANNELS.sourcesListFormats, SourceFormatSchema.array()),
   },
   batches: {
     create: (input) =>

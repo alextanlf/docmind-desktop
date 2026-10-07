@@ -1,120 +1,58 @@
+"""Dispatching a downloaded payload to the format that can read it.
+
+The parser owns no knowledge of any particular format. It looks the payload's
+media type up in a :class:`~app.document.formats.FormatRegistry` and delegates.
+Adding a format — including one installed by a plugin — needs no change here,
+which is the whole point: the previous version was an ``if media_type == ...``
+chain that every new format had to be threaded through.
+"""
 from __future__ import annotations
 
-import re
-
-import pymupdf
-from bs4 import BeautifulSoup
-from markdownify import markdownify
-
 from app.api.errors import DomainError
-from app.document.extraction import (
-    extract_main_content,
-    strip_document_noise,
-    strip_hidden_content,
-)
-from app.schemas.imports import DownloadedDocument, ParsedDocument, ParsedSection
-
-_HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+from app.document.builtin_formats import builtin_registry
+from app.document.formats import FormatRegistry
+from app.schemas.imports import DownloadedDocument, ParsedDocument
 
 
 class DocumentParser:
+    """Dispatches on media type via a format registry.
+
+    The registry is resolved through a property rather than a plain attribute
+    so that a subclass replacing ``__init__`` still parses. That is not
+    hypothetical: the test suite has such a subclass, and a caller wrapping the
+    parser for instrumentation is the obvious next one — both would otherwise
+    die on an attribute the base class never got to set.
+    """
+
+    _formats: FormatRegistry | None = None
+
+    def __init__(self, formats: FormatRegistry | None = None) -> None:
+        self._formats = formats
+
+    @property
+    def formats(self) -> FormatRegistry:
+        """Built-in formats until something supplies a wider registry.
+
+        Cached on the instance, so the fallback is built once and one parser
+        can never leak formats into another.
+        """
+        if self._formats is None:
+            self._formats = builtin_registry()
+        return self._formats
+
+    @formats.setter
+    def formats(self, value: FormatRegistry) -> None:
+        self._formats = value
+
     def parse(self, document: DownloadedDocument) -> ParsedDocument:
-        if document.media_type == "application/pdf":
-            return self._parse_pdf(document)
-        if document.media_type == "text/markdown":
-            try:
-                markdown = document.raw_bytes.decode("utf-8-sig")
-            except UnicodeDecodeError:
-                raise DomainError("SOURCE_UNSUPPORTED", "Markdown 必须使用 UTF-8 编码", 400, False) from None
-            title = next(
-                (
-                    match.group(2).strip().rstrip("#").strip()
-                    for match in (_HEADING.match(line) for line in markdown.splitlines())
-                    if match and len(match.group(1)) == 1
-                ),
-                document.title,
-            )
-            return self._from_markdown(document, markdown, title)
-        if document.media_type == "text/html":
-            return self._parse_html(document)
-        raise DomainError("SOURCE_UNSUPPORTED", "不支持的文档类型", 400, False)
-
-    def _parse_html(self, document: DownloadedDocument) -> ParsedDocument:
-        soup = BeautifulSoup(document.raw_bytes, "html.parser")
-        strip_hidden_content(soup)
-        title_node = soup.find("h1") or soup.title
-        title = title_node.get_text(" ", strip=True) if title_node else document.title
-        container = extract_main_content(soup)
-        if container is not None:
-            strip_document_noise(container)
-        if soup.head:
-            soup.head.decompose()
-        target = container if container is not None else soup
-        markdown = markdownify(str(target), heading_style="ATX", code_language_callback=self._code_language).strip()
-        languages = [self._code_language(code) for code in target.select("pre > code")]
-        language_index = 0
-
-        def add_code_language(match: re.Match[str]) -> str:
-            nonlocal language_index
-            language = languages[language_index] if language_index < len(languages) else None
-            language_index += 1
-            return f"```{language or ''}{match.group(1)}```"
-
-        markdown = re.sub(r"```(\n.*?\n)```", add_code_language, markdown, flags=re.DOTALL)
-        return self._from_markdown(document, markdown, title or document.title)
-
-    @staticmethod
-    def _code_language(element: object) -> str | None:
-        classes = getattr(element, "get", lambda _: [])("class") or []
-        for class_name in classes:
-            if class_name.startswith("language-"):
-                return class_name.removeprefix("language-")
-        return None
-
-    def _parse_pdf(self, document: DownloadedDocument) -> ParsedDocument:
-        if not document.raw_bytes.startswith(b"%PDF-"):
-            raise DomainError("SOURCE_UNSUPPORTED", "PDF 文件签名无效", 400, False)
-        try:
-            pdf = pymupdf.open(stream=document.raw_bytes, filetype="pdf")
-        except (RuntimeError, ValueError):
-            raise DomainError("SOURCE_UNSUPPORTED", "PDF 文件无效", 400, False) from None
-        try:
-            sections = [
-                ParsedSection(heading_path=[], markdown=text, page_number=index)
-                for index, page in enumerate(pdf, start=1)
-                if (text := page.get_text("text").strip())
-            ]
-        finally:
-            pdf.close()
-        markdown = "\n\n".join(section.markdown for section in sections)
-        return ParsedDocument(title=document.title, markdown=markdown, source_url=document.source_url, sections=sections)
-
-    def _from_markdown(self, document: DownloadedDocument, markdown: str, title: str) -> ParsedDocument:
-        markdown = markdown.strip()
-        sections = self._sections_from_markdown(markdown)
-        return ParsedDocument(title=title, markdown=markdown, source_url=document.source_url, sections=sections)
-
-    @staticmethod
-    def _sections_from_markdown(markdown: str) -> list[ParsedSection]:
-        sections: list[ParsedSection] = []
-        path: list[str] = []
-        current: list[str] = []
-        current_path: list[str] = []
-        in_fence = False
-        for line in markdown.splitlines():
-            if line.startswith(("```", "~~~")):
-                in_fence = not in_fence
-            heading = None if in_fence else _HEADING.match(line)
-            if heading:
-                if current and "\n".join(current).strip():
-                    sections.append(ParsedSection(heading_path=current_path, markdown="\n".join(current).strip()))
-                level = len(heading.group(1))
-                text = heading.group(2).strip().rstrip("#").strip()
-                path = path[: level - 1] + [text]
-                current_path = list(path)
-                current = [line]
-            else:
-                current.append(line)
-        if current and "\n".join(current).strip():
-            sections.append(ParsedSection(heading_path=current_path, markdown="\n".join(current).strip()))
-        return sections
+        format = self.formats.for_media_type(document.media_type)
+        if format is None:
+            raise DomainError("SOURCE_UNSUPPORTED", "不支持的文档类型", 400, False)
+        # The format's own payload check runs here too, not only at staging
+        # time: this parser is also reached from the remote gateways and the
+        # directory scanner, which hand it bytes that were never staged.
+        if format.validate is not None:
+            problem = format.validate(document.raw_bytes)
+            if problem is not None:
+                raise DomainError("SOURCE_UNSUPPORTED", problem, 400, False)
+        return format.parse(document)

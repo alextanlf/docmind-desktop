@@ -35,6 +35,7 @@ import {
   SourceRefSchema,
   StagedSourceSchema,
   StagedCollectionSchema,
+  SourceFormatSchema,
   RemoteStatusSchema,
   RemoteProviderSummarySchema,
   RemoteCredentialChannelSchema,
@@ -600,11 +601,22 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         sender: event.sender ?? { send: () => {} },
       });
     },
-    [IPC_CHANNELS.dialogsChooseSource]: (_event, kind) => {
-      if (kind !== "pdf" && kind !== "markdown")
+    [IPC_CHANNELS.sourcesListFormats]: () =>
+      proxy.requestJson("/api/imports/formats", {}, SourceFormatSchema.array()),
+    [IPC_CHANNELS.dialogsChooseSource]: (_event, name) => {
+      // Arity and shape are checked before any await, so a malformed call
+      // fails here rather than after a needless backend round trip.
+      if (typeof name !== "string" || name.length === 0 || name.length > 64)
         throw new DocMindClientError("INVALID_REQUEST", "来源类型无效");
-      return stagedFiles
-        .chooseAndStage(kind)
+      // The format list lives in the backend, so a picker opened for a format
+      // a plugin contributed works without this process knowing it exists.
+      return proxy
+        .requestJson("/api/imports/formats", {}, SourceFormatSchema.array())
+        .then((formats) => {
+          const format = formats.find((candidate) => candidate.name === name);
+          if (!format) throw new DocMindClientError("INVALID_REQUEST", "来源类型无效");
+          return stagedFiles.chooseAndStage(format);
+        })
         .then((value) => (value === null ? null : parse(StagedSourceSchema, value)))
         .catch((error: unknown) => {
           if (error instanceof DocMindClientError) throw error;
@@ -619,8 +631,9 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
     },
     [IPC_CHANNELS.sourcesStageDirectory]: (_event, ...args) => {
       if (args.length !== 0) throw new DocMindClientError("INVALID_REQUEST", "请求参数无效");
-      return stagedFiles
-        .stageDirectory()
+      return proxy
+        .requestJson("/api/imports/formats", {}, SourceFormatSchema.array())
+        .then((formats) => stagedFiles.stageDirectory(formats))
         .then((value) => (value === null ? null : parse(StagedCollectionSchema, value)))
         .catch((error: unknown) => {
           if (error instanceof DocMindClientError) throw error;

@@ -520,6 +520,22 @@ export const StagedSourceSchema = z.object({
   mediaType: z.string().max(255),
   sizeBytes: z.number().int().nonnegative(),
 });
+
+/**
+ * One importable document format, as declared by the backend.
+ *
+ * The file dialog's filters, its size ceiling and the label on the import
+ * button all come from this, so a format the backend can parse can be picked
+ * without a matching edit here. That is what makes a format plugin usable
+ * rather than merely installed.
+ */
+export const SourceFormatSchema = z.object({
+  name: z.string().min(1).max(64),
+  label: z.string().min(1).max(64),
+  extensions: z.array(z.string().min(2).max(16)).min(1),
+  mediaType: z.string().min(1).max(255),
+  maxBytes: z.number().int().positive(),
+});
 export const StagedCollectionSchema = z.object({
   collectionId: id,
   displayName: text(255),
@@ -797,6 +813,7 @@ export type EventEnvelope = z.infer<typeof EventEnvelopeSchema>;
 export type BackendEventEnvelope = z.infer<typeof BackendEventEnvelopeSchema>;
 export type StagedSource = z.infer<typeof StagedSourceSchema>;
 export type StagedCollection = z.infer<typeof StagedCollectionSchema>;
+export type SourceFormat = z.infer<typeof SourceFormatSchema>;
 export type BatchImport = z.infer<typeof BatchImportSchema>;
 export type BatchItem = z.infer<typeof BatchItemSchema>;
 export type BatchProgressPayload = z.infer<typeof BatchProgressPayloadSchema>;
@@ -829,6 +846,13 @@ export interface StreamSubscription {
 
 export interface SourcesApi {
   stageDirectory(): Promise<StagedCollection | null>;
+  /**
+   * Formats the backend can import as a single file.
+   *
+   * The import dialog is built from this list, so a newly installed format
+   * plugin becomes pickable without the renderer knowing its name.
+   */
+  listFormats(): Promise<SourceFormat[]>;
 }
 export interface BatchesApi {
   create(input: CreateBatchInput): Promise<BatchImport>;
@@ -967,7 +991,15 @@ export interface DocMindApi {
     ): StreamSubscription;
   };
   dialogs: {
-    chooseSource(kind: "pdf" | "markdown"): Promise<StagedSource | null>;
+    /**
+     * Open the file picker for one importable format and stage the choice.
+     *
+     * Takes the format's declared name rather than a fixed list of kinds: the
+     * main process asks the backend for that format's extensions and size
+     * ceiling, so the set of pickable formats is whatever the backend can
+     * parse. A closed union here would silently exclude every plugin format.
+     */
+    chooseSource(format: string): Promise<StagedSource | null>;
   };
   sources: SourcesApi;
   batches: BatchesApi;
@@ -1000,6 +1032,7 @@ export const schemas = {
   EventEnvelopeSchema,
   BackendEventEnvelopeSchema,
   StagedSourceSchema,
+  SourceFormatSchema,
   StagedCollectionSchema,
   BatchImportSchema,
   BatchItemSchema,

@@ -64,6 +64,7 @@ export const IPC_CHANNELS = {
   memorySubscribeDistillation: "memory:subscribeDistillation",
   dialogsChooseSource: "dialogs:chooseSource",
   sourcesStageDirectory: "sources:stageDirectory",
+  sourcesListFormats: "sources:listFormats",
   batchesCreate: "batches:create",
   batchesGet: "batches:get",
   batchesList: "batches:list",

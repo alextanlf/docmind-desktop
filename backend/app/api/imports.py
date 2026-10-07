@@ -8,8 +8,16 @@ from fastapi import APIRouter, Header, Request, status
 from fastapi.responses import StreamingResponse
 
 from app.api.errors import DomainError
+from app.config import AppSettings
+from app.document.formats import FormatRegistry, size_limit_for
 from app.imports.service import ImportService
-from app.schemas.imports import ImportCreateRequest, ImportJobView, SourcePreview, SourceRef
+from app.schemas.imports import (
+    ImportCreateRequest,
+    ImportJobView,
+    SourceFormatView,
+    SourcePreview,
+    SourceRef,
+)
 
 router = APIRouter(prefix="/api/imports", tags=["imports"])
 
@@ -34,6 +42,33 @@ def _schedule(request: Request, job_id: str) -> None:
 @router.post("/inspect", response_model=SourcePreview)
 async def inspect_source(request: Request, ref: SourceRef) -> SourcePreview:
     return await _service(request).inspect(ref)
+
+
+@router.get("/formats", response_model=list[SourceFormatView])
+async def list_source_formats(request: Request) -> list[SourceFormatView]:
+    """The formats a user may pick as a single file.
+
+    The client builds its file dialog from this — filters, size ceiling and the
+    label on the button — so a format plugin widens what can be imported
+    without a matching edit in the renderer or the main process.
+    """
+    registry: FormatRegistry = request.app.state.format_registry
+    settings: AppSettings = request.app.state.settings
+    return [
+        SourceFormatView(
+            name=format.name,
+            label=format.label or format.name,
+            extensions=list(format.extensions),
+            media_type=format.media_type,
+            max_bytes=size_limit_for(
+                format,
+                binary_max_bytes=settings.pdf_max_bytes,
+                text_max_bytes=settings.html_markdown_max_bytes,
+            ),
+        )
+        for format in registry.formats()
+        if format.single_file
+    ]
 
 
 @router.post("", response_model=ImportJobView, status_code=status.HTTP_202_ACCEPTED)

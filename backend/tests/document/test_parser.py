@@ -6,8 +6,10 @@ import pymupdf
 import pytest
 
 from app.api.errors import DomainError
+from app.document.builtin_formats import builtin_registry
+from app.document.formats import DocumentFormat
 from app.document.parser import DocumentParser
-from app.schemas.imports import DownloadedDocument
+from app.schemas.imports import DownloadedDocument, ParsedDocument
 
 
 @pytest.fixture
@@ -93,3 +95,86 @@ def test_parser_rejects_invalid_supported_content(parser: DocumentParser, docume
     with pytest.raises(DomainError) as error:
         parser.parse(document)
     assert (error.value.code, error.value.retryable) == ("SOURCE_UNSUPPORTED", False)
+
+
+# -- registry-driven dispatch -------------------------------------------------
+
+
+def test_parser_dispatches_through_the_registry_for_a_new_format() -> None:
+    """A format the parser has never heard of is parsed with no code change.
+
+    This is the property the previous if/elif chain could not have: adding a
+    format was an edit to the parser itself.
+    """
+
+    def parse_bang(document: DownloadedDocument):
+        return ParsedDocument(
+            title="bang",
+            markdown=document.raw_bytes.decode("utf-8"),
+            source_url=document.source_url,
+            sections=[],
+        )
+
+    registry = builtin_registry()
+    registry.register(
+        DocumentFormat(
+            name="bang",
+            media_type="text/x-bang",
+            extensions=(".bang",),
+            parse=parse_bang,
+        )
+    )
+    parser = DocumentParser(registry)
+
+    parsed = parser.parse(
+        DownloadedDocument(
+            title="x.bang", source_url="staged://x", media_type="text/x-bang", raw_bytes=b"!hello"
+        )
+    )
+
+    assert parsed.markdown == "!hello"
+
+
+def test_parser_rejects_a_media_type_no_format_claims() -> None:
+    with pytest.raises(DomainError) as error:
+        DocumentParser().parse(
+            DownloadedDocument(
+                title="x", source_url="x", media_type="application/x-nothing", raw_bytes=b"x"
+            )
+        )
+
+    assert (error.value.code, error.value.retryable) == ("SOURCE_UNSUPPORTED", False)
+
+
+def test_parser_runs_the_formats_own_payload_check() -> None:
+    # The signature check is declared by the format, so a registry-driven
+    # parser still rejects it — including for bytes that never went to staging.
+    with pytest.raises(DomainError) as error:
+        DocumentParser().parse(
+            DownloadedDocument(
+                title="x", source_url="x", media_type="application/pdf", raw_bytes=b"not a pdf"
+            )
+        )
+
+    assert error.value.code == "SOURCE_UNSUPPORTED"
+
+
+def test_parser_built_without_an_argument_uses_the_builtin_formats() -> None:
+    parser = DocumentParser()
+
+    assert parser.formats.for_media_type("application/pdf") is not None
+    assert parser.formats.for_media_type("application/vnd.openxmlformats-officedocument.wordprocessingml.document") is not None
+
+
+def test_parser_survives_a_subclass_that_replaces_init() -> None:
+    # A wrapper that hooks parse() without chaining __init__ must still work;
+    # otherwise instrumenting the parser breaks it in a way that only shows up
+    # at import time.
+    class Wrapper(DocumentParser):
+        def __init__(self) -> None:  # noqa: D107 - deliberately does not chain
+            self.calls = 0
+
+    wrapped = Wrapper()
+    wrapped.calls += 1
+
+    assert wrapped.formats.for_media_type("text/markdown") is not None

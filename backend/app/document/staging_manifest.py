@@ -12,9 +12,10 @@ from uuid import UUID
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.api.errors import DomainError
+from app.document.builtin_formats import builtin_registry
+from app.document.formats import FormatRegistry, size_limit_for
 
 _SHA256 = r"^[0-9a-f]{64}$"
-_MEDIA_TYPES = {"text/markdown", "text/html", "application/pdf"}
 _MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 _MAX_FILES = 1000
 _MAX_TOTAL_BYTES = 2 * 1024**3
@@ -204,7 +205,12 @@ def verify_file_snapshot(path: Path, snapshot: FileSnapshot) -> None:
         raise _changed("暂存文件已变化")
 
 
-def validate_manifest(manifest: StagingManifest | dict[str, Any], collection_root: Path) -> list[ManifestFile]:
+def validate_manifest(
+    manifest: StagingManifest | dict[str, Any],
+    collection_root: Path,
+    formats: FormatRegistry | None = None,
+) -> list[ManifestFile]:
+    registry = formats if formats is not None else builtin_registry()
     try:
         parsed = manifest if isinstance(manifest, StagingManifest) else StagingManifest.model_validate(manifest)
     except ValidationError:
@@ -222,9 +228,14 @@ def validate_manifest(manifest: StagingManifest | dict[str, Any], collection_roo
             raise _changed("暂存文件标识无效") from None
         if str(staged_uuid) != entry.staged_id.lower():
             raise _changed("暂存文件标识无效")
-        if entry.staged_id in seen or relative_path in seen_paths or entry.media_type not in _MEDIA_TYPES:
+        if entry.staged_id in seen or relative_path in seen_paths:
             raise _changed("暂存清单内容无效")
-        max_bytes = _MAX_PDF_BYTES if entry.media_type == "application/pdf" else _MAX_TEXT_BYTES
+        format = registry.for_media_type(entry.media_type)
+        if format is None:
+            raise _changed("暂存清单内容无效")
+        max_bytes = size_limit_for(
+            format, binary_max_bytes=_MAX_PDF_BYTES, text_max_bytes=_MAX_TEXT_BYTES
+        )
         if entry.size_bytes > max_bytes:
             raise DomainError("BATCH_LIMIT_EXCEEDED", "目录文件超过大小限制", 413, False)
         total_bytes += entry.size_bytes

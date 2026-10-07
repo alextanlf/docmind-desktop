@@ -14,6 +14,7 @@ import type {
   SettingsView,
   RemoteStatus,
   SourcePreview,
+  SourceFormat,
   StagedSource,
 } from "../../shared/contracts";
 import { vi } from "vitest";
@@ -201,6 +202,37 @@ export const feishuCredentialChannels: RemoteCredentialChannel[] = [
  * in DocMind's own source, which is the point: the renderer must present it
  * with no vendor-specific code.
  */
+/**
+ * The formats the backend serves for the import dialog.
+ *
+ * Mirrors `GET /api/imports/formats`, including the docx entry: the source
+ * step must render a choice per entry rather than a fixed set, so a format
+ * added on the backend appears without a renderer change.
+ */
+export const sourceFormats: SourceFormat[] = [
+  {
+    name: "pdf",
+    label: "PDF",
+    extensions: [".pdf"],
+    mediaType: "application/pdf",
+    maxBytes: 100 * 1024 * 1024,
+  },
+  {
+    name: "markdown",
+    label: "Markdown",
+    extensions: [".md", ".markdown"],
+    mediaType: "text/markdown",
+    maxBytes: 20 * 1024 * 1024,
+  },
+  {
+    name: "docx",
+    label: "Word 文档",
+    extensions: [".docx"],
+    mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    maxBytes: 20 * 1024 * 1024,
+  },
+];
+
 export const pluginManifests: PluginManifest[] = [
   {
     id: "yuque:web",
@@ -635,6 +667,7 @@ export function installDocMindApi(overrides?: {
     },
     sources: {
       stageDirectory: vi.fn().mockResolvedValue(null),
+      listFormats: vi.fn().mockResolvedValue(sourceFormats),
       ...overrides?.sources,
     },
     batches: {

@@ -9,7 +9,9 @@ from typing import Any
 from uuid import UUID
 
 from app.api.errors import DomainError
+from app.document.builtin_formats import builtin_registry
 from app.document.discovery import DirectoryDiscovery
+from app.document.formats import FormatRegistry
 from app.document.web_discovery import WebDiscovery
 from app.imports.events import EventType, ImportEventBroker
 from app.remote.discovery import RemoteDiscovery
@@ -41,6 +43,7 @@ class BatchService:
         batch_max_items: int = 1000,
         web_discovery: WebDiscovery | None = None,
         remote_discovery: RemoteDiscovery | None = None,
+        formats: FormatRegistry | None = None,
     ) -> None:
         if max_concurrency != MAX_BATCH_CONCURRENCY:
             raise ValueError("batch concurrency is fixed at three")
@@ -53,6 +56,7 @@ class BatchService:
         self.batch_max_items = batch_max_items
         self.web_discovery = web_discovery
         self.remote_discovery = remote_discovery
+        self.formats = formats if formats is not None else builtin_registry()
         self._semaphores: dict[str, asyncio.Semaphore] = {}
         self._batch_locks: dict[str, asyncio.Lock] = {}
         self._batch_tasks: dict[str, dict[str, asyncio.Task[None]]] = {}
@@ -105,7 +109,9 @@ class BatchService:
         try:
             descriptor = json.loads(batch.source_descriptor_json)
             if batch.source_kind == "staged_directory":
-                discovery = DirectoryDiscovery(self.staging_root, self.manifest_max_bytes)
+                discovery = DirectoryDiscovery(
+                    self.staging_root, self.manifest_max_bytes, self.formats
+                )
             elif batch.source_kind == "web":
                 discovery = self.web_discovery
             elif batch.source_kind == "remote_repository":

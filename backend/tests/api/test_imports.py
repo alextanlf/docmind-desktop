@@ -9,6 +9,7 @@ import pytest
 from starlette.requests import Request
 
 from app.api.imports import import_events
+from app.document.formats import DocumentFormat
 from app.imports.events import InMemoryEventBroker
 from app.schemas.imports import ImportJobView, SourcePreview, SourceRef
 
@@ -234,3 +235,62 @@ async def test_persisted_terminal_uses_durable_sequence_after_broker_restart(
         assert '"type":"error"' in frame
         with pytest.raises(StopAsyncIteration):
             await anext(response.body_iterator)
+
+
+# -- the format catalogue the client builds its picker from -----------------
+
+
+def test_formats_endpoint_lists_every_pickable_format(client, auth_headers) -> None:
+    response = client.get("/api/imports/formats", headers=auth_headers)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [entry["name"] for entry in body] == ["pdf", "markdown", "docx"]
+    # camelCase over the wire; the renderer never sees snake_case.
+    assert set(body[0]) == {"name", "label", "extensions", "mediaType", "maxBytes"}
+    assert body[0]["mediaType"] == "application/pdf"
+    assert body[0]["extensions"] == [".pdf"]
+
+
+def test_formats_endpoint_omits_formats_a_user_may_not_pick_alone(client, auth_headers) -> None:
+    response = client.get("/api/imports/formats", headers=auth_headers)
+
+    names = [entry["name"] for entry in response.json()]
+    # HTML is parsable and allowed inside an imported directory, but a lone
+    # .html is not offered — this is the distinction `single_file` encodes.
+    assert "html" not in names
+
+
+def test_formats_endpoint_carries_the_configured_ceiling(client, auth_headers) -> None:
+    body = client.get("/api/imports/formats", headers=auth_headers).json()
+    limits = {entry["name"]: entry["maxBytes"] for entry in body}
+
+    # The ceilings come from settings, and binary formats use the wider one —
+    # a client must not be left deriving that from the media type.
+    assert limits["pdf"] > limits["markdown"]
+    assert limits["docx"] == limits["pdf"]
+
+
+def test_formats_endpoint_follows_a_plugin_registered_format(client, auth_headers) -> None:
+    """The promise the picker makes: a new format appears with no client edit."""
+
+    registry = client.app.state.format_registry
+    registry.register(
+        DocumentFormat(
+            name="tex",
+            label="TeX 文档",
+            media_type="text/x-tex",
+            extensions=(".tex",),
+            parse=lambda document: document,  # type: ignore[arg-type,return-value]
+        )
+    )
+
+    body = client.get("/api/imports/formats", headers=auth_headers).json()
+
+    assert [entry["name"] for entry in body] == ["pdf", "markdown", "docx", "tex"]
+    assert body[-1]["label"] == "TeX 文档"
+    assert body[-1]["extensions"] == [".tex"]
+
+
+def test_formats_endpoint_requires_a_token(client) -> None:
+    assert client.get("/api/imports/formats").status_code == 401

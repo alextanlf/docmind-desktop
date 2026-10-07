@@ -30,7 +30,7 @@ describe("单文档导入", () => {
       </AppProviders>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Markdown" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Markdown" }));
     fireEvent.click(screen.getByRole("button", { name: "选择 Markdown 文件" }));
     expect(await screen.findByText("guide.md")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "继续" }));
@@ -54,7 +54,7 @@ describe("单文档导入", () => {
       </AppProviders>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Markdown" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Markdown" }));
     fireEvent.click(screen.getByRole("button", { name: "选择 Markdown 文件" }));
     expect(await screen.findByText("guide.md")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "关闭导入窗口" }));
@@ -90,7 +90,7 @@ describe("单文档导入", () => {
       </AppProviders>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Markdown" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Markdown" }));
     fireEvent.click(screen.getByRole("button", { name: "选择 Markdown 文件" }));
     expect(await screen.findByText("guide.md")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "继续" }));
@@ -105,7 +105,7 @@ describe("单文档导入", () => {
       </AppProviders>,
     );
 
-    expect(screen.getByRole("button", { name: "Markdown" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Markdown" })).toBeVisible();
     expect(useImportStore.getState().preview).toBeNull();
     expect(useImportStore.getState().source).toBeNull();
   });
@@ -139,7 +139,7 @@ describe("单文档导入", () => {
       </AppProviders>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Markdown" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Markdown" }));
     fireEvent.click(screen.getByRole("button", { name: "选择 Markdown 文件" }));
     expect(await screen.findByText("guide.md")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "继续" }));
@@ -182,7 +182,7 @@ describe("单文档导入", () => {
       </AppProviders>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Markdown" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Markdown" }));
     fireEvent.click(screen.getByRole("button", { name: "选择 Markdown 文件" }));
     expect(await screen.findByText("guide.md")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "继续" }));
@@ -199,7 +199,7 @@ describe("单文档导入", () => {
       </AppProviders>,
     );
     expect(screen.queryByRole("button", { name: "选择 Markdown 文件" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Markdown" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Markdown" })).toBeVisible();
     expect(api.imports.create).toHaveBeenCalledTimes(1);
   });
 
@@ -222,7 +222,7 @@ describe("单文档导入", () => {
       </AppProviders>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Markdown" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Markdown" }));
     fireEvent.click(screen.getByRole("button", { name: "选择 Markdown 文件" }));
     expect(await screen.findByText("guide.md")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "继续" }));
@@ -256,7 +256,7 @@ describe("单文档导入", () => {
       </AppProviders>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Markdown" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Markdown" }));
     fireEvent.click(screen.getByRole("button", { name: "选择 Markdown 文件" }));
     expect(await screen.findByText("guide.md")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "继续" }));

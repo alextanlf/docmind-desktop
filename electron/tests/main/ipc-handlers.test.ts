@@ -13,8 +13,7 @@ function dependencies() {
       cancel: vi.fn(),
       cleanup: vi.fn(),
     },
-    stagedFiles: { chooseAndStage: vi.fn(), stageDirectory: vi.fn() },
-    shellOpenExternal: vi.fn(),
+    stagedFiles: { chooseAndStage: vi.fn(), stageDirectory: vi.fn() },    shellOpenExternal: vi.fn(),
     ipcMain: {
       handle: vi.fn(),
       on: vi.fn(),
