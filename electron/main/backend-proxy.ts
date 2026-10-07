@@ -123,6 +123,30 @@ export class BackendProxy {
     await this.throwResponseError(response);
   }
 
+  /**
+   * 拉取一段二进制（含 begin 与 end，即 HTTP Range 的闭区间语义）。
+   *
+   * `total` 优先取 `Content-Range` 的分母；后端若不支持 Range 会忽略请求头
+   * 直接整包返回 200，此时响应体长度就是总长，所以回退到 `byteLength` 是正确的。
+   */
+  async requestRange(
+    route: string,
+    begin: number,
+    end: number,
+  ): Promise<{ data: Uint8Array; total: number }> {
+    let response: Response;
+    try {
+      response = await this.requestFn(route, { headers: { Range: `bytes=${begin}-${end}` } });
+    } catch (error) {
+      if (error instanceof DocMindClientError) throw error;
+      throw new DocMindClientError("BACKEND_UNAVAILABLE", "后端暂不可用，请稍后重试", true);
+    }
+    if (!response.ok) await this.throwResponseError(response);
+    const data = new Uint8Array(await response.arrayBuffer());
+    const total = parseContentRangeTotal(response.headers.get("content-range")) ?? data.byteLength;
+    return { data, total };
+  }
+
   openStream(options: OpenStreamOptions): StreamSubscription {
     if (!STREAM_ROUTE.test(options.route.split("?")[0]))
       throw new DocMindClientError("INVALID_REQUEST", "流式请求路径无效");
@@ -365,6 +389,13 @@ function isSchema(value: unknown): value is z.ZodType<unknown> {
   return Boolean(
     value && typeof value === "object" && typeof (value as z.ZodType).parse === "function",
   );
+}
+
+export function parseContentRangeTotal(value: string | null): number | null {
+  const match = value?.match(/^bytes\s+\d+-\d+\/(\d+)$/);
+  if (!match) return null;
+  const total = Number(match[1]);
+  return Number.isSafeInteger(total) ? total : null;
 }
 
 export function parseSseFrame(frame: string): BackendEventEnvelope | null {

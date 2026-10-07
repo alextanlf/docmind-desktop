@@ -408,6 +408,21 @@ export const GraphEdgeSchema = z.object({
 });
 export const DocumentDetailSchema = DocumentSummarySchema.extend({
   content: z.string().max(2_000_000),
+  /**
+   * 原件预览能力。为 null 表示磁盘上没有可识别的原件（远程文档、原件被删），
+   * 渲染层据此隐藏「原文」视图 —— 不要靠试错去发现。
+   */
+  originalMediaType: z.string().max(255).nullable(),
+  originalByteSize: z.number().int().nonnegative().nullable(),
+});
+
+/**
+ * 原件分片。二进制以 base64 过 IPC：`contextBridge` 不保证透传 TypedArray，
+ * 而本项目已有同款约定（见后端 `_document_snapshot` 的 `file_bytes_b64`）。
+ */
+export const DocumentOriginalChunkSchema = z.object({
+  data: z.string(),
+  total: z.number().int().nonnegative(),
 });
 
 export const SourceRefSchema = z.object({
@@ -838,6 +853,7 @@ export type GraphEdge = z.infer<typeof GraphEdgeSchema>;
 export type DocumentInput = z.infer<typeof DocumentInputSchema>;
 export type DocumentSummary = z.infer<typeof DocumentSummarySchema>;
 export type DocumentDetail = z.infer<typeof DocumentDetailSchema>;
+export type DocumentOriginalChunk = z.infer<typeof DocumentOriginalChunkSchema>;
 export type SourceRef = z.infer<typeof SourceRefSchema>;
 export type SourcePreview = z.infer<typeof SourcePreviewSchema>;
 export type CreateImportInput = z.infer<typeof CreateImportInputSchema>;
@@ -975,6 +991,15 @@ export interface DocMindApi {
   documents: {
     list(repositoryId: string): Promise<DocumentSummary[]>;
     read(documentId: string): Promise<DocumentDetail>;
+    /**
+     * 读取原件的一段字节（含 begin 与 end）。
+     * 阅读器按需分页依赖它，所以必须支持任意区间而不是整包返回。
+     */
+    readOriginalChunk(
+      documentId: string,
+      begin: number,
+      end: number,
+    ): Promise<DocumentOriginalChunk>;
     create(repositoryId: string, input: DocumentInput): Promise<DocumentDetail>;
     update(documentId: string, input: DocumentInput): Promise<DocumentDetail>;
     delete(documentId: string, confirm: true): Promise<void>;
@@ -1064,6 +1089,7 @@ export const schemas = {
   UpdateRepositoryInputSchema,
   DocumentSummarySchema,
   DocumentDetailSchema,
+  DocumentOriginalChunkSchema,
   SourcePreviewSchema,
   ImportJobSchema,
   SessionSummarySchema,

@@ -1,11 +1,19 @@
 import { Eye, Pencil, Save, Trash2, X } from "lucide-react";
-import { useState } from "react";
+import { Suspense, lazy, useState } from "react";
 import type { DocumentDetail } from "../../../../shared/contracts";
 import { appQueryClient } from "../../app/query-client";
 import { MarkdownBody } from "../../components/MarkdownBody";
 import { clientErrorMessage } from "../settings/settings.queries";
 import { DeleteDocumentDialog } from "./DeleteDocumentDialog";
 import { repositoryKeys } from "./repository.queries";
+
+/**
+ * pdf.js 是 1.7MB 的独立依赖，绝大多数会话用不到。
+ * 按需加载，避免每次启动都要解析它。
+ */
+const PdfOriginalView = lazy(() =>
+  import("./PdfOriginalView").then((module) => ({ default: module.PdfOriginalView })),
+);
 
 type DocumentEditorProps = {
   document: DocumentDetail;
@@ -14,6 +22,8 @@ type DocumentEditorProps = {
 };
 
 type ViewMode = "read" | "edit";
+/** 阅读视图下看什么：解析后的正文，还是导入时的原件。 */
+type SourceMode = "parsed" | "original";
 
 export function DocumentEditor({
   document,
@@ -22,6 +32,11 @@ export function DocumentEditor({
 }: DocumentEditorProps) {
   // 默认阅读模式：默认展示渲染后的正文，不直接抛原始 Markdown 源码。
   const [mode, setMode] = useState<ViewMode>("read");
+  // 有 PDF 原件时默认看原文 —— PDF 转 Markdown 会丢掉版式，
+  // 阅读体验只有原件能给全（解析视图仍在旁边一键可达）。
+  const hasOriginal =
+    document.originalMediaType === "application/pdf" && (document.originalByteSize ?? 0) > 0;
+  const [source, setSource] = useState<SourceMode>(hasOriginal ? "original" : "parsed");
   const [title, setTitle] = useState(document.title);
   const [content, setContent] = useState(document.content);
   const [saving, setSaving] = useState(false);
@@ -59,6 +74,8 @@ export function DocumentEditor({
       setTitle(document.title);
       setContent(document.content);
     }
+    // 编辑的对象是解析后的 Markdown，原文视图下不允许直接进编辑。
+    if (next === "edit") setSource("parsed");
     setError("");
     setMode(next);
   }
@@ -77,6 +94,24 @@ export function DocumentEditor({
             <h1 className="document-view-title">{title}</h1>
           )}
         </div>
+        {hasOriginal && mode === "read" ? (
+          <div aria-label="内容来源" className="document-source-toggle" role="group">
+            <button
+              aria-pressed={source === "original"}
+              onClick={() => setSource("original")}
+              type="button"
+            >
+              原文
+            </button>
+            <button
+              aria-pressed={source === "parsed"}
+              onClick={() => setSource("parsed")}
+              type="button"
+            >
+              解析
+            </button>
+          </div>
+        ) : null}
         <div className="editor-actions">
           {mode === "read" ? (
             <button
@@ -120,13 +155,25 @@ export function DocumentEditor({
         </div>
       </header>
       {mode === "read" ? (
-        <article aria-label="文档内容" className="document-view">
-          {content.trim() ? (
-            <MarkdownBody content={content} />
-          ) : (
-            <p className="document-view-empty">这篇文档还没有内容。</p>
-          )}
-        </article>
+        hasOriginal && source === "original" ? (
+          <Suspense
+            fallback={
+              <div className="pdf-original" role="status">
+                <p className="pdf-original-loading">正在加载阅读器…</p>
+              </div>
+            }
+          >
+            <PdfOriginalView byteSize={document.originalByteSize ?? 0} documentId={document.id} />
+          </Suspense>
+        ) : (
+          <article aria-label="文档内容" className="document-view">
+            {content.trim() ? (
+              <MarkdownBody content={content} />
+            ) : (
+              <p className="document-view-empty">这篇文档还没有内容。</p>
+            )}
+          </article>
+        )
       ) : (
         <textarea
           aria-label="Markdown 内容"

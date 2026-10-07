@@ -503,6 +503,113 @@ button:disabled {
   padding: 12px 18px;
   border-top: 1px solid var(--line);
 }
+/* 内容来源切换：原文（PDF 原件） / 解析（Markdown 正文）。 */
+.document-source-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-subtle);
+}
+.document-source-toggle button {
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.document-source-toggle button[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+}
+.pdf-original {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--workspace);
+}
+.pdf-original-loading,
+.pdf-original-error {
+  margin: 0;
+  padding: 24px 28px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.pdf-original-error {
+  color: var(--red);
+}
+.pdf-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.pdf-toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+/* 工具栏里的按钮整体收紧一档：.button 的 36px 在这里会把工具条撑高。 */
+.pdf-toolbar .button {
+  min-height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+.pdf-page-input {
+  width: 52px;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+  text-align: center;
+}
+.pdf-page-total,
+.pdf-zoom-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+.pdf-zoom-label {
+  min-width: 40px;
+  text-align: center;
+}
+.pdf-scroller {
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 0 40px;
+}
+.pdf-page {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  margin: 0 auto 18px;
+}
+.pdf-page-canvas {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 80px;
+  background: var(--surface);
+  box-shadow: 0 1px 4px rgba(24, 27, 32, 0.14);
+}
+.pdf-page-canvas canvas {
+  display: block;
+}
+.pdf-page-failed {
+  margin: 0;
+  padding: 16px;
+  color: var(--red);
+  font-size: 12px;
+}
 .editor-error {
   margin: 8px 0;
   font-size: 12px;

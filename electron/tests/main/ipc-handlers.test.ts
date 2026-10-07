@@ -6,6 +6,7 @@ function dependencies() {
     proxy: {
       requestJson: vi.fn().mockResolvedValue({}),
       requestVoid: vi.fn().mockResolvedValue(undefined),
+      requestRange: vi.fn().mockResolvedValue({ data: new Uint8Array([1, 2, 3]), total: 3 }),
       openStream: vi.fn().mockReturnValue({
         requestId: "00000000-0000-0000-0000-000000000001",
         cancel: vi.fn(),
@@ -36,6 +37,42 @@ describe("IPC handlers", () => {
     const handlers = registerIpcHandlers(deps);
     expect(() => handlers["documents:read"]({} as any, "not-a-uuid")).toThrow(/请求参数无效/);
     expect(deps.proxy.requestJson).not.toHaveBeenCalled();
+  });
+
+  it("forwards original document ranges with base64 payloads", async () => {
+    const deps = dependencies();
+    const handlers = registerIpcHandlers(deps);
+
+    const chunk = await handlers["documents:readOriginalChunk"](
+      {} as any,
+      "00000000-0000-0000-0000-0000000000aa",
+      0,
+      2,
+    );
+
+    expect(deps.proxy.requestRange).toHaveBeenCalledWith(
+      "/api/documents/00000000-0000-0000-0000-0000000000aa/raw",
+      0,
+      2,
+    );
+    // base64 而非 TypedArray：contextBridge 不保证透传二进制。
+    expect(chunk).toEqual({ data: "AQID", total: 3 });
+  });
+
+  it("rejects nonsensical original ranges before touching the backend", async () => {
+    const deps = dependencies();
+    const handlers = registerIpcHandlers(deps);
+    const id = "00000000-0000-0000-0000-0000000000aa";
+    const requestRange = (documentId: unknown, begin: unknown, end: unknown) =>
+      handlers["documents:readOriginalChunk"]({} as any, documentId, begin, end);
+
+    await expect(requestRange("not-a-uuid", 0, 1)).rejects.toThrow(/请求参数无效/);
+    await expect(requestRange(id, -1, 1)).rejects.toThrow(/请求参数无效/);
+    await expect(requestRange(id, 0, 1.5)).rejects.toThrow(/请求参数无效/);
+    await expect(requestRange(id, "0", 1)).rejects.toThrow(/请求参数无效/);
+    // begin 大于 end 不能被静默夹取，否则阅读器会拿到错位的数据。
+    await expect(requestRange(id, 10, 4)).rejects.toThrow(/请求参数无效/);
+    expect(deps.proxy.requestRange).not.toHaveBeenCalled();
   });
 
   it("proxies remote provider calls to the parameterized backend route", async () => {

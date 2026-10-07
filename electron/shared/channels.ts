@@ -34,6 +34,7 @@ export const IPC_CHANNELS = {
   graphAdjacency: "graph:adjacency",
   documentsList: "documents:list",
   documentsRead: "documents:read",
+  documentsReadOriginalChunk: "documents:readOriginalChunk",
   documentsCreate: "documents:create",
   documentsUpdate: "documents:update",
   documentsDelete: "documents:delete",

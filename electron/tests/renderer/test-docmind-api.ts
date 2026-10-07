@@ -442,8 +442,19 @@ export const document: DocumentDetail = {
   status: "已同步",
   remoteDeleted: false,
   content: "# State 管理\n\n内容",
+  originalMediaType: null,
+  originalByteSize: null,
   createdAt: "2026-08-31T00:00:00Z",
   updatedAt: "2026-08-31T00:00:00Z",
+};
+
+/** 带 PDF 原件的文档 —— 用来测「原文」视图的出现与切换。 */
+export const documentWithPdf: DocumentDetail = {
+  ...document,
+  id: "00000000-0000-0000-0000-000000000026",
+  title: "导入的论文",
+  originalMediaType: "application/pdf",
+  originalByteSize: 2048,
 };
 
 export const source: StagedSource = {
@@ -647,6 +658,7 @@ export function installDocMindApi(overrides?: {
     documents: {
       list: vi.fn().mockResolvedValue([document]),
       read: vi.fn().mockResolvedValue(document),
+      readOriginalChunk: vi.fn().mockResolvedValue({ data: "", total: 0 }),
       create: vi.fn().mockResolvedValue(document),
       update: vi.fn().mockResolvedValue(document),
       delete: vi.fn().mockResolvedValue(undefined),

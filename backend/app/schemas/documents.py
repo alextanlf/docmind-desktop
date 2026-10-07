@@ -51,3 +51,7 @@ class DocumentSummary(WireModel):
 
 class DocumentDetail(DocumentSummary):
     content: str
+    # 原件预览能力：仅当磁盘上存在可识别的原件时才有值。
+    # 前端据此决定是否显示「原文」视图；为 None 表示只能看解析结果。
+    original_media_type: str | None = None
+    original_byte_size: int | None = None

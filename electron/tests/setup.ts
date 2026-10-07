@@ -41,3 +41,60 @@ if (typeof Element.prototype.setPointerCapture !== "function") {
     return false;
   };
 }
+
+// jsdom implements neither observer, and the PDF reader depends on both:
+// ResizeObserver to size a page against the scroll container, IntersectionObserver
+// to defer rasterization until a page approaches the viewport.
+//
+// The stubs below report every observed element as visible and already sized.
+// A no-op stub would leave pages as empty placeholders forever, and any
+// assertion about rendering would then pass for the wrong reason.
+type ObserverCallback = (entries: unknown[], observer: unknown) => void;
+
+function installObserverStubs() {
+  const observedClasses: string[] = [];
+  class JsdomIntersectionObserver {
+    readonly root = null;
+    readonly rootMargin = "";
+    readonly thresholds: number[] = [];
+    constructor(private readonly callback: ObserverCallback) {}
+    observe(target: Element) {
+      observedClasses.push(target.className);
+      queueMicrotask(() =>
+        this.callback([{ isIntersecting: true, target }], this),
+      );
+    }
+    unobserve() {}
+    disconnect() {}
+    takeRecords() {
+      return [];
+    }
+  }
+  class JsdomResizeObserver {
+    constructor(private readonly callback: ObserverCallback) {}
+    observe(target: Element) {
+      queueMicrotask(() => this.callback([{ target }], this));
+    }
+    unobserve() {}
+    disconnect() {}
+  }
+  if (typeof globalThis.IntersectionObserver === "undefined") {
+    globalThis.IntersectionObserver =
+      JsdomIntersectionObserver as unknown as typeof IntersectionObserver;
+  }
+  if (typeof globalThis.ResizeObserver === "undefined") {
+    globalThis.ResizeObserver = JsdomResizeObserver as unknown as typeof ResizeObserver;
+  }
+  return observedClasses;
+}
+
+export const observedByIntersection = installObserverStubs();
+
+// jsdom's getContext logs a "not implemented" error and returns null, so any code
+// guarding on the context would silently take the bail-out branch and the canvas
+// path would never be exercised. Return a minimal stub instead.
+if (typeof HTMLCanvasElement !== "undefined") {
+  HTMLCanvasElement.prototype.getContext = function getContext(this: HTMLCanvasElement) {
+    return { canvas: this } as unknown as CanvasRenderingContext2D;
+  } as unknown as HTMLCanvasElement["getContext"];
+}

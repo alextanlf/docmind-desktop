@@ -1,5 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
-import { BackendProxy, collectSse } from "../../main/backend-proxy";
+import { BackendProxy, collectSse, parseContentRangeTotal } from "../../main/backend-proxy";
+
+describe("parseContentRangeTotal", () => {
+  it("reads the denominator of a Content-Range", () => {
+    expect(parseContentRangeTotal("bytes 0-65535/20480")).toBe(20480);
+    expect(parseContentRangeTotal("bytes 1024-2047/2048")).toBe(2048);
+  });
+
+  it("returns null instead of guessing on anything else", () => {
+    expect(parseContentRangeTotal(null)).toBeNull();
+    expect(parseContentRangeTotal("")).toBeNull();
+    expect(parseContentRangeTotal("bytes */2048")).toBeNull();
+    expect(parseContentRangeTotal("bytes 0-10/*")).toBeNull();
+    expect(parseContentRangeTotal("items 0-1/2")).toBeNull();
+  });
+});
 
 describe("BackendProxy", () => {
   it("allows batch import event streams", () => {
@@ -351,6 +366,58 @@ describe("BackendProxy", () => {
       requestId,
       type: "error",
       payload: { code: "BACKEND_PROTOCOL_ERROR" },
+    });
+  });
+});
+
+describe("BackendProxy.requestRange", () => {
+  const route = "/api/documents/00000000-0000-0000-0000-000000000002/raw";
+
+  it("sends an inclusive byte range and reports the total from Content-Range", async () => {
+    const request = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([1, 2, 3, 4]), {
+        status: 206,
+        headers: { "Content-Range": "bytes 100-103/2048" },
+      }),
+    );
+    const proxy = new BackendProxy({ request, send: vi.fn() });
+
+    const result = await proxy.requestRange(route, 100, 103);
+
+    expect(request).toHaveBeenCalledWith(route, { headers: { Range: "bytes=100-103" } });
+    expect(Array.from(result.data)).toEqual([1, 2, 3, 4]);
+    expect(result.total).toBe(2048);
+  });
+
+  it("falls back to the body length when the backend ignores Range", async () => {
+    // 后端若不支持 Range 会直接整包 200，此时响应体长度就是总长。
+    const request = vi
+      .fn()
+      .mockResolvedValue(new Response(new Uint8Array([9, 9, 9]), { status: 200 }));
+    const proxy = new BackendProxy({ request, send: vi.fn() });
+
+    const result = await proxy.requestRange(route, 0, 2);
+
+    expect(result.total).toBe(3);
+    expect(Array.from(result.data)).toEqual([9, 9, 9]);
+  });
+
+  it("surfaces backend failures as client errors instead of returning partial bytes", async () => {
+    const request = vi.fn().mockResolvedValue(new Response("range not satisfiable", { status: 416 }));
+    const proxy = new BackendProxy({ request, send: vi.fn() });
+
+    await expect(proxy.requestRange(route, 999, 1999)).rejects.toMatchObject({
+      name: "DocMindClientError",
+    });
+  });
+
+  it("reports the backend as unavailable when the request itself throws", async () => {
+    const request = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+    const proxy = new BackendProxy({ request, send: vi.fn() });
+
+    await expect(proxy.requestRange(route, 0, 10)).rejects.toMatchObject({
+      code: "BACKEND_UNAVAILABLE",
+      retryable: true,
     });
   });
 });

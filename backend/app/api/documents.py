@@ -12,6 +12,7 @@ from typing import cast
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from fastapi import APIRouter, Request, Response, status
+from fastapi.responses import FileResponse
 
 from app.api.errors import DomainError
 from app.core.embedding import EmbeddingProvider, require_ready_embedding
@@ -38,6 +39,8 @@ from app.storage.repositories import (
 from app.storage.vectorstore import PersistentVectorStore
 
 router = APIRouter(tags=["documents"])
+
+_PDF_MAGIC = b"%PDF-"
 
 
 def _registry(request: Request) -> ProviderRegistry:
@@ -105,12 +108,38 @@ def _summary(document: DocumentRecord, remote: RemoteDocument | None = None) -> 
     )
 
 
+def _original_info(document: DocumentRecord) -> tuple[str | None, int | None]:
+    """探测原件是否可预览。
+
+    只读前几个字节做类型嗅探：`raw.bin` 落盘时不带扩展名与 media type
+    （见 `imports/service.py`），所以类型只能从内容判断。
+    任何 OSError 都当作「没有原件」——原件缺失不该让整篇文档读不出来。
+    """
+    if not document.raw_path:
+        return None, None
+    try:
+        with open(document.raw_path, "rb") as handle:
+            head = handle.read(len(_PDF_MAGIC))
+        size = os.stat(document.raw_path).st_size
+    except OSError:
+        return None, None
+    if head == _PDF_MAGIC:
+        return "application/pdf", size
+    return "application/octet-stream", size
+
+
 def _detail(document: DocumentRecord) -> DocumentDetail:
     try:
         content = Path(document.markdown_path or "").read_text(encoding="utf-8")
     except OSError:
         content = ""
-    return DocumentDetail(**_summary(document).model_dump(), content=content)
+    media_type, byte_size = _original_info(document)
+    return DocumentDetail(
+        **_summary(document).model_dump(),
+        content=content,
+        original_media_type=media_type,
+        original_byte_size=byte_size,
+    )
 
 
 def _mutation_store(request: Request) -> DocumentMutationStore:
@@ -978,6 +1007,29 @@ async def read_document(request: Request, document_id: str) -> DocumentDetail:
     if document is None:
         raise _not_found()
     return _detail(document)
+
+
+@router.get("/api/documents/{document_id}/raw", response_class=FileResponse)
+async def read_document_original(request: Request, document_id: str) -> FileResponse:
+    """流式返回导入时落盘的 PDF 原件。
+
+    阅读器按需分页依赖 HTTP Range，这里直接交给 Starlette 的 FileResponse ——
+    它已实现 206 / 416 / 多段 Range 与 `Accept-Ranges`，不要自己解析 Range 头。
+    """
+    await _recover_for_request(request)
+    document = _document_store(request).get(document_id)
+    if document is None:
+        raise _not_found()
+    media_type, _ = _original_info(document)
+    path = Path(document.raw_path or "")
+    if media_type is None or not path.is_file():
+        raise DomainError("DOCUMENT_ORIGINAL_MISSING", "该文档没有可预览的原件", 404, False)
+    return FileResponse(
+        path,
+        media_type=media_type,
+        content_disposition_type="inline",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.put("/api/documents/{document_id}", response_model=DocumentDetail)

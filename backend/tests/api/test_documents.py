@@ -12,6 +12,7 @@ from app.api.errors import DomainError
 from app.core.embedding import FakeEmbeddingProvider
 from app.remote.fake import FakeRemoteProvider
 from app.schemas.documents import DocumentInput
+from app.storage.models import DocumentRecord
 
 
 class RecordingVectorStore:
@@ -608,3 +609,171 @@ def test_remote_rollback_failure_is_retried_during_app_recreation(client, auth_h
         pass
 
     assert asyncio.run(gateway.read_document("doc-1")).content == "# State\n\n状态管理"
+
+
+def _seed_document_with_original(  # type: ignore[no-untyped-def]
+    client, payload: bytes, *, document_id: str = "doc-original"
+):
+    """建一篇带原件的本地文档。
+
+    直连 store 而不是走导入流程：这里要精确控制 `raw.bin` 的字节内容，
+    导入链路会把它换成真实下载物。
+    """
+    repository = client.app.state.repository_store.create_local(name="Original KB")
+    directory = client.app.state.settings.documents_dir / document_id
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    raw_path = directory / "raw.bin"
+    markdown_path = directory / "document.md"
+    raw_path.write_bytes(payload)
+    markdown_path.write_text("# 标题\n\n正文", encoding="utf-8")
+    return client.app.state.document_store.create(
+        DocumentRecord(
+            id=document_id,
+            repository_id=repository.id,
+            title="带原件的文档",
+            raw_path=str(raw_path),
+            markdown_path=str(markdown_path),
+            source_type="import",
+        )
+    )
+
+
+def _seed_document_without_original(client, *, document_id: str = "doc-plain"):  # type: ignore[no-untyped-def]
+    repository = client.app.state.repository_store.create_local(name="No original")
+    return client.app.state.document_store.create(
+        DocumentRecord(id=document_id, repository_id=repository.id, title="无原件")
+    )
+
+
+def test_detail_reports_pdf_original(client, auth_headers) -> None:
+    payload = b"%PDF-1.7\nrest"
+    document = _seed_document_with_original(client, payload)
+
+    response = client.get(f"/api/documents/{document.id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["originalMediaType"] == "application/pdf"
+    assert body["originalByteSize"] == len(payload)
+
+
+def test_detail_reports_no_original(client, auth_headers) -> None:
+    document = _seed_document_without_original(client)
+
+    response = client.get(f"/api/documents/{document.id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["originalMediaType"] is None
+    assert body["originalByteSize"] is None
+
+
+def test_detail_survives_missing_original_file(client, auth_headers) -> None:
+    """记录里有 raw_path 但文件已被删 —— 不能因此让整篇文档读不出来。"""
+    document = _seed_document_with_original(client, b"%PDF-1.7\nx", document_id="doc-gone")
+    Path(document.raw_path or "").unlink()
+
+    response = client.get(f"/api/documents/{document.id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["originalMediaType"] is None
+    assert body["content"] == "# 标题\n\n正文"
+
+
+def test_raw_serves_original_bytes(client, auth_headers) -> None:
+    payload = b"%PDF-1.7\n" + b"x" * 4096
+    document = _seed_document_with_original(client, payload)
+
+    response = client.get(f"/api/documents/{document.id}/raw", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["accept-ranges"] == "bytes"
+    assert response.content == payload
+
+
+def test_raw_honours_range_requests(client, auth_headers) -> None:
+    """阅读器按需分页完全依赖这条；断言必须是 206 + 正确的 Content-Range。"""
+    payload = b"%PDF-1.7\n" + bytes(range(256))
+    document = _seed_document_with_original(client, payload)
+
+    response = client.get(
+        f"/api/documents/{document.id}/raw",
+        headers={**auth_headers, "Range": "bytes=0-9"},
+    )
+
+    assert response.status_code == 206
+    assert response.headers["content-range"] == f"bytes 0-9/{len(payload)}"
+    assert response.content == payload[:10]
+
+
+def test_raw_honours_tail_range(client, auth_headers) -> None:
+    """尾部 range 单独测：pdf.js 读 trailer 时请求的是文件末尾。"""
+    payload = b"%PDF-1.7\n" + bytes(range(256))
+    document = _seed_document_with_original(client, payload)
+
+    response = client.get(
+        f"/api/documents/{document.id}/raw",
+        headers={**auth_headers, "Range": "bytes=-16"},
+    )
+
+    assert response.status_code == 206
+    assert response.content == payload[-16:]
+
+
+def test_raw_rejects_unsatisfiable_range(client, auth_headers) -> None:
+    document = _seed_document_with_original(client, b"%PDF-1.7\n")
+
+    response = client.get(
+        f"/api/documents/{document.id}/raw",
+        headers={**auth_headers, "Range": "bytes=999-1999"},
+    )
+
+    assert response.status_code == 416
+
+
+def test_raw_404s_without_original(client, auth_headers) -> None:
+    document = _seed_document_without_original(client)
+
+    response = client.get(f"/api/documents/{document.id}/raw", headers=auth_headers)
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "DOCUMENT_ORIGINAL_MISSING"
+
+
+def test_raw_404s_when_original_file_missing(client, auth_headers) -> None:
+    document = _seed_document_with_original(client, b"%PDF-1.7\nx", document_id="doc-unlinked")
+    Path(document.raw_path or "").unlink()
+
+    response = client.get(f"/api/documents/{document.id}/raw", headers=auth_headers)
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "DOCUMENT_ORIGINAL_MISSING"
+
+
+def test_raw_404s_for_unknown_document(client, auth_headers) -> None:
+    response = client.get("/api/documents/missing-document/raw", headers=auth_headers)
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+def test_raw_requires_token(client) -> None:
+    document = _seed_document_with_original(client, b"%PDF-1.7\n")
+
+    response = client.get(f"/api/documents/{document.id}/raw")
+
+    assert response.status_code == 401
+
+
+def test_raw_serves_non_pdf_original_as_octet_stream(client, auth_headers) -> None:
+    """非 PDF 原件也照常返回，只是前端不会给它「原文」视图。"""
+    payload = "# 我是 Markdown\n".encode()
+    document = _seed_document_with_original(client, payload, document_id="doc-md")
+
+    response = client.get(f"/api/documents/{document.id}/raw", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/octet-stream"
+    assert response.content == payload

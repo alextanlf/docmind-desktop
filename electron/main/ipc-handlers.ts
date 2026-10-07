@@ -115,6 +115,11 @@ export type IpcHandlerMap = Record<string, Handler>;
 
 const UUID = z.string().uuid();
 /**
+ * 原件分片的字节偏移。上限 2^53-1 由 z 的 int 校验覆盖，这里再压到
+ * Number.MAX_SAFE_INTEGER 以下，避免拼接进 Range 头时出现科学计数法。
+ */
+const BYTE_OFFSET = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+/**
  * A plugin search box must not be able to smuggle anything into the query
  * string. Bounded to the same length the backend accepts, and encoded on the
  * way out; the value is user input, so it is validated like any other.
@@ -325,6 +330,18 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
     [IPC_CHANNELS.documentsRead]: (_event, documentId) => {
       const id = parse(UUID, documentId);
       return proxy.requestJson(`/api/documents/${id}`, {}, DocumentDetailSchema);
+    },
+    /**
+     * 原件按需分片。阅读器自己不持有后端地址与令牌，所有字节都必须经这里转发；
+     * 以 base64 回传是因为 contextBridge 不保证透传 TypedArray。
+     */
+    [IPC_CHANNELS.documentsReadOriginalChunk]: async (_event, documentId, begin, end) => {
+      const id = parse(UUID, documentId);
+      const start = parse(BYTE_OFFSET, begin);
+      const stop = parse(BYTE_OFFSET, end);
+      if (stop < start) throw new DocMindClientError("INVALID_REQUEST", "请求参数无效");
+      const { data, total } = await proxy.requestRange(`/api/documents/${id}/raw`, start, stop);
+      return { data: Buffer.from(data).toString("base64"), total };
     },
     [IPC_CHANNELS.documentsCreate]: (_event, repositoryId, input) => {
       const id = parse(UUID, repositoryId);

@@ -10,6 +10,7 @@ import {
   UpdateRepositoryInputSchema,
   CreateSessionInputSchema,
   DocumentDetailSchema,
+  DocumentOriginalChunkSchema,
   DocumentVersionSchema,
   DocumentInputSchema,
   DocumentSummarySchema,
@@ -75,6 +76,12 @@ const uuid = (value: unknown): string => {
 
 const providerName = (value: unknown): string => {
   if (typeof value !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(value))
+    throw new Error("INVALID_REQUEST");
+  return value;
+};
+
+const byteOffset = (value: unknown): number => {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
     throw new Error("INVALID_REQUEST");
   return value;
 };
@@ -271,6 +278,14 @@ const api: DocMindApi = {
       invoke(IPC_CHANNELS.documentsList, DocumentSummarySchema.array(), uuid(repositoryId)),
     read: (documentId) =>
       invoke(IPC_CHANNELS.documentsRead, DocumentDetailSchema, uuid(documentId)),
+    readOriginalChunk: (documentId, begin, end) =>
+      invoke(
+        IPC_CHANNELS.documentsReadOriginalChunk,
+        DocumentOriginalChunkSchema,
+        uuid(documentId),
+        byteOffset(begin),
+        byteOffset(end),
+      ),
     create: (repositoryId, input) =>
       invoke(
         IPC_CHANNELS.documentsCreate,
