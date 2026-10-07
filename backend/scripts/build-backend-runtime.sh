@@ -259,9 +259,8 @@ find "$runtime_dir/app" -name 'tests' -type d -prune -exec rm -rf {} + 2>/dev/nu
 #
 # 🔴 删之前必须确认「没有任何运行路径需要 pip」，否则新用户直接崩：
 #   - backend/app 与 electron/ 全仓 grep `pip` / `ensurepip` / `pip install` 均 0 命中；
-#   - 唯一的后端子进程是 `python -m playwright install chromium`（yuque/gateway.py
-#     的 install_browser），它走 playwright 自带的 driver/node 二进制 + HTTP 下载，
-#     不经过 pip —— 实测删后 --dry-run 仍 exit=0；
+#   - 唯一的后端子进程是 chromedriver（yuque/driver.py 的 ensure_driver），
+#     它是 HTTP 下载的单个可执行文件，不经过 pip —— 实测删后 --dry-run 仍 exit=0；
 #   - 代码里没有 repair/doctor 类自修复接口，不存在「少包就现场补装」的路径。
 # 已实测（复制真产物删 pip后跑真实启动）：18 个 alembic 迁移全过、73 条路由注册、
 # 4 个真实 API 200、真实 bge-m3 model.onnx 加载 OK。

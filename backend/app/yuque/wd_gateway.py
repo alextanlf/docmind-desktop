@@ -59,6 +59,7 @@ from app.yuque.repository_page import RepositoryPage
 from app.yuque.wd_locator import _RETRYABLE as _WEBDRIVER_RETRYABLE
 from app.yuque.wd_page import WdPage
 from app.yuque.wd_session import (
+    YuqueBrowserUnavailableError,
     has_stored_session,
     open_session,
     persist_session,
@@ -155,11 +156,9 @@ class WebDriverYuqueGateway:
                 return LoginStatus(
                     logged_in=False, account_label=None, requires_login=True
                 )
-        except DomainError as error:
-            if error.code == "YUQUE_BROWSER_UNAVAILABLE":
-                return LoginStatus(
-                    logged_in=False, account_label=None, requires_login=True
-                )
+        except YuqueBrowserUnavailableError:
+            # No usable browser is a "not signed in" answer for this probe, not
+            # an error: the desktop app asks on every start and must not raise.
             return LoginStatus(logged_in=False, account_label=None, requires_login=True)
         except (*_WEBDRIVER_RETRYABLE, TimeoutError, ConnectionError, OSError):
             return LoginStatus(logged_in=False, account_label=None, requires_login=True)
@@ -244,6 +243,7 @@ class WebDriverYuqueGateway:
 
     # -- background session ------------------------------------------------
 
+    @asynccontextmanager
     async def _background_page(self, operation: str) -> AsyncIterator[tuple[Any, str]]:
         request_id = uuid4().hex
         async with self._new_page(visible_login=False) as page:

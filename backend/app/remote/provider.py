@@ -20,7 +20,7 @@ class ProviderCapabilities:
     """Optional abilities a remote provider may or may not support.
 
     ``browser_install``: the provider authenticates through a locally driven
-    browser and can install it on demand (Playwright Chromium).
+    browser and can prepare the matching WebDriver on demand.
     ``marker_lookup``: the provider supports ``find_document_by_marker`` as a
     write-compensation mechanism for idempotent mutations.
     ``parent_node_write``: new documents may target a provider-native parent

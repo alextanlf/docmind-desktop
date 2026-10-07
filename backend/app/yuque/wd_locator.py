@@ -206,8 +206,19 @@ def by_test_id(driver: Any, value: str) -> AsyncLocator:
     return AsyncLocator(driver, f"testid={value}")
 
 
-def by_text(driver: Any, value: str) -> AsyncLocator:
-    return AsyncLocator(driver, f"text={value}")
+def by_text(driver: Any, value: str, *, exact: bool = True) -> AsyncLocator:
+    """Locate by visible text.
+
+    ``exact`` mirrors the Playwright argument the page objects pass. The
+    translation is not cosmetic: the exact form is a full-string XPath
+    comparison, while the loose one uses ``contains`` so a selector written as
+    ``text=新建`` still matches "新建知识库". Accepting the flag and ignoring it
+    would silently make a loose selector behave as an exact one.
+    """
+    if exact:
+        return AsyncLocator(driver, f"text={value}")
+    escaped = value.replace('"', '""')
+    return AsyncLocator(driver, f'//*[contains(normalize-space(.), "{escaped}")]')
 
 
 __all__ = [

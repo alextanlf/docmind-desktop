@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from playwright.async_api import Error as PlaywrightError
 from pydantic import SecretStr
 
 from app.api.errors import DomainError
@@ -20,11 +19,15 @@ from app.schemas.remote import (
     RemoteDocumentContent,
     UpdateRemoteDocumentRequest,
 )
+from app.yuque import browser as browser_module
 from app.yuque.base_page import BasePage
 from app.yuque.dashboard_page import DashboardPage
 from app.yuque.editor_page import EditorPage
-from app.yuque.gateway import PlaywrightYuqueGateway
 from app.yuque.login_page import LoginPage
+from app.yuque.session import StoredCookie
+from app.yuque.session import save as save_session
+from app.yuque.wd_gateway import WebDriverYuqueGateway
+from app.yuque.wd_session import YuqueBrowserUnavailableError
 
 
 class FixtureLocator:
@@ -97,11 +100,37 @@ class FixtureCookieContext:
         return list(self._cookies)
 
 
+class FixtureDriver:
+    """Just enough driver for ``session_store.capture`` to read cookies."""
+
+    def __init__(self, cookies: list[dict[str, Any]]) -> None:
+        self._cookies = cookies
+
+    def get_cookies(self) -> list[dict[str, Any]]:
+        return list(self._cookies)
+
+
+class FixtureSession:
+    """Stand-in for ``BrowserSession``, as exposed by ``WdPage.session``."""
+
+    def __init__(self, cookies: list[dict[str, Any]]) -> None:
+        self.driver = FixtureDriver(cookies)
+
+
 class FixturePage:
-    def __init__(self, available: set[str], fixture: Path | None = None) -> None:
+    def __init__(
+        self,
+        available: set[str],
+        fixture: Path | None = None,
+        cookies: list[dict[str, Any]] | None = None,
+    ) -> None:
         self.available = available
         self.fixture = fixture
         self.context: FixtureCookieContext | None = None
+        # The WebDriver gateway persists the live session after a successful
+        # login (``persist_session(page.session, ...)``), so the page has to
+        # expose one carrying whatever cookies the fixture declares.
+        self.session = FixtureSession(cookies or [])
         self.clicked: list[str] = []
         self.fill_attempts: list[tuple[str, str]] = []
         self.filled: dict[str, str] = {}
@@ -195,7 +224,7 @@ async def test_real_gateway_checks_login_after_navigating_to_local_dashboard(
     tmp_path: Path,
 ) -> None:
     settings = AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
-    gateway = PlaywrightYuqueGateway(settings)
+    gateway = WebDriverYuqueGateway(settings)
     page = FixturePage({"[data-testid=dashboard]"})
 
     @asynccontextmanager
@@ -207,7 +236,6 @@ async def test_real_gateway_checks_login_after_navigating_to_local_dashboard(
 
     status = await gateway.login_status()
 
-    assert gateway._playwright is None
     assert page.gotos == ["https://www.yuque.com/dashboard"]
     assert status.logged_in is True
 
@@ -217,11 +245,11 @@ async def test_real_gateway_login_status_stays_bounded_when_page_never_renders(
 ) -> None:
     """A stalled page must not hang the desktop startup check."""
     settings = AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
-    gateway = PlaywrightYuqueGateway(settings)
+    gateway = WebDriverYuqueGateway(settings)
     page = FixturePage(set())
 
     async def never_renders() -> None:
-        raise PlaywrightError("Timeout 3000ms exceeded while waiting for domcontentloaded")
+        raise TimeoutError("page did not reach a load state in time")
 
     page.load_state_hook = never_renders
 
@@ -243,14 +271,23 @@ async def test_real_gateway_login_status_stays_bounded_when_page_never_renders(
 
 
 async def test_real_gateway_login_status_falls_back_to_session_cookie(tmp_path: Path) -> None:
-    """Yuque's shell cannot render without its CDN; the session cookie still counts."""
+    """Yuque's shell cannot render without its CDN; the stored cookie still counts.
+
+    The two stacks read the session from different places: Playwright could ask
+    its persistent profile for cookies in memory, whereas WebDriver keeps no
+    profile at all, so the login state lives in a file this gateway owns. The
+    fallback therefore has to be arranged on disk here.
+    """
     settings = AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
-    gateway = PlaywrightYuqueGateway(settings)
+    gateway = WebDriverYuqueGateway(settings)
     page = FixturePage(set())
-    page.context = FixtureCookieContext([{"name": "_yuque_session", "value": "secret"}])
+    save_session(
+        tmp_path / "browser-data",
+        [StoredCookie("_yuque_session", "secret", ".yuque.com", "/")],
+    )
 
     async def never_renders() -> None:
-        raise PlaywrightError("Timeout 3000ms exceeded while waiting for domcontentloaded")
+        raise TimeoutError("page did not reach a load state in time")
 
     page.load_state_hook = never_renders
 
@@ -269,7 +306,7 @@ async def test_real_gateway_login_status_falls_back_to_session_cookie(tmp_path: 
 
 async def test_real_gateway_reports_logged_out_status_without_raising(tmp_path: Path) -> None:
     settings = AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
-    gateway = PlaywrightYuqueGateway(settings)
+    gateway = WebDriverYuqueGateway(settings)
     page = FixturePage(set())
 
     @asynccontextmanager
@@ -288,12 +325,17 @@ async def test_real_gateway_reports_logged_out_status_without_raising(tmp_path: 
 
 async def test_real_gateway_reports_logged_out_when_browser_unavailable(tmp_path: Path) -> None:
     settings = AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
-    gateway = PlaywrightYuqueGateway(settings)
+    gateway = WebDriverYuqueGateway(settings)
 
     @asynccontextmanager
     async def unavailable_new_page(*, visible_login: bool):
         assert visible_login is False
-        raise PlaywrightError("Executable doesn't exist")
+        raise YuqueBrowserUnavailableError(
+            "YUQUE_BROWSER_UNAVAILABLE",
+            "本机未找到可用的 Google Chrome",
+            503,
+            True,
+        )
         yield
 
     gateway._new_page = unavailable_new_page  # type: ignore[method-assign]
@@ -308,12 +350,17 @@ async def test_real_gateway_reports_logged_out_when_browser_unavailable(tmp_path
 async def test_begin_login_reports_missing_browser_without_generic_login_error(
     tmp_path: Path,
 ) -> None:
-    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    gateway = WebDriverYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
 
     @asynccontextmanager
     async def unavailable_new_page(*, visible_login: bool):
         assert visible_login is True
-        raise PlaywrightError("Executable doesn't exist")
+        raise YuqueBrowserUnavailableError(
+            "YUQUE_BROWSER_UNAVAILABLE",
+            "本机未找到可用的 Google Chrome",
+            503,
+            True,
+        )
         yield
 
     gateway._new_page = unavailable_new_page  # type: ignore[method-assign]
@@ -327,7 +374,7 @@ async def test_begin_login_reports_missing_browser_without_generic_login_error(
 
 async def test_real_gateway_maps_expired_cookie_to_login_required(tmp_path: Path) -> None:
     settings = AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
-    gateway = PlaywrightYuqueGateway(settings)
+    gateway = WebDriverYuqueGateway(settings)
     page = FixturePage(set())
 
     @asynccontextmanager
@@ -346,7 +393,7 @@ async def test_real_gateway_maps_expired_cookie_to_login_required(tmp_path: Path
 
 async def test_real_gateway_opens_requested_repository_before_listing_documents(tmp_path: Path) -> None:
     settings = AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
-    gateway = PlaywrightYuqueGateway(settings)
+    gateway = WebDriverYuqueGateway(settings)
     page = FixturePage({"[data-testid=dashboard]", "[data-testid=document-link]"})
     page.text["[data-testid=document-link]"] = "State"
     page.attributes[("[data-testid=document-link]", "href")] = "/swiftui/state"
@@ -448,7 +495,7 @@ async def test_gateway_retries_resource_navigation_inside_operation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     settings = AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
-    gateway = PlaywrightYuqueGateway(settings)
+    gateway = WebDriverYuqueGateway(settings)
     page = FixturePage({"[data-testid=dashboard]", "[data-testid=document-link]"})
     page.text["[data-testid=document-link]"] = "State"
     page.resource_goto_failures = 1
@@ -502,89 +549,67 @@ async def test_failure_screenshot_masks_sensitive_page_material(tmp_path: Path) 
     assert page.screenshots
 
 
-async def test_close_stops_playwright_once_when_called_concurrently(tmp_path: Path) -> None:
-    class FakeManager:
-        def __init__(self) -> None:
-            self.stops = 0
-
-        async def stop(self) -> None:
-            self.stops += 1
-            await asyncio.sleep(0)
-
-    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
-    manager = FakeManager()
-    gateway._playwright = manager
-
-    await asyncio.gather(gateway.close(), gateway.close())
-
-    assert manager.stops == 1
-    assert gateway._playwright is None
-
-
-async def test_new_page_reuses_manager_serializes_contexts_and_closes_each_context(
+async def test_new_page_serializes_sessions_and_quits_each_one_exactly_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    class FakeContext:
-        def __init__(self, chromium: FakeChromium, page: object) -> None:
-            self.chromium = chromium
-            self.pages = [page]
-            self.init_scripts: list[str] = []
-            self.close_calls = 0
+    """One browser session at a time, and none is left running.
 
-        async def add_init_script(self, script: str) -> None:
-            self.init_scripts.append(script)
+    The Playwright gateway reused a long-lived manager across calls; the
+    WebDriver gateway starts a fresh session per operation instead, so the
+    invariant worth locking down is unchanged in spirit but different in
+    mechanism: concurrent callers must not hold a session at the same time,
+    every session must be quit exactly once, and a visible login must not
+    inherit the stored cookie.
+    """
 
-        async def close(self) -> None:
-            self.close_calls += 1
-            self.chromium.active_contexts -= 1
-
-    class FakeChromium:
+    class FakeSession:
         def __init__(self) -> None:
-            self.active_contexts = 0
-            self.max_active_contexts = 0
-            self.contexts: list[FakeContext] = []
-            self.headless_values: list[bool] = []
+            self.quit_calls = 0
 
-        async def launch_persistent_context(
-            self,
-            _profile: str,
-            *,
-            headless: bool,
-            args: list[str],
-            channel: str | None = None,
-        ) -> FakeContext:
-            # This test covers reuse/serialization, not browser selection, so
-            # any channel is accepted here; the fallback order has its own test
-            # in TestBrowserSelectionPrefersSystemInstall.
-            assert args == ["--disable-blink-features=AutomationControlled"]
-            self.active_contexts += 1
-            self.max_active_contexts = max(self.max_active_contexts, self.active_contexts)
-            self.headless_values.append(headless)
-            context = FakeContext(self, object())
-            self.contexts.append(context)
-            return context
+        async def quit(self) -> None:
+            self.quit_calls += 1
+            # Yield so an unserialised implementation would interleave here.
+            await asyncio.sleep(0)
 
-    class FakeManager:
+    class FakeSessionFactory:
         def __init__(self) -> None:
-            self.chromium = FakeChromium()
-            self.stop_calls = 0
+            self.active_sessions = 0
+            self.max_active_sessions = 0
+            self.sessions: list[FakeSession] = []
+            self.calls: list[dict[str, Any]] = []
 
-        async def stop(self) -> None:
-            self.stop_calls += 1
+        async def open(
+            self, *, cache_root: Path, visible: bool, restore_session: bool
+        ) -> FakeSession:
+            self.calls.append(
+                {"cache_root": cache_root, "visible": visible, "restore_session": restore_session}
+            )
+            self.active_sessions += 1
+            self.max_active_sessions = max(
+                self.max_active_sessions, self.active_sessions
+            )
+            session = FakeSession()
+            self.sessions.append(session)
+            original_quit = session.quit
 
-    class FakePlaywrightStarter:
-        def __init__(self, manager: FakeManager) -> None:
-            self.manager = manager
-            self.start_calls = 0
+            async def quit() -> None:
+                self.active_sessions -= 1
+                await original_quit()
 
-        async def start(self) -> FakeManager:
-            self.start_calls += 1
-            return self.manager
+            session.quit = quit  # type: ignore[method-assign]
+            return session
 
-    manager = FakeManager()
-    starter = FakePlaywrightStarter(manager)
-    monkeypatch.setattr("app.yuque.gateway.async_playwright", lambda: starter)
-    gateway = PlaywrightYuqueGateway(
+    factory = FakeSessionFactory()
+
+    async def fake_open_session(
+        *, cache_root: Path, visible: bool, restore_session: bool
+    ) -> FakeSession:
+        return await factory.open(
+            cache_root=cache_root, visible=visible, restore_session=restore_session
+        )
+
+    monkeypatch.setattr("app.yuque.wd_gateway.open_session", fake_open_session)
+    gateway = WebDriverYuqueGateway(
         AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
     )
 
@@ -593,20 +618,25 @@ async def test_new_page_reuses_manager_serializes_contexts_and_closes_each_conte
             await asyncio.sleep(0)
 
     await asyncio.gather(use_page(False), use_page(True))
-    await gateway.close()
 
-    assert starter.start_calls == 1
-    assert manager.chromium.max_active_contexts == 1
-    assert manager.chromium.headless_values == [True, False]
-    assert [context.close_calls for context in manager.chromium.contexts] == [1, 1]
-    assert all("navigator" in context.init_scripts[0] for context in manager.chromium.contexts)
-    assert manager.stop_calls == 1
+    # Serialisation: the two callers never overlapped.
+    assert factory.max_active_sessions == 1
+    # Every session is torn down exactly once, none leaked.
+    assert [session.quit_calls for session in factory.sessions] == [1, 1]
+    assert factory.active_sessions == 0
+    # A background page restores the stored cookie; a visible login must
+    # start clean so it cannot be short-circuited by a stale session.
+    assert sorted(call["visible"] for call in factory.calls) == [False, True]
+    assert {call["visible"]: call["restore_session"] for call in factory.calls} == {
+        False: True,
+        True: False,
+    }
 
 
 async def test_begin_login_waits_for_regular_context_work_instead_of_reporting_conflict(
     tmp_path: Path,
 ) -> None:
-    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    gateway = WebDriverYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
     page = FixturePage({"[data-testid=dashboard]"})
 
     @asynccontextmanager
@@ -626,7 +656,7 @@ async def test_begin_login_waits_for_regular_context_work_instead_of_reporting_c
 
 
 async def test_real_gateway_read_and_update_return_document_metadata(tmp_path: Path) -> None:
-    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    gateway = WebDriverYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
     page = FixturePage(
         {
             "[data-testid=dashboard]",
@@ -656,7 +686,7 @@ async def test_real_gateway_read_and_update_return_document_metadata(tmp_path: P
 
 
 async def test_create_missing_document_and_delete_confirmation_are_retryable(tmp_path: Path) -> None:
-    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    gateway = WebDriverYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
     page = FixturePage(
         {
             "[data-testid=dashboard]",
@@ -692,7 +722,7 @@ async def test_create_missing_document_and_delete_confirmation_are_retryable(tmp
 
 
 async def test_dashboard_without_stable_selector_maps_to_page_changed(tmp_path: Path) -> None:
-    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    gateway = WebDriverYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
     page = FixturePage(set())
 
     @asynccontextmanager
@@ -711,7 +741,7 @@ async def test_dashboard_without_stable_selector_maps_to_page_changed(tmp_path: 
 async def test_visible_login_navigation_retries_before_capturing_masked_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    gateway = WebDriverYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
     page = FixturePage(set())
     page.login_goto_failures = 4
 
@@ -750,7 +780,7 @@ async def test_repository_creation_retries_visibility_without_submitting_twice(
     )
     page.text["[data-testid=repository-link]"] = "SwiftUI"
     page.repository_list_visibility_after = 1
-    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    gateway = WebDriverYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
 
     async def no_delay(_: float) -> None:
         return None
@@ -809,7 +839,7 @@ async def test_repository_creation_submit_error_is_not_replayed(
         }
     )
     page.repository_submit_error = submit_error
-    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    gateway = WebDriverYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
 
     @asynccontextmanager
     async def fake_new_page(*, visible_login: bool):
@@ -854,7 +884,7 @@ async def test_gateway_uses_a_distinct_screenshot_id_for_each_operation(tmp_path
         }
     )
     page.repository_submit_error = TimeoutError("repository create response timed out")
-    gateway = PlaywrightYuqueGateway(
+    gateway = WebDriverYuqueGateway(
         AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
     )
 
@@ -878,7 +908,7 @@ async def test_gateway_uses_a_distinct_screenshot_id_for_each_operation(tmp_path
 async def test_document_creation_uses_current_editor_identity_when_titles_duplicate(
     tmp_path: Path,
 ) -> None:
-    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    gateway = WebDriverYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
     page = FixturePage(
         {
             "[data-testid=dashboard]",
@@ -925,7 +955,7 @@ async def test_document_creation_rejects_editor_url_outside_requested_yuque_repo
     monkeypatch: pytest.MonkeyPatch,
     editor_url: str,
 ) -> None:
-    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    gateway = WebDriverYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
     page = FixturePage(
         {
             "[data-testid=dashboard]",
@@ -966,7 +996,7 @@ async def test_document_creation_confirms_current_editor_title(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    gateway = WebDriverYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
     page = FixturePage(
         {
             "[data-testid=dashboard]",
@@ -1007,8 +1037,8 @@ async def test_document_creation_confirms_current_editor_title(
 async def test_document_recovery_lookup_reads_marker_without_submitting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Playwright recovery can discover the exact marked page without replaying create."""
-    gateway = PlaywrightYuqueGateway(
+    """Recovery can discover the exact marked page without replaying create."""
+    gateway = WebDriverYuqueGateway(
         AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
     )
     page = FixturePage(
@@ -1030,7 +1060,7 @@ async def test_document_recovery_lookup_reads_marker_without_submitting(
     async def no_delay(_: float) -> None:
         return None
 
-    monkeypatch.setattr("app.yuque.gateway.asyncio.sleep", no_delay)
+    monkeypatch.setattr("app.yuque.wd_gateway.asyncio.sleep", no_delay)
 
     @asynccontextmanager
     async def fake_new_page(*, visible_login: bool):
@@ -1084,7 +1114,7 @@ async def test_document_creation_save_error_is_not_replayed(
         }
     )
     page.document_save_error = save_error
-    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    gateway = WebDriverYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
 
     @asynccontextmanager
     async def fake_new_page(*, visible_login: bool):
@@ -1169,7 +1199,7 @@ async def test_terminal_failure_writes_redacted_diagnostic_artifacts(tmp_path: P
 async def test_create_reads_back_when_save_confirmation_is_lost(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    gateway = WebDriverYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
     page = FixturePage(
         {
             "[data-testid=dashboard]",
@@ -1217,7 +1247,7 @@ async def test_create_reads_back_when_save_confirmation_is_lost(
 async def test_update_reads_back_by_marker_when_confirmation_is_lost(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    gateway = WebDriverYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
     page = FixturePage(
         {
             "[data-testid=dashboard]",
@@ -1264,7 +1294,7 @@ async def test_update_reads_back_by_marker_when_confirmation_is_lost(
 async def test_delete_treats_already_gone_as_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    gateway = PlaywrightYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    gateway = WebDriverYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
     page = FixturePage(
         {
             "[data-testid=dashboard]",
@@ -1294,104 +1324,86 @@ async def test_delete_treats_already_gone_as_success(
     assert page.clicked.count("[data-testid=confirm-delete]") >= 1
 
 
-class _FakeChromium:
-    """Records launch attempts so the channel fallback order is observable."""
-
-    def __init__(self, available: set[str]) -> None:
-        self._available = available
-        self.attempts: list[dict[str, Any]] = []
-
-    async def launch_persistent_context(self, user_data_dir: str, **kwargs: Any):
-        channel = kwargs.get("channel")
-        self.attempts.append({"dir": user_data_dir, **kwargs})
-        # ``channel=None`` is Playwright's own bundled build, which is the last
-        # resort and is therefore always considered present; a named channel
-        # only works when that browser is actually installed.
-        if channel is not None and channel not in self._available:
-            raise PlaywrightError(f"Chromium distribution '{channel}' is not installed")
-        return object()
-
-
-class _FakePlaywright:
-    def __init__(self, chromium: _FakeChromium) -> None:
-        self.chromium = chromium
-
-
-def _gateway_with_fake_browser(
-    tmp_path: Path, available: set[str]
-) -> tuple[PlaywrightYuqueGateway, _FakeChromium]:
-    settings = AppSettings(session_token=SecretStr("token"), data_dir=tmp_path)
-    gateway = PlaywrightYuqueGateway(settings)
-    chromium = _FakeChromium(available)
-    gateway._playwright = _FakePlaywright(chromium)  # type: ignore[assignment]
-    return gateway, chromium
 
 
 class TestBrowserSelectionPrefersSystemInstall:
-    """Regression: the gateway always asked for Playwright's bundled Chromium.
+    """Regression: the browser must come from the machine, never from us.
 
-    That made every Yuque browser login fail with YUQUE_BROWSER_UNAVAILABLE on
-    machines that already had Chrome, and pushed a ~170 MB download onto users
-    who did not need it.
+    The Playwright gateway always asked for its own bundled Chromium, so every
+    Yuque login failed with YUQUE_BROWSER_UNAVAILABLE on a machine that already
+    had Chrome, and users were pushed into a ~170 MB download they did not need.
+    The replacement keeps the same promise in a different place: it drives an
+    installed browser, and when there is none it says so instead of silently
+    fetching a browser of its own.
     """
 
-    async def test_uses_system_chrome_without_downloading_anything(
-        self, tmp_path: Path
+    def test_a_missing_browser_is_reported_not_downloaded(
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        gateway, chromium = _gateway_with_fake_browser(tmp_path, {"chrome"})
-        profile = tmp_path / "profile"
-        profile.mkdir()
+        for empty in ("_darwin_candidates", "_windows_candidates", "_linux_candidates"):
+            monkeypatch.setattr(browser_module, empty, list)
 
-        await gateway._launch_browser(profile, visible_login=True)
+        with pytest.raises(browser_module.BrowserNotFoundError) as raised:
+            browser_module.find_browser()
 
-        # Exactly one attempt, and it targeted the system browser.
-        assert len(chromium.attempts) == 1
-        assert chromium.attempts[0]["channel"] == "chrome"
-        assert chromium.attempts[0]["headless"] is False
+        message = str(raised.value)
+        assert "Chrome" in message
+        assert "Chromium" in message
+        # The wording has to tell the user what to install; a bare failure
+        # would read as "the app is broken".
+        assert "请安装" in message
 
-    async def test_falls_back_to_the_next_system_browser(self, tmp_path: Path) -> None:
-        gateway, chromium = _gateway_with_fake_browser(tmp_path, {"msedge"})
-        profile = tmp_path / "profile"
-        profile.mkdir()
+    def test_an_installed_browser_is_used_without_any_download(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One candidate, one probe, no network and no install step."""
+        monkeypatch.setattr(
+            browser_module,
+            "_darwin_candidates",
+            lambda: [("chrome", "/apps/Google Chrome.app/.../Google Chrome")],
+        )
+        # The other platforms contribute no candidates on this machine; the
+        # search must therefore be decided by the darwin list alone.
+        monkeypatch.setattr(browser_module, "_windows_candidates", list)
+        monkeypatch.setattr(browser_module, "_linux_candidates", list)
+        monkeypatch.setattr(
+            browser_module, "_read_major_version", lambda _path: 154
+        )
 
-        await gateway._launch_browser(profile, visible_login=False)
+        found = browser_module.find_browser()
 
-        # chrome is tried first, fails, then msedge succeeds.
-        assert [a.get("channel") for a in chromium.attempts] == ["chrome", "msedge"]
-        assert chromium.attempts[-1]["headless"] is True
+        assert found.kind == "chrome"
+        assert found.major_version == 154
+        # The executable is used as found — no bundled path is substituted.
+        assert found.executable.endswith("Google Chrome")
 
-    async def test_last_resort_is_playwrights_own_build(self, tmp_path: Path) -> None:
-        """With no system browser installed, the bundled build takes over.
+    def test_candidates_are_tried_in_order_until_one_reports_a_version(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An unreadable or versionless binary must not win the search.
 
-        Dropping it would leave a machine with no Chrome/Edge unable to log in
-        at all, so it must stay as the final fallback.
+        This is what the old channel fallback tested, in the place where the
+        choice is now made: the candidate list, not a browser launch.
         """
-        gateway, chromium = _gateway_with_fake_browser(tmp_path, set())
-        profile = tmp_path / "profile"
-        profile.mkdir()
-
-        await gateway._launch_browser(profile, visible_login=False)
-
-        # Both channels attempted, then the channel-less bundled launch.
-        assert [a.get("channel") for a in chromium.attempts] == [
-            "chrome",
-            "msedge",
-            None,
+        candidates = [
+            ("chrome", "/apps/broken/Google Chrome"),
+            ("chromium", "/apps/Chromium.app/.../Chromium"),
         ]
+        probed: list[str] = []
 
-    async def test_bundled_build_is_not_attempted_when_a_system_one_works(
-        self, tmp_path: Path
-    ) -> None:
-        """The regression's core claim: no fallback once a system browser opens.
+        def fake_version(path: str) -> int | None:
+            probed.append(path)
+            return 153 if "Chromium" in path else None
 
-        The bundled build is modelled as always available here, so the only way
-        to prove the download is skipped is that it is never attempted.
-        """
-        gateway, chromium = _gateway_with_fake_browser(tmp_path, {"chrome"})
-        profile = tmp_path / "profile"
-        profile.mkdir()
+        monkeypatch.setattr(browser_module, "_darwin_candidates", lambda: list(candidates))
+        monkeypatch.setattr(browser_module, "_windows_candidates", list)
+        monkeypatch.setattr(browser_module, "_linux_candidates", list)
+        monkeypatch.setattr(browser_module, "_read_major_version", fake_version)
 
-        await gateway._launch_browser(profile, visible_login=True)
+        found = browser_module.find_browser()
 
-        assert len(chromium.attempts) == 1
-        assert chromium.attempts[0]["channel"] == "chrome"
+        # The unusable first candidate was tried and skipped...
+        assert probed == ["/apps/broken/Google Chrome", "/apps/Chromium.app/.../Chromium"]
+        # ...and the second one, which reported a version, was returned.
+        assert found.kind == "chromium"
+        assert found.major_version == 153

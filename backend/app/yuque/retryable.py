@@ -2,16 +2,13 @@
 
 ``BasePage.with_retry`` and ``wait_for_any`` are written against this tuple so
 a selector that has not appeared yet is retried instead of failing the whole
-operation. Both browser stacks therefore share one page implementation:
+operation. The members come from Selenium's ``WebDriverException`` family,
+narrowed down to its transient members in :mod:`app.yuque.wd_locator` — an
+element that is missing, stale, or briefly covered — plus the standard
+built-ins that describe a network or filesystem hiccup.
 
-* Playwright raises ``PlaywrightError``;
-* WebDriver raises Selenium's ``WebDriverException`` family, whose transient
-  members (missing element, stale reference, not interactable) are already
-  narrowed down in :mod:`app.yuque.wd_locator`.
-
-Keeping the tuple here — rather than in either stack's module — is what lets
-``base_page`` stop importing a concrete automation library. A missing driver
-must not be importable just to describe "not ready".
+Keeping the tuple here — rather than in the automation module — is what lets
+``base_page`` describe "not ready" without importing a driver library.
 """
 from __future__ import annotations
 

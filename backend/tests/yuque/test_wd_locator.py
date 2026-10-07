@@ -256,3 +256,40 @@ class TestWaitFor:
         from app.yuque.wd_locator import _RETRYABLE
 
         assert NoSuchElementException in _RETRYABLE
+
+
+class TestByTextExactness:
+    """``BasePage`` passes ``exact=True``; both branches have to be real.
+
+    Accepting the flag and translating both ways to the same selector would make
+    a loose selector behave as an exact one, which surfaces as "button not
+    found" on a page whose label merely contains the text.
+    """
+
+    def _queried(self, locator: AsyncLocator) -> tuple[str, str]:
+        """The (by, value) pair the locator would send to the browser."""
+        return to_by(locator._selector)
+
+    def test_the_exact_form_compares_the_whole_string(self) -> None:
+        by, value = self._queried(by_text(_FakeDriver([]), "新建知识库"))
+
+        assert by == By.XPATH
+        assert "normalize-space(.)='新建知识库'" in value
+        assert "contains(" not in value
+
+    def test_the_loose_form_matches_a_substring(self) -> None:
+        """Without this, a shorter selector would silently find nothing."""
+        by, value = self._queried(
+            by_text(_FakeDriver([]), "新建", exact=False)
+        )
+
+        assert by == By.XPATH
+        assert 'contains(normalize-space(.), "新建")' in value
+
+    def test_a_quote_in_loose_text_cannot_close_the_literal(self) -> None:
+        _, value = self._queried(
+            by_text(_FakeDriver([]), 'say "hi"', exact=False)
+        )
+
+        # Escaped as "" — an unescaped quote would end the literal early.
+        assert '""hi""' in value

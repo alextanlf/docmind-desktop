@@ -100,8 +100,8 @@ class WdPage:
     def get_by_test_id(self, value: str) -> AsyncLocator:
         return by_test_id(self._session.driver, value)
 
-    def get_by_text(self, value: str) -> AsyncLocator:
-        return by_text(self._session.driver, value)
+    def get_by_text(self, value: str, exact: bool = True) -> AsyncLocator:
+        return by_text(self._session.driver, value, exact=exact)
 
     # -- diagnostics -------------------------------------------------------
 
