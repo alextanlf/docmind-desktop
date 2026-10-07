@@ -18,6 +18,10 @@ dependencies = [
   "pymupdf>=1.26,<2",
   "playwright>=1.55,<2",
   "rank-bm25>=0.2.2,<1",
+  # 语雀网页登录的浏览器驱动。刻意不用 Playwright：它硬依赖 node driver
+  #（实测 driver/node 115M），且自带 170M Chromium。WebDriver 驱动用户
+  # 已装的 Chrome，驱动本体仅 9.3M，且 Chromium 从不进安装包。
+  "selenium>=4.20,<5",
   # 向量索引：sqlite-vec 替代 chromadb。零传递依赖（只需一个 wheel），
   # 沙箱/离线环境友好；对比 chromadb 少 134M（rust_bindings 50M + kubernetes 44M
   # + grpc 40M + chromadb 3.3M + bcrypt/opentelemetry）。实测 5 万条 top-3 = 29ms。
