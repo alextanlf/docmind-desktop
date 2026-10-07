@@ -1,0 +1,18 @@
+[project]
+name = "docmind-tex"
+version = "0.1.0"
+description = "把 LaTeX 源文件导入 DocMind"
+requires-python = ">=3.12"
+# 刻意不声明 dependencies：DocMind 打包后的 runtime 里没有安装器，任何第三方
+# 依赖都得靠用户自己先装好。这个插件的转换器只用标准库，装上就能跑。
+dependencies = []
+
+[project.entry-points."docmind.plugins"]
+docmind-tex = "docmind_tex:plugin"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["docmind_tex"]

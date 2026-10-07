@@ -26,7 +26,6 @@ import importlib
 import re
 import sys
 import tomllib
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -94,32 +93,6 @@ plugin = DocumentFormatContribution(
     tag="文档格式",
 )
 '''
-
-
-@pytest.fixture(autouse=True)
-def plugin_imports() -> Iterator[None]:
-    """Undo the two global effects of loading a plugin.
-
-    ``sys.path`` gains the plugin's directory and ``sys.modules`` gains its
-    module. Both outlive a single test otherwise, and the second is the worse of
-    the two: the next test would silently load *this* test's plugin instead of
-    the one it wrote. Automatic, because a test that forgot to opt in would fail
-    in a way that looks like a bug in the loader.
-
-    Only modules that came from a directory this test added are dropped. Loading
-    a plugin imports DocMind and its dependencies as a side effect, and evicting
-    those breaks the rest of the session — C extensions such as numpy's cannot be
-    imported twice in one process.
-    """
-    path = list(sys.path)
-    modules = set(sys.modules)
-    yield
-    added = [entry for entry in sys.path if entry not in path]
-    sys.path[:] = path
-    for name in set(sys.modules) - modules:
-        origin = getattr(sys.modules.get(name), "__file__", None)
-        if origin and any(origin.startswith(entry) for entry in added):
-            del sys.modules[name]
 
 
 def _write_plugin(

@@ -17,6 +17,9 @@ fi
 cd "$root/backend"
 uv run pytest -v
 uv run ruff check app tests
+# The plugins live outside backend/, so they need naming explicitly — otherwise
+# the one place third-party code is written is the one place nothing lints.
+uv run ruff check --config pyproject.toml ../plugins
 cd "$root"
 npm run desktop:test
 npm run typecheck
