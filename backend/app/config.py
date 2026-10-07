@@ -67,6 +67,7 @@ class AppSettings(BaseSettings):
             self.data_dir / "imports" / "staging",
             self.data_dir / "browser-data",
             self.data_dir / "logs" / "screenshots",
+            self.data_dir / "plugins",
         )
         for directory in directories:
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -93,6 +94,17 @@ class AppSettings(BaseSettings):
     @property
     def vectorstore_dir(self) -> Path:
         return self.data_dir / "vectorstore"
+
+    @property
+    def plugins_dir(self) -> Path:
+        """Where plugins live, whether installed or checked out.
+
+        Under ``data_dir`` rather than next to the application, because the
+        application's own tree is read-only in the packaged build — this is the
+        directory a user can actually write to, and the only one that can be put
+        on ``sys.path`` without depending on install location.
+        """
+        return self.data_dir / "plugins"
 
     @property
     def embedding_settings(self) -> EmbeddingSettings:

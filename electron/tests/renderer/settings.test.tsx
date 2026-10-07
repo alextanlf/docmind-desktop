@@ -365,9 +365,13 @@ describe("设置", () => {
   it("reports plugins that failed to load instead of hiding them", async () => {
     installDocMindApi({
       plugins: {
-        diagnostics: vi
-          .fn()
-          .mockResolvedValue([{ name: "acme", error: "ImportError: no module" }]),
+        diagnostics: vi.fn().mockResolvedValue([
+          {
+            name: "acme",
+            error: "ImportError: no module",
+            source: "/Users/someone/.docmind/plugins/docmind-tex",
+          },
+        ]),
       },
     });
     renderSettings();
@@ -377,6 +381,43 @@ describe("设置", () => {
     // never installed, so the user could not tell "broken" from "does not exist".
     expect(await screen.findByText("以下插件加载失败")).toBeVisible();
     expect(screen.getByText(/no module/)).toBeVisible();
+    // And the directory is named: with several clones on disk, that is the one
+    // piece of information that says which one to fix.
+    expect(screen.getByText("/Users/someone/.docmind/plugins/docmind-tex")).toBeVisible();
+  });
+
+  it("does not show a directory for a plugin that loaded", async () => {
+    installDocMindApi({
+      plugins: {
+        // Every plugin produces a record, including the ones that worked. The
+        // panel must key off the error, not off the record's existence.
+        diagnostics: vi
+          .fn()
+          .mockResolvedValue([{ name: "acme", error: "", source: "/tmp/acme" }]),
+      },
+    });
+    renderSettings();
+    await openSection("插件");
+    await screen.findByRole("searchbox");
+
+    expect(screen.queryByText("以下插件加载失败")).not.toBeInTheDocument();
+    expect(screen.queryByText("/tmp/acme")).not.toBeInTheDocument();
+  });
+
+  it("tells the user where to put a plugin", async () => {
+    // Installing a plugin is a filesystem action, so the path is the one part of
+    // the flow the user cannot find in the UI. It comes from the server: it is
+    // derived from the data directory, which is per-platform and follows the
+    // application's own name, so the renderer cannot compose it.
+    const pluginsDirectory = "/Users/x/Library/Application Support/docmind-desktop/plugins";
+    installDocMindApi({
+      plugins: { directory: vi.fn().mockResolvedValue({ path: pluginsDirectory }) },
+    });
+    renderSettings();
+    await openSection("插件");
+
+    expect(await screen.findByText(pluginsDirectory)).toBeVisible();
+    expect(screen.getByText(/重启 DocMind 后生效/)).toBeVisible();
   });
 
   it("saves a plugin credential under its own provider and channel", async () => {

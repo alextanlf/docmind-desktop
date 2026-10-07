@@ -1,11 +1,11 @@
 import { Bell, Blocks, KeyRound, LogIn, Puzzle, Search, X } from "lucide-react";
 import { useDeferredValue, useId, useMemo, useState, type ReactNode } from "react";
-import type { PluginManifest } from "../../../../shared/contracts";
+import type { PluginDiagnostic, PluginManifest } from "../../../../shared/contracts";
 import { StatusBadge } from "../../components/StatusBadge";
 import { PluginSecretForm } from "./PluginSecretForm";
 import { PluginLogin } from "./PluginLogin";
 import { filterPlugins } from "./plugin-filter";
-import { usePluginDiagnosticsQuery, usePluginsQuery } from "./settings.queries";
+import { usePluginDirectoryQuery, usePluginDiagnosticsQuery, usePluginsQuery } from "./settings.queries";
 
 /**
  * The plugin page: a flat, searchable grid of plugin cards.
@@ -37,6 +37,7 @@ export function PluginSettings() {
   const plugins = usePluginsQuery();
   const deferredQuery = useDeferredValue(query);
   const diagnostics = usePluginDiagnosticsQuery();
+  const directory = usePluginDirectoryQuery();
 
   const visible = useMemo(
     () => filterPlugins(plugins.data ?? [], deferredQuery),
@@ -95,7 +96,27 @@ export function PluginSettings() {
       </div>
 
       <PluginLoadFailures diagnostics={diagnostics.data ?? []} />
+
+      <PluginDirectoryNote directory={directory.data?.path} />
     </div>
+  );
+}
+
+/**
+ * Where to put a plugin. Shown because installing one is a filesystem action:
+ * every other part of the flow is discoverable from the UI, and this is the one
+ * piece the user cannot guess — the path follows the data directory, which is
+ * not the same on every platform or every build.
+ */
+function PluginDirectoryNote({ directory }: { directory?: string }) {
+  if (!directory) return null;
+  return (
+    <p className="plugin-directory">
+      插件目录：<code>{directory}</code>
+      <span>
+        把插件目录（或 git clone 下来的仓库）放进这里，重启 DocMind 后生效。
+      </span>
+    </p>
   );
 }
 
@@ -104,8 +125,12 @@ export function PluginSettings() {
  * silently failed is indistinguishable from one that was never installed, so
  * the user would have no way to tell "this integration is broken" from "this
  * integration does not exist".
+ *
+ * A failure that came from a directory also shows the directory: it is the only
+ * part a developer can act on, and guessing which of several clones is at fault
+ * is exactly the work this panel exists to remove.
  */
-function PluginLoadFailures({ diagnostics }: { diagnostics: { name: string; error: string }[] }) {
+function PluginLoadFailures({ diagnostics }: { diagnostics: PluginDiagnostic[] }) {
   const failures = diagnostics.filter((item) => item.error);
   if (failures.length === 0) return null;
   return (
@@ -115,6 +140,7 @@ function PluginLoadFailures({ diagnostics }: { diagnostics: { name: string; erro
         {failures.map((failure) => (
           <li key={failure.name}>
             <code>{failure.name}</code>：{failure.error}
+            {failure.source ? <span className="plugin-failure-source">{failure.source}</span> : null}
           </li>
         ))}
       </ul>

@@ -458,7 +458,7 @@ def test_third_party_plugin_registers_onto_the_shared_host(
     host = _host(store=store)
     monkeypatch.setattr(
         loader,
-        "_iter_entry_points",
+        "_installed_candidates",
         lambda: (
             _FakeEntryPoint(
                 "acme",
@@ -487,7 +487,7 @@ def test_a_plugin_may_return_several_contributions(store: CredentialStore, monke
     host = _host(store=store)
     monkeypatch.setattr(
         loader,
-        "_iter_entry_points",
+        "_installed_candidates",
         lambda: (_FakeEntryPoint("multi", [_remote(_DocsProvider()), _tex_contribution()]),),
     )
 
@@ -503,7 +503,7 @@ def test_a_broken_plugin_is_reported_and_skipped(store: CredentialStore, monkeyp
     host = _host(store=store)
     monkeypatch.setattr(
         loader,
-        "_iter_entry_points",
+        "_installed_candidates",
         lambda: (
             _FakeEntryPoint("broken", None, raises=True),
             _FakeEntryPoint("wrong-shape", ["not a contribution"]),
@@ -527,7 +527,7 @@ def test_a_plugin_whose_format_conflicts_is_reported_not_ignored(
     host = _host(store=store)
     monkeypatch.setattr(
         loader,
-        "_iter_entry_points",
+        "_installed_candidates",
         lambda: (
             _FakeEntryPoint(
                 "squatter",
@@ -698,3 +698,23 @@ def test_merging_keywords_tolerates_missing_and_empty_groups() -> None:
     assert merge_keywords((), ("b",)) == ("b",)
     assert merge_keywords(None, ("c",)) == ("c",)
     assert merge_keywords(("a", "a"), ("A", "b")) == ("a", "b")
+
+
+def test_plugin_directory_endpoint_reports_the_data_directory(
+    client: TestClient, auth_headers, app_settings
+) -> None:
+    """Installing a plugin is a filesystem action, so the path must come from
+    the server: it is derived from the data directory, which is per-platform and
+    follows the application's own name."""
+    response = client.get("/api/plugins/directory", headers=auth_headers)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"path": str(app_settings.plugins_dir)}
+    # A path under the data directory, not somewhere the packaged build cannot
+    # write to.
+    assert app_settings.plugins_dir.parent == app_settings.data_dir
+    assert app_settings.plugins_dir.is_dir()
+
+
+def test_plugin_directory_endpoint_requires_a_token(client: TestClient) -> None:
+    assert client.get("/api/plugins/directory").status_code == 401

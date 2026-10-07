@@ -12,6 +12,18 @@ from dataclasses import field
 from app.schemas.common import WireModel
 
 
+class PluginDirectoryView(WireModel):
+    """Where plugins are looked for.
+
+    Reported by the server rather than documented, because it is derived from the
+    application's data directory — which differs per platform and follows the
+    application's own name. A path written into a guide goes stale the first time
+    either changes, and the user is left cloning into a directory nothing reads.
+    """
+
+    path: str
+
+
 class PluginManifestView(WireModel):
     """One plugin card, fully renderable without a second request."""
 

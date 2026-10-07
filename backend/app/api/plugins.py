@@ -10,7 +10,7 @@ from fastapi import APIRouter, Query, Request
 
 from app.api.errors import DomainError
 from app.plugins.catalog import PluginCatalog
-from app.schemas.plugins import PluginManifestView
+from app.schemas.plugins import PluginDirectoryView, PluginManifestView
 
 router = APIRouter(prefix="/api/plugins", tags=["plugins"])
 
@@ -52,3 +52,13 @@ async def plugin_diagnostics(request: Request) -> list[dict[str, str]]:
     """
     diagnostics = getattr(request.app.state, "plugin_diagnostics", None)
     return diagnostics.as_dicts() if diagnostics is not None else []
+
+
+@router.get("/directory", response_model=PluginDirectoryView)
+async def plugin_directory(request: Request) -> PluginDirectoryView:
+    """The directory a plugin is installed by putting it in.
+
+    Installing a plugin is a filesystem action, so the one thing a user cannot
+    guess — and the one thing the server alone knows — has to come from here.
+    """
+    return PluginDirectoryView(path=str(request.app.state.settings.plugins_dir))

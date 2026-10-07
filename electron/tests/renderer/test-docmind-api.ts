@@ -607,6 +607,7 @@ export function installDocMindApi(overrides?: {
       // to ship wholesale.
       list: vi.fn().mockResolvedValue(pluginManifests),
       diagnostics: vi.fn().mockResolvedValue([]),
+      directory: vi.fn().mockResolvedValue({ path: "/tmp/docmind-data/plugins" }),
       ...overrides?.plugins,
     },
     repositories: {

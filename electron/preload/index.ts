@@ -40,6 +40,8 @@ import {
   RemoteCredentialTestResultSchema,
   SaveRemoteCredentialInputSchema,
   PluginManifestSchema,
+  PluginDiagnosticSchema,
+  PluginDirectorySchema,
   BatchImportSchema,
   BatchItemPageSchema,
   BrowserInstallResultSchema,
@@ -220,10 +222,8 @@ const api: DocMindApi = {
         typeof query === "string" && query.trim() ? query.trim().slice(0, 200) : undefined,
       ),
     diagnostics: () =>
-      invoke(
-        IPC_CHANNELS.pluginsDiagnostics,
-        z.array(z.object({ name: z.string(), error: z.string() })),
-      ),
+      invoke(IPC_CHANNELS.pluginsDiagnostics, PluginDiagnosticSchema.array()),
+    directory: () => invoke(IPC_CHANNELS.pluginsDirectory, PluginDirectorySchema),
   },
   repositories: {
     list: () => invoke(IPC_CHANNELS.repositoriesList, RepositorySchema.array()),

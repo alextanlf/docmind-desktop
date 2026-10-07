@@ -1,7 +1,11 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { BatchProgressPayloadSchema, MODEL_PRESET_IDS } from "../../shared/contracts";
+import {
+  BatchProgressPayloadSchema,
+  MODEL_PRESET_IDS,
+  PluginDiagnosticSchema,
+} from "../../shared/contracts";
 
 /**
  * The preset list is copied between three places that share no type link:
@@ -66,5 +70,46 @@ describe("BatchProgressPayloadSchema", () => {
         itemState: null,
       }).success,
     ).toBe(false);
+  });
+});
+
+/**
+ * The plugin diagnostics record. The backend emits one record per plugin it
+ * looked at, whether or not that plugin loaded, so the shape cannot depend on
+ * the outcome — the common case in a working install is a plugin that loaded.
+ */
+describe("PluginDiagnosticSchema", () => {
+  it("accepts a plugin that loaded, with an empty error", () => {
+    // The regression this covers: `error` used to be required and absent for a
+    // successful plugin, so the first working plugin would have failed the
+    // client's parse and taken the whole panel down with it.
+    expect(
+      PluginDiagnosticSchema.safeParse({
+        name: "acme",
+        error: "",
+        source: "/Users/someone/.docmind/plugins/acme",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("keeps the two sides locked together", () => {
+    // The backend normalises its records instead of letting the client special
+    // case a missing key; a response in the old shape must be caught here rather
+    // than rendering as a nameless failure. `source` is supplied so the only
+    // thing this can fail on is the missing `error` — otherwise a second,
+    // unrelated required field would mask the one under test.
+    expect(
+      PluginDiagnosticSchema.safeParse({ name: "acme", source: "/tmp/acme" }).success,
+    ).toBe(false);
+  });
+
+  it("carries the directory the plugin was found in", () => {
+    const parsed = PluginDiagnosticSchema.parse({
+      name: "acme",
+      error: "boom",
+      source: "/tmp/acme",
+    });
+
+    expect(parsed.source).toBe("/tmp/acme");
   });
 });

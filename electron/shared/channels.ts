@@ -21,6 +21,7 @@ export const IPC_CHANNELS = {
   remoteDeleteCredential: "remote:deleteCredential",
   pluginsList: "plugins:list",
   pluginsDiagnostics: "plugins:diagnostics",
+  pluginsDirectory: "plugins:directory",
   repositoriesList: "repositories:list",
   repositoriesCreate: "repositories:create",
   repositoriesUpdate: "repositories:update",

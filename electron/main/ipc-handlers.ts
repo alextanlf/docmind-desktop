@@ -42,6 +42,8 @@ import {
   RemoteCredentialTestResultSchema,
   SaveRemoteCredentialInputSchema,
   PluginManifestSchema,
+  PluginDiagnosticSchema,
+  PluginDirectorySchema,
   BatchImportSchema,
   BatchItemPageSchema,
   BrowserInstallResultSchema,
@@ -258,11 +260,9 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         z.array(PluginManifestSchema),
       ),
     [IPC_CHANNELS.pluginsDiagnostics]: () =>
-      proxy.requestJson(
-        "/api/plugins/diagnostics",
-        {},
-        z.array(z.object({ name: z.string(), error: z.string() })),
-      ),
+      proxy.requestJson("/api/plugins/diagnostics", {}, z.array(PluginDiagnosticSchema)),
+    [IPC_CHANNELS.pluginsDirectory]: () =>
+      proxy.requestJson("/api/plugins/directory", {}, PluginDirectorySchema),
     [IPC_CHANNELS.repositoriesList]: () =>
       proxy.requestJson("/api/repositories", {}, z.array(RepositorySchema)),
     [IPC_CHANNELS.repositoriesCreate]: (_event, input) =>

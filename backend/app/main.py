@@ -349,7 +349,7 @@ def create_app(
                     credential_store, runtime_settings
                 ):
                     install_contribution(host, contribution)
-            app.state.plugin_diagnostics = load_plugins(host)
+            app.state.plugin_diagnostics = load_plugins(host, runtime_settings.plugins_dir)
         host_notifications = host.notifications
         app.state.plugin_host = host
         # The plugin page is a read model over the installed contributions, so

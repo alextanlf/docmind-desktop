@@ -1831,6 +1831,28 @@ input:disabled {
   margin: 0;
   padding-left: 18px;
 }
+.plugin-failure-source {
+  display: block;
+  color: var(--muted);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 11px;
+  word-break: break-all;
+}
+.plugin-directory {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.plugin-directory code {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 11px;
+  color: var(--text);
+  word-break: break-all;
+  user-select: text;
+}
 .connection-help-link {
   display: inline-flex;
   align-items: center;

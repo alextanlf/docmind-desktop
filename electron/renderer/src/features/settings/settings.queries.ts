@@ -18,6 +18,7 @@ export const settingsKeys = {
   // what changes a card's connection state.
   plugins: ["plugins"] as const,
   pluginDiagnostics: ["plugins", "diagnostics"] as const,
+  pluginDirectory: ["plugins", "directory"] as const,
 };
 export const localModelKeys = {
   status: ["localModel", "status"] as const,
@@ -86,6 +87,20 @@ export function usePluginDiagnosticsQuery() {
   return useQuery({
     queryKey: settingsKeys.pluginDiagnostics,
     queryFn: () => window.docmind.plugins.diagnostics(),
+  });
+}
+
+/**
+ * The directory a plugin is installed by putting it in.
+ *
+ * Asked for rather than composed in the renderer: the path follows the
+ * application's data directory, which the renderer has no way to know and which
+ * is not the same on every platform.
+ */
+export function usePluginDirectoryQuery() {
+  return useQuery({
+    queryKey: settingsKeys.pluginDirectory,
+    queryFn: () => window.docmind.plugins.directory(),
   });
 }
 

@@ -298,6 +298,31 @@ export const PluginManifestSchema = z.object({
   browserUnavailableCode: z.string().nullable().optional(),
 });
 
+/**
+ * One line of the plugin diagnostics report: a plugin that was found, and what
+ * happened to it.
+ *
+ * `error` is present and empty for a plugin that loaded, so the shape does not
+ * depend on the outcome — the common case in a working install is a plugin that
+ * loaded, and a client that had to special-case a missing key would eventually
+ * treat that case as malformed. `source` is the directory the plugin was found
+ * in, empty for an installed distribution; it is what a developer needs in
+ * order to know which clone to fix.
+ */
+export const PluginDiagnosticSchema = z.object({
+  name: z.string(),
+  error: z.string(),
+  source: z.string(),
+});
+
+/**
+ * Where plugins are installed by putting them. Reported rather than documented:
+ * the path is derived from the application's data directory, which differs per
+ * platform and follows the application's own name, so a path written into a
+ * guide goes stale and leaves the user cloning into a directory nothing reads.
+ */
+export const PluginDirectorySchema = z.object({ path: z.string() });
+
 export const RepositorySchema = z.object({
   id,
   provider: z.string().max(32).nullable().optional(),
@@ -798,6 +823,8 @@ export type RemoteCredentialChannel = z.infer<typeof RemoteCredentialChannelSche
 export type RemoteCredentialTestResult = z.infer<typeof RemoteCredentialTestResultSchema>;
 export type SaveRemoteCredentialInput = z.infer<typeof SaveRemoteCredentialInputSchema>;
 export type PluginManifest = z.infer<typeof PluginManifestSchema>;
+export type PluginDiagnostic = z.infer<typeof PluginDiagnosticSchema>;
+export type PluginDirectory = z.infer<typeof PluginDirectorySchema>;
 export type Repository = z.infer<typeof RepositorySchema>;
 export type CreateRepositoryInput = z.infer<typeof CreateRepositoryInputSchema>;
 export type UpdateRepositoryInput = z.infer<typeof UpdateRepositoryInputSchema>;
@@ -921,7 +948,9 @@ export interface DocMindApi {
    */
   plugins: {
     list(query?: string): Promise<PluginManifest[]>;
-    diagnostics(): Promise<{ name: string; error: string }[]>;
+    diagnostics(): Promise<PluginDiagnostic[]>;
+    /** The directory a plugin is installed by putting it in. */
+    directory(): Promise<PluginDirectory>;
   };
   repositories: {
     list(): Promise<Repository[]>;
@@ -1044,6 +1073,8 @@ export const schemas = {
   StagedSourceSchema,
   SourceFormatSchema,
   StagedCollectionSchema,
+  PluginDiagnosticSchema,
+  PluginDirectorySchema,
   BatchImportSchema,
   BatchItemSchema,
   BatchProgressPayloadSchema,
