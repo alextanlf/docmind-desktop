@@ -71,7 +71,7 @@ class PluginCatalog:
             summary=channel.summary,
             hint=channel.hint,
             icon=channel.icon or getattr(self._identity(provider), "icon", None),
-            keywords=tuple(channel.keywords) + self._identity_keywords(provider),
+            keywords=_merge_keywords(channel.keywords, self._identity_keywords(provider)),
             purpose=channel.purpose,
             homepage=getattr(self._identity(provider), "homepage", None),
             version=getattr(self._identity(provider), "version", None),
@@ -126,7 +126,7 @@ class PluginCatalog:
         keywords = getattr(identity, "keywords", ()) if identity is not None else ()
         # The provider's own name is always searchable: "yuque" must find 语雀
         # even though no label contains the latin spelling.
-        return (provider,) + tuple(keywords)
+        return _merge_keywords((provider,), keywords)
 
     def _capabilities(self, provider: str):
         identity = self._identity(provider)
@@ -136,6 +136,31 @@ class PluginCatalog:
         # the manifest builder total instead of AttributeError-ing on a
         # half-implemented third-party plugin.
         return capabilities if capabilities is not None else ProviderCapabilities()
+
+
+def _merge_keywords(*groups: tuple[str, ...] | object) -> tuple[str, ...]:
+    """Concatenate keyword groups, dropping case-insensitive duplicates.
+
+    The provider name is prepended to every manifest's keywords, and a provider
+    whose own ``keywords`` already mention its name (a natural thing to write)
+    would otherwise ship that term twice. Duplicates are invisible in the UI but
+    leak into the search haystack, where they cost a redundant ``in`` check per
+    keystroke and make the manifest harder to assert on.
+
+    Order is preserved and the first spelling wins, so a channel's own aliases
+    keep priority over the provider-wide ones.
+    """
+    merged: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for keyword in group or ():  # type: ignore[union-attr]
+            text = str(keyword)
+            folded = text.casefold()
+            if folded in seen:
+                continue
+            seen.add(folded)
+            merged.append(text)
+    return tuple(merged)
 
 
 def _matches(manifest: PluginManifest, terms: list[str]) -> bool:

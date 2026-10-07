@@ -348,3 +348,111 @@ def test_no_plugins_yields_an_empty_catalogue(store: CredentialStore, returned) 
 
     assert len(PluginCatalog(registry, store).manifests()) == 1
     assert PluginManifest is not None
+
+# -- extensibility: the contract a new plugin author relies on --------------
+
+
+def test_a_vendor_absent_from_this_codebase_gets_a_full_card(store: CredentialStore) -> None:
+    """The one promise the settings page makes to a plugin author.
+
+    A provider invented here — named nowhere in this repository, registered the
+    only way a third party can — must produce a complete, searchable card. If
+    this ever needs a matching edit in ``catalog.py`` or the renderer, the
+    extensibility claim is false and this test is the thing that noticed.
+    """
+
+    class _Zenith:
+        identity = ProviderIdentity(
+            name="zenith",
+            label="Zenith Board",
+            summary="把 Zenith 工单导入 DocMind",
+            icon="key",
+            keywords=("zenith", "工单", "ticket"),
+            homepage="https://zenith.test",
+            version="9.9.9",
+        )
+
+        async def close(self) -> None:
+            return None
+
+    registry = ProviderRegistry(store)
+    registry.register(
+        _Zenith(),
+        always_configured=True,
+        credential_spec=ProviderCredentialSpec(
+            provider="zenith",
+            channels=(
+                CredentialChannelSpec(
+                    name="api",
+                    label="Zenith API",
+                    has_secret=True,
+                    default_secret_ref="zenith:token",
+                    summary="用令牌读取 Zenith",
+                ),
+            ),
+        ),
+    )
+
+    manifests = PluginCatalog(registry, store).manifests()
+
+    # Every string the card renders is plugin-declared, so the renderer needs no
+    # per-vendor knowledge to draw it.
+    assert [m.id for m in manifests] == ["zenith:api"]
+    assert manifests[0].label == "Zenith API"
+    assert manifests[0].provider_label == "Zenith Board"
+    assert manifests[0].summary == "用令牌读取 Zenith"
+    assert manifests[0].icon == "key"
+    assert manifests[0].version == "9.9.9"
+    # And it is findable by a term that appears in no label.
+    assert [m.id for m in PluginCatalog(registry, store).search("工单")] == ["zenith:api"]
+
+
+def test_keywords_are_merged_without_duplicates(store: CredentialStore) -> None:
+    """A provider whose own keywords repeat its name must not ship it twice.
+
+    The provider name is prepended to every manifest, and repeating it in
+    ``keywords`` is the most natural thing an author can write — so this is the
+    default shape, not an exotic one. Duplicates are invisible on the card but
+    inflate the search haystack, where they cost a redundant substring check per
+    keystroke.
+    """
+    registry = ProviderRegistry(store)
+    # Dirty input on purpose: the name appears in the provider keywords AND in
+    # the channel keywords AND is prepended by the catalogue.
+    registry.register(
+        _DocsProvider(),
+        always_configured=True,
+        credential_spec=ProviderCredentialSpec(
+            provider="acme",
+            channels=(
+                CredentialChannelSpec(
+                    name="api",
+                    label="Acme API",
+                    has_secret=True,
+                    default_secret_ref="acme:token",
+                    keywords=("acme", "ACME", "token"),
+                ),
+            ),
+        ),
+    )
+
+    keywords = PluginCatalog(registry, store).manifests()[0].keywords
+
+    # Order preserved and first spelling kept: the channel's own aliases lead,
+    # the provider-wide ones follow, and the name — prepended by the catalogue —
+    # collapses into the channel's own mention of it. Case-insensitive, so a
+    # shouty "ACME" cannot sneak past as a second term.
+    assert keywords == ("acme", "token", "wiki")
+    # Every term still searchable — merging must not drop anything.
+    assert [m.id for m in PluginCatalog(registry, store).search("wiki")] == ["acme:api"]
+    assert [m.id for m in PluginCatalog(registry, store).search("ACME")] == ["acme:api"]
+
+
+def test_merging_keywords_tolerates_missing_and_empty_groups() -> None:
+    from app.plugins.catalog import _merge_keywords
+
+    assert _merge_keywords((), ()) == ()
+    assert _merge_keywords(("a",), ()) == ("a",)
+    assert _merge_keywords((), ("b",)) == ("b",)
+    assert _merge_keywords(None, ("c",)) == ("c",)
+    assert _merge_keywords(("a", "a"), ("A", "b")) == ("a", "b")
