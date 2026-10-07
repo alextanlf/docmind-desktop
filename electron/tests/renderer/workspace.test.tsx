@@ -81,23 +81,27 @@ describe("Workspace", () => {
     expect(screen.queryByLabelText("引用资料")).not.toBeInTheDocument();
   });
 
-  it("treats settings as a peer page rather than a toggle back to the workspace", async () => {
+  it("pins settings to the bottom-left of the sidebar, outside the feature nav", async () => {
     renderWorkspace();
 
+    // The nav holds the three things you *work with*; settings is a destination
+    // pinned below the library tree, so it must not read as a fourth peer.
     const nav = screen.getByRole("navigation", { name: "功能导航" });
-    const settingsNav = within(nav).getByRole("button", { name: "设置" });
-    // A peer of 知识库 / 导入文档 / 记忆, not a pinned footer action.
-    expect(settingsNav).toBeInTheDocument();
+    expect(within(nav).queryByRole("button", { name: "设置" })).not.toBeInTheDocument();
+
+    const sidebar = screen.getByLabelText("主导航");
+    const settingsNav = within(sidebar).getByRole("button", { name: "设置" });
+    // Bottom-left means the last thing in the sidebar column, after the tree.
+    expect(sidebar.lastElementChild).toBe(settingsNav);
     expect(settingsNav).not.toHaveAttribute("aria-current");
 
     fireEvent.click(settingsNav);
     expect(await screen.findByRole("heading", { name: "设置", level: 1 })).toBeVisible();
     expect(settingsNav).toHaveAttribute("aria-current", "page");
 
-    // Clicking it again must NOT bounce back to the conversation. It used to,
-    // which made settings feel like a mode you could fall out of rather than a
-    // page you stay on. The main region stays labelled as the settings page
-    // rather than flipping back to the conversation workspace.
+    // Pinned position must not reintroduce the old toggle: clicking again has
+    // to keep you on the settings page instead of bouncing back to the
+    // conversation, which is what made it read as a mode you could fall out of.
     fireEvent.click(settingsNav);
     expect(screen.getByRole("heading", { name: "设置", level: 1 })).toBeVisible();
     expect(screen.getByLabelText("设置内容")).toBeInTheDocument();

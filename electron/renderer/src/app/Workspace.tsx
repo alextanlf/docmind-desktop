@@ -235,20 +235,6 @@ export function Workspace() {
             <BookOpen aria-hidden="true" size={17} />
             <span>记忆</span>
           </button>
-          {/* Settings is a peer of the three above, not a footer action. It used
-              to live outside this list and toggle back to the workspace when
-              clicked again, which made it read as a mode rather than a page. */}
-          <button
-            aria-current={activeView === "settings" ? "page" : undefined}
-            aria-label="设置"
-            className={clsx("settings-nav", activeView === "settings" && "is-active")}
-            onClick={() => setActiveView("settings")}
-            title="设置"
-            type="button"
-          >
-            <Settings aria-hidden="true" size={17} />
-            <span>设置</span>
-          </button>
         </nav>
         <div className="sidebar-library" ref={sidebarLibraryRef}>
           <RepositoryTree
@@ -257,6 +243,20 @@ export function Workspace() {
             }}
           />
         </div>
+        {/* Pinned to the bottom-left of the sidebar, below the library tree.
+            It is still a *page*, not a mode: clicking it again must not bounce
+            back to the conversation, so there is deliberately no toggle here. */}
+        <button
+          aria-current={activeView === "settings" ? "page" : undefined}
+          aria-label="设置"
+          className={clsx("settings-nav", activeView === "settings" && "is-active")}
+          onClick={() => setActiveView("settings")}
+          title="设置"
+          type="button"
+        >
+          <Settings aria-hidden="true" size={17} />
+          <span>设置</span>
+        </button>
       </aside>
       <section
         className="workspace-main"
