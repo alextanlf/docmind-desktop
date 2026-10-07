@@ -12,9 +12,12 @@ the page objects stay async.
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from selenium.common.exceptions import WebDriverException
 
 from app.api.errors import DomainError
 from app.yuque import session as session_store
@@ -24,6 +27,14 @@ from app.yuque.wd_locator import _RETRYABLE, locator
 
 # Where the browser must land before cookies may be injected.
 YUQUE_ORIGIN = "https://www.yuque.com"
+
+# Chrome takes a few seconds to spawn; anything beyond this means the machine
+# is under enough load that waiting longer only delays the user's answer.
+_LAUNCH_TIMEOUT_SECONDS = 30.0
+# Grace added on top of the page-load budget before the warm-up is abandoned.
+_WARMUP_SLACK_SECONDS = 5.0
+
+logger = logging.getLogger(__name__)
 
 # Chrome flags shared by every session. ``--no-sandbox`` is required because
 # the app ships a standalone runtime without the usual user namespaces, and
@@ -54,8 +65,18 @@ class BrowserSession:
         return locator(self.driver, selector)
 
     async def goto(self, url: str, timeout_ms: int = 30_000) -> None:
+        """Navigate with a hard ceiling.
+
+        ``set_page_load_timeout`` is best-effort and does not always interrupt a
+        stalled navigation, so the call is wrapped in ``wait_for`` as well.
+        Without that second guard a slow CDN can hold the call open well past
+        the budget, which is exactly what the login probe must never do.
+        """
         await asyncio.to_thread(self._apply_timeout, timeout_ms)
-        await asyncio.to_thread(self.driver.get, url)
+        await asyncio.wait_for(
+            asyncio.to_thread(self.driver.get, url),
+            timeout=timeout_ms / 1000 + _WARMUP_SLACK_SECONDS,
+        )
 
     async def current_url(self) -> str:
         return await asyncio.to_thread(getattr, self.driver, "current_url")
@@ -86,7 +107,7 @@ async def open_session(
     cache_root: Path,
     visible: bool,
     restore_session: bool,
-    timeout_ms: int = 30_000,
+    timeout_ms: int = 15_000,
 ) -> BrowserSession:
     """Start Chrome, optionally replaying the stored Yuque session.
 
@@ -111,20 +132,38 @@ async def open_session(
             "YUQUE_BROWSER_UNAVAILABLE", str(error), 503, True, "稍后重试"
         ) from error
 
-    driver = await asyncio.to_thread(
-        _launch, bundle.path, browser.executable, visible
-    )
+    try:
+        driver = await asyncio.wait_for(
+            asyncio.to_thread(_launch, bundle.path, browser.executable, visible),
+            timeout=_LAUNCH_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as error:
+        raise YuqueBrowserUnavailableError(
+            "YUQUE_BROWSER_UNAVAILABLE", "启动浏览器超时，请重试", 503, True
+        ) from error
+
     session = BrowserSession(
         driver=driver, profile_dir=cache_root, visible=visible
     )
     try:
-        await session.goto(YUQUE_ORIGIN, timeout_ms=timeout_ms)
-        # Hide the automation flag before any script runs on the page.
-        await session.set_script(
-            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
-        )
-        if restore_session:
-            await _restore(session, cache_root)
+        # Cookies can only be injected once the browser is on the domain, so
+        # this first navigation is required — but it must not be able to hang
+        # the caller. A stalled warm-up still yields a usable browser that can
+        # report "not logged in", which matters because the desktop app probes
+        # login state on its startup path.
+        try:
+            await asyncio.wait_for(
+                session.goto(YUQUE_ORIGIN, timeout_ms=timeout_ms),
+                timeout=timeout_ms / 1000 + _WARMUP_SLACK_SECONDS,
+            )
+            # Hide the automation flag before any script runs on the page.
+            await session.set_script(
+                "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+            )
+            if restore_session:
+                await _restore(session, cache_root)
+        except (TimeoutError, WebDriverException, OSError):
+            logger.warning("语雀会话预热失败，仍返回可用会话", exc_info=True)
     except DomainError:
         await session.quit()
         raise

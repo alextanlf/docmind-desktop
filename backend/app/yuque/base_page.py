@@ -9,8 +9,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar
 
-from playwright.async_api import Error as PlaywrightError
-
 from app.api.errors import DomainError
 from app.yuque.diagnostics import (
     SelectorAttempt,
@@ -19,6 +17,7 @@ from app.yuque.diagnostics import (
     redact_dom_snapshot,
     redact_page_url,
 )
+from app.yuque.retryable import _RETRYABLE_ERRORS
 
 T = TypeVar("T")
 
@@ -26,7 +25,13 @@ RETRY_DELAYS = (0.2, 0.5, 1.0)
 
 
 class BasePage:
-    """Small selector and retry boundary around a Playwright page."""
+    """Small selector and retry boundary around an automation page.
+
+    Backend-agnostic on purpose: the page it wraps only has to provide
+    ``locator`` / ``get_by_*`` / ``url``, which both the Playwright and the
+    WebDriver facades do, so a selector or a login heuristic is never written
+    twice.
+    """
 
     def __init__(
         self,
@@ -144,9 +149,6 @@ async def maybe_await(value: T | Awaitable[T]) -> T:
     if inspect.isawaitable(value):
         return await value
     return value
-
-
-_RETRYABLE_ERRORS = (PlaywrightError, TimeoutError, ConnectionError, OSError)
 
 
 _SCREENSHOT_MASK_CSS = """
