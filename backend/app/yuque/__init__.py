@@ -1,6 +1,6 @@
-"""Yuque remote provider implementation (browser automation + open API)."""
+"""Yuque remote provider implementation (WebDriver automation + open API)."""
 
 from app.yuque.api_gateway import YuqueApiGateway, YuqueProvider
-from app.yuque.gateway import PlaywrightYuqueGateway
+from app.yuque.wd_gateway import WebDriverYuqueGateway
 
-__all__ = ["PlaywrightYuqueGateway", "YuqueApiGateway", "YuqueProvider"]
+__all__ = ["WebDriverYuqueGateway", "YuqueApiGateway", "YuqueProvider"]

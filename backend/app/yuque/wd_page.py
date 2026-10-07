@@ -26,8 +26,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from selenium.common.exceptions import WebDriverException
-
 from app.yuque.wd_locator import (
     _RETRYABLE,
     AsyncLocator,
@@ -135,7 +133,12 @@ class WdPage:
         )
         self._session.driver.set_script_timeout(timeout_ms / 1000 + 5)
         if not self._session.driver.execute_async_script(script):
-            raise WebDriverException("page did not reach a load state in time")
+            # Deliberately a builtin TimeoutError rather than Selenium's
+            # WebDriverException: the retry layer treats "the page did not
+            # load in time" as retryable, and widening the tuple to the whole
+            # Selenium base class would also retry failures that a retry can
+            # never fix (browser refused to start, session already dead).
+            raise TimeoutError("page did not reach a load state in time")
 
     async def screenshot(self, path: str) -> None:
         await self._session.screenshot(path)

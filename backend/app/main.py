@@ -113,7 +113,7 @@ from app.sync.scheduler import SyncScheduler
 from app.sync.service import IncrementalSyncService
 from app.yuque.api_gateway import YuqueApiGateway, YuqueProvider
 from app.yuque.credentials import YUQUE_CREDENTIAL_SPEC
-from app.yuque.gateway import PlaywrightYuqueGateway
+from app.yuque.wd_gateway import WebDriverYuqueGateway
 
 # 界面启动时会拉起语雀浏览器做"首次设置"检查；启动同步必须排在它后面，
 # 否则用户会看到几十秒的转圈。
@@ -183,7 +183,7 @@ def _assemble_production_registry(
 
     registry.register(
         YuqueProvider(
-            PlaywrightYuqueGateway(runtime_settings),
+            WebDriverYuqueGateway(runtime_settings),
             YuqueApiGateway(_yuque_api_token),
             lambda: _yuque_api_token() is not None,
         ),

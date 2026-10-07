@@ -222,7 +222,7 @@ class YuqueProvider:
     """The yuque remote provider: API token first, browser session fallback.
 
     Document operations route to the verified open API when a token is
-    available and fall back to the Playwright-driven web session. Login
+    available and fall back to the WebDriver-driven web session. Login
     surface (status/login/browser install) always reflects the web session,
     matching the former /api/yuque behaviour, because the account binding
     card tracks the browser login state.

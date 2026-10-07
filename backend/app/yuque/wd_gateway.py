@@ -1,15 +1,14 @@
 """Yuque gateway driven by WebDriver against the user's own Chrome.
 
-Same contract as :class:`~app.yuque.gateway.PlaywrightYuqueGateway`, but the
-browser is the one already installed on the machine and the driver is a ~9 MB
-binary fetched on demand, instead of a 133 MB Node runtime plus a 170 MB
-Chromium bundled into the installer.
+The browser is the one already installed on the machine and the driver is a
+~9 MB binary fetched on demand, instead of a 133 MB Node runtime plus a
+170 MB Chromium bundled into the installer.
 
-The nine provider capabilities are lifted verbatim rather than re-implemented:
-they only ever touch the page facade (``goto`` / ``locator`` / ``url`` …) and
-the shared page objects, so a selector or an error mapping can never drift
-between the two stacks. Only the three driver-level methods differ, and they
-are written out below.
+The nine provider capabilities came over verbatim from the Playwright gateway
+this replaced: they only ever touch the page facade (``goto`` / ``locator`` /
+``url`` …) and the shared page objects, so a selector or an error mapping was
+never written twice. Only the three driver-level methods are written out
+below.
 
 ``_read_document_via_api`` keeps working unchanged: it guards on
 ``hasattr(page, "evaluate")`` and falls back to reading the rendered DOM, which
@@ -19,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import urlparse
@@ -41,11 +41,12 @@ from app.schemas.remote import (
     RemoteRepository,
     UpdateRemoteDocumentRequest,
 )
+from app.yuque.base_page import RETRY_DELAYS
 from app.yuque.codes import YUQUE_BROWSER_UNAVAILABLE_CODE
 from app.yuque.dashboard_page import DashboardPage
 from app.yuque.editor_page import EditorPage
-from app.yuque.gateway import (
-    RETRY_DELAYS,
+from app.yuque.login_page import LoginPage
+from app.yuque.navigation import (
     _extract_mutation_marker,
     _is_login_url,
     _open_yuque_resource,
@@ -54,7 +55,6 @@ from app.yuque.gateway import (
     _strip_mutation_marker,
     _wait_for_render,
 )
-from app.yuque.login_page import LoginPage
 from app.yuque.repository_page import RepositoryPage
 from app.yuque.wd_locator import _RETRYABLE as _WEBDRIVER_RETRYABLE
 from app.yuque.wd_page import WdPage
@@ -63,6 +63,11 @@ from app.yuque.wd_session import (
     open_session,
     persist_session,
 )
+
+# Budgets for a background capability call: reach the dashboard, then give
+# the SPA a moment to render before declaring the network at fault.
+_PAGE_NAVIGATION_TIMEOUT_MS = 15_000
+_PAGE_RENDER_TIMEOUT_MS = 8_000
 
 _LOGIN_STATUS_NAV_TIMEOUT_MS = 6_000
 _LOGIN_STATUS_RENDER_TIMEOUT_MS = 3_000
@@ -105,7 +110,7 @@ class WebDriverYuqueGateway:
     async def login_status(self) -> LoginStatus:
         """Best-effort probe with a hard budget.
 
-        Mirrors the Playwright gateway: commit the navigation, poll briefly for
+        Mirrors the previous gateway: commit the navigation, poll briefly for
         a decisive signal, and fall back to the stored session cookie so a slow
         CDN cannot stall the desktop app.
         """
@@ -237,7 +242,44 @@ class WebDriverYuqueGateway:
             finally:
                 await session.quit()
 
-    # -- capabilities (shared verbatim with the Playwright gateway) -------
+    # -- background session ------------------------------------------------
+
+    async def _background_page(self, operation: str) -> AsyncIterator[tuple[Any, str]]:
+        request_id = uuid4().hex
+        async with self._new_page(visible_login=False) as page:
+            login = LoginPage(page, self.settings.screenshots_dir, request_id)
+
+            async def authenticate() -> None:
+                await page.goto(
+                    "https://www.yuque.com/dashboard",
+                    wait_until="commit",
+                    timeout=_PAGE_NAVIGATION_TIMEOUT_MS,
+                )
+                if not await _wait_for_render(page, _PAGE_RENDER_TIMEOUT_MS):
+                    raise DomainError(
+                        "YUQUE_PAGE_UNAVAILABLE",
+                        "语雀页面加载超时，请检查网络后重试",
+                        503,
+                        False,
+                        "检查网络后重试",
+                    )
+                if await login.is_logged_in():
+                    return
+                if _is_login_url(page.url):
+                    raise DomainError(
+                        "YUQUE_LOGIN_REQUIRED",
+                        "语雀登录已失效，请重新登录",
+                        401,
+                        False,
+                        "重新登录语雀",
+                        auth_expired=True,
+                    )
+                raise DomainError("YUQUE_PAGE_CHANGED", "语雀页面结构已变化，请重新登录后重试", 503, True)
+
+            await login.with_retry(f"{operation}-authenticate", authenticate)
+            yield page, request_id
+
+    # -- capabilities ----------------------------------------------------
     async def list_repositories(self) -> list[RemoteRepository]:
         async with self._background_page("list-repositories") as operation:
             page, request_id = operation
