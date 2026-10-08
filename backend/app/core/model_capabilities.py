@@ -308,6 +308,27 @@ def clamp_temperature(value: float) -> float:
     return min(value, TEMPERATURE_MAX)
 
 
+# 🔴 工具调用判定方向与上面**相反**，这不是疏忽。
+#
+# `reasoning_effort` / `thinking` 是厂商私有字段，字段名各不一样，猜错即 400，
+# 所以未登记就不发。而 `tools`（function calling）是 OpenAI 兼容**基础字段**，
+# 与 `messages` / `stream` 同级，主流 chat 模型普遍支持 —— 按"未登记即不发"
+# 会让这个能力对所有模型都是关的，等于没有。
+#
+# 因此这里记的是**黑名单**：只登记已确认拒绝 `tools` 的组合。未登记组合若实际
+# 返回 400，由 `OpenAICompatibleProvider.stream_chat` 的「去掉 tools 重试一次」
+# 兜底，所以能力表不需要填全，发现一例登记一例即可。
+_TOOL_CALLING_UNSUPPORTED: frozenset[tuple[str, str]] = frozenset()
+
+
+def supports_tool_calling(preset: str, model: str) -> bool:
+    """该「厂商 + 模型」组合是否可以下发 `tools` 字段。
+
+    见上方说明：默认 True，只有登记在 `_TOOL_CALLING_UNSUPPORTED` 里的组合返回 False。
+    """
+    return (preset, (model or "").strip().lower()) not in _TOOL_CALLING_UNSUPPORTED
+
+
 def reasoning_params(preset: str, model: str, effort: str) -> dict[str, object]:
     """把档位翻译成该模型认识的请求字段。
 

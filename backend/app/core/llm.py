@@ -3,17 +3,18 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import AsyncIterator
-from typing import Protocol
+from typing import Any, Protocol
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
-from pydantic import Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from app.api.errors import DomainError
 from app.core.model_capabilities import (
     accepts_temperature,
     clamp_temperature,
     reasoning_params,
+    supports_tool_calling,
 )
 from app.schemas.common import WireModel
 
@@ -71,21 +72,121 @@ class ModelConnectionResult(WireModel):
 CONNECTION_TEST_TEMPERATURE = 0.1
 
 
-class LLMMessage(WireModel):
+# 🔴 下面这几个 DTO 故意用 `BaseModel` 而不是 `WireModel`。
+# `WireModel` 带 `alias_generator=to_camel` + `serialize_by_alias=True`，于是
+# `LLMMessage(tool_call_id=...)` 会被 `model_dump()` 序列化成 `toolCallId`，
+# 而 OpenAI 兼容接口要的是 `tool_call_id` —— 一次改名就把工具调用打挂，
+# 且因为字段名合法而**静默**失败（服务端只会回 400，看不出是别名问题）。
+# 这几个类是本进程与厂商之间的内部传输结构，不参与 DocMind 自己的 HTTP 契约，
+# 所以中性名（snake_case）才是正确形态。
+class LLMToolCall(BaseModel):
+    """A complete tool call the model asked for, arguments as the raw JSON string
+    the vendor produced (never re-serialized, so a malformed payload stays
+    observable instead of being silently coerced)."""
+
+    id: str = ""
+    name: str = ""
+    arguments: str = ""
+
+
+class LLMToolCallDelta(BaseModel):
+    """One streamed fragment of a tool call.
+
+    Vendors split a single call across frames: `index` selects which call,
+    `id`/`name` normally arrive once, and `arguments` arrives in arbitrary
+    slices that must be concatenated in order.
+    """
+
+    index: int = 0
+    id: str = ""
+    name: str = ""
+    arguments: str = ""
+
+
+class LLMToolSpec(BaseModel):
+    """An OpenAI-shaped `function` tool declaration offered to the model."""
+
+    name: str
+    description: str
+    parameters: dict[str, Any]
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters,
+            },
+        }
+
+
+class LLMMessage(BaseModel):
     role: str
-    content: str
+    content: str = ""
+    # Set on the `assistant` message that requests tools, and echoed on the
+    # `tool` message that answers each one. The vendor matches them by id.
+    tool_call_id: str = ""
+    tool_calls: list[LLMToolCall] = []
+
+    def to_wire(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"role": self.role, "content": self.content}
+        if self.tool_calls:
+            payload["tool_calls"] = [
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {"name": call.name, "arguments": call.arguments},
+                }
+                for call in self.tool_calls
+            ]
+        if self.tool_call_id:
+            payload["tool_call_id"] = self.tool_call_id
+        return payload
 
 
-class ChatRequest(WireModel):
+class ChatRequest(BaseModel):
     messages: list[LLMMessage]
     temperature: float = 0.2
     # Unified reasoning-effort level. Translated to the vendor's own field by
     # `reasoning_params`; ignored when the vendor does not declare support.
     reasoning_effort: str | None = None
+    # Empty means "send no `tools` field at all". The caller decides — it is the
+    # only layer that knows whether the user allowed web access this turn — and
+    # `OpenAICompatibleProvider.stream_chat` retries without the field when a
+    # model rejects it.
+    tools: list[LLMToolSpec] = []
 
 
-class ChatDelta(WireModel):
-    content: str
+class ChatDelta(BaseModel):
+    content: str = ""
+    tool_calls: list[LLMToolCallDelta] = []
+
+
+class ToolCallAccumulator:
+    """Rebuilds complete tool calls from streamed fragments."""
+
+    def __init__(self) -> None:
+        self._calls: dict[int, LLMToolCall] = {}
+
+    def add(self, deltas: list[LLMToolCallDelta]) -> None:
+        for delta in deltas:
+            call = self._calls.setdefault(delta.index, LLMToolCall())
+            if delta.id:
+                call.id = delta.id
+            if delta.name:
+                call.name = delta.name
+            if delta.arguments:
+                call.arguments += delta.arguments
+
+    def complete(self) -> list[LLMToolCall]:
+        # A vendor that never sends an id still needs one back on the matching
+        # `tool` message, so synthesise a stable placeholder instead of echoing
+        # an empty string the vendor cannot match.
+        return [
+            call.model_copy(update={"id": call.id or f"call_{index}"})
+            for index, call in sorted(self._calls.items())
+        ]
 
 
 class LLMProvider(Protocol):
@@ -196,11 +297,42 @@ class OpenAICompatibleProvider:
         )
 
     async def stream_chat(self, request: ChatRequest) -> AsyncIterator[ChatDelta]:
+        """Stream one answer, degrading to plain chat if the model rejects `tools`.
+
+        `tools` is a base OpenAI-compatible field, so unlike `reasoning_effort` it
+        is sent for every model rather than only for registered ones — see
+        `model_capabilities.supports_tool_calling`. A model that nonetheless
+        rejects the field answers 400, which arrives before any delta is emitted;
+        retrying once without `tools` turns "this model cannot call tools" into a
+        plain answer instead of a failed request.
+        """
+        emitted = False
+        try:
+            async for delta in self._stream_once(request, request.tools):
+                emitted = True
+                yield delta
+        except DomainError as error:
+            # Only a 4xx protocol rejection is worth retrying, only when `tools`
+            # was actually the thing being sent, and only if the first attempt
+            # produced nothing — otherwise the retry would duplicate output.
+            if emitted or not request.tools or error.code != "MODEL_PROTOCOL_ERROR":
+                raise
+            async for delta in self._stream_once(request, []):
+                yield delta
+
+    async def _stream_once(
+        self, request: ChatRequest, tools: list[LLMToolSpec]
+    ) -> AsyncIterator[ChatDelta]:
         payload: dict[str, object] = {
             "model": self.config.model,
-            "messages": [message.model_dump() for message in request.messages],
+            "messages": [message.to_wire() for message in request.messages],
             "stream": True,
         }
+        # 能力判定放在这里而不是调用方 —— 只有 provider 自己知道 preset/model。
+        # 登记为不支持时直接不发；未登记但实际拒绝的组合由 `stream_chat` 的
+        # 「去掉 tools 重试一次」兜底。
+        if tools and supports_tool_calling(self.config.preset, self.config.model):
+            payload["tools"] = [tool.to_wire() for tool in tools]
         # Not every model accepts temperature. OpenAI's reasoning family rejects
         # it outright (gpt-5.5: "Unsupported parameter: 'temperature'"; the 5.6
         # family accepts only the default 1; GPT-6 Astra requires omitting it),
@@ -226,26 +358,32 @@ class OpenAICompatibleProvider:
                     .startswith("text/event-stream")
                 ):
                     raise _model_error("MODEL_PROTOCOL_ERROR")
-                emitted_content = False
+                emitted = False
                 async for event in _sse_events(response):
                     if event == "[DONE]":
                         break
-                    content = _delta_content(event)
-                    if content is _NO_CONTENT:
+                    parts = _delta_parts(event)
+                    if parts is None:
                         # Structurally textless frame (usage-only, reasoning-only,
                         # or a shape we do not recognize): vendors legitimately
                         # emit all three mid-stream.
                         continue
-                    if not isinstance(content, str):
+                    content, tool_calls = parts
+                    if content is not _NO_CONTENT and not isinstance(content, str):
                         # `content` is present but not a string: corrupt, not a
                         # frame we can skip over.
                         raise _model_error("MODEL_PROTOCOL_ERROR")
-                    if content:
-                        emitted_content = True
-                        yield ChatDelta(content=content)
-                # A stream that never produced a text delta is unusable, whether or
-                # not the vendor closed it with the `[DONE]` sentinel.
-                if not emitted_content:
+                    emitted = True
+                    yield ChatDelta(
+                        content=content if isinstance(content, str) else "",
+                        tool_calls=tool_calls,
+                    )
+                # A stream that produced neither text nor a tool call is
+                # unusable, whether or not the vendor closed it with `[DONE]`.
+                # Tool-call frames count: a model that answers purely by calling
+                # a tool emits no text at all, and treating that as a bad stream
+                # turned a working tool call into MODEL_PROTOCOL_ERROR.
+                if not emitted:
                     raise _model_error("MODEL_PROTOCOL_ERROR")
         except httpx.TimeoutException as error:
             raise _model_error("MODEL_TIMEOUT") from error
@@ -258,35 +396,74 @@ class OpenAICompatibleProvider:
 _NO_CONTENT = object()
 
 
-def _delta_content(event: str) -> object:
-    """Extract text from one SSE `data:` payload, or `_NO_CONTENT` when textless.
+def _delta_parts(event: str) -> tuple[object, list[LLMToolCallDelta]] | None:
+    """Extract text and tool-call fragments from one SSE `data:` payload.
 
-    Reasoning models (GLM thinking, Kimi, MiMo) interleave `reasoning_content`
-    and usage-only frames into the stream, and some vendors close the connection
-    without a `[DONE]` sentinel. Those frames are textless rather than corrupt, so
-    they are reported as `_NO_CONTENT`. A `content` value that is present but not a
-    string is returned as-is so the caller can reject it as corrupt.
+    Returns `None` for a frame carrying neither — usage-only, reasoning-only, the
+    role-only opening frame, or a shape we do not recognize; vendors legitimately
+    emit all of those mid-stream. Otherwise returns `(content, tool_calls)`, where
+    `content` is the text or `_NO_CONTENT` for a tool-call-only frame. A `content`
+    value that is present but not a string is returned as-is so the caller can
+    reject it as corrupt instead of silently dropping it.
     """
     try:
         data = json.loads(event)
     except (json.JSONDecodeError, TypeError):
-        return _NO_CONTENT
+        return None
     if not isinstance(data, dict):
-        return _NO_CONTENT
+        return None
     choices = data.get("choices")
     if not isinstance(choices, list) or not choices:
-        return _NO_CONTENT
+        return None
     first = choices[0]
     if not isinstance(first, dict):
-        return _NO_CONTENT
+        return None
     delta = first.get("delta")
     if not isinstance(delta, dict):
-        return _NO_CONTENT
+        return None
     content = delta.get("content")
-    if content is None or content == "":
-        # Absent, null and empty-string content are all "no text this frame".
-        return _NO_CONTENT
-    return content
+    # Absent, null and empty-string content are all "no text this frame".
+    text: object = _NO_CONTENT if content is None or content == "" else content
+    tool_calls = _tool_call_deltas(delta.get("tool_calls"))
+    if text is _NO_CONTENT and not tool_calls:
+        return None
+    return text, tool_calls
+
+
+def _tool_call_deltas(raw: object) -> list[LLMToolCallDelta]:
+    """Parse a `delta.tool_calls` array, skipping entries that are unreadable.
+
+    A malformed entry is dropped rather than raised on: the frame's text (if any)
+    is still usable, and one odd fragment should not kill the whole answer. The
+    accumulator concatenates whatever survives.
+    """
+    if not isinstance(raw, list):
+        return []
+    deltas: list[LLMToolCallDelta] = []
+    for position, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            continue
+        function = entry.get("function")
+        if not isinstance(function, dict):
+            function = {}
+        index = entry.get("index")
+        identifier = entry.get("id")
+        name = function.get("name")
+        arguments = function.get("arguments")
+        # A few OpenAI-compatible servers send `arguments` already parsed as an
+        # object even while streaming. Re-serialize so downstream always sees the
+        # raw JSON string the wire contract promises.
+        if isinstance(arguments, dict):
+            arguments = json.dumps(arguments, ensure_ascii=False)
+        deltas.append(
+            LLMToolCallDelta(
+                index=index if isinstance(index, int) else position,
+                id=identifier if isinstance(identifier, str) else "",
+                name=name if isinstance(name, str) else "",
+                arguments=arguments if isinstance(arguments, str) else "",
+            )
+        )
+    return deltas
 
 
 def model_label(model_id: str) -> str:

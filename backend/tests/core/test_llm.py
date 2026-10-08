@@ -12,8 +12,11 @@ from app.core.llm import (
     CONNECTION_TEST_TEMPERATURE,
     ChatRequest,
     LLMMessage,
+    LLMToolCall,
+    LLMToolSpec,
     ModelConfig,
     OpenAICompatibleProvider,
+    ToolCallAccumulator,
 )
 from app.core.model_capabilities import accepts_temperature
 from app.schemas.settings import MODEL_PRESETS
@@ -610,3 +613,165 @@ async def test_model_connection_rejects_empty_or_malformed_success_response(
     assert error.value.code == "MODEL_PROTOCOL_ERROR"
     assert error.value.retryable is False
     assert error.value.message == "模型服务返回了无法识别的数据"
+
+
+# ------------------------------------------------------------------ 工具调用
+# 本地声明一个工具规格，避免 tests/core 反向依赖 app.chat。
+_EchoTool = LLMToolSpec(
+    name="web_search",
+    description="搜索",
+    parameters={"type": "object", "properties": {"query": {"type": "string"}}},
+)
+
+
+@respx.mock
+async def test_stream_reports_tool_call_fragments_instead_of_a_protocol_error(
+    config: ModelConfig,
+) -> None:
+    """只有 tool_calls 的流必须被接受，且分片要能拼回完整调用。
+
+    旧解析器只读 `delta.content`，于是这种帧全被判成"无内容"跳过，最后一帧都没有
+    就抛 MODEL_PROTOCOL_ERROR —— 一个完全正常的工具调用被报成模型协议错误。
+    """
+    respx.post("https://example.test/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            text=(
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_a",'
+                '"type":"function","function":{"name":"web_search",'
+                '"arguments":"{\\"query\\":"}}]}}]}\n\n'
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+                '"function":{"arguments":"\\"RAG\\"}"}}]}}]}\n\n'
+                "data: [DONE]\n\n"
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+    )
+
+    deltas = [
+        delta
+        async for delta in OpenAICompatibleProvider(config, "test-key").stream_chat(
+            ChatRequest(messages=[LLMMessage(role="user", content="q")], tools=[_EchoTool])
+        )
+    ]
+
+    assert [delta.content for delta in deltas] == ["", ""]
+    accumulator = ToolCallAccumulator()
+    for delta in deltas:
+        accumulator.add(delta.tool_calls)
+    assert accumulator.complete() == [
+        LLMToolCall(id="call_a", name="web_search", arguments='{"query":"RAG"}')
+    ]
+
+
+@respx.mock
+async def test_stream_sends_tools_with_snake_case_message_fields(config: ModelConfig) -> None:
+    """🔴 契约回归：`tool_call_id` 绝不能变成 `toolCallId`。
+
+    `LLMMessage` 一旦退回 `WireModel`（`serialize_by_alias=True`），下划线字段就会被
+    转成 camelCase，OpenAI 兼容接口只会回一个 400，而且从错误里看不出是别名问题。
+    """
+    route = respx.post("https://example.test/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+    )
+    request = ChatRequest(
+        messages=[
+            LLMMessage(
+                role="assistant",
+                tool_calls=[LLMToolCall(id="call_a", name="web_search", arguments="{}")],
+            ),
+            LLMMessage(role="tool", tool_call_id="call_a", content="结果"),
+        ],
+        tools=[_EchoTool],
+    )
+
+    [delta async for delta in OpenAICompatibleProvider(config, "test-key").stream_chat(request)]
+
+    payload = json.loads(route.calls[0].request.content)
+    assert payload["tools"] == [_EchoTool.to_wire()]
+    assert payload["messages"][0]["tool_calls"][0]["function"]["name"] == "web_search"
+    assert payload["messages"][1]["tool_call_id"] == "call_a"
+    assert "toolCall" not in json.dumps(payload)
+
+
+@respx.mock
+async def test_stream_retries_without_tools_when_the_model_rejects_them(
+    config: ModelConfig,
+) -> None:
+    """未登记但实际拒绝 `tools` 的模型要降级成普通回答，而不是整条请求失败。"""
+    route = respx.post("https://example.test/v1/chat/completions").mock(
+        side_effect=[
+            httpx.Response(400, json={"error": {"message": "unsupported parameter"}}),
+            httpx.Response(
+                200,
+                text='data: {"choices":[{"delta":{"content":"降级成功"}}]}\n\ndata: [DONE]\n\n',
+                headers={"content-type": "text/event-stream"},
+            ),
+        ]
+    )
+
+    deltas = [
+        delta
+        async for delta in OpenAICompatibleProvider(config, "test-key").stream_chat(
+            ChatRequest(messages=[LLMMessage(role="user", content="q")], tools=[_EchoTool])
+        )
+    ]
+
+    assert [delta.content for delta in deltas] == ["降级成功"]
+    assert len(route.calls) == 2
+    assert "tools" in json.loads(route.calls[0].request.content)
+    assert "tools" not in json.loads(route.calls[1].request.content)
+
+
+@respx.mock
+async def test_stream_does_not_retry_a_rejection_when_no_tools_were_sent(
+    config: ModelConfig,
+) -> None:
+    """没有发 tools 时的 400 是真错误，重试只会白跑一趟。"""
+    route = respx.post("https://example.test/v1/chat/completions").mock(
+        return_value=httpx.Response(400, json={"error": {"message": "bad model"}})
+    )
+
+    with pytest.raises(DomainError) as error:
+        [
+            delta
+            async for delta in OpenAICompatibleProvider(config, "test-key").stream_chat(
+                ChatRequest(messages=[LLMMessage(role="user", content="q")])
+            )
+        ]
+
+    assert error.value.code == "MODEL_PROTOCOL_ERROR"
+    assert len(route.calls) == 1
+
+
+@respx.mock
+async def test_stream_does_not_retry_after_output_was_already_emitted(
+    config: ModelConfig,
+) -> None:
+    """已经吐出内容后再失败不能重试 —— 否则用户会看到同一段回答出现两次。"""
+    route = respx.post("https://example.test/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            text=(
+                'data: {"choices":[{"delta":{"content":"前半段"}}]}\n\n'
+                'data: {"choices":[{"delta":{"content":123}}]}\n\n'
+                "data: [DONE]\n\n"
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+    )
+
+    received: list[str] = []
+    with pytest.raises(DomainError) as error:
+        async for delta in OpenAICompatibleProvider(config, "test-key").stream_chat(
+            ChatRequest(messages=[LLMMessage(role="user", content="q")], tools=[_EchoTool])
+        ):
+            received.append(delta.content)
+
+    assert received == ["前半段"]
+    assert error.value.code == "MODEL_PROTOCOL_ERROR"
+    assert len(route.calls) == 1

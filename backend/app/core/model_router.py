@@ -143,7 +143,11 @@ class ModelRouter:
                     raise DomainError(
                         "LOCAL_MODEL_PROTOCOL_ERROR", "本地模型服务返回了无法识别的数据", 502
                     )
-                if delta.content:
+                # A tool-call delta carries no text but is still real output: a
+                # model that answers by calling a tool emits nothing else, and
+                # treating that as "local model returned nothing" would trip the
+                # cloud fallback on a perfectly healthy local tool call.
+                if delta.content or delta.tool_calls:
                     return delta, stream
         except StopAsyncIteration as error:
             raise DomainError("LOCAL_MODEL_UNAVAILABLE", "本地模型未返回内容", 503, True) from error
