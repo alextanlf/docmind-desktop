@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -186,10 +187,49 @@ def citations_from(events):
     ]
 
 
-def assert_no_secrets(context, caplog):
+@pytest.fixture
+def captured_logs():
+    """自己收集日志，**不用 `caplog`**。
+
+    🔴 这里踩过一个会制造假绿的坑：本套件在该位置 `caplog` 收不到任何记录 —— 实测在函数里
+    `logging.getLogger("probe").warning("…")` 之后 `caplog.text` 仍为空，而**同样写法在
+    `tests/core` 里正常**。机制是全局 logging 状态被别的测试改动（`root.manager.disable`
+    非 NOTSET 时 `isEnabledFor` 直接返回 False，记录根本不产生）。
+    后果是下面的"密钥不得出现在日志里"会**永远通过**，等于没测。
+
+    所以这里自己挂 handler 覆盖整段测试，并在期间把 disable 归零；配合 canary 自证通道是活的。
+    """
+    records: list[str] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record.getMessage())
+
+    root = logging.getLogger()
+    capture = _Capture()
+    previous_disable = logging.root.manager.disable
+    logging.disable(logging.NOTSET)
+    root.addHandler(capture)
+    try:
+        yield records
+    finally:
+        root.removeHandler(capture)
+        logging.disable(previous_disable)
+
+
+def assert_no_secrets(context, logs) -> None:
+    # 🔴 canary 自证：通道没抓到记录就直接失败，否则"日志里没有密钥"会退化成永远通过。
+    canary = "docmind-log-canary"
+    logging.getLogger("probe").warning(canary)
+    assert canary in logs, (
+        "日志通道没抓到记录，下面的泄漏断言会是空转 :: "
+        f"probe.disabled={logging.getLogger('probe').disabled} "
+        f"root.level={logging.getLogger().level} "
+        f"manager.disable={logging.root.manager.disable}"
+    )
     with context.state.database.engine.connect() as connection:
         dump = "\n".join(connection.connection.driver_connection.iterdump())
-    public = "\n".join(context.wire.public) + caplog.text + dump
+    public = "\n".join(context.wire.public) + "\n".join(logs) + dump
     for secret in (MODEL_KEY, SEARCH_KEY):
         assert secret not in public
 
@@ -291,12 +331,14 @@ async def explicit_results(context):
     return run_id, results
 
 
-async def test_explicit_continuation_persists_only_registered_w_citations(search_app, caplog):
+async def test_explicit_continuation_persists_only_registered_w_citations(
+    search_app, captured_logs
+):
     await explicit_results(search_app)
-    assert_no_secrets(search_app, caplog)
+    assert_no_secrets(search_app, captured_logs)
 
 
-async def test_explicit_w_citation_then_partial_second_confirmation(search_app, caplog):
+async def test_explicit_w_citation_then_partial_second_confirmation(search_app, captured_logs):
     context = search_app
     before_jobs = {row.id for row in rows(context, ImportJobRecord)}
     before_docs = {row.id for row in rows(context, DocumentRecord)}
@@ -352,10 +394,10 @@ async def test_explicit_w_citation_then_partial_second_confirmation(search_app, 
     assert "SkippedNebula" not in "\n".join(entry["text"] for entry in indexed)
     assert "UnpickedPulsar" not in "\n".join(entry["text"] for entry in indexed)
     assert len(context.wire.calls) == 1
-    assert_no_secrets(context, caplog)
+    assert_no_secrets(context, captured_logs)
 
 
-async def test_legacy_search_key_is_used_but_never_leaked(search_app, caplog):
+async def test_legacy_search_key_is_used_but_never_leaked(search_app, captured_logs):
     """设置页删除后 Key 只读：仍需生效（付费档不限流），且不能出现在任何公开输出里。"""
     context = search_app
     client = context.harness.client
@@ -372,10 +414,14 @@ async def test_legacy_search_key_is_used_but_never_leaked(search_app, caplog):
     events = await stream(context)
     assert events[-1]["type"] == "done", events[-1]
     assert events[-1]["payload"]["warning"]["code"] == "SEARCH_PROVIDER_ERROR"
-    # 用户显式点了「联网搜索」时失败必须上报 —— 静默变成"没搜到"是欺骗。
+    # 🔴 用户显式点了「联网搜索」时**同样降级**：联网只是补充证据，把它当主路径等于用
+    # "外部搜索挂了"去否掉本地文档本来能答的问题。但必须讲出来，不能静默。
+    before = len(context.llm.requests)
     events = await stream(context, permission="explicit")
-    assert events[-1]["type"] == "error"
-    assert events[-1]["payload"]["code"] == "SEARCH_PROVIDER_ERROR"
+    assert events[-1]["type"] == "done", events[-1]
+    assert events[-1]["payload"]["warning"]["code"] == "SEARCH_PROVIDER_ERROR"
+    # 降级 ≠ 跳过生成：失败之后模型仍然必须被叫起来基于已有资料作答。
+    assert len(context.llm.requests) > before
     failed = next(row for row in rows(context, WebSearchRunRecord) if row.status == "failed")
     assert failed.error_code == "SEARCH_PROVIDER_ERROR"
     for path in (f"/api/search/runs/{failed.id}", f"/api/web-search/runs/{failed.id}"):
@@ -392,4 +438,4 @@ async def test_legacy_search_key_is_used_but_never_leaked(search_app, caplog):
     # 删除端点本身：旧客户端调用应当拿到 404/405，而不是静默成功。
     response = await client.put("/api/settings/web-search", json={"mode": "auto"})
     assert response.status_code in (404, 405)
-    assert_no_secrets(context, caplog)
+    assert_no_secrets(context, captured_logs)

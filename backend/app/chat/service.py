@@ -274,25 +274,32 @@ class ChatService:
             #
             # - explicit（用户点了「联网搜索」按钮）→ **预检索**。用户已经表达了意图，
             #   不能指望模型自己决定搜不搜，所以先搜一次保证有结果；工具仍然发给模型，
-            #   让它能追加检索。失败直接上报 —— 静默降级成"没搜到"是欺骗，何况 UI
-            #   本来就有「重试联网搜索」入口。
+            #   让它能追加检索。
             # - auto（其余情况）→ **只发工具，不预检索**。原来的预检索用
             #   `decide_evidence` 的相似度阈值判断"证据够不够"，而这个项目已经定论
             #   相似度分数不能判断覆盖度 —— 触发闸门建立在被否定的信号上。改成让模型
             #   看着本地片段自己决定，闸门从临界路径上移除。
+            #
+            # 🔴 两条路都**不因联网失败而失败**：预检索抛错时转成 warning 继续生成。
+            # 此时 `web_results` 仍为空 → prompt 自动落到「仅依据文档片段」那一版，
+            # 模型基于已有资料作答，回答下方给一条降级提示。
             if request.web_search_permission == "explicit" and self.search_service is not None:
-                run = await self.search_service.run(
-                    SearchRunRequest(
-                        request_id=request.request_id,
-                        session_id=request.session_id,
-                        user_message_id=user_message.id,
-                        query=request.message,
+                try:
+                    run = await self.search_service.run(
+                        SearchRunRequest(
+                            request_id=request.request_id,
+                            session_id=request.session_id,
+                            user_message_id=user_message.id,
+                            query=request.message,
+                            authorization_mode=authorization,
+                        ),
                         authorization_mode=authorization,
-                    ),
-                    authorization_mode=authorization,
-                )
-                web_results = run.results
-                sources.update(ContextAssembler().register_web(run.id, web_results).registry)
+                    )
+                    web_results = run.results
+                    sources.update(ContextAssembler().register_web(run.id, web_results).registry)
+                except DomainError as error:
+                    # 用户点了按钮却没搜到，必须讲出来 —— 但不必让整条回答失败。
+                    search_warning = {"code": error.code, "message": error.message}
 
             tool_specs: list[LLMToolSpec] = []
             if search_mode == "auto" and self.search_service is not None and self.tool_registry:
@@ -508,15 +515,13 @@ class ChatService:
                 "status": "failed" if outcome.error_code is not None else "done",
             },
         )
-        if outcome.fatal and invocation.authorization_mode == "explicit":
-            # 用户显式要求联网时必须上报，不能让回答看起来像"搜过了但没结果"。
-            raise DomainError(
-                outcome.error_code or "SEARCH_PROVIDER_ERROR",
-                "联网搜索未取得结果",
-                502,
-                True,
-                "稍后重试",
-            )
+        # 🔴 联网失败一律**降级作答**，不抛错（含用户显式点「联网搜索」那次）。
+        # 联网只是补充证据：把它当成主路径、失败就让整条回答 502，等于用"外部搜索挂了"
+        # 去否掉本地文档本来能答的问题。改成「回灌失败原因 → 模型基于已有资料作答 →
+        # 回答下方给一条降级提示」，用户看得到、也不至于拿不到回答。
+        #
+        # `fatal` 仍然有意义：它区分「联网基础设施没成功」（值得给用户一条提示）与
+        # 「模型自己把参数写错了」（回灌让它自纠即可，用户不必知道）。
         failure = (
             {"code": outcome.error_code, "message": outcome.content} if outcome.fatal else None
         )

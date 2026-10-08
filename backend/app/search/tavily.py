@@ -1,18 +1,55 @@
 from __future__ import annotations
 
+import logging
+
 import httpx
 
 from app.schemas.web_search import (
     NormalizedSearchResult,
-    SearchConnectionResult,
     SearchRequest,
     SearchResponse,
 )
 from app.search.provider import SearchProviderError
 
+logger = logging.getLogger(__name__)
+
 # 历史 Key 的存储名。设置页的「联网搜索」分区已删除，这里保留读取是为了让
 # 以前配过 Key 的安装继续用上自己的额度（付费档不限流），只是不再有输入口。
 TAVILY_SECRET_NAME = "web-search:tavily"
+
+_MAX_MESSAGE_CHARS = 300
+
+
+def _error_message(response: httpx.Response) -> str | None:
+    """从错误响应体里取一句能读的原因；取不到返回 None。
+
+    两种形状都实测过：
+      - 免密钥：`{"error": {"code": …, "message": …}}` —— 注意**不在 `detail` 下**
+      - 带 Key：`{"detail": {"error": "…"}}`
+
+    官方说 keyless 打满时返回"自然语言指令"，形态未公开；解析不出来时**不把原文直接
+    当用户文案**（可能是 HTML 错误页），只记日志，由调用方给通用文案。
+    """
+    try:
+        data = response.json()
+    except ValueError:
+        logger.warning(
+            "tavily returned %s with a non-JSON body: %s",
+            response.status_code,
+            (response.text or "")[:200],
+        )
+        return None
+    if not isinstance(data, dict):
+        return None
+    for candidate in (data.get("error"), data.get("detail")):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()[:_MAX_MESSAGE_CHARS]
+        if isinstance(candidate, dict):
+            for key in ("message", "error"):
+                value = candidate.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()[:_MAX_MESSAGE_CHARS]
+    return None
 
 
 class TavilyProvider:
@@ -39,7 +76,13 @@ class TavilyProvider:
         payload: dict[str, object] = {
             "query": request.query,
             "max_results": request.max_results,
-            "include_content": True,
+            # 🔴 `advanced` 买的不是"更多字"而是"更对题"：实测同一 query 下 content 只涨
+            # 39%（3.0K → 4.2K），首位三条的相关性明显更好（0.79→0.86，把一条 marginal
+            # 的 GitHub 仓库换成更对题的页面），代价约 +0.7s。带 Key 时 credit 从 1 涨到 2。
+            #
+            # ⚠️ 不要改用 `include_raw_content`：结果集与 `content` 完全相同，只多塞
+            # 35.8K/次 的导航样板 markdown；agent loop 最多 3 轮 → 单条回答多 ~107K 字符。
+            "search_depth": "advanced",
         }
         headers: dict[str, str] | None = None
         if self.api_key:
@@ -58,11 +101,20 @@ class TavilyProvider:
             if own:
                 await client.aclose()
         if response.status_code in (401, 403):
-            raise SearchProviderError("SEARCH_AUTH_FAILED", "Tavily API Key 无效", retryable=False)
+            raise SearchProviderError(
+                "SEARCH_AUTH_FAILED", _error_message(response) or "Tavily API Key 无效"
+            )
         if response.status_code == 429:
-            raise SearchProviderError("SEARCH_PROVIDER_RATE_LIMITED", "Tavily 请求过于频繁")
+            raise SearchProviderError(
+                "SEARCH_PROVIDER_RATE_LIMITED", _error_message(response) or "Tavily 请求过于频繁"
+            )
         if response.status_code >= 400:
-            raise SearchProviderError("SEARCH_PROVIDER_ERROR", "Tavily 暂时不可用")
+            # 🔴 必须把响应体里的原因透出来。免密钥档打满时 Tavily 返回的是**自然语言**
+            # 指令（与带 Key 的 429 JSON 不是同一格式），而文案如果一律写成"暂时不可用"，
+            # 用户看到的是"服务坏了"，实际是"免费额度用完了"。
+            raise SearchProviderError(
+                "SEARCH_PROVIDER_ERROR", _error_message(response) or "Tavily 暂时不可用"
+            )
         try:
             data = response.json()
         except ValueError as error:
@@ -90,11 +142,3 @@ class TavilyProvider:
             raise SearchProviderError("SEARCH_PROVIDER_ERROR", "Tavily 没有返回结果")
         return SearchResponse(results=results, provider=self.name)
 
-    async def test_connection(self) -> SearchConnectionResult:
-        try:
-            await self.search(SearchRequest(query="test", max_results=1))
-        except Exception:  # noqa: BLE001 - connection test reports failure instead of raising
-            return SearchConnectionResult(
-                ok=False, provider=self.name, message="Tavily 连接失败"
-            )
-        return SearchConnectionResult(ok=True, provider=self.name, message="Tavily 可用")

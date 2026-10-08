@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.api.errors import DomainError
 from app.chat.service import ChatService
 from app.chat.tools import ToolRegistry, WebSearchTool
 from app.core.llm import ChatDelta, LLMToolCall, LLMToolCallDelta
@@ -97,6 +98,34 @@ async def test_search_permission_gates_pre_search_and_tools(
     else:
         # 不许联网且没有本地证据 → 连模型都不该被叫到。
         assert llm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_explicit_search_failure_degrades_instead_of_failing():
+    """用户点了「联网搜索」但搜索挂了：回答照常产出 + 一条可读的降级提示。
+
+    把联网当主路径的话，"外部搜索挂了"会否掉本地文档本来能答的问题 —— 而联网本来就
+    只是补充证据。但也不能静默：warning 必须带上，否则用户以为搜过了。
+    """
+
+    class FailingSearch:
+        async def run(self, request, **kwargs):
+            raise DomainError("SEARCH_PROVIDER_ERROR", "联网搜索暂时不可用", 502, True)
+
+    llm = FakeLLM(["本地答案 [S1]"])
+    service = _service(FailingSearch(), llm)
+
+    events = [
+        event async for event in service.stream(_request(web_search_permission="explicit"))
+    ]
+
+    assert events[-1].type == "done"
+    assert events[-1].payload["warning"]["code"] == "SEARCH_PROVIDER_ERROR"
+    # 降级 ≠ 跳过生成。
+    assert llm.calls, "联网失败之后仍必须让模型作答"
+    assert [event.payload["content"] for event in events if event.type == "delta"] == [
+        "本地答案 [S1]"
+    ]
 
 
 @pytest.mark.asyncio
