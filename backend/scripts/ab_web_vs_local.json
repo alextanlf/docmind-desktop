@@ -1,0 +1,331 @@
+[
+  {
+    "group": "G1 文档可答",
+    "query": "本地后端监听哪个端口？",
+    "web_n": 5,
+    "web_chars": 2733,
+    "web_top": [
+      "https://www.nowcoder.com/discuss/920729730502926336?sourceSSR=post",
+      "https://www.reddit.com/r/golang/comments/vuvsph/listen_and_read_on_loc",
+      "https://developer.chrome.com/docs/devtools/remote-debugging/local-serv"
+    ],
+    "variants": {
+      "A 仅文档": {
+        "answer": "本地后端固定监听 **127.0.0.1:18800**，端口是 **18800**。[S1]",
+        "right_hit": [
+          "18800"
+        ],
+        "wrong_hit": [],
+        "cites": [
+          "[S1]"
+        ],
+        "prompt_chars": 559
+      },
+      "P 生产（改后）": {
+        "answer": "本地后端固定监听 `127.0.0.1:18800`，因此端口是 **18800**。[S1]",
+        "right_hit": [
+          "18800"
+        ],
+        "wrong_hit": [],
+        "cites": [
+          "[S1]"
+        ],
+        "prompt_chars": 3707
+      }
+    }
+  },
+  {
+    "group": "G1 文档可答",
+    "query": "单文件导入上限是多少？",
+    "web_n": 5,
+    "web_chars": 5251,
+    "web_top": [
+      "https://alidocs.dingtalk.com/i/p/Y7kmbokZp3pgGLq2/docs/Z0LYK27vwxp80nr",
+      "https://www.feishu.cn/hc/zh-CN/articles/485779748873-%E5%A4%9A%E7%BB%B",
+      "https://www.larksuite.com/hc/zh-CN/articles/890398616778-%E5%A4%9A%E7%"
+    ],
+    "variants": {
+      "A 仅文档": {
+        "answer": "单文件导入上限是 **100MB**。[S2]",
+        "right_hit": [
+          "100MB"
+        ],
+        "wrong_hit": [],
+        "cites": [
+          "[S2]"
+        ],
+        "prompt_chars": 559
+      },
+      "P 生产（改后）": {
+        "answer": "单文件导入上限是 **100MB**。  \n依据 DocMind 内部部署手册，导入文档时会同时保留 staging 与 documents 两份副本，且单文件上限为 100MB。[S2]",
+        "right_hit": [
+          "100MB"
+        ],
+        "wrong_hit": [],
+        "cites": [
+          "[S2]"
+        ],
+        "prompt_chars": 6225
+      }
+    }
+  },
+  {
+    "group": "G1 文档可答",
+    "query": "本地会话令牌是怎么生成的？",
+    "web_n": 5,
+    "web_chars": 5522,
+    "web_top": [
+      "https://openreplay.com/zh/tools/token-generator",
+      "https://developer.amazon.com/zh/docs/ssi/token-mechanism.html",
+      "https://www.opentext.com/cn/what-is/tokenization"
+    ],
+    "variants": {
+      "A 仅文档": {
+        "answer": "根据 [S3]，本地会话令牌在应用启动时随机生成，写入 userData，并且不随会话刷新。",
+        "right_hit": [
+          "启动时",
+          "启动"
+        ],
+        "wrong_hit": [],
+        "cites": [
+          "[S3]"
+        ],
+        "prompt_chars": 561
+      },
+      "P 生产（改后）": {
+        "answer": "本地会话令牌的生成方式是：应用启动时随机生成，并写入 `userData`，且不会随会话刷新而更新。[S3]",
+        "right_hit": [
+          "启动时",
+          "启动"
+        ],
+        "wrong_hit": [],
+        "cites": [
+          "[S3]"
+        ],
+        "prompt_chars": 6498
+      }
+    }
+  },
+  {
+    "group": "G2 文档有误",
+    "query": "bge-m3 的向量维度是多少？",
+    "web_n": 5,
+    "web_chars": 6413,
+    "web_top": [
+      "https://arthurchiao.art/blog/rag-basis-bge-zh",
+      "https://zilliz.com.cn/blog/build-multimodal-rag-gemini-bge-m3-milvus-l",
+      "https://www.cnblogs.com/xiaoqi/p/18143552/bge-m3"
+    ],
+    "variants": {
+      "A 仅文档": {
+        "answer": "bge-m3 输出 768 维向量。[S1]",
+        "right_hit": [],
+        "wrong_hit": [
+          "768"
+        ],
+        "cites": [
+          "[S1]"
+        ],
+        "prompt_chars": 444
+      },
+      "P 生产（改后）": {
+        "answer": "BGE-M3 的稠密向量（dense embedding）维度是 **1024 维**，不是 768 维。[W5] 明确给出 `Dense document dim: 1024` 和 `Dense query dim: 1024`。此外，BGE-M3 还支持稀疏向量输出，稀疏向量维度取决于稀疏空间/词表大小，示例中为 **250002 维** [W2][W5]。\n\n文档 [S1] 称“bge-m3 输出 768 维向量，建表时按此维度声明”。由于模型规格属于外部可验证事实，且网页证据与文档冲突，应以网页证据为准，因此 [S1] 中“768 维”的说法已过时/不准确。若 DocMind 内部建表仍按 768 声明，那是旧的内部约定，实际应更新为稠密向量 1024 维；若使用稀疏向量，则需按稀疏空间维度处理。",
+        "right_hit": [
+          "1024"
+        ],
+        "wrong_hit": [
+          "768"
+        ],
+        "cites": [
+          "[S1]",
+          "[W2]",
+          "[W5]"
+        ],
+        "prompt_chars": 7272
+      }
+    }
+  },
+  {
+    "group": "G2 文档有误",
+    "query": "PyMuPDF 现在推荐的导入名是什么？",
+    "web_n": 5,
+    "web_chars": 6153,
+    "web_top": [
+      "https://pymupdf.readthedocs.io/en/latest/tutorial.html",
+      "https://github.com/pymupdf/pymupdf",
+      "https://buildmedia.readthedocs.org/media/pdf/pymupdf/latest/pymupdf.pd"
+    ],
+    "variants": {
+      "A 仅文档": {
+        "answer": "根据提供的文档，PyMuPDF 的导入名统一写为 `fitz`，即：\n\n```python\nimport fitz\n```\n\n依据来源：[S2]",
+        "right_hit": [],
+        "wrong_hit": [
+          "fitz"
+        ],
+        "cites": [
+          "[S2]"
+        ],
+        "prompt_chars": 448
+      },
+      "P 生产（改后）": {
+        "answer": "现在 PyMuPDF 推荐使用：\n\n```python\nimport pymupdf\n```\n\n`import fitz` 是旧版本/兼容用法的遗留别名，虽然仍可能可用，但已不是推荐方式 [W1][W2]。  \n文档 [S2] 中“统一写 `import fitz`”属于旧写法，按当前公开资料看已经过时；若只是沿用 DocMind 内部代码约定，才继续用 `fitz`。",
+        "right_hit": [
+          "pymupdf"
+        ],
+        "wrong_hit": [
+          "fitz"
+        ],
+        "cites": [
+          "[S2]",
+          "[W1]",
+          "[W2]"
+        ],
+        "prompt_chars": 7016
+      }
+    }
+  },
+  {
+    "group": "G2 文档有误",
+    "query": "使用 Tavily 搜索是否必须先注册 API Key？",
+    "web_n": 5,
+    "web_chars": 6656,
+    "web_top": [
+      "https://zhuanlan.zhihu.com/p/16183565341",
+      "https://docs.tavily.com/documentation/keyless",
+      "https://www.youtube.com/watch?v=uk6rD4_3qaw"
+    ],
+    "variants": {
+      "A 仅文档": {
+        "answer": "是。根据文档，Tavily 搜索必须先在官网注册并配置 API Key 才可调用 [S3]。",
+        "right_hit": [],
+        "wrong_hit": [],
+        "cites": [
+          "[S3]"
+        ],
+        "prompt_chars": 456
+      },
+      "P 生产（改后）": {
+        "answer": "结论：**不是必须**。\n\n当前 Tavily 支持 **keyless 模式**：可以零设置使用 Tavily Search 和 Extract，**无需账号、无需 API Key、无需配置**，即可获得真实搜索结果；之后如需更高限额，再升级为 API Key 即可 [W2]。\n\n因此，文档 [S3] 中“Tavily 搜索必须先在官网注册并配置 API Key 才可调用”的说法已经过时，应以网页证据为准 [W2]。其他网页 [W1][W3][W5] 介绍的是注册并获取 API Key 的常规接入流程，适用于需要密钥、更高额度或特定功能的场景，但不能说明“必须”注册 API Key 才能使用 Tavily 搜索。",
+        "right_hit": [
+          "keyless",
+          "无需"
+        ],
+        "wrong_hit": [],
+        "cites": [
+          "[S3]",
+          "[W1]",
+          "[W2]",
+          "[W3]",
+          "[W5]"
+        ],
+        "prompt_chars": 7527
+      }
+    }
+  },
+  {
+    "group": "G3 文档未覆盖",
+    "query": "sqlite-vec 支持哪些向量距离度量？",
+    "web_n": 5,
+    "web_chars": 6042,
+    "web_top": [
+      "https://alexgarcia.xyz/sqlite-vec/api-reference.html",
+      "https://learn.microsoft.com/zh-cn/semantic-kernel/concepts/vector-stor",
+      "https://medium.com/@stephenc211/how-sqlite-vec-works-for-storing-and-q"
+    ],
+    "variants": {
+      "A 仅文档": {
+        "answer": "当前文档未覆盖。  \n提供的 [S4] 仅说明向量库已从 ChromaDB 迁移到 sqlite-vec，旧索引必须重建才能检索，未提及 sqlite-vec 支持哪些向量距离度量。",
+        "right_hit": [],
+        "wrong_hit": [],
+        "cites": [
+          "[S4]"
+        ],
+        "prompt_chars": 570
+      },
+      "P 生产（改后）": {
+        "answer": "根据网页证据，`sqlite-vec` 支持以下向量距离度量 [W3]：\n\n1. **L2 / Euclidean Distance（欧氏距离）**：`vec_distance_l2`，支持 `float32` 和 `int8`，并有 AVX/NEON 加速 [W3]。\n2. **L1 / Manhattan Distance（曼哈顿距离）**：`vec_distance_l1`，适合量化 `int8` 向量和紧凑浮点向量 [W3]。\n3. **Cosine Similarity（余弦相似度）**：`vec_distance_cosine` [W3]。\n4. **Hamming Distance（汉明距离）**：`vec_distance_hamming`，仅适用于 `bit` 二值向量 [W3]。\n\n网页示例中也出现了 `vec_distance_L2`、`vec_distance_hamming`、`vec_distance_cosine` 等函数用法 [W1]。文档 [S4] 只说明向量库已迁移到 `sqlite-vec`，未列出具体距离度量，因此这里以网页证据为准。",
+        "right_hit": [
+          "cosine",
+          "l2",
+          "欧",
+          "L1",
+          "曼哈顿"
+        ],
+        "wrong_hit": [],
+        "cites": [
+          "[S4]",
+          "[W1]",
+          "[W3]"
+        ],
+        "prompt_chars": 7027
+      }
+    }
+  },
+  {
+    "group": "G3 文档未覆盖",
+    "query": "bge-m3 支持的最大输入长度是多少 token？",
+    "web_n": 5,
+    "web_chars": 6108,
+    "web_top": [
+      "https://aws.amazon.com/cn/blogs/china/using-aws-to-build-an-enterprise",
+      "https://arthurchiao.art/blog/rag-basis-bge-zh",
+      "https://huggingface.co/BAAI/bge-reranker-v2-m3/discussions/8"
+    ],
+    "variants": {
+      "A 仅文档": {
+        "answer": "当前文档未覆盖。提供的片段中没有关于 bge-m3 最大输入长度（token 数）的信息。",
+        "right_hit": [],
+        "wrong_hit": [],
+        "cites": [],
+        "prompt_chars": 574
+      },
+      "P 生产（改后）": {
+        "answer": "BGE-M3 支持的最大输入长度是 **8192 tokens**。[W2][W4][W5]\n\n补充：如果问题具体指 **bge-reranker-v2-m3**，其基座模型也支持最大 8192 tokens，但微调时使用的是 1024 tokens，因此超过 1024 tokens 后效果可能下降。[W3]",
+        "right_hit": [
+          "8192"
+        ],
+        "wrong_hit": [],
+        "cites": [
+          "[W2]",
+          "[W3]",
+          "[W4]",
+          "[W5]"
+        ],
+        "prompt_chars": 7097
+      }
+    }
+  },
+  {
+    "group": "G3 文档未覆盖",
+    "query": "PyMuPDF 采用什么开源许可证？",
+    "web_n": 5,
+    "web_chars": 3615,
+    "web_top": [
+      "https://pymupdf.io/pymupdf",
+      "https://pymupdf.cn/",
+      "https://pymupdf.readthedocs.io/en/latest/faq.html"
+    ],
+    "variants": {
+      "A 仅文档": {
+        "answer": "当前文档未覆盖。",
+        "right_hit": [],
+        "wrong_hit": [],
+        "cites": [],
+        "prompt_chars": 566
+      },
+      "P 生产（改后）": {
+        "answer": "PyMuPDF 的开源许可证是 **AGPL**（Affero 通用公共许可证）；同时，Artifex 也为需要不同授权条款的项目提供商业许可。[W1]\n\n当前提供的文档片段未覆盖该问题。[S1]–[S5] 均未提及 PyMuPDF 的许可证信息。",
+        "right_hit": [
+          "AGPL"
+        ],
+        "wrong_hit": [],
+        "cites": [
+          "[S1]",
+          "[S5]",
+          "[W1]"
+        ],
+        "prompt_chars": 4596
+      }
+    }
+  }
+]
