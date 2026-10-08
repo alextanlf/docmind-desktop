@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 from app.api.errors import DomainError
 from app.chat.service import ChatService
-from app.core.llm import ChatDelta
+from app.core.llm import ChatDelta, LLMToolCall, LLMToolCallDelta
 from app.imports.events import InMemoryEventBroker
 from app.schemas.chat import ChatStreamRequest
 from app.schemas.retrieval import RetrievalHit, RetrievalResult
@@ -28,15 +28,37 @@ class FakeRetriever:
 
 
 class FakeLLM:
-    def __init__(self, deltas: list[str] | None = None, error: DomainError | None = None) -> None:
+    def __init__(
+        self,
+        deltas: list[str] | None = None,
+        error: DomainError | None = None,
+        tool_calls: list[LLMToolCall] | None = None,
+    ) -> None:
         self.deltas = deltas or []
         self.error = error
+        # 设置后，第一轮先要求这些工具调用，拿到 role=tool 结果之后才吐 `deltas`
+        # —— 真实工具模型就是这个形状。
+        self.tool_calls = tool_calls or []
         self.calls = []
 
     async def stream_chat(self, request):  # type: ignore[no-untyped-def]
         self.calls.append(request)
         if self.error is not None:
             raise self.error
+        answered = any(message.role == "tool" for message in request.messages)
+        if self.tool_calls and not answered and request.tools:
+            for index, call in enumerate(self.tool_calls):
+                yield ChatDelta(
+                    tool_calls=[
+                        LLMToolCallDelta(
+                            index=index,
+                            id=call.id,
+                            name=call.name,
+                            arguments=call.arguments,
+                        )
+                    ]
+                )
+            return
         for content in self.deltas:
             yield ChatDelta(content=content)
 

@@ -36,6 +36,7 @@ from app.api.settings import router as settings_router
 from app.api.sync import router as sync_router
 from app.api.web_search import router as web_search_router
 from app.chat.service import ChatService
+from app.chat.tools import ToolRegistry, WebSearchTool
 from app.config import AppSettings, get_settings
 from app.core.embedding import EmbeddingProvider, FakeEmbeddingProvider, create_embedding_provider
 from app.core.llm import (
@@ -600,6 +601,11 @@ def create_app(
             memory_retriever=memory_retriever,
             search_service=app.state.search_service,
             settings_service=app.state.settings_service,
+            # 交给模型的工具集合。`WebSearchTool` 复用同一个 SearchService，
+            # 所以授权、去重、run 记录与"显式联网"预检索走的是同一套逻辑。
+            tool_registry=ToolRegistry(
+                [WebSearchTool(app.state.search_service, app.state.settings_service)]
+            ),
         )
         app.state.chat_service = chat_service
         app.state.distillation_service = DistillationService(

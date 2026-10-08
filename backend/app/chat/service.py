@@ -9,9 +9,16 @@ from typing import Any
 from app.api.errors import DomainError
 from app.chat.citations import URLStreamSanitizer, parse_citations
 from app.chat.context import ContextAssembler
-from app.chat.evidence import decide_evidence
 from app.chat.prompts import build_rag_prompt
-from app.core.llm import ChatRequest, LLMMessage, LLMProvider
+from app.chat.tools import ToolInvocation, ToolRegistry
+from app.core.llm import (
+    ChatRequest,
+    LLMMessage,
+    LLMProvider,
+    LLMToolCall,
+    LLMToolSpec,
+    ToolCallAccumulator,
+)
 from app.core.retrieval import HybridRetriever
 from app.imports.events import EventEnvelope, EventType, ImportEventBroker
 from app.memory.retriever import MemoryHit, MemoryRetriever
@@ -23,6 +30,9 @@ from app.storage.repositories import ConversationStore
 
 _GAP_ANSWER = "当前文档未覆盖该问题，无法基于现有资料作答。"
 _DEFAULT_TERMINAL_REPLAY_TTL_SECONDS = 30.0
+# 一个回答里最多执行几轮工具调用（不包含收尾那次模型调用）。3 轮足够覆盖
+# "先查一个概念、再查它引用的方法"这类两跳检索；再多只是把延迟堆上去。
+_MAX_TOOL_ROUNDS = 3
 
 
 class ChatService:
@@ -38,6 +48,7 @@ class ChatService:
         memory_retriever: MemoryRetriever | None = None,
         search_service=None,
         settings_service=None,
+        tool_registry: ToolRegistry | None = None,
     ) -> None:
         self.retriever = retriever
         self.llm = llm
@@ -60,6 +71,7 @@ class ChatService:
         self.memory_retriever = memory_retriever
         self.search_service = search_service
         self.settings_service = settings_service
+        self.tool_registry = tool_registry
 
     async def stream(
         self, request: ChatStreamRequest, *, after_sequence: int = 0
@@ -232,7 +244,7 @@ class ChatService:
         answer_parts: list[str] = []
         user_persisted = False
         assistant_persistence_attempted = False
-        route_payload: dict[str, Any] | None = None
+        route_state: dict[str, Any] = {}
         try:
             if request.existing_user_message_id:
                 user_message = self.conversation_store.get_message(request.existing_user_message_id)
@@ -255,32 +267,56 @@ class ChatService:
             sources.update(_memory_source_map(memory_hits))
             web_results = []
             search_warning = None
-            decision = decide_evidence(request.message, [*result.hits, *memory_hits])
             search_mode = "off"
             if request.web_search_permission == "explicit":
                 search_mode = "auto"
             elif request.web_search_permission != "off" and self.settings_service is not None:
                 search_mode = self.settings_service.web_search().mode
-            if not decision.sufficient and search_mode == "auto" and self.search_service is not None:
+            authorization = "explicit" if request.web_search_permission == "explicit" else "auto"
+
+            # 联网按授权档位分成两条路：
+            #
+            # - explicit（用户点了「联网搜索」）→ **预检索**。用户已经表达了意图，
+            #   不能指望模型自己决定搜不搜，所以先搜一次保证有结果；工具仍然发给
+            #   模型，让它能追加检索。失败直接上报 —— 静默降级成"没搜到"是欺骗，
+            #   何况 UI 本来就有「重试联网搜索」入口。
+            # - auto（设置里选了自动）→ **只发工具，不预检索**。原来的预检索用
+            #   `decide_evidence` 的相似度阈值判断"证据够不够"，而这个项目已经
+            #   定论相似度分数不能判断覆盖度 —— 触发闸门建立在被否定的信号上。
+            #   改成让模型看着本地片段自己决定，闸门从临界路径上移除。
+            # - ask / off → 都不做，保持"用户点了才搜"。
+            if request.web_search_permission == "explicit" and self.search_service is not None:
                 search_settings = self.settings_service.web_search()
-                authorization = "explicit" if request.web_search_permission == "explicit" else "auto"
-                try:
-                    run = await self.search_service.run(
-                        SearchRunRequest(request_id=request.request_id, session_id=request.session_id, user_message_id=user_message.id, query=request.message, max_results=search_settings.max_results, query_rewrite=search_settings.query_rewrite, authorization_mode=authorization),
+                run = await self.search_service.run(
+                    SearchRunRequest(
+                        request_id=request.request_id,
+                        session_id=request.session_id,
+                        user_message_id=user_message.id,
+                        query=request.message,
+                        max_results=search_settings.max_results,
+                        query_rewrite=search_settings.query_rewrite,
                         authorization_mode=authorization,
-                    )
-                    web_results = run.results
-                    sources.update(ContextAssembler().register_web(run.id, web_results).registry)
-                except DomainError as error:
-                    if request.web_search_permission == "explicit":
-                        raise
-                    search_warning = {"code": error.code, "message": error.message}
+                    ),
+                    authorization_mode=authorization,
+                )
+                web_results = run.results
+                sources.update(ContextAssembler().register_web(run.id, web_results).registry)
+
+            tool_specs: list[LLMToolSpec] = []
+            if search_mode == "auto" and self.search_service is not None and self.tool_registry:
+                # "模型是否接受 tools 字段"由 provider 判定（只有它知道 preset/model）；
+                # 这里只负责"本回合是否被授权联网"。
+                tool_specs = self.tool_registry.specs()
             await self._publish(
                 key,
                 "citations",
                 {"citations": [source.model_dump(by_alias=True) for source in sources.values()]},
             )
-            if not sources:
+            if not sources and not tool_specs:
+                # 🔴 只有在"没有任何取证手段"时才直接认输。本地为空但允许联网时
+                # 不能走这里 —— 那会在模型有机会调用 web_search 之前就返回"文档未覆盖"，
+                # 联网能力等于没接上。本地为空且模型也没搜时，由 `_stream_answer`
+                # 之后的空回答兜底转成同一句话。
                 assistant_persistence_attempted = True
                 assistant = self._persist_assistant(
                     request.session_id, _GAP_ANSWER, [], "completed"
@@ -294,41 +330,59 @@ class ChatService:
                 await self._start_cleanup(key)
                 return
 
-            chat_request = ChatRequest(
-                messages=_history_with_prompt(
-                    history, user_message.id, request.message, result.hits, memory_hits, web_results
-                )
+            messages = _history_with_prompt(
+                history, user_message.id, request.message, result.hits, memory_hits, web_results
             )
-            sanitizer = URLStreamSanitizer()
-            open_stream = getattr(self.llm, "open_stream", None)
-            if open_stream is not None:
-                routed = await open_stream(chat_request)
-                route_payload = routed.route.model_dump(by_alias=True)
-                deltas = routed.deltas
-            else:
-                route = getattr(self.llm, "last_route", None)
-                if route is not None:
-                    route_payload = route.model_dump(by_alias=True)
-                deltas = self.llm.stream_chat(chat_request)
-            if route_payload is not None:
-                await self._publish(key, "progress", {"stage": "generating", "route": route_payload})
-            async for delta in deltas:
-                sanitized_delta = sanitizer.feed(delta.content)
-                if sanitized_delta:
-                    answer_parts.append(sanitized_delta)
-                    await self._publish(key, "delta", {"content": sanitized_delta})
-            final_delta = sanitizer.finish()
-            if final_delta:
-                answer_parts.append(final_delta)
-                await self._publish(key, "delta", {"content": final_delta})
+            web_registered = _web_citation_count(sources)
+            invocation = ToolInvocation(
+                request_id=request.request_id,
+                session_id=request.session_id,
+                user_message_id=user_message.id,
+                authorization_mode=authorization,
+                round_index=0,
+                registry=sources,
+                citation_offset=web_registered,
+            )
+            tool_warning = await self._stream_answer(
+                key,
+                messages,
+                tools=tool_specs,
+                invocation=invocation,
+                sink=answer_parts,
+                route_state=route_state,
+            )
+            if tool_warning is not None and search_warning is None:
+                search_warning = tool_warning
+            if _web_citation_count(sources) > web_registered:
+                # 工具轮里新注册的网页引用要补发一次：首个 citations 事件发在生成
+                # 之前，模型边想边搜时它不可能包含这些，不补发则刷新前看不到出处。
+                await self._publish(
+                    key,
+                    "citations",
+                    {
+                        "citations": [
+                            source.model_dump(by_alias=True) for source in sources.values()
+                        ]
+                    },
+                )
 
             answer = "".join(answer_parts)
+            if not answer.strip():
+                # 模型可能只调用了工具却没产出文字（或最后一轮仍在要求工具）。
+                # 直接持久化一条空助手消息会让界面上出现一个空白气泡。
+                answer = _GAP_ANSWER
+                answer_parts.append(answer)
+                await self._publish(key, "delta", {"content": answer})
             citations = parse_citations(answer, sources)
             assistant_persistence_attempted = True
             assistant = self._persist_assistant(request.session_id, answer, citations, "completed")
             terminal = {"messageId": assistant.id}
-            if route_payload is not None:
-                terminal["route"] = route_payload
+            if route_state.get("route") is not None:
+                terminal["route"] = route_state["route"]
+            # 联网失败但回答照常产出时，也必须把这个降级讲出来 —— 此前 warning 只
+            # 挂在"无证据早退"那条终态上，本地有片段、只有联网失败时用户完全看不到。
+            if search_warning is not None:
+                terminal["warning"] = search_warning
             self.conversation_store.complete_chat_request(key, "done", terminal)
             await self._publish(key, "done", terminal)
             await self._start_cleanup(key)
@@ -336,8 +390,11 @@ class ChatService:
             raise
         except Exception as error:  # noqa: BLE001 - producer owns the operation error boundary
             details = _error_details(error)
-            if route_payload is not None:
-                details["route"] = route_payload
+            # 路由信息由 `_stream_answer` 写进 `route_state`（而不是靠返回值），
+            # 这样流中途失败时错误终态仍然带着模型来源 —— 用户需要知道是本地还是
+            # 云端出的错。
+            if route_state.get("route") is not None:
+                details["route"] = route_state["route"]
             if user_persisted and not assistant_persistence_attempted:
                 try:
                     self._persist_assistant(
@@ -363,6 +420,102 @@ class ChatService:
                 self._fallback_ready[key].set()
                 await self._start_cleanup(key)
                 raise
+
+    async def _stream_answer(
+        self,
+        key: str,
+        messages: list[LLMMessage],
+        *,
+        tools: list[LLMToolSpec],
+        invocation: ToolInvocation,
+        sink: list[str],
+        route_state: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """流式生成回答；模型要求工具就执行并回灌，直到它不再要求。
+
+        就地修改 `messages`（追加 assistant 的 tool_calls 回合与配对的 role=tool
+        结果），把可见文本追加进 `sink` —— 循环中途失败时，已经推给用户的文字仍在。
+        返回需要透出的 warning（若有）。
+        """
+        warning: dict[str, Any] | None = None
+        sanitizer = URLStreamSanitizer()
+        for call_index in range(_MAX_TOOL_ROUNDS + 1):
+            last_round = call_index == _MAX_TOOL_ROUNDS
+            # 最后一轮不再提供工具，逼模型收尾。否则一个"总想再搜一次"的模型会把
+            # 轮数上限耗在任意一轮，用户最终拿到的是空回答。
+            invocation.round_index = call_index
+            chat_request = ChatRequest(messages=messages, tools=[] if last_round else tools)
+            open_stream = getattr(self.llm, "open_stream", None)
+            if open_stream is not None:
+                routed = await open_stream(chat_request)
+                route_state["route"] = routed.route.model_dump(by_alias=True)
+                deltas = routed.deltas
+            else:
+                route = getattr(self.llm, "last_route", None)
+                if route is not None:
+                    route_state["route"] = route.model_dump(by_alias=True)
+                deltas = self.llm.stream_chat(chat_request)
+            if route_state.get("route") is not None and call_index == 0:
+                await self._publish(
+                    key, "progress", {"stage": "generating", "route": route_state["route"]}
+                )
+            accumulator = ToolCallAccumulator()
+            async for delta in deltas:
+                accumulator.add(delta.tool_calls)
+                sanitized_delta = sanitizer.feed(delta.content)
+                if sanitized_delta:
+                    sink.append(sanitized_delta)
+                    await self._publish(key, "delta", {"content": sanitized_delta})
+            calls = accumulator.complete()
+            # `last_round` 仍可能带来 tool_calls（模型不知道工具已经取消），
+            # 此时不执行也不回灌 —— 循环到此结束，对话不再需要自洽。
+            if not calls or last_round:
+                break
+            messages.append(LLMMessage(role="assistant", tool_calls=calls))
+            for call in calls:
+                content, failure = await self._execute_tool(key, call, invocation)
+                if failure is not None and warning is None:
+                    warning = failure
+                messages.append(LLMMessage(role="tool", tool_call_id=call.id, content=content))
+        final_delta = sanitizer.finish()
+        if final_delta:
+            sink.append(final_delta)
+            await self._publish(key, "delta", {"content": final_delta})
+        return warning
+
+    async def _execute_tool(
+        self, key: str, call: LLMToolCall, invocation: ToolInvocation
+    ) -> tuple[str, dict[str, Any] | None]:
+        """执行一次工具调用，并把它的生命周期推给前端。"""
+        if self.tool_registry is None:
+            return "当前没有可用的工具。", None
+        await self._publish(
+            key, "progress", {"stage": "tool", "tool": call.name, "status": "running"}
+        )
+        outcome = await self.tool_registry.execute(call, invocation)
+        invocation.citation_offset += outcome.citations_registered
+        await self._publish(
+            key,
+            "progress",
+            {
+                "stage": "tool",
+                "tool": call.name,
+                "status": "failed" if outcome.error_code is not None else "done",
+            },
+        )
+        if outcome.fatal and invocation.authorization_mode == "explicit":
+            # 用户显式要求联网时必须上报，不能让回答看起来像"搜过了但没结果"。
+            raise DomainError(
+                outcome.error_code or "SEARCH_PROVIDER_ERROR",
+                "联网搜索未取得结果",
+                502,
+                True,
+                "稍后重试",
+            )
+        failure = (
+            {"code": outcome.error_code, "message": outcome.content} if outcome.fatal else None
+        )
+        return outcome.content, failure
 
     def _persist_assistant(
         self,
@@ -398,6 +551,11 @@ class ChatService:
     ) -> None:
         event = await self.event_broker.publish(key, event_type, payload, sequence=sequence)
         self._last_sequences[key] = event.sequence
+
+
+def _web_citation_count(sources: dict[str, Citation]) -> int:
+    """已注册的网页引用条数，用作多轮搜索的编号偏移量与"是否需要补发"的判据。"""
+    return sum(1 for source in sources.values() if source.kind == "web")
 
 
 def _source_map(hits: list[RetrievalHit]) -> dict[str, DocumentCitation]:

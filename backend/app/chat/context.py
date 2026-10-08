@@ -26,6 +26,22 @@ class ContextAssembler:
             sources.append(MemoryCitation(source_id=f"M{index}", memory_kind=hit.kind, memory_id=hit.source_id, title="会话摘要" if hit.kind == "session_summary" else "知识蒸馏", excerpt=hit.text, session_id=hit.metadata.get("session_id")))
         return ContextBundle(tuple(sources), MappingProxyType({source.source_id: source for source in sources}))
 
-    def register_web(self, run_id, results: list) -> ContextBundle:
-        sources = tuple(WebCitation(source_id=f"W{index}", search_run_id=str(run_id), result_id=result.id, title=result.title, excerpt=result.snippet or result.content[:5000], source_url=result.canonical_url, retrieved_at=result.created_at) for index, result in enumerate(results[:10], 1))
-        return ContextBundle(sources, MappingProxyType({source.source_id: source for source in sources}))
+    def register_web(self, run_id, results: list, *, start_index: int = 1) -> ContextBundle:
+        # `start_index` 存在的原因：agent 循环里一个回答可能触发多轮搜索，每轮
+        # `register_web` 都从 W1 起编号会让第二轮的 W1 覆盖第一轮 —— 模型引用
+        # [W1] 时指向哪一条完全取决于合并顺序。调用方传累计偏移量即可避免。
+        sources = tuple(
+            WebCitation(
+                source_id=f"W{start_index + offset}",
+                search_run_id=str(run_id),
+                result_id=result.id,
+                title=result.title,
+                excerpt=result.snippet or result.content[:5000],
+                source_url=result.canonical_url,
+                retrieved_at=result.created_at,
+            )
+            for offset, result in enumerate(results[:10])
+        )
+        return ContextBundle(
+            sources, MappingProxyType({source.source_id: source for source in sources})
+        )

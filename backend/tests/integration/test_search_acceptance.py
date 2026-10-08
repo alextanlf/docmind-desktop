@@ -8,7 +8,7 @@ import httpx
 import pytest
 from sqlalchemy import select
 
-from app.core.llm import ChatDelta, ModelConnectionResult
+from app.core.llm import ChatDelta, LLMToolCallDelta, ModelConnectionResult
 from app.search.bing import BingProvider
 from app.search.duckduckgo import DuckDuckGoProvider
 from app.search.searxng import SearxngProvider
@@ -26,11 +26,32 @@ QUESTION = "quasar neutrino spectroscopy unknown evidence"
 
 
 class AcceptanceLLM:
+    """充当"会调用工具的模型"。
+
+    联网现在由模型发起而非相似度阈值，所以只吐文本的桩永远不会触发搜索：
+    - 请求带了工具、且提示词里还没有网页证据 → 先要求一次 `web_search`；
+    - 拿到配对的 `role=tool` 结果、或已经有预检索塞进来的 `<web-context>` → 直接作答。
+    """
+
     def __init__(self):
         self.requests = []
 
     async def stream_chat(self, request):
         self.requests.append(request)
+        answered = any(message.role == "tool" for message in request.messages)
+        has_web_evidence = any("<web-context>" in message.content for message in request.messages)
+        if request.tools and not answered and not has_web_evidence:
+            yield ChatDelta(
+                tool_calls=[
+                    LLMToolCallDelta(
+                        index=0,
+                        id="call-search",
+                        name="web_search",
+                        arguments=json.dumps({"query": QUESTION}, ensure_ascii=False),
+                    )
+                ]
+            )
+            return
         yield ChatDelta(content="Supported [W1]. Unsupported [W999].")
 
     async def test_connection(self):
@@ -198,6 +219,20 @@ def rows(context, model):
         return list(session.scalars(select(model)))
 
 
+def citations_from(events):
+    """全部 citations 事件里的引用合集。
+
+    联网改由模型发起之后，首个 citations 事件（发在生成之前）不可能包含工具轮注册
+    的网页引用 —— 它们由生成结束后的补发事件带出来，所以断言必须跨事件聚合。
+    """
+    return [
+        item
+        for event in events
+        if event["type"] == "citations"
+        for item in event["payload"]["citations"]
+    ]
+
+
 def assert_no_secrets(context, caplog):
     with context.state.database.engine.connect() as connection:
         dump = "\n".join(connection.connection.driver_connection.iterdump())
@@ -249,7 +284,7 @@ async def test_free_fallback_runs_without_any_search_key(search_app):
     assert len(runs) == 1
     assert runs[0].provider == "duckduckgo"
     assert runs[0].status == "completed"
-    citations = events[0]["payload"]["citations"]
+    citations = citations_from(events)
     assert any(item.get("sourceUrl") == "https://free.test/evidence" for item in citations)
 
 
