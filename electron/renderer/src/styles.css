@@ -2505,6 +2505,10 @@ progress::-webkit-progress-bar {
   padding: 8px 16px;
   color: var(--warning);
 }
+.chat-tool-status {
+  padding: 8px 16px;
+  color: var(--muted);
+}
 .reference-metadata {
   overflow-wrap: anywhere;
   color: var(--muted);

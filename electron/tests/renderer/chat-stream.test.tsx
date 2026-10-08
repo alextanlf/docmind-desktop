@@ -279,4 +279,82 @@ describe("流式对话", () => {
     fireEvent.click(screen.getByRole("button", { name: "查看引用 S1" }));
     expect(screen.getByLabelText("引用资料内容")).toHaveTextContent(citation.title);
   });
+
+  it("surfaces a model-initiated tool call and clears it once text arrives", () => {
+    const api = installDocMindApi();
+    const stream = installChatStreamMock(api.chat);
+    render(
+      <AppProviders>
+        <ChatPanel
+          sessionId="00000000-0000-0000-0000-000000000025"
+          repositoryIds={[repository.id]}
+        />
+      </AppProviders>,
+    );
+
+    sendMessage("@State 是什么？");
+    act(() => {
+      stream.emit({
+        requestId: stream.requestId,
+        type: "progress",
+        sequence: 1,
+        payload: { stage: "tool", tool: "web_search", status: "running" },
+      });
+    });
+    // 联网是**模型自己发起**的，可能要好几秒。没有提示时界面看起来只是卡住了。
+    expect(screen.getByText("正在联网搜索…")).toBeVisible();
+
+    act(() => {
+      stream.emit({
+        requestId: stream.requestId,
+        type: "progress",
+        sequence: 2,
+        payload: { stage: "tool", tool: "web_search", status: "failed" },
+      });
+    });
+    expect(screen.getByText("联网搜索未取得结果")).toBeVisible();
+
+    act(() => {
+      stream.emit({
+        requestId: stream.requestId,
+        type: "delta",
+        sequence: 3,
+        payload: { content: "答案" },
+      });
+    });
+    // 开始出文字后状态条必须消失，否则它会在整个生成过程里一直挂着。
+    expect(screen.queryByText("联网搜索未取得结果")).toBeNull();
+    expect(screen.getByText("答案")).toBeVisible();
+  });
+
+  it("keeps the tool status for the running tool while text streams in", () => {
+    const api = installDocMindApi();
+    const stream = installChatStreamMock(api.chat);
+    render(
+      <AppProviders>
+        <ChatPanel
+          sessionId="00000000-0000-0000-0000-000000000025"
+          repositoryIds={[repository.id]}
+        />
+      </AppProviders>,
+    );
+
+    sendMessage("@State 是什么？");
+    act(() => {
+      stream.emit({
+        requestId: stream.requestId,
+        type: "progress",
+        sequence: 1,
+        payload: { stage: "tool", tool: "web_search", status: "running" },
+      });
+      stream.emit({
+        requestId: stream.requestId,
+        type: "delta",
+        sequence: 2,
+        payload: { content: "我先查一下" },
+      });
+    });
+    // 模型可能边说边搜；此时"正在检索"仍然是真的，不能提前清掉。
+    expect(screen.getByText("正在联网搜索…")).toBeVisible();
+  });
 });

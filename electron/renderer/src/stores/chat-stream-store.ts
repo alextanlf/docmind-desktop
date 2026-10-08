@@ -16,6 +16,26 @@ export type RouteView = {
 
 export type ChatStreamStatus = "idle" | "streaming" | "error" | "stopped";
 
+export type ToolActivity = {
+  name: string;
+  status: "running" | "done" | "failed";
+};
+
+/**
+ * 工具 id → 给用户看的中文名。
+ *
+ * 未知工具直接回落到 id 本身，不隐藏 —— 静默丢掉一个正在跑的步骤，比显示一个
+ * 生僻名字更糟（用户会以为卡住了）。
+ */
+const TOOL_LABELS: Record<string, string> = { web_search: "联网搜索" };
+
+export function toolActivityText(activity: ToolActivity): string {
+  const label = TOOL_LABELS[activity.name] ?? activity.name;
+  if (activity.status === "running") return `正在${label}…`;
+  if (activity.status === "failed") return `${label}未取得结果`;
+  return `${label}完成`;
+}
+
 type ChatStreamState = {
   requestId: string | null;
   sessionId: string | null;
@@ -39,6 +59,13 @@ type ChatStreamState = {
   streamMode: "chat" | "search";
   warning: string | null;
   route: RouteView | null;
+  /**
+   * 工具调用的当前状态；null 表示这一轮没有工具在跑。
+   *
+   * 🔴 必须透出：`web_search` 是**模型自己发起的**，可能要好几秒。没有状态提示时
+   * 用户看到的只是"提问后卡住"，而不知道是在联网。
+   */
+  toolActivity: ToolActivity | null;
   start: (input: {
     requestId: string;
     sessionId: string;
@@ -69,6 +96,7 @@ const initialState = {
   streamMode: "chat" as const,
   warning: null,
   route: null,
+  toolActivity: null,
 };
 
 function mergeCitations(current: Citation[], incoming: Citation[]) {
@@ -142,6 +170,7 @@ export const useChatStreamStore = create<ChatStreamState>((set, get) => ({
       streamMode: continuationUserMessageId ? "search" : "chat",
       warning: null,
       route: null,
+      toolActivity: null,
     }),
   attachSubscription: (subscription) => {
     if (get().requestId === subscription.requestId) set({ subscription });
@@ -160,8 +189,21 @@ export const useChatStreamStore = create<ChatStreamState>((set, get) => ({
       const content = typeof event.payload.content === "string" ? event.payload.content : "";
       set((state) => ({
         draftAssistant: state.draftAssistant + content,
+        // 已经开始出文字了，"联网搜索完成"就不必继续挂着 —— 它只在检索期间有意义。
+        toolActivity: state.toolActivity?.status === "running" ? state.toolActivity : null,
         lastSequence: event.sequence,
       }));
+      return true;
+    }
+    if (event.type === "progress" && event.payload.stage === "tool") {
+      const name = typeof event.payload.tool === "string" ? event.payload.tool : "";
+      const raw = event.payload.status;
+      const status =
+        raw === "running" || raw === "done" || raw === "failed" ? raw : "running";
+      set({
+        toolActivity: name ? { name, status } : null,
+        lastSequence: event.sequence,
+      });
       return true;
     }
     const eventRoute = parseRoute(event.payload);
@@ -209,6 +251,7 @@ export const useChatStreamStore = create<ChatStreamState>((set, get) => ({
         lastSequence: event.sequence,
         subscription: null,
         requestId: state.requestId,
+        toolActivity: null,
       }));
       return true;
     }

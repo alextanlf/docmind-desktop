@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { EventEnvelope } from "../../../../shared/contracts";
 import { IconButton } from "../../components/IconButton";
-import { useChatStreamStore } from "../../stores/chat-stream-store";
+import { useChatStreamStore, toolActivityText } from "../../stores/chat-stream-store";
 import { chatKeys, useMessagesQuery } from "./chat.queries";
 import { MessageComposer } from "./MessageComposer";
 import { MessageList } from "./MessageList";
@@ -202,6 +202,11 @@ export function ChatPanel({
       {route?.fallbackReason ? (
         <p className="chat-route-status" role="status">
           本次回答已使用云端模型（{route.fallbackReason}）
+        </p>
+      ) : null}
+      {activeStream?.toolActivity ? (
+        <p className="chat-tool-status" role="status">
+          {toolActivityText(activeStream.toolActivity)}
         </p>
       ) : null}
       {activeStream?.warning ? (
