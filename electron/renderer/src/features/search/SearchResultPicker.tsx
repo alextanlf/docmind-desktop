@@ -60,6 +60,7 @@ function providerLabel(provider: string | null | undefined): string {
   if (!provider) return "联网搜索";
   if (provider.startsWith("model")) return "模型内置联网";
   if (provider === "tavily") return "Tavily";
+  // 该来源的实现已删除，但历史 run 记录里仍有这个名字，保留标签以免旧记录显示成生字符串。
   if (provider === "duckduckgo") return "免费兜底（DuckDuckGo）";
   return "联网搜索";
 }

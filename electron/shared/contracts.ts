@@ -85,27 +85,6 @@ export const SettingsViewSchema = z.object({
   hasApiKey: z.boolean(),
   dataPath: z.string(),
   screenshotCount: z.number().int().nonnegative(),
-  webSearch: z
-    .object({
-      mode: z.enum(["off", "ask", "auto"]),
-      maxResults: z.number().int().min(1).max(10),
-      hasApiKey: z.boolean(),
-      queryRewrite: z.boolean().default(true),
-      searxngUrl: z.string().max(500).default(""),
-      modelSearchAvailable: z.boolean().default(false),
-      modelSearchLabel: z.string().max(200).default(""),
-      freeFallbackAvailable: z.boolean().default(true),
-    })
-    .default({
-      mode: "ask",
-      maxResults: 5,
-      hasApiKey: false,
-      queryRewrite: true,
-      searxngUrl: "",
-      modelSearchAvailable: false,
-      modelSearchLabel: "",
-      freeFallbackAvailable: true,
-    }),
   runtime: z
     .object({
       local: LocalModelRuntimeSchema,
@@ -156,13 +135,6 @@ export const LocalModelsSchema = z.object({
 export type LocalModelStatusView = z.infer<typeof LocalModelStatusSchema>;
 export type LocalModelView = z.infer<typeof LocalModelSchema>;
 export type LocalModelsView = z.infer<typeof LocalModelsSchema>;
-export const WebSearchSettingsInputSchema = z.object({
-  mode: z.enum(["off", "ask", "auto"]),
-  maxResults: z.number().int().min(1).max(10),
-  queryRewrite: z.boolean(),
-  searxngUrl: z.string().max(500),
-  apiKey: z.string().max(2_000).nullable().optional(),
-});
 export const ModelConnectionResultSchema = z.object({
   connected: z.boolean(),
   latencyMs: z.number().int().nonnegative(),
@@ -876,7 +848,6 @@ export type ConfirmBatchInput = z.infer<typeof ConfirmBatchInputSchema>;
 export type RetryBatchInput = z.infer<typeof RetryBatchInputSchema>;
 export type ChatStreamInput = z.input<typeof ChatStreamInputSchema>;
 export type ChatSearchInput = z.infer<typeof ChatSearchInputSchema>;
-export type WebSearchSettingsInput = z.infer<typeof WebSearchSettingsInputSchema>;
 export type WebSearchRun = z.infer<typeof WebSearchRunSchema>;
 export type SearchImportInput = z.infer<typeof SearchImportInputSchema>;
 export type SessionMemorySummary = z.infer<typeof SessionMemorySummarySchema>;
@@ -935,7 +906,6 @@ export interface DocMindApi {
     listModels(input?: ModelListProbe): Promise<ModelListView>;
     skipModelSetup(): Promise<SettingsView>;
     clearDiagnostics(): Promise<void>;
-    saveWebSearch(input: WebSearchSettingsInput): Promise<SettingsView>;
     saveRuntime(input: z.infer<typeof RuntimeSettingsInputSchema>): Promise<SettingsView>;
   };
   embedding: {

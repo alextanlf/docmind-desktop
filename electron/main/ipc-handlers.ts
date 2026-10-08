@@ -56,7 +56,6 @@ import {
   MemoryItemPageSchema,
   MemoryListInputSchema,
   SessionMemorySummarySchema,
-  WebSearchSettingsInputSchema,
   WebSearchRunSchema,
   SearchImportInputSchema,
   ChatSearchInputSchema,
@@ -184,12 +183,6 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
       ),
     [IPC_CHANNELS.settingsClearDiagnostics]: () =>
       proxy.requestVoid("/api/settings/diagnostics/clear", jsonInit("POST")),
-    [IPC_CHANNELS.settingsSaveWebSearch]: (_event, input) =>
-      proxy.requestJson(
-        "/api/settings/web-search",
-        jsonInit("PUT", parse(WebSearchSettingsInputSchema, input)),
-        SettingsViewSchema,
-      ),
     [IPC_CHANNELS.settingsSaveRuntime]: (_event, input) =>
       proxy.requestJson(
         "/api/settings/runtime",

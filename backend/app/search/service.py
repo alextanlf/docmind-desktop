@@ -8,7 +8,6 @@ from uuid import UUID
 
 from app.api.errors import DomainError
 from app.schemas.web_search import NormalizedSearchResult, SearchRequest, SearchResponse
-from app.search.enrichment import SNIPPET_ONLY_PROVIDERS
 from app.search.provider import provider_available
 from app.storage.repositories import WebSearchRunStore
 
@@ -37,12 +36,10 @@ class SearchService:
         run_store: WebSearchRunStore,
         *,
         query_planner=None,
-        enricher=None,
     ):
         self.provider = provider
         self.run_store = run_store
         self.query_planner = query_planner
-        self.enricher = enricher
 
     async def run(self, request, *, authorization_mode: str = "auto") -> SearchRunView:
         if authorization_mode not in ("auto", "explicit"):
@@ -80,8 +77,6 @@ class SearchService:
         try:
             responses = await self._search_queries(queries, max_results)
             results = _merge_results(responses, max_results)
-            if self.enricher is not None and _snippet_only(responses):
-                results = await self.enricher.enrich(results)
             provider_label = _provider_label(responses)
             self.run_store.complete(row.id, results, provider=provider_label)
             return SearchRunView(
@@ -168,10 +163,6 @@ def _merge_results(
         items[key].model_copy(update={"rank": rank})
         for rank, key in enumerate(ordered[:max_results], start=1)
     ]
-
-
-def _snippet_only(responses: list[SearchResponse]) -> bool:
-    return all((response.provider or "") in SNIPPET_ONLY_PROVIDERS for response in responses)
 
 
 def _provider_label(responses: list[SearchResponse]) -> str:

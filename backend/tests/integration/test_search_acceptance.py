@@ -9,10 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from app.core.llm import ChatDelta, LLMToolCallDelta, ModelConnectionResult
-from app.search.bing import BingProvider
-from app.search.duckduckgo import DuckDuckGoProvider
-from app.search.searxng import SearxngProvider
-from app.search.tavily import TavilyProvider
+from app.search.tavily import TAVILY_SECRET_NAME, TavilyProvider
 from app.storage.models import (
     DocumentChunkRecord,
     DocumentRecord,
@@ -73,7 +70,7 @@ def no_real_http(monkeypatch):
 @pytest.fixture
 async def search_app(test_app, staged_markdown, monkeypatch):
     state = test_app.app.state
-    wire = SimpleNamespace(calls=[], fail=False, model_keys=[], public=[])
+    wire = SimpleNamespace(calls=[], headers=[], fail=False, model_keys=[], public=[])
 
     async def record_public_response(response):
         await response.aread()
@@ -82,12 +79,16 @@ async def search_app(test_app, staged_markdown, monkeypatch):
     test_app.client.event_hooks["response"].append(record_public_response)
 
     def respond(request):
+        # 搜索链现在只剩两级：模型内置联网（custom 预设下不可用）→ Tavily。
         assert str(request.url) == "https://tavily.fixture/search"
         assert request.method == "POST"
         payload = json.loads(request.content)
         wire.calls.append(payload)
+        # 免密钥模式全靠这个头。不记录它的话，"没有 api_key" 这个断言对着一个
+        # 连头都没发的实现也会通过。
+        wire.headers.append(request.headers.get("x-tavily-access-mode"))
         if wire.fail:
-            raise httpx.ConnectError(f"provider failed {SEARCH_KEY} {MODEL_KEY}", request=request)
+            raise httpx.ConnectError("provider failed", request=request)
         return httpx.Response(
             200,
             json={
@@ -103,65 +104,17 @@ async def search_app(test_app, staged_markdown, monkeypatch):
             },
         )
 
-    def respond_free(request):
-        assert str(request.url) == "https://html.duckduckgo.com/html/"
-        if wire.fail:
-            raise httpx.ConnectError("free provider failed", request=request)
-        return httpx.Response(200, text=FREE_SEARCH_HTML)
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(respond), base_url="https://tavily.fixture"
+    ) as provider_client:
 
-    def respond_searxng(request):
-        assert request.url.path == "/search"
-        assert request.url.params["format"] == "json"
-        if wire.fail:
-            raise httpx.ConnectError("searxng provider failed", request=request)
-        return httpx.Response(
-            200,
-            json={
-                "results": [
-                    {
-                        "url": "https://searx.test/evidence",
-                        "title": "SearxEvidence",
-                        "content": "Searx evidence snippet.",
-                    }
-                ]
-            },
-        )
-
-    def respond_bing(request):
-        # Bing stays unavailable here so the chain must fall through to DuckDuckGo;
-        # Bing parsing itself is covered by unit tests.
-        raise httpx.ConnectError("bing provider failed", request=request)
-
-    async with (
-        httpx.AsyncClient(
-            transport=httpx.MockTransport(respond), base_url="https://tavily.fixture"
-        ) as provider_client,
-        httpx.AsyncClient(transport=httpx.MockTransport(respond_free)) as free_client,
-        httpx.AsyncClient(transport=httpx.MockTransport(respond_bing)) as bing_client,
-        httpx.AsyncClient(transport=httpx.MockTransport(respond_searxng)) as searxng_client,
-    ):
-
-        def provider_factory(api_key):
+        def provider_factory(api_key=None):
             return TavilyProvider(api_key, client=provider_client)
 
-        def free_provider_factory():
-            return DuckDuckGoProvider(client=free_client)
-
-        def bing_provider_factory():
-            return BingProvider(client=bing_client)
-
-        def searxng_provider_factory(base_url):
-            return SearxngProvider(base_url, client=searxng_client)
-
         monkeypatch.setattr("app.main.TavilyProvider", provider_factory)
-        monkeypatch.setattr("app.main.BingProvider", bing_provider_factory)
-        monkeypatch.setattr("app.main.SearxngProvider", searxng_provider_factory)
-        monkeypatch.setattr("app.main.DuckDuckGoProvider", free_provider_factory)
-        monkeypatch.setattr("app.api.settings.TavilyProvider", provider_factory)
-        # Query planning and page fetching are covered by unit tests; keep the
-        # integration flow offline and deterministic.
+        # Query planning is covered by unit tests; keep the integration flow
+        # offline and deterministic unless a test installs its own planner.
         state.search_service.query_planner = None
-        state.search_service.enricher = None
         llm = AcceptanceLLM()
         state.chat_service.llm = llm
 
@@ -187,13 +140,13 @@ async def search_app(test_app, staged_markdown, monkeypatch):
         )
 
 
-async def settings(context, mode, key=SEARCH_KEY):
-    response = await context.harness.client.put(
-        "/api/settings/web-search", json={"mode": mode, "maxResults": 3, "apiKey": key}
-    )
-    assert response.status_code == 200, response.text
-    context.wire.public.append(response.text)
-    return response.json()
+def configure_search_key(context, key=SEARCH_KEY):
+    """直接写密钥。
+
+    设置页的「联网搜索」分区已删除，应用内不再有任何写入入口 —— 这里模拟"以前
+    配过 Key 的安装"，验证那条路径仍然生效。
+    """
+    context.state.settings_service.secret_store.set(TAVILY_SECRET_NAME, key)
 
 
 async def stream(context, *, continuation=None, permission="inherit"):
@@ -241,51 +194,34 @@ def assert_no_secrets(context, caplog):
         assert secret not in public
 
 
-FREE_SEARCH_HTML = """
-<html><body>
-<div class="result results_links">
-  <h2 class="result__title">
-    <a class="result__a" href="https://free.test/evidence">FreeEvidence</a>
-  </h2>
-  <a class="result__snippet">Free evidence snippet.</a>
-</div>
-</body></html>
-"""
-
-
-@pytest.mark.parametrize(
-    ("mode", "permission", "key", "suggested"),
-    [
-        ("off", "inherit", SEARCH_KEY, False),
-        ("ask", "inherit", SEARCH_KEY, True),
-        ("auto", "off", SEARCH_KEY, False),
-    ],
-)
-async def test_unauthorized_modes_make_zero_provider_calls(
-    search_app, mode, permission, key, suggested
-):
+async def test_permission_off_makes_zero_provider_calls(search_app):
+    """唯一的联网开关是 per-request 权限：off 时连工具都不下发。"""
     context = search_app
-    await settings(context, mode, key)
-    events = await stream(context, permission=permission)
+    events = await stream(context, permission="off")
     assert events[-1]["type"] == "done", events[-1]
-    assert events[-1]["payload"]["searchSuggested"] is suggested
+    # 没有本地证据、又不许联网 → 直接认输，并给出「联网搜索」入口。
+    assert events[-1]["payload"]["searchSuggested"] is True
+    assert events[-1]["payload"]["userMessageId"]
     assert context.wire.calls == []
     assert context.llm.requests == []
     assert rows(context, WebSearchRunRecord) == []
 
 
-async def test_free_fallback_runs_without_any_search_key(search_app):
+async def test_tavily_keyless_runs_without_any_missing_key(search_app):
+    """没有任何 Key 也能搜 —— 免密钥档是设置页那一栏能被删掉的前提。"""
     context = search_app
-    await settings(context, "auto", "")
     events = await stream(context)
     assert events[-1]["type"] == "done", events[-1]
-    assert context.wire.calls == []
+    assert len(context.wire.calls) == 1
+    # 🔴 免密钥的关键证据：不带 api_key，且必须真的发出免密钥请求头。
+    assert "api_key" not in context.wire.calls[0]
+    assert context.wire.headers == ["keyless"]
     runs = rows(context, WebSearchRunRecord)
     assert len(runs) == 1
-    assert runs[0].provider == "duckduckgo"
+    assert runs[0].provider == "tavily"
     assert runs[0].status == "completed"
     citations = citations_from(events)
-    assert any(item.get("sourceUrl") == "https://free.test/evidence" for item in citations)
+    assert any(item.get("sourceUrl") == "https://evidence.test/SelectedQuasar" for item in citations)
 
 
 class StubPlanner:
@@ -302,7 +238,6 @@ async def test_query_rewrite_searches_every_variant(search_app):
     context = search_app
     planner = StubPlanner(["DeepSeek V4 发布时间", "DeepSeek V4 release date"])
     context.state.search_service.query_planner = planner
-    await settings(context, "auto")
 
     events = await stream(context)
 
@@ -320,29 +255,12 @@ async def test_query_rewrite_searches_every_variant(search_app):
     assert runs[0].provider == "tavily"
 
 
-async def test_configured_searxng_instance_is_used(search_app):
-    context = search_app
-    await settings(context, "auto", "")
-    response = await context.harness.client.put(
-        "/api/settings/web-search",
-        json={"mode": "auto", "maxResults": 3, "searxngUrl": "https://searx.example.com"},
-    )
-    assert response.status_code == 200, response.text
-
-    events = await stream(context)
-
-    assert events[-1]["type"] == "done", events[-1]
-    assert context.wire.calls == []
-    runs = rows(context, WebSearchRunRecord)
-    assert len(runs) == 1
-    assert runs[0].provider == "searxng"
-    assert runs[0].status == "completed"
-
-
 async def explicit_results(context):
-    await settings(context, "ask")
-    initial = await stream(context)
+    # 第一回合不联网：这正是用户看到"文档未覆盖 + 联网搜索按钮"的场景。
+    initial = await stream(context, permission="off")
+    assert initial[-1]["payload"]["searchSuggested"] is True
     original_id = initial[-1]["payload"]["userMessageId"]
+    # 续搜端点强制 explicit 授权（用户已经点了按钮）→ 预检索一次。
     events = await stream(context, continuation=original_id)
     assert events[-1]["type"] == "done", events[-1]
     assert len(context.wire.calls) == 1
@@ -383,7 +301,9 @@ async def test_explicit_w_citation_then_partial_second_confirmation(search_app, 
     before_jobs = {row.id for row in rows(context, ImportJobRecord)}
     before_docs = {row.id for row in rows(context, DocumentRecord)}
     before_chunks = {row.id for row in rows(context, DocumentChunkRecord)}
-    before_vectors = {entry["id"] for entry in context.state.vector_store.list_stored(context.repository.id)}
+    before_vectors = {
+        entry["id"] for entry in context.state.vector_store.list_stored(context.repository.id)
+    }
     run_id, results = await explicit_results(context)
     response = await context.harness.client.post(
         f"/api/web-search/runs/{run_id}/import-batch",
@@ -401,7 +321,9 @@ async def test_explicit_w_citation_then_partial_second_confirmation(search_app, 
     assert {row.id for row in rows(context, ImportJobRecord)} == before_jobs
     assert {row.id for row in rows(context, DocumentRecord)} == before_docs
     assert {row.id for row in rows(context, DocumentChunkRecord)} == before_chunks
-    assert {entry["id"] for entry in context.state.vector_store.list_stored(context.repository.id)} == before_vectors
+    assert {
+        entry["id"] for entry in context.state.vector_store.list_stored(context.repository.id)
+    } == before_vectors
     chosen = next(item for item in items.items if item.title == "SelectedQuasar")
     response = await context.harness.client.post(
         f"/api/import-batches/{batch['id']}/confirm",
@@ -433,42 +355,24 @@ async def test_explicit_w_citation_then_partial_second_confirmation(search_app, 
     assert_no_secrets(context, caplog)
 
 
-async def test_key_namespaces_and_provider_failure_are_private(search_app, caplog):
+async def test_legacy_search_key_is_used_but_never_leaked(search_app, caplog):
+    """设置页删除后 Key 只读：仍需生效（付费档不限流），且不能出现在任何公开输出里。"""
     context = search_app
     client = context.harness.client
-    response = await client.put(
-        "/api/settings/model",
-        json={
-            "preset": "custom",
-            "baseUrl": "https://model.fixture/v1",
-            "model": "fixture-model",
-            "timeoutSeconds": 30,
-            "apiKey": MODEL_KEY,
-        },
-    )
-    assert response.status_code == 200, response.text
-    context.wire.public.append(response.text)
-    await settings(context, "auto", "")
-    await stream(context)
-    assert context.wire.calls == []
-    view = await settings(context, "auto")
-    assert view["hasApiKey"] and view["webSearch"]["hasApiKey"]
-    secret_store = context.state.settings_service.secret_store
-    assert secret_store.get("model-api-key") == MODEL_KEY
-    search_names = [name for name in secret_store._values if name.startswith("web-search")]
-    assert len(search_names) == 1
-    assert secret_store.get(search_names[0]) == SEARCH_KEY
-    response = await client.post("/api/settings/model/test")
-    assert response.status_code == 200
-    assert context.wire.model_keys == [MODEL_KEY]
-    context.wire.public.append(response.text)
+    configure_search_key(context)
+
     events = await stream(context)
-    assert events[-1]["type"] == "done"
-    assert [call["api_key"] for call in context.wire.calls] == [SEARCH_KEY]
+    assert events[-1]["type"] == "done", events[-1]
+    assert [call.get("api_key") for call in context.wire.calls] == [SEARCH_KEY]
+    # 有 Key 就不该再声明免密钥档 —— 两条路径不能同时生效。
+    assert "keyless" not in context.wire.headers
+
+    # 模型发起（auto）时联网失败是降级提示，不把整条回答变成错误。
     context.wire.fail = True
     events = await stream(context)
     assert events[-1]["type"] == "done", events[-1]
     assert events[-1]["payload"]["warning"]["code"] == "SEARCH_PROVIDER_ERROR"
+    # 用户显式点了「联网搜索」时失败必须上报 —— 静默变成"没搜到"是欺骗。
     events = await stream(context, permission="explicit")
     assert events[-1]["type"] == "error"
     assert events[-1]["payload"]["code"] == "SEARCH_PROVIDER_ERROR"
@@ -479,38 +383,13 @@ async def test_key_namespaces_and_provider_failure_are_private(search_app, caplo
         assert response.status_code == 200, response.text
         assert response.json()["results"] == []
         context.wire.public.append(response.text)
-    response = await client.post("/api/settings/web-search/test")
-    assert response.status_code == 200, response.text
-    assert response.json()["ok"] is False
-    response = await client.put(
-        "/api/settings/model",
-        json={
-            "preset": "custom",
-            "baseUrl": "https://model.fixture/v1",
-            "model": "fixture-model",
-            "timeoutSeconds": 30,
-            "apiKey": "",
-        },
-    )
-    assert response.status_code == 200, response.text
-    assert secret_store.get("model-api-key") is None
-    assert secret_store.get(search_names[0]) == SEARCH_KEY
-    response = await client.put(
-        "/api/settings/model",
-        json={
-            "preset": "custom",
-            "baseUrl": "https://model.fixture/v1",
-            "model": "fixture-model",
-            "timeoutSeconds": 30,
-            "apiKey": MODEL_KEY,
-        },
-    )
-    assert response.status_code == 200, response.text
-    await settings(context, "off", "")
-    assert secret_store.get("model-api-key") == MODEL_KEY
-    assert secret_store.get(search_names[0]) is None
+
+    # 设置视图里不该再有任何联网分区（这是本次删除的对象）。
     response = await client.get("/api/settings")
     context.wire.public.append(response.text)
-    assert response.json()["hasApiKey"] is True
-    assert response.json()["webSearch"]["hasApiKey"] is False
+    assert response.status_code == 200, response.text
+    assert "webSearch" not in response.json()
+    # 删除端点本身：旧客户端调用应当拿到 404/405，而不是静默成功。
+    response = await client.put("/api/settings/web-search", json={"mode": "auto"})
+    assert response.status_code in (404, 405)
     assert_no_secrets(context, caplog)

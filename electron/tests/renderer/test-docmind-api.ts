@@ -30,16 +30,6 @@ export const readySettings: SettingsView = {
   hasApiKey: true,
   dataPath: "/Users/test/Library/Application Support/DocMind",
   screenshotCount: 2,
-  webSearch: {
-    mode: "ask",
-    maxResults: 5,
-    hasApiKey: false,
-    queryRewrite: true,
-    searxngUrl: "",
-    modelSearchAvailable: false,
-    modelSearchLabel: "",
-    freeFallbackAvailable: true,
-  },
   modelSetupSkipped: false,
   // Keyed by preset then model id, mirroring the backend's model-level table.
   // Values are the vendors' own effort levels (not a normalized scale), so they
@@ -562,7 +552,6 @@ export function installDocMindApi(overrides?: {
       listModels: vi.fn().mockResolvedValue({ models: [], source: "live", notice: null }),
       skipModelSetup: vi.fn().mockResolvedValue(readySettings),
       clearDiagnostics: vi.fn().mockResolvedValue(undefined),
-      saveWebSearch: vi.fn().mockResolvedValue(readySettings),
       ...overrides?.settings,
     },
     embedding: {

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppProviders } from "../../renderer/src/app/AppProviders";
 import { appQueryClient } from "../../renderer/src/app/query-client";
 import { SettingsView } from "../../renderer/src/features/settings/SettingsView";
+import { settingsModules } from "../../renderer/src/features/settings/settings-modules";
 import { clientErrorMessage } from "../../renderer/src/features/settings/settings.queries";
 import {
   installDocMindApi,
@@ -124,11 +125,16 @@ describe("设置", () => {
     // One nav entry per registered module — the nav and the page are derived
     // from the same registry, so a page that exists must be reachable and a
     // page that is reachable must exist.
+    //
+    // 🔴 期望值必须从注册表派生。写死数字的话，删/加一个分区只会让这条失败，
+    // 而它本该防的「导航与页面脱钩」反而测不出来（两边都少一个也会通过）。
     const nav = await screen.findByRole("navigation", { name: "设置分区" });
-    expect(within(nav).getAllByRole("button")).toHaveLength(5);
+    const expected = settingsModules().length;
+    expect(expected).toBeGreaterThan(0);
+    expect(within(nav).getAllByRole("button")).toHaveLength(expected);
 
     const sections = document.querySelectorAll(".settings-section");
-    expect(sections).toHaveLength(5);
+    expect(sections).toHaveLength(expected);
     // The opening page is the first registered module, not a hard-coded id.
     // Inactive pages are `hidden`, and a role query skips hidden nodes by
     // design, so asserting on them needs the explicit flag.

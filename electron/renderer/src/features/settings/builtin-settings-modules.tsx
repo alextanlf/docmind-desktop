@@ -11,13 +11,12 @@
  * tiebreaker; `order` decides the sequence.
  */
 import type { ReactNode } from "react";
-import { Cpu, Globe, HardDrive, KeyRound, Puzzle } from "lucide-react";
+import { Cpu, HardDrive, KeyRound, Puzzle } from "lucide-react";
 import type { SettingsView } from "../../../../shared/contracts";
 import { DiagnosticsSection } from "./DiagnosticsSection";
 import { ModelSettingsForm } from "./ModelSettingsForm";
 import { PluginSettings } from "./PluginSettings";
 import { RuntimeModelSettings } from "./RuntimeModelSettings";
-import { WebSearchSettings } from "./WebSearchSettings";
 import { registerModule } from "./settings-modules";
 import { useSettingsQuery } from "./settings.queries";
 
@@ -57,7 +56,6 @@ function settingsSection(
 
 const ModelModule = settingsSection(ModelSettingsForm);
 const RuntimeModule = settingsSection(RuntimeModelSettings);
-const WebSearchModule = settingsSection(WebSearchSettings);
 const DiagnosticsModule = settingsSection(DiagnosticsSection);
 
 /**
@@ -95,15 +93,6 @@ registerModule({
   icon: Puzzle,
   order: 30,
   render: () => <PluginSettings />,
-});
-
-registerModule({
-  id: "settings-web-search",
-  label: "联网搜索",
-  description: "本地证据不足时按模型内置联网、Tavily、免费兜底的顺序搜索",
-  icon: Globe,
-  order: 40,
-  render: () => <WebSearchModule />,
 });
 
 registerModule({

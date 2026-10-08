@@ -98,9 +98,8 @@ class WebSearchTool:
     name = WEB_SEARCH_TOOL_NAME
     spec = WEB_SEARCH_SPEC
 
-    def __init__(self, search_service: Any, settings_service: Any) -> None:
+    def __init__(self, search_service: Any) -> None:
         self.search_service = search_service
-        self.settings_service = settings_service
 
     async def execute(self, call: LLMToolCall, invocation: ToolInvocation) -> ToolOutcome:
         query = parse_query(call.arguments)
@@ -109,7 +108,6 @@ class WebSearchTool:
                 content="搜索失败：query 参数缺失或不是字符串。请重新给出搜索关键词。",
                 error_code="SEARCH_INVALID_ARGUMENT",
             )
-        settings = self.settings_service.web_search()
         try:
             run = await self.search_service.run(
                 SearchRunRequest(
@@ -120,8 +118,8 @@ class WebSearchTool:
                     session_id=invocation.session_id,
                     user_message_id=invocation.user_message_id,
                     query=query,
-                    max_results=settings.max_results,
-                    query_rewrite=settings.query_rewrite,
+                    # max_results / query_rewrite 直接走 `SearchRunRequest` 自己的默认值：
+                    # 设置页的联网分区删除后没有第二处真源，没必要再套一层常量。
                     authorization_mode=invocation.authorization_mode,
                 ),
                 authorization_mode=invocation.authorization_mode,

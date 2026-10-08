@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from typing import Literal
-from urllib.parse import urlsplit
 from uuid import UUID
 
-from pydantic import Field, HttpUrl, field_validator
+from pydantic import Field, HttpUrl
 
 from app.schemas.common import WireModel
 
@@ -34,37 +33,5 @@ class NormalizedSearchResult(WireModel):
 class SearchResponse(WireModel):
     results: list[NormalizedSearchResult] = Field(max_length=10)
     provider: str = ""
-def normalize_searxng_url(value: str) -> str:
-    """Validate a user-supplied SearXNG instance URL; empty means "not configured"."""
-    value = (value or "").strip()
-    if not value:
-        return ""
-    parsed = urlsplit(value)
-    if (
-        parsed.scheme not in {"http", "https"}
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise ValueError("invalid SearXNG instance URL")
-    return value.rstrip("/")
-
-
-class WebSearchSettings(WireModel):
-    mode: Literal["off", "ask", "auto"] = "ask"
-    max_results: int = Field(default=5, ge=1, le=10)
-    query_rewrite: bool = True
-    searxng_url: str = ""
-    has_api_key: bool = False
-
-    @field_validator("searxng_url")
-    @classmethod
-    def _normalize_searxng_url(cls, value: str) -> str:
-        return normalize_searxng_url(value)
-    model_search_available: bool = False
-    model_search_label: str = ""
-    free_fallback_available: bool = True
 class SearchResultView(NormalizedSearchResult):
     id: UUID

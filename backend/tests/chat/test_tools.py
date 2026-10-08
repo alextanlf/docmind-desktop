@@ -10,11 +10,7 @@ import pytest
 from app.api.errors import DomainError
 from app.chat.tools import ToolInvocation, ToolRegistry, WebSearchTool, parse_query
 from app.core.llm import LLMToolCall
-
-
-class Settings:
-    def web_search(self):
-        return SimpleNamespace(mode="auto", max_results=5, query_rewrite=False)
+from app.schemas.web_search import SearchRunRequest
 
 
 class Search:
@@ -57,7 +53,7 @@ async def test_each_round_uses_a_distinct_search_request_id() -> None:
     query 会被静默丢弃、模型拿回第一轮的结果 —— 不报错，只是答错。
     """
     search = Search()
-    tool = WebSearchTool(search, Settings())
+    tool = WebSearchTool(search)
     state = invocation()
     call = LLMToolCall(id="call_a", name="web_search", arguments='{"query":"first"}')
 
@@ -71,12 +67,18 @@ async def test_each_round_uses_a_distinct_search_request_id() -> None:
     identifiers = [request.request_id for request in search.requests]
     assert identifiers[0] != identifiers[1]
     assert [request.query for request in search.requests] == ["first", "second"]
+    # 设置页的联网分区删除后，检索宽度与改写开关不再有第二处真源：工具只传授权
+    # 档位，其余跟随 `SearchRunRequest` 的默认值。这里挡住"顺手写死一个 3/5"。
+    assert {request.max_results for request in search.requests} == {
+        SearchRunRequest.model_fields["max_results"].default
+    }
+    assert all(request.query_rewrite is True for request in search.requests)
 
 
 async def test_citation_ids_keep_advancing_across_rounds() -> None:
     """两轮搜索各自从 W1 起编号会互相覆盖，偏移量必须累计。"""
     search = Search()
-    tool = WebSearchTool(search, Settings())
+    tool = WebSearchTool(search)
     state = invocation()
     call = LLMToolCall(id="call_a", name="web_search", arguments='{"query":"x"}')
 
@@ -92,7 +94,7 @@ async def test_citation_ids_keep_advancing_across_rounds() -> None:
 
 async def test_unknown_tool_is_reported_back_without_being_fatal() -> None:
     """模型凭空造工具名是它自己的问题，不该让整条回答失败。"""
-    outcome = await ToolRegistry([WebSearchTool(Search(), Settings())]).execute(
+    outcome = await ToolRegistry([WebSearchTool(Search())]).execute(
         LLMToolCall(id="call_a", name="teleport", arguments="{}"), invocation()
     )
 
@@ -105,7 +107,7 @@ async def test_unknown_tool_is_reported_back_without_being_fatal() -> None:
 async def test_unusable_arguments_never_reach_the_search_service(arguments: str) -> None:
     """参数坏掉时连搜索都不该发起 —— 否则会白烧一次 provider 配额。"""
     search = Search()
-    outcome = await WebSearchTool(search, Settings()).execute(
+    outcome = await WebSearchTool(search).execute(
         LLMToolCall(id="call_a", name="web_search", arguments=arguments), invocation()
     )
 
@@ -117,7 +119,7 @@ async def test_unusable_arguments_never_reach_the_search_service(arguments: str)
 async def test_transport_failure_is_flagged_fatal() -> None:
     """空结果与"联网基础设施坏了"必须能区分：只有后者才值得惊动用户。"""
     error = DomainError("SEARCH_PROVIDER_ERROR", "搜索服务暂时不可用", 502, True)
-    outcome = await WebSearchTool(Search(error), Settings()).execute(
+    outcome = await WebSearchTool(Search(error)).execute(
         LLMToolCall(id="call_a", name="web_search", arguments='{"query":"x"}'), invocation()
     )
 

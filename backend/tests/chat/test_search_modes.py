@@ -13,14 +13,6 @@ from app.schemas.retrieval import RetrievalResult
 from tests.chat.test_service import FakeConversationStore, FakeLLM, FakeRetriever
 
 
-class Settings:
-    def __init__(self, mode):
-        self.mode = mode
-
-    def web_search(self):
-        return SimpleNamespace(mode=self.mode, max_results=5, query_rewrite=False)
-
-
 class Search:
     def __init__(self):
         self.calls = 0
@@ -48,78 +40,80 @@ class Store(FakeConversationStore):
         return next((message for message in self.messages if message.id == message_id), None)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("mode", "calls", "suggested", "offers_tools"),
-    [("off", 0, False, False), ("ask", 0, True, False), ("auto", 0, False, True)],
-)
-async def test_low_evidence_respects_search_mode(mode, calls, suggested, offers_tools):
-    """auto 档不再预检索 —— 它只把工具发给模型，搜不搜由模型决定。"""
-    search = Search()
-    settings = Settings(mode)
-    llm = FakeLLM(["web [W1]"])
-    service = ChatService(
+def _service(search, llm, store=None, **kwargs):
+    return ChatService(
         retriever=FakeRetriever(RetrievalResult(hits=[], max_score=0)),
         llm=llm,
-        conversation_store=Store(),
+        conversation_store=store or Store(),
         event_broker=InMemoryEventBroker(retention=None),
         search_service=search,
-        settings_service=settings,
-        tool_registry=ToolRegistry([WebSearchTool(search, settings)]),
+        tool_registry=ToolRegistry([WebSearchTool(search)]),
+        **kwargs,
     )
-    events = [
-        event
-        async for event in service.stream(
-            ChatStreamRequest(
-                request_id=uuid4(),
-                session_id="00000000-0000-0000-0000-000000000041",
-                message="question",
-                repository_ids=["00000000-0000-0000-0000-000000000042"],
-            )
-        )
-    ]
+
+
+def _request(**kwargs):
+    return ChatStreamRequest(
+        request_id=uuid4(),
+        session_id="00000000-0000-0000-0000-000000000041",
+        message="question",
+        repository_ids=["00000000-0000-0000-0000-000000000042"],
+        **kwargs,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("permission", "calls", "offers_tools", "suggested"),
+    [
+        # off：本次不联网 —— 连工具都不发，模型无从调用，直接认输并建议手动搜。
+        ("off", 0, False, True),
+        # inherit：只发工具、不预检索（闸门由模型自己判断，不再看相似度阈值）。
+        ("inherit", 0, True, True),
+        # explicit：用户点了「联网搜索」→ 先搜一次，同时仍发工具让它能追加检索。
+        ("explicit", 1, True, False),
+    ],
+)
+async def test_search_permission_gates_pre_search_and_tools(
+    permission, calls, offers_tools, suggested
+):
+    """设置页的联网分区删除后，`web_search_permission` 是仅存的联网开关。"""
+    search = Search()
+    llm = FakeLLM(["web [W1]"])
+    service = _service(search, llm)
+
+    events = [event async for event in service.stream(_request(web_search_permission=permission))]
+
     assert search.calls == calls
     assert events[-1].payload.get("searchSuggested", False) is suggested
+    # 🔴 续搜端点靠 userMessageId 定位原始提问；缺了它前端画得出按钮也点不动。
+    # 早退那条终态尤其容易漏 —— 而它正是最需要手动补搜的场景。
+    assert events[-1].payload.get("userMessageId")
     if offers_tools:
         # 🔴 本次改动的核心：闸门从"相似度阈值"换成"模型自己决定"。所以必须验证
-        # 工具确实下发到了 —— 否则 auto 档会静默地永远不联网（模型无从知道能搜）。
-        assert llm.calls, "auto 档必须把工具发给模型"
+        # 工具确实下发到了 —— 否则会静默地永远不联网（模型无从知道能搜）。
+        assert llm.calls, "允许联网时必须把工具发给模型"
         assert [tool.name for tool in llm.calls[0].tools] == ["web_search"]
     else:
-        # off / ask 档：既没有本地证据也不许联网取证，连模型都不该被叫到。
+        # 不许联网且没有本地证据 → 连模型都不该被叫到。
         assert llm.calls == []
 
 
 @pytest.mark.asyncio
-async def test_auto_mode_searches_when_the_model_asks():
+async def test_model_initiated_search_runs_and_registers_citations():
     """模型主动调用工具时，搜索真的发生、引用真的注册、过程真的透出。"""
     search = Search()
-    settings = Settings("auto")
-    service = ChatService(
-        retriever=FakeRetriever(RetrievalResult(hits=[], max_score=0)),
-        llm=FakeLLM(
+    service = _service(
+        search,
+        FakeLLM(
             ["web [W1]"],
             tool_calls=[
                 LLMToolCall(id="call-1", name="web_search", arguments='{"query":"question"}')
             ],
         ),
-        conversation_store=Store(),
-        event_broker=InMemoryEventBroker(retention=None),
-        search_service=search,
-        settings_service=settings,
-        tool_registry=ToolRegistry([WebSearchTool(search, settings)]),
     )
-    events = [
-        event
-        async for event in service.stream(
-            ChatStreamRequest(
-                request_id=uuid4(),
-                session_id="00000000-0000-0000-0000-000000000041",
-                message="question",
-                repository_ids=["00000000-0000-0000-0000-000000000042"],
-            )
-        )
-    ]
+    events = [event async for event in service.stream(_request())]
+
     assert search.calls == 1
     assert events[-1].type == "done"
     # 工具生命周期要透出，否则用户看不到"正在联网搜索"。
@@ -137,6 +131,8 @@ async def test_auto_mode_searches_when_the_model_asks():
         for item in event.payload["citations"]
     ]
     assert "W1" in registered
+    # 搜索真的拿到了引用 → 不该再提示用户手动补搜。
+    assert events[-1].payload.get("searchSuggested", False) is False
     # 工具结果必须以 role=tool + tool_call_id 回灌，否则厂商无法把结果配对到调用。
     follow_up = service.llm.calls[1]
     assert follow_up.messages[-1].role == "tool"
@@ -151,7 +147,6 @@ async def test_tool_loop_is_bounded_and_the_last_call_gets_no_tools():
     没有这个上限，一个"总想再搜一次"的模型会让请求永远不返回。
     """
     search = Search()
-    settings = Settings("auto")
 
     class EndlessLLM:
         def __init__(self) -> None:
@@ -174,26 +169,7 @@ async def test_tool_loop_is_bounded_and_the_last_call_gets_no_tools():
             yield ChatDelta(content="收尾回答")
 
     llm = EndlessLLM()
-    service = ChatService(
-        retriever=FakeRetriever(RetrievalResult(hits=[], max_score=0)),
-        llm=llm,
-        conversation_store=Store(),
-        event_broker=InMemoryEventBroker(retention=None),
-        search_service=search,
-        settings_service=settings,
-        tool_registry=ToolRegistry([WebSearchTool(search, settings)]),
-    )
-    events = [
-        event
-        async for event in service.stream(
-            ChatStreamRequest(
-                request_id=uuid4(),
-                session_id="00000000-0000-0000-0000-000000000041",
-                message="question",
-                repository_ids=["00000000-0000-0000-0000-000000000042"],
-            )
-        )
-    ]
+    events = [event async for event in _service(search, llm).stream(_request())]
 
     assert events[-1].type == "done"
     assert [event.payload["content"] for event in events if event.type == "delta"] == ["收尾回答"]
@@ -207,14 +183,7 @@ async def test_tool_loop_is_bounded_and_the_last_call_gets_no_tools():
 async def test_explicit_continuation_reuses_original_user_message():
     search = Search()
     store = Store()
-    service = ChatService(
-        retriever=FakeRetriever(RetrievalResult(hits=[], max_score=0)),
-        llm=FakeLLM(["web [W1]"]),
-        conversation_store=store,
-        event_broker=InMemoryEventBroker(retention=None),
-        search_service=search,
-        settings_service=Settings("ask"),
-    )
+    service = _service(search, FakeLLM(["web [W1]"]), store=store)
     session_id = "00000000-0000-0000-0000-000000000041"
     repositories = ["00000000-0000-0000-0000-000000000042"]
     first = [

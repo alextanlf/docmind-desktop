@@ -55,7 +55,6 @@ import {
   MemoryItemPageSchema,
   MemoryListInputSchema,
   SessionMemorySummarySchema,
-  WebSearchSettingsInputSchema,
   WebSearchRunSchema,
   SearchImportInputSchema,
   ChatSearchInputSchema,
@@ -166,12 +165,6 @@ const api: DocMindApi = {
       invoke(IPC_CHANNELS.settingsListModels, ModelListViewSchema, ModelListProbeSchema.parse(input ?? {})),
     skipModelSetup: () => invoke(IPC_CHANNELS.settingsSkipModelSetup, SettingsViewSchema),
     clearDiagnostics: () => invoke(IPC_CHANNELS.settingsClearDiagnostics, z.undefined()),
-    saveWebSearch: (input) =>
-      invoke(
-        IPC_CHANNELS.settingsSaveWebSearch,
-        SettingsViewSchema,
-        WebSearchSettingsInputSchema.parse(input),
-      ),
     saveRuntime: (input) =>
       invoke(
         IPC_CHANNELS.settingsSaveRuntime,

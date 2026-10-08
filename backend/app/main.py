@@ -86,17 +86,11 @@ from app.remote.provider import RemoteProvider
 from app.remote.registry import ProviderRegistry
 from app.remote.snapshot import read_remote_snapshot
 from app.schemas.common import HealthResponse
-from app.schemas.web_search import SearchConnectionResult
-from app.search.bing import BingProvider
-from app.search.duckduckgo import DuckDuckGoProvider
-from app.search.enrichment import ContentEnricher
 from app.search.fallback import FallbackSearchProvider
 from app.search.model_native import ModelSearchProvider
-from app.search.provider import SearchProviderError
 from app.search.query_planner import LLMQueryPlanner
-from app.search.searxng import SearxngProvider
 from app.search.service import SearchService
-from app.search.tavily import TavilyProvider
+from app.search.tavily import TAVILY_SECRET_NAME, TavilyProvider
 from app.storage.database import Database
 from app.storage.models import ProviderCredentialState
 from app.storage.repositories import (
@@ -429,69 +423,16 @@ def create_app(
             name = "tavily"
 
             def available(self) -> bool:
-                return bool(_read_secret("web-search:tavily"))
-
-            async def search(self, req):
-                key = _read_secret("web-search:tavily")
-                if not key:
-                    raise SearchProviderError(
-                        "SEARCH_AUTH_FAILED", "未配置 Tavily API Key", retryable=False
-                    )
-                return await TavilyProvider(key).search(req)
-
-            async def test_connection(self):
-                key = _read_secret("web-search:tavily")
-                if not key:
-                    return SearchConnectionResult(
-                        ok=False, provider=self.name, message="未配置 Tavily API Key"
-                    )
-                return await TavilyProvider(key).test_connection()
-
-        class _LazySearxng:
-            name = "searxng"
-
-            def available(self) -> bool:
-                return bool(app.state.settings_service.web_search().searxng_url)
-
-            async def search(self, req):
-                instance = app.state.settings_service.web_search().searxng_url
-                if not instance:
-                    raise SearchProviderError(
-                        "SEARCH_AUTH_FAILED", "未配置 SearXNG 实例", retryable=False
-                    )
-                return await SearxngProvider(instance).search(req)
-
-            async def test_connection(self):
-                instance = app.state.settings_service.web_search().searxng_url
-                if not instance:
-                    return SearchConnectionResult(
-                        ok=False, provider=self.name, message="未配置 SearXNG 实例"
-                    )
-                return await SearxngProvider(instance).test_connection()
-
-        class _LazyBing:
-            name = "bing"
-
-            def available(self) -> bool:
+                # 免密钥即可用，所以恒定可用 —— 不再有"有没有配 Key"这个前置条件。
                 return True
 
             async def search(self, req):
-                return await BingProvider().search(req)
+                # Key 是惰性读取的：历史配过的 Key 仍然生效（付费档不限流），
+                # 只是设置页已删除、不再有输入口。
+                return await TavilyProvider(_read_secret(TAVILY_SECRET_NAME)).search(req)
 
             async def test_connection(self):
-                return await BingProvider().test_connection()
-
-        class _LazyDuckDuckGo:
-            name = "duckduckgo"
-
-            def available(self) -> bool:
-                return True
-
-            async def search(self, req):
-                return await DuckDuckGoProvider().search(req)
-
-            async def test_connection(self):
-                return await DuckDuckGoProvider().test_connection()
+                return await TavilyProvider(_read_secret(TAVILY_SECRET_NAME)).test_connection()
 
         cloud_llm_provider = fake_llm_provider or _RuntimeLLMProvider(
             app.state.settings_service,
@@ -521,20 +462,18 @@ def create_app(
                     local_service=app.state.local_model_service,
                 )
             )
-        search_enricher = ContentEnricher(safe_http_client)
         app.state.search_service = SearchService(
             FallbackSearchProvider(
                 [
+                    # 只有两级：厂商自己的内置联网优先，Tavily 兜底（免密钥即可用）。
+                    # SearXNG / Bing / DuckDuckGo 那三级抓屏已删除 —— 抓屏是"看着免费、
+                    # 维护成本无上限"的典型（上游改版就断，且我们跑不到真实网络里测不到）。
                     ModelSearchProvider(_model_credentials),
                     _LazyTavily(),
-                    _LazySearxng(),
-                    _LazyBing(),
-                    _LazyDuckDuckGo(),
                 ]
             ),
             WebSearchRunStore(database),
             query_planner=LLMQueryPlanner(runtime_llm_provider),
-            enricher=search_enricher,
         )
         app.state.repository_store = repository_store
         app.state.document_store = document_store
@@ -600,12 +539,9 @@ def create_app(
             ),
             memory_retriever=memory_retriever,
             search_service=app.state.search_service,
-            settings_service=app.state.settings_service,
             # 交给模型的工具集合。`WebSearchTool` 复用同一个 SearchService，
             # 所以授权、去重、run 记录与"显式联网"预检索走的是同一套逻辑。
-            tool_registry=ToolRegistry(
-                [WebSearchTool(app.state.search_service, app.state.settings_service)]
-            ),
+            tool_registry=ToolRegistry([WebSearchTool(app.state.search_service)]),
         )
         app.state.chat_service = chat_service
         app.state.distillation_service = DistillationService(

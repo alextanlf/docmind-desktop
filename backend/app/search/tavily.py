@@ -10,30 +10,46 @@ from app.schemas.web_search import (
 )
 from app.search.provider import SearchProviderError
 
+# 历史 Key 的存储名。设置页的「联网搜索」分区已删除，这里保留读取是为了让
+# 以前配过 Key 的安装继续用上自己的额度（付费档不限流），只是不再有输入口。
+TAVILY_SECRET_NAME = "web-search:tavily"
+
 
 class TavilyProvider:
+    """Tavily 搜索。
+
+    免密钥模式是默认形态：官方支持 `X-Tavily-Access-Mode: keyless`，无需注册即可调用，
+    所以 Tavily 现在是**零配置**来源 —— 这也是设置页那一栏能被删掉的前提。
+    配过 Key 的安装仍走带 Key 的路径。
+    """
+
     name = "tavily"
 
-    def __init__(self, api_key: str, client: httpx.AsyncClient | None = None):
-        self.api_key = api_key
+    def __init__(self, api_key: str | None = None, client: httpx.AsyncClient | None = None):
+        self.api_key = api_key or ""
         self.client = client
 
     def available(self) -> bool:
-        return bool(self.api_key)
+        # 🔴 不再取决于有没有 Key：没有 Key 时走免密钥档。
+        return True
 
     async def search(self, request: SearchRequest) -> SearchResponse:
         own = self.client is None
         client = self.client or httpx.AsyncClient(base_url="https://api.tavily.com", timeout=20)
+        payload: dict[str, object] = {
+            "query": request.query,
+            "max_results": request.max_results,
+            "include_content": True,
+        }
+        headers: dict[str, str] | None = None
+        if self.api_key:
+            # 带 Key 时保持既有形态（Key 放 body），不顺手改成 Bearer —— 那条路
+            # 没有真实 Key 可验，改了等于拿一个能用的配置去赌一个没验证的写法。
+            payload["api_key"] = self.api_key
+        else:
+            headers = {"X-Tavily-Access-Mode": "keyless"}
         try:
-            response = await client.post(
-                "/search",
-                json={
-                    "api_key": self.api_key,
-                    "query": request.query,
-                    "max_results": request.max_results,
-                    "include_content": True,
-                },
-            )
+            response = await client.post("/search", json=payload, headers=headers)
         except httpx.TimeoutException as error:
             raise SearchProviderError("SEARCH_PROVIDER_TIMEOUT", "Tavily 响应超时") from error
         except httpx.HTTPError as error:

@@ -62,15 +62,6 @@ class StubPlanner:
         return [query, *self.queries][:max_queries]
 
 
-class StubEnricher:
-    def __init__(self) -> None:
-        self.calls = 0
-
-    async def enrich(self, results: list[NormalizedSearchResult]):
-        self.calls += 1
-        return [item.model_copy(update={"content": "enriched content"}) for item in results]
-
-
 def _response(provider: str, urls: list[str]) -> SearchResponse:
     return SearchResponse(
         provider=provider,
@@ -223,29 +214,6 @@ async def test_query_rewrite_disabled_searches_the_original_query_only(database)
 
     assert provider.queries == ["q"]
     assert planner.calls == 0
-
-
-@pytest.mark.asyncio
-async def test_snippet_only_providers_are_enriched_after_merging(database) -> None:
-    provider = StubProvider(responses={"q": _response("bing", ["https://example.com/a"])})
-    enricher = StubEnricher()
-    service = SearchService(provider, WebSearchRunStore(database), enricher=enricher)
-
-    view = await service.run(_request())
-
-    assert enricher.calls == 1
-    assert view.results[0].content == "enriched content"
-
-
-@pytest.mark.asyncio
-async def test_tavily_results_are_not_enriched(database) -> None:
-    provider = StubProvider(responses={"q": _response("tavily", ["https://example.com/a"])})
-    enricher = StubEnricher()
-    service = SearchService(provider, WebSearchRunStore(database), enricher=enricher)
-
-    await service.run(_request())
-
-    assert enricher.calls == 0
 
 
 def test_complete_and_fail_both_reject_unknown_run(database) -> None:

@@ -2343,39 +2343,6 @@ progress::-webkit-progress-bar {
 .session-actions {
   margin-left: auto;
 }
-.web-search-settings {
-  display: grid;
-  max-width: 680px;
-  gap: 14px;
-}
-.web-search-settings fieldset {
-  display: flex;
-  gap: 16px;
-  margin: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-}
-.web-search-settings > label {
-  display: grid;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 12px;
-}
-.web-search-settings input[type="number"],
-.web-search-settings input[type="password"] {
-  min-height: 36px;
-  padding: 6px 9px;
-  border: 1px solid var(--line-strong);
-  border-radius: 5px;
-}
-.web-search-settings > .web-search-rewrite {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  font-size: 12px;
-}
 .web-search-sources {
   display: grid;
   gap: 8px;
@@ -2405,27 +2372,6 @@ progress::-webkit-progress-bar {
   gap: 2px;
 }
 .web-search-sources span {
-  color: var(--muted);
-  font-size: 12px;
-}
-.web-search-advanced {
-  display: grid;
-  gap: 10px;
-}
-.web-search-advanced summary {
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 12px;
-}
-.web-search-advanced small {
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.4;
-}
-.web-search-advanced > label {
-  display: grid;
-  gap: 6px;
-  margin-top: 10px;
   color: var(--muted);
   font-size: 12px;
 }

@@ -47,7 +47,6 @@ class ChatService:
         message_activity_callback: Callable[[str], None] | None = None,
         memory_retriever: MemoryRetriever | None = None,
         search_service=None,
-        settings_service=None,
         tool_registry: ToolRegistry | None = None,
     ) -> None:
         self.retriever = retriever
@@ -70,7 +69,6 @@ class ChatService:
         self._message_activity_callback = message_activity_callback
         self.memory_retriever = memory_retriever
         self.search_service = search_service
-        self.settings_service = settings_service
         self.tool_registry = tool_registry
 
     async def stream(
@@ -267,34 +265,28 @@ class ChatService:
             sources.update(_memory_source_map(memory_hits))
             web_results = []
             search_warning = None
-            search_mode = "off"
-            if request.web_search_permission == "explicit":
-                search_mode = "auto"
-            elif request.web_search_permission != "off" and self.settings_service is not None:
-                search_mode = self.settings_service.web_search().mode
+            # 联网档位固定为 auto（设置页的「联网搜索」分区已删除）：由模型自己决定
+            # 搜不搜。`off` 是唯一能关掉它的来源，而且只作用于单次请求。
+            search_mode = "off" if request.web_search_permission == "off" else "auto"
             authorization = "explicit" if request.web_search_permission == "explicit" else "auto"
 
-            # 联网按授权档位分成两条路：
+            # 联网按授权分成两条路：
             #
-            # - explicit（用户点了「联网搜索」）→ **预检索**。用户已经表达了意图，
-            #   不能指望模型自己决定搜不搜，所以先搜一次保证有结果；工具仍然发给
-            #   模型，让它能追加检索。失败直接上报 —— 静默降级成"没搜到"是欺骗，
-            #   何况 UI 本来就有「重试联网搜索」入口。
-            # - auto（设置里选了自动）→ **只发工具，不预检索**。原来的预检索用
-            #   `decide_evidence` 的相似度阈值判断"证据够不够"，而这个项目已经
-            #   定论相似度分数不能判断覆盖度 —— 触发闸门建立在被否定的信号上。
-            #   改成让模型看着本地片段自己决定，闸门从临界路径上移除。
-            # - ask / off → 都不做，保持"用户点了才搜"。
+            # - explicit（用户点了「联网搜索」按钮）→ **预检索**。用户已经表达了意图，
+            #   不能指望模型自己决定搜不搜，所以先搜一次保证有结果；工具仍然发给模型，
+            #   让它能追加检索。失败直接上报 —— 静默降级成"没搜到"是欺骗，何况 UI
+            #   本来就有「重试联网搜索」入口。
+            # - auto（其余情况）→ **只发工具，不预检索**。原来的预检索用
+            #   `decide_evidence` 的相似度阈值判断"证据够不够"，而这个项目已经定论
+            #   相似度分数不能判断覆盖度 —— 触发闸门建立在被否定的信号上。改成让模型
+            #   看着本地片段自己决定，闸门从临界路径上移除。
             if request.web_search_permission == "explicit" and self.search_service is not None:
-                search_settings = self.settings_service.web_search()
                 run = await self.search_service.run(
                     SearchRunRequest(
                         request_id=request.request_id,
                         session_id=request.session_id,
                         user_message_id=user_message.id,
                         query=request.message,
-                        max_results=search_settings.max_results,
-                        query_rewrite=search_settings.query_rewrite,
                         authorization_mode=authorization,
                     ),
                     authorization_mode=authorization,
@@ -322,7 +314,12 @@ class ChatService:
                     request.session_id, _GAP_ANSWER, [], "completed"
                 )
                 await self._publish(key, "delta", {"content": _GAP_ANSWER})
-                terminal = {"messageId": assistant.id, "searchSuggested": search_mode == "ask", "userMessageId": user_message.id}
+                terminal = {
+                    "messageId": assistant.id,
+                    # 认输的回答一个引用都没有 → 正是该给用户一个手动补搜入口的场景。
+                    "searchSuggested": True,
+                    "userMessageId": user_message.id,
+                }
                 if search_warning is not None:
                     terminal["warning"] = search_warning
                 self.conversation_store.complete_chat_request(key, "done", terminal)
@@ -376,7 +373,15 @@ class ChatService:
             citations = parse_citations(answer, sources)
             assistant_persistence_attempted = True
             assistant = self._persist_assistant(request.session_id, answer, citations, "completed")
-            terminal = {"messageId": assistant.id}
+            terminal: dict[str, Any] = {
+                "messageId": assistant.id,
+                # 🔴 触发条件从「ask 档」改成「这次回答没有产生任何引用」：档位设置页
+                # 已经删掉，而"一个来源都没引到"才是用户真的可能需要手动补搜的信号。
+                # `userMessageId` 必须一起给 —— 续搜端点靠它定位原始提问，缺了它前端
+                # 画得出按钮也点不动（store 会因为它不是字符串而把建议整个丢掉）。
+                "searchSuggested": not citations,
+                "userMessageId": user_message.id,
+            }
             if route_state.get("route") is not None:
                 terminal["route"] = route_state["route"]
             # 联网失败但回答照常产出时，也必须把这个降级讲出来 —— 此前 warning 只

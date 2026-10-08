@@ -33,23 +33,16 @@ from app.schemas.settings import (
     ModelSettingsUpdate,
     ModelSettingsView,
     SettingsView,
-    WebSearchSettingsUpdate,
     is_free_model,
     model_label,
     preset_models,
 )
-from app.schemas.web_search import SearchConnectionResult, WebSearchSettings
-from app.search.model_native import ModelSearchProvider, detect_native_search
-from app.search.searxng import SearxngProvider
-from app.search.tavily import TavilyProvider
 from app.storage.repositories import SettingStore
 
 MODEL_CONFIG_KEY = "model.config"
 MODEL_KEY_REFERENCE = "model.api_key_ref"
 MODEL_SETUP_SKIPPED_KEY = "model.setup_skipped"
 MODEL_API_KEY_NAME = "model-api-key"
-WEB_SEARCH_CONFIG_KEY = "web-search.config"
-WEB_SEARCH_API_KEY_NAME = "web-search:tavily"
 LOCAL_RUNTIME_CONFIG_KEY = "local-model.config"
 # Read-only: an install that saved runtime settings before the local-model
 # rename still holds its server address and model under this key.
@@ -233,7 +226,6 @@ class SettingsService:
             has_api_key=self.has_api_key(),
             data_path=str(settings.data_dir.resolve()),
             screenshot_count=_screenshot_count(settings.screenshots_dir),
-            web_search=self.web_search(),
             runtime=self.runtime(),
             model_presets={
                 preset: preset_models(preset) for preset in MODEL_PRESETS if preset != "custom"
@@ -291,84 +283,6 @@ class SettingsService:
             }
         )
         return normalized
-
-    def web_search(self) -> WebSearchSettings:
-        raw = self.setting_store.get(WEB_SEARCH_CONFIG_KEY)
-        if raw:
-            config = WebSearchSettings.model_validate_json(raw)
-        else:
-            config = WebSearchSettings()
-        model_search_available = False
-        model_search_label = ""
-        try:
-            support = detect_native_search(self.model())
-            if support is None:
-                model_search_label = "当前模型不支持内置联网，自动跳过"
-            elif self.runtime().routing.mode == "local_only":
-                model_search_label = "本地模式不调用云端联网，自动跳过"
-            elif not self.secret_store.get(MODEL_API_KEY_NAME):
-                model_search_label = "需要配置模型 API Key"
-            else:
-                model_search_available = True
-                model_search_label = f"可用 · {support.label}"
-        except (DomainError, OSError):
-            pass
-        try:
-            has_api_key = bool(self.secret_store.get(WEB_SEARCH_API_KEY_NAME))
-        except (DomainError, OSError):
-            has_api_key = False
-        return config.model_copy(
-            update={
-                "has_api_key": has_api_key,
-                "model_search_available": model_search_available,
-                "model_search_label": model_search_label,
-            }
-        )
-
-    def save_web_search(self, update: WebSearchSettingsUpdate) -> WebSearchSettings:
-        if update.mode not in {"off", "ask", "auto"} or not 1 <= update.max_results <= 10:
-            raise DomainError("SEARCH_SETTINGS_INVALID", "联网搜索设置无效", 422)
-        try:
-            config = WebSearchSettings(
-                mode=update.mode,
-                max_results=update.max_results,
-                query_rewrite=update.query_rewrite,
-                searxng_url=update.searxng_url,
-                has_api_key=False,
-            )
-        except ValueError as error:
-            raise DomainError("SEARCH_SETTINGS_INVALID", "SearXNG 实例地址无效", 422) from error
-        previous = self.secret_store.get(WEB_SEARCH_API_KEY_NAME)
-        if update.api_key is not None:
-            if update.api_key:
-                self.secret_store.set(WEB_SEARCH_API_KEY_NAME, update.api_key)
-            else:
-                self.secret_store.delete(WEB_SEARCH_API_KEY_NAME)
-        try:
-            self.setting_store.set_many({WEB_SEARCH_CONFIG_KEY: config.model_dump_json()})
-        except Exception:
-            if previous is None:
-                self.secret_store.delete(WEB_SEARCH_API_KEY_NAME)
-            else:
-                self.secret_store.set(WEB_SEARCH_API_KEY_NAME, previous)
-            raise
-        return self.web_search()
-
-    async def test_web_search(self) -> SearchConnectionResult:
-        model_provider = ModelSearchProvider(
-            lambda: (self.model(), self.secret_store.get(MODEL_API_KEY_NAME))
-        )
-        if model_provider.available():
-            return await model_provider.test_connection()
-        key = self.secret_store.get(WEB_SEARCH_API_KEY_NAME)
-        if key:
-            return await TavilyProvider(key).test_connection()
-        instance = self.web_search().searxng_url
-        if instance:
-            return await SearxngProvider(instance).test_connection()
-        return SearchConnectionResult(
-            ok=True, provider="bing", message="将使用免费兜底（Bing / DuckDuckGo）"
-        )
 
     def clear_diagnostics(self, settings: AppSettings) -> None:
         directory = settings.screenshots_dir
@@ -452,14 +366,3 @@ async def save_runtime(update: RuntimeSettingsInput, request: Request) -> Settin
 async def clear_diagnostics(request: Request) -> Response:
     _service(request).clear_diagnostics(_settings(request))
     return Response(status_code=204)
-
-
-@router.put("/web-search", response_model=SettingsView)
-async def save_web_search(update: WebSearchSettingsUpdate, request: Request) -> SettingsView:
-    _service(request).save_web_search(update)
-    return _service(request).view(_settings(request))
-
-
-@router.post("/web-search/test", response_model=SearchConnectionResult)
-async def test_web_search(request: Request) -> SearchConnectionResult:
-    return await _service(request).test_web_search()

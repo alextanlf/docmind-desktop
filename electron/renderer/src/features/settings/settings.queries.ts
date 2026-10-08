@@ -1,9 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type {
-  RuntimeSettingsInput,
-  SaveRemoteCredentialInput,
-  WebSearchSettingsInput,
-} from "../../../../shared/contracts";
+import type { RuntimeSettingsInput, SaveRemoteCredentialInput } from "../../../../shared/contracts";
 import { clientErrorMessage, isRetryable } from "../../lib/client-errors";
 
 export { clientErrorMessage, errorAction, isRetryable } from "../../lib/client-errors";
@@ -173,14 +169,6 @@ export function useSaveRuntimeMutation() {
       void client.invalidateQueries({ queryKey: localModelKeys.status });
       void client.invalidateQueries({ queryKey: localModelKeys.models });
     },
-  });
-}
-
-export function useSaveWebSearchMutation() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (input: WebSearchSettingsInput) => window.docmind.settings.saveWebSearch(input),
-    onSuccess: (settings) => client.setQueryData(settingsKeys.root, settings),
   });
 }
 

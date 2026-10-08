@@ -7,7 +7,6 @@ export const IPC_CHANNELS = {
   settingsListModels: "settings:listModels",
   settingsSkipModelSetup: "settings:skipModelSetup",
   settingsClearDiagnostics: "settings:clearDiagnostics",
-  settingsSaveWebSearch: "settings:saveWebSearch",
   settingsSaveRuntime: "settings:saveRuntime",
   embeddingStatus: "embedding:status",
   embeddingPrepare: "embedding:prepare",

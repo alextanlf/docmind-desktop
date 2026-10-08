@@ -7,7 +7,6 @@ from pydantic import Field
 from app.core.llm import AvailableModel, ModelConfig, ModelConnectionResult, model_label
 from app.schemas.common import WireModel
 from app.schemas.local_model import RuntimeSettingsInput
-from app.schemas.web_search import WebSearchSettings
 
 MODEL_PRESETS = {
     # DeepSeek retired deepseek-chat / deepseek-reasoner on 2026-07-24; the
@@ -199,7 +198,6 @@ class SettingsView(WireModel):
     has_api_key: bool
     data_path: str
     screenshot_count: int
-    web_search: WebSearchSettings
     runtime: RuntimeSettingsInput | None = None
     # Curated per-preset catalogue so the model picker has choices on first
     # paint, before an API key is entered and before any live query.
@@ -212,14 +210,6 @@ class SettingsView(WireModel):
     model_capabilities: dict[str, dict[str, ModelPresetCapabilities]] = Field(default_factory=dict)
     # True once the user dismissed first-run setup, so it is not shown again.
     model_setup_skipped: bool = False
-
-
-class WebSearchSettingsUpdate(WireModel):
-    mode: Literal["off", "ask", "auto"]
-    max_results: int = Field(ge=1, le=10)
-    query_rewrite: bool = True
-    searxng_url: str = ""
-    api_key: str | None = None
 
 
 __all__ = [
@@ -236,7 +226,6 @@ __all__ = [
     "ModelSettingsView",
     "ModelSetupSkip",
     "SettingsView",
-    "WebSearchSettingsUpdate",
     "is_free_model",
     "model_label",
     "preset_models",
