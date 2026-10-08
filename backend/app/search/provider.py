@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from app.schemas.web_search import SearchConnectionResult, SearchRequest, SearchResponse
+from app.schemas.web_search import SearchRequest, SearchResponse
 
 
 class SearchProviderError(RuntimeError):
@@ -19,8 +19,6 @@ class SearchProvider(Protocol):
     name: str
 
     def available(self) -> bool: ...
-
-    async def test_connection(self) -> SearchConnectionResult: ...
 
     async def search(self, request: SearchRequest) -> SearchResponse: ...
 

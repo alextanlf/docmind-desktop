@@ -48,8 +48,6 @@ class StubProvider:
             raise self._error
         return _response(self._provider, ["https://example.com/a"])
 
-    async def test_connection(self):  # pragma: no cover - not used here
-        raise NotImplementedError
 
 
 class StubPlanner:

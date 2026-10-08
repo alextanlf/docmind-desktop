@@ -132,7 +132,6 @@ async def run(args: argparse.Namespace) -> int:
 
     from sqlalchemy import select
 
-    from app.chat.evidence import decide_evidence
     from app.config import get_settings
     from app.core.embedding import create_embedding_provider
     from app.core.multilingual import detect_language, retrieval_threshold
@@ -198,7 +197,7 @@ async def run(args: argparse.Namespace) -> int:
         print(f"  ① 检索门控: {best:.4f} {'<' if blocked else '>='} {threshold} → "
               f"{'被拦下（返回空 hits，直接走「未覆盖」话术）' if blocked else '通过'}")
         print(f"  ② 证据门控(硬编码 0.65): max={best:.4f} → "
-              f"{'不充分' if best < 0.65 else '充分'}  (decide_evidence)")
+              f"{'不充分' if best < 0.65 else '充分'}")
 
         if args.ranking:
             result = await retriever.search(query, [repository.id], top_k=args.top_k)

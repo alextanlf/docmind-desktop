@@ -5,11 +5,7 @@ import logging
 from collections.abc import Sequence
 
 from app.api.errors import DomainError
-from app.schemas.web_search import (
-    SearchConnectionResult,
-    SearchRequest,
-    SearchResponse,
-)
+from app.schemas.web_search import SearchRequest, SearchResponse
 from app.search.provider import SearchProvider, provider_available
 
 logger = logging.getLogger(__name__)
@@ -69,11 +65,3 @@ class FallbackSearchProvider:
             "SEARCH_PROVIDER_ERROR", f"联网搜索暂时不可用（已尝试：{names}）", 502, True
         )
 
-    async def test_connection(self) -> SearchConnectionResult:
-        for provider in self.providers:
-            if not provider_available(provider):
-                continue
-            return await provider.test_connection()
-        return SearchConnectionResult(
-            ok=False, provider="none", message="没有可用的联网搜索来源"
-        )

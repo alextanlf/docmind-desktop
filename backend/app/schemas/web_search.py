@@ -20,10 +20,6 @@ class SearchRunRequest(WireModel):
     max_results: int = Field(default=5, ge=1, le=10)
     query_rewrite: bool = True
     authorization_mode: Literal["auto", "explicit"] = "auto"
-class SearchConnectionResult(WireModel):
-    ok: bool
-    provider: str = "tavily"
-    message: str
 class NormalizedSearchResult(WireModel):
     rank: int
     canonical_url: HttpUrl

@@ -431,8 +431,6 @@ def create_app(
                 # 只是设置页已删除、不再有输入口。
                 return await TavilyProvider(_read_secret(TAVILY_SECRET_NAME)).search(req)
 
-            async def test_connection(self):
-                return await TavilyProvider(_read_secret(TAVILY_SECRET_NAME)).test_connection()
 
         cloud_llm_provider = fake_llm_provider or _RuntimeLLMProvider(
             app.state.settings_service,

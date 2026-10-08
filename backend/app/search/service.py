@@ -61,10 +61,10 @@ class SearchService:
         if not provider_available(self.provider):
             raise DomainError(
                 "SEARCH_AUTH_FAILED",
-                "没有可用的联网搜索来源，请配置搜索 API Key 或选择支持联网的模型",
+                "没有可用的联网搜索来源",
                 400,
                 False,
-                "配置搜索来源后重试",
+                "稍后重试",
             )
         row = self.run_store.create(
             request_id=str(request.request_id),

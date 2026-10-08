@@ -3,11 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.api.errors import DomainError
-from app.schemas.web_search import (
-    SearchConnectionResult,
-    SearchRequest,
-    SearchResponse,
-)
+from app.schemas.web_search import SearchRequest, SearchResponse
 from app.search.fallback import FallbackSearchProvider
 from app.search.provider import SearchProviderError
 
@@ -29,8 +25,6 @@ class StubProvider:
             raise self._error
         return self._response
 
-    async def test_connection(self) -> SearchConnectionResult:
-        return SearchConnectionResult(ok=True, provider=self.name, message="ok")
 
 
 def _response(provider: str) -> SearchResponse:

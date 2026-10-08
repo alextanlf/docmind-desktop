@@ -444,7 +444,7 @@ class PersistentVectorStore:
             payload = meta_by_id.get(identifier)
             if payload is None:
                 # 过滤列与元数据表不一致时的兜底：宁可少一条，也不要返回
-                # 空 metadata 的脏命中（会影响 chat/evidence 的引用溯源）。
+                # 空 metadata 的脏命中（会让引用溯源拿到没有标题/页码的块）。
                 continue
             text, raw_metadata = payload
             try:

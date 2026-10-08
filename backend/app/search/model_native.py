@@ -12,7 +12,6 @@ import httpx
 from app.core.llm import ModelConfig
 from app.schemas.web_search import (
     NormalizedSearchResult,
-    SearchConnectionResult,
     SearchRequest,
     SearchResponse,
 )
@@ -124,22 +123,6 @@ class ModelSearchProvider:
         if support.kind == "mimo":
             return await self._search_mimo(config, api_key, request)
         return await self._search_openai(config, api_key, request)
-
-    async def test_connection(self) -> SearchConnectionResult:
-        resolved = self._resolve()
-        if resolved is None:
-            return SearchConnectionResult(
-                ok=False, provider=self.name, message="模型内置联网当前不可用"
-            )
-        try:
-            await self.search(SearchRequest(query="DocMind 联网搜索测试", max_results=1))
-        except Exception:  # noqa: BLE001 - connection test reports failure instead of raising
-            return SearchConnectionResult(
-                ok=False, provider=self.name, message="模型内置联网连接失败"
-            )
-        return SearchConnectionResult(
-            ok=True, provider=self.name, message=f"{resolved[2].label} 可用"
-        )
 
     async def _search_dashscope(
         self, config: ModelConfig, api_key: str, request: SearchRequest
