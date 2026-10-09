@@ -130,3 +130,23 @@ npm run icons:generate
 ```
 
 Dock 与应用包用「macOS 画布版」（`build/icons/png/docmind-icon-mac-512.png`、`DocMind.icns`）：1024 画布内实体只占 824，四周各留 100 透明边距，和系统自带图标的占位一致。窗口图标、favicon 等仍用铺满画布的版本（应用内侧边栏只保留 DocMind 文字，不再显示图标）。
+
+### 提交前扫描
+
+本仓库是公开仓库，所以提交前会拦下本机绝对路径（`/Users/<用户名>/…`）、本机专属目录名、常见密钥形态（`sk-`、`tvly-`、`AKIA`、`ghp_` 等）与个人邮箱。钩子在 `.githooks/pre-commit`，克隆后执行一次即可启用（`npm install` 的 `prepare` 也会自动做）：
+
+```bash
+git config core.hooksPath .githooks
+```
+
+测试夹具里的占位路径（`/Users/x/`、`/Users/private/`、`/Users/someone/` 等）已在白名单内，不会误报。本机专属词（本机目录名、主机名等）不写进仓库，放不受版本控制的 `.git/docmind-scan-terms`，一行一个：
+
+```bash
+printf '%s\n' '本机目录名' >> .git/docmind-scan-terms
+```
+
+确需提交故意构造的样例时显式绕过：
+
+```bash
+DOCMIND_SKIP_SECRET_SCAN=1 git commit ...
+```

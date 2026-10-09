@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# 提交前扫描：本机个人信息 + 常见密钥形态。
+#
+# 为什么存在：本仓库是 public，任何提交都会立刻公开。历史上曾把
+# /Users/<本机用户>/Documents/... 这类绝对路径写进脚本，泄漏了用户名与本机目录结构。
+#
+# 启用（克隆后执行一次；package.json 的 prepare 也会自动做）：
+#   git config core.hooksPath .githooks
+# 确需绕过（例如提交含故意脏输入的 redaction 测试）：
+#   DOCMIND_SKIP_SECRET_SCAN=1 git commit ...
+
+set -uo pipefail
+
+if [ "${DOCMIND_SKIP_SECRET_SCAN:-0}" = "1" ]; then
+  echo "secret-scan: 已按 DOCMIND_SKIP_SECRET_SCAN=1 跳过" >&2
+  exit 0
+fi
+
+# 允许出现的占位用户名（测试夹具里合法使用）
+ALLOW_USERS='shared|x|xxx|you|youruser|user|users|name|example|sample|demo|test|tests|testuser|tmp|private|secret|someone|someuser|foo|bar|alice|bob|me|home|placeholder|unknown'
+
+# 本机专属词：目录名 / 主机名 / 真名等，一行一个。
+# 🔴 故意不写在这份会被提交的脚本里——那等于把要防的词自己泄出去一份。
+# 本机专属词放不受版本控制的 .git/docmind-scan-terms：
+#   printf '%s\n' '你的本机目录名' >> .git/docmind-scan-terms
+MACHINE_TERMS=""
+TERMS_FILE="$(git rev-parse --git-dir 2>/dev/null)/docmind-scan-terms"
+if [ -f "$TERMS_FILE" ]; then
+  MACHINE_TERMS="$(cat "$TERMS_FILE")"
+fi
+
+# 常见密钥形态
+SECRET_RE='sk-[A-Za-z0-9_-]{16,}|tvly-[A-Za-z0-9_-]{10,}|sk-ant-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+
+# 个人邮箱域名
+MAIL_RE='[A-Za-z0-9._%+-]+@(qq|163|126|foxmail|outlook|gmail|icloud)\.[A-Za-z]{2,}'
+
+HOME_SEG="$(basename "${HOME:-/Users/unknown}")"
+found=0
+
+# 从 stdin 收 grep -n 的输出（形如 12:内容），逐条登记。
+# 注意：必须用 `< <(...)` 进程替换调用，否则会落在管道子 shell 里、found 传不出来。
+collect() { # $1=文件 $2=原因
+  local f="$1" why="$2" line n text
+  while IFS= read -r line; do
+    n="${line%%:*}"; text="${line#*:}"
+    printf '  %s:%s  [%s]\n    %s\n' \
+      "$f" "$n" "$why" "$(printf '%s' "$text" | cut -c1-160)" >&2
+    found=1
+  done
+}
+
+while IFS= read -r -d '' f; do
+  # 钩子自身含检测样例，不参与扫描
+  case "$f" in .githooks/*) continue ;; esac
+
+  # 二进制跳过（numstat 首列为 "-"）
+  if [ "$(git diff --cached --numstat -- "$f" | head -1 | awk '{print $1}')" = "-" ]; then
+    continue
+  fi
+
+  content="$(git show ":$f" 2>/dev/null)" || continue
+  [ -z "$content" ] && continue
+
+  # 1) 本机用户名出现在绝对路径里
+  collect "$f" "本机用户名路径" \
+    < <(printf '%s\n' "$content" | grep -nE "/(Users|home)/${HOME_SEG}(/|\"|'|$)" | head -3)
+
+  # 2) 其它 /Users/<seg>/ 且不在占位白名单里
+  #    用 -o 逐段匹配：同一行里既有占位路径又有真实路径时，才不会因占位路径而整行放过
+  collect "$f" "可疑用户目录" \
+    < <(printf '%s\n' "$content" | grep -noE "/(Users|home)/[A-Za-z0-9._-]+/" \
+        | grep -vE "/(Users|home)/(${ALLOW_USERS}|${HOME_SEG})/" | head -3)
+
+  # 3) 本机专属词
+  for term in $MACHINE_TERMS; do
+    collect "$f" "本机专属词「${term}」" \
+      < <(printf '%s\n' "$content" | grep -nF -- "$term" | head -3)
+  done
+
+  # 4) 密钥形态
+  collect "$f" "疑似密钥" \
+    < <(printf '%s\n' "$content" | grep -nE -- "$SECRET_RE" | head -3)
+
+  # 5) 个人邮箱
+  collect "$f" "个人邮箱" \
+    < <(printf '%s\n' "$content" | grep -nE -- "$MAIL_RE" | head -3)
+done < <(git diff --cached --name-only --diff-filter=ACM -z)
+
+if [ "$found" -ne 0 ]; then
+  cat >&2 <<'EOF'
+
+提交被拦下：上面命中了「本机信息 / 密钥」规则。本仓库是 public，请先改掉：
+  - 绝对路径  → 从脚本自身位置推导（Path(__file__).resolve().parents[1]）或走环境变量
+  - 真实密钥  → 放 keychain / 环境变量，仓库里只留占位样例
+  - 本机目录名 / 个人邮箱 → 换成中性占位
+确属故意为之（如 redaction 测试），显式绕过：
+  DOCMIND_SKIP_SECRET_SCAN=1 git commit ...
+EOF
+  exit 1
+fi
+
+exit 0

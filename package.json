@@ -20,7 +20,8 @@
     "test": "npm run desktop:test",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "icons:generate": "node scripts/generate-icons.mjs"
+    "icons:generate": "node scripts/generate-icons.mjs",
+    "prepare": "git config core.hooksPath .githooks || true"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.66.0",
