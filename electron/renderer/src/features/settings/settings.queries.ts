@@ -100,6 +100,41 @@ export function usePluginDirectoryQuery() {
   });
 }
 
+/**
+ * Switch a plugin off, or back on.
+ *
+ * The rows are derived state — a switched-off plugin loses its cards and gains
+ * a row of its own — so the catalogue has to be refetched, or the page would go
+ * on showing the plugin as though nothing had happened.
+ */
+export function useSetPluginEnabledMutation(plugin: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (enabled: boolean) => window.docmind.plugins.setEnabled(plugin, enabled),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: settingsKeys.plugins });
+      void client.invalidateQueries({ queryKey: settingsKeys.pluginDiagnostics });
+    },
+  });
+}
+
+/**
+ * Take a directory plugin out of the plugin directory.
+ *
+ * Same refetch as the switch, for the same reason: the plugin is no longer
+ * installed, so every row that came from it is now wrong.
+ */
+export function useUninstallPluginMutation(plugin: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => window.docmind.plugins.uninstall(plugin),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: settingsKeys.plugins });
+      void client.invalidateQueries({ queryKey: settingsKeys.pluginDiagnostics });
+    },
+  });
+}
+
 export function useSaveRemoteCredentialMutation(provider: string, channel: string) {
   const client = useQueryClient();
   return useMutation({

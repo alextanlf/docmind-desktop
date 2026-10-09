@@ -230,6 +230,30 @@ export const SaveRemoteCredentialInputSchema = z.object({
  * icon, keywords, tag). The renderer holds no list of its own and names no
  * vendor — installing a third-party plugin needs no change on this side.
  */
+/**
+ * The plugin a row belongs to.
+ *
+ * Every card names the plugin that provided it, because the plugin — not the
+ * credential channel — is the unit a user can switch off or take out. Declared
+ * `source` rather than inferred: an unfamiliar value must still render, for the
+ * same reason an unknown card kind does.
+ */
+export const PluginOriginSchema = z.object({
+  plugin: z.string(),
+  source: z.string(),
+  /** The directory, when the plugin is one; absent for a distribution. */
+  path: z.string().nullable().optional(),
+  version: z.string().nullable().optional(),
+  /** False once the user switched it off. The row stays on the page. */
+  enabled: z.boolean().default(true),
+  /** True when it loaded. Enabled but inactive is what a load failure looks like. */
+  active: z.boolean().default(true),
+  error: z.string().nullable().optional(),
+  /** Whether a switch and a remove button belong on the detail view. */
+  toggleable: z.boolean().default(false),
+  removable: z.boolean().default(false),
+});
+
 export const PluginManifestSchema = z.object({
   id: z.string(),
   /** Which kind of capability this card configures; picks the card body. */
@@ -268,6 +292,12 @@ export const PluginManifestSchema = z.object({
   accountLabel: z.string().nullable().optional(),
   browserInstall: z.boolean(),
   browserUnavailableCode: z.string().nullable().optional(),
+  /**
+   * Which plugin this row belongs to. Absent only for a contribution installed
+   * with nothing to attribute it to, which is not a shape the application
+   * produces — treated as "no plugin actions" rather than guessed at.
+   */
+  origin: PluginOriginSchema.nullable().optional(),
 });
 
 /**
@@ -285,6 +315,22 @@ export const PluginDiagnosticSchema = z.object({
   name: z.string(),
   error: z.string(),
   source: z.string(),
+});
+
+/**
+ * The outcome of switching a plugin off or taking it out.
+ *
+ * `restartRequired` is stated by the server rather than assumed by the client:
+ * plugins are discovered once per process, so nothing the user just changed is
+ * live yet, and a page that stayed silent about that would look like a switch
+ * that did nothing.
+ */
+export const PluginStateSchema = z.object({
+  plugin: z.string(),
+  enabled: z.boolean(),
+  restartRequired: z.boolean(),
+  /** Where a removed plugin was moved to; null for a switch. */
+  removedTo: z.string().nullable().optional(),
 });
 
 /**
@@ -810,6 +856,8 @@ export type RemoteCredentialChannel = z.infer<typeof RemoteCredentialChannelSche
 export type RemoteCredentialTestResult = z.infer<typeof RemoteCredentialTestResultSchema>;
 export type SaveRemoteCredentialInput = z.infer<typeof SaveRemoteCredentialInputSchema>;
 export type PluginManifest = z.infer<typeof PluginManifestSchema>;
+export type PluginOrigin = z.infer<typeof PluginOriginSchema>;
+export type PluginState = z.infer<typeof PluginStateSchema>;
 export type PluginDiagnostic = z.infer<typeof PluginDiagnosticSchema>;
 export type PluginDirectory = z.infer<typeof PluginDirectorySchema>;
 export type Repository = z.infer<typeof RepositorySchema>;
@@ -927,8 +975,8 @@ export interface DocMindApi {
     deleteCredential(provider: string, channel: string): Promise<RemoteCredentialChannel>;
   };
   /**
-   * The plugin catalogue. Read-only and vendor-agnostic: the response is
-   * derived from the backend's provider registry, so a newly installed
+   * The plugin catalogue. Read-only apart from the switch and the remove
+   * button: the rows are derived from what is installed, so a newly installed
    * third-party plugin shows up here with no client change. `query` is matched
    * server-side against each plugin's own declared text; empty returns all.
    */
@@ -937,6 +985,16 @@ export interface DocMindApi {
     diagnostics(): Promise<PluginDiagnostic[]>;
     /** The directory a plugin is installed by putting it in. */
     directory(): Promise<PluginDirectory>;
+    /**
+     * Switch a plugin off, or back on. Takes effect at the next start —
+     * plugins are discovered once per process — which the response says.
+     */
+    setEnabled(plugin: string, enabled: boolean): Promise<PluginState>;
+    /**
+     * Take a directory plugin out of the plugin directory. It is moved, not
+     * deleted, and the response reports where it went.
+     */
+    uninstall(plugin: string): Promise<PluginState>;
   };
   repositories: {
     list(): Promise<Repository[]>;

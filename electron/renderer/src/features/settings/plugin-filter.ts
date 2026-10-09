@@ -34,6 +34,11 @@ export function filterPlugins(plugins: PluginManifest[], query: string): PluginM
       plugin.tag ?? "",
       ...plugin.extensions,
       ...plugin.keywords,
+      // The plugin's own name, which is what someone who cloned it knows it as.
+      // A row's name appears in no label when the plugin is switched off, so
+      // without this the one row a user is looking for is the one they cannot
+      // find.
+      plugin.origin?.plugin ?? "",
     ]
       .join(" ")
       .toLowerCase();

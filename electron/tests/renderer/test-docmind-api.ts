@@ -7,6 +7,8 @@ import type {
   Message,
   ModelStatus,
   PluginManifest,
+  PluginOrigin,
+  PluginState,
   RemoteCredentialChannel,
   RemoteProviderSummary,
   Repository,
@@ -216,20 +218,46 @@ export const sourceFormats: SourceFormat[] = [
 ];
 
 /**
+ * A row's provenance.
+ *
+ * The defaults mirror the schema's — switched on, loaded, and offering neither
+ * action — so a test that cares about one of them states only that one. That is
+ * also why they are spelled out here rather than left off: after parsing, every
+ * one of these fields exists, and a fixture that omitted them would not be a
+ * `PluginManifest`.
+ */
+function origin(plugin: string, source: string, extra: Partial<PluginOrigin> = {}): PluginOrigin {
+  return {
+    plugin,
+    source,
+    enabled: true,
+    active: true,
+    toggleable: false,
+    removable: false,
+    ...extra,
+  };
+}
+
+/** Where the tex plugin's checkout lives in the fixtures. */
+export const texPluginPath = "/tmp/docmind-data/plugins/docmind-tex";
+
+/**
  * The plugin catalogue, mirroring what the backend derives from the installed
- * contributions: one card per credential channel, plus one per contributed
+ * contributions: one row per credential channel, plus one per contributed
  * document format.
  *
  * `acme` stands in for an installed third-party plugin — it has no counterpart
  * in DocMind's own source, which is the point: the renderer must present it
- * with no vendor-specific code. `tex:core` covers the other kind: a card whose
- * body is a static description rather than a credential form, and which
- * therefore reports no connection state.
+ * with no vendor-specific code. `tex:core` covers the other kind: a row whose
+ * body is not a credential form, and which therefore reports no connection
+ * state. Every row carries the plugin it came from, because that — not the
+ * channel — is what the page can switch off or remove.
  */
 export const pluginManifests: PluginManifest[] = [
   {
     kind: "remote_source",
     id: "yuque:web",
+    origin: origin("yuque", "builtin"),
     provider: "yuque",
     channel: "web",
     label: "语雀网页登录",
@@ -255,6 +283,7 @@ export const pluginManifests: PluginManifest[] = [
   {
     kind: "remote_source",
     id: "yuque:api",
+    origin: origin("yuque", "builtin"),
     provider: "yuque",
     channel: "api",
     label: "语雀 API",
@@ -280,6 +309,7 @@ export const pluginManifests: PluginManifest[] = [
   {
     kind: "remote_source",
     id: "feishu:app",
+    origin: origin("feishu", "builtin"),
     provider: "feishu",
     channel: "app",
     label: "飞书自建应用",
@@ -305,6 +335,7 @@ export const pluginManifests: PluginManifest[] = [
   {
     kind: "remote_source",
     id: "feishu:user",
+    origin: origin("feishu", "builtin"),
     provider: "feishu",
     channel: "user",
     label: "飞书账号授权",
@@ -330,6 +361,7 @@ export const pluginManifests: PluginManifest[] = [
   {
     kind: "remote_source",
     id: "feishu:webhook",
+    origin: origin("feishu", "builtin"),
     provider: "feishu",
     channel: "webhook",
     label: "飞书机器人",
@@ -358,6 +390,7 @@ export const pluginManifests: PluginManifest[] = [
   {
     kind: "remote_source",
     id: "acme:token",
+    origin: origin("acme-wiki", "distribution", { version: "0.1.0", toggleable: true }),
     provider: "acme",
     channel: "token",
     label: "Acme 访问令牌",
@@ -383,6 +416,12 @@ export const pluginManifests: PluginManifest[] = [
   {
     kind: "document_format",
     id: "tex:core",
+    origin: origin("docmind-tex", "directory", {
+      path: texPluginPath,
+      version: "0.1.0",
+      toggleable: true,
+      removable: true,
+    }),
     provider: "tex",
     channel: "core",
     label: "TeX 文档",
@@ -406,6 +445,72 @@ export const pluginManifests: PluginManifest[] = [
     browserUnavailableCode: null,
   },
 ];
+
+/**
+ * A plugin that is switched off.
+ *
+ * It has no cards — nothing of it was loaded — so this row is built from the
+ * plugin's own record. It is the case the page could not show at all before:
+ * without a row, a switched-off plugin would be invisible, and invisible is
+ * indistinguishable from never installed.
+ */
+export const switchedOffPlugin: PluginManifest = {
+  kind: "plugin",
+  id: "docmind-pages@directory",
+  origin: origin("docmind-pages", "directory", {
+    path: "/tmp/docmind-data/plugins/docmind-pages",
+    version: "0.1.0",
+    enabled: false,
+    active: false,
+    toggleable: true,
+    removable: true,
+  }),
+  provider: "docmind-pages",
+  channel: "",
+  label: "docmind-pages",
+  providerLabel: null,
+  summary: "把 Apple Pages 文档导入 DocMind",
+  hint: null,
+  icon: null,
+  keywords: ["pages", "iwork"],
+  tag: null,
+  homepage: null,
+  version: "0.1.0",
+  extensions: [],
+  hasSecret: false,
+  secretPlaceholder: null,
+  helpUrl: null,
+  helpLabel: null,
+  configured: false,
+  state: "disconnected",
+  accountLabel: null,
+  browserInstall: false,
+  browserUnavailableCode: null,
+};
+
+/**
+ * A plugin that failed to load.
+ *
+ * It keeps a row of its own carrying the reason, which is the whole point: a
+ * plugin that silently failed looks exactly like one that was never installed,
+ * and the reason is the only part a user can act on.
+ */
+export const brokenPlugin: PluginManifest = {
+  ...switchedOffPlugin,
+  id: "docmind-heavy@directory",
+  origin: origin("docmind-heavy", "directory", {
+    path: "/tmp/docmind-data/plugins/docmind-heavy",
+    active: false,
+    error: "ImportError: no module named 'docmind_absent_dependency'",
+    toggleable: true,
+    removable: true,
+  }),
+  provider: "docmind-heavy",
+  label: "docmind-heavy",
+  summary: null,
+  keywords: [],
+  version: null,
+};
 
 export const repository: Repository = {
   id: "00000000-0000-0000-0000-000000000021",
@@ -608,6 +713,19 @@ export function installDocMindApi(overrides?: {
       list: vi.fn().mockResolvedValue(pluginManifests),
       diagnostics: vi.fn().mockResolvedValue([]),
       directory: vi.fn().mockResolvedValue({ path: "/tmp/docmind-data/plugins" }),
+      // Both writes answer the way the backend does: a new position for the
+      // switch, and the real location a removed plugin was moved to.
+      setEnabled: vi.fn((plugin: string, enabled: boolean): Promise<PluginState> =>
+        Promise.resolve({ plugin, enabled, restartRequired: true, removedTo: null }),
+      ),
+      uninstall: vi.fn((plugin: string): Promise<PluginState> =>
+        Promise.resolve({
+          plugin,
+          enabled: false,
+          restartRequired: true,
+          removedTo: `/tmp/docmind-data/removed-plugins/${plugin}`,
+        }),
+      ),
       ...overrides?.plugins,
     },
     repositories: {

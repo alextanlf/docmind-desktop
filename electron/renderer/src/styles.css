@@ -1830,56 +1830,226 @@ input:disabled {
   font-size: 12px;
   line-height: 1.6;
 }
-.plugin-grid {
+/* The list is one row per plugin, and the row is a button: the page has two
+   levels now, so the whole row has to lead to the second one — a link inside it
+   would leave most of the target inert. */
+.plugin-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.plugin-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.plugin-row:hover {
+  border-color: var(--blue);
+  background: var(--surface);
+}
+.plugin-row:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+.plugin-row-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--blue);
+}
+.plugin-row-text {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+.plugin-row-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14px;
+}
+/* Which integration this plugs into. A row titled「机器人」or「网页登录」says
+   nothing on its own, so the owner is always shown. */
+.plugin-row-owner {
+  color: var(--muted);
+  font-size: 12px;
+}
+/* One line of what the plugin does — the rest is a click away. Truncated
+   rather than wrapped so a long summary cannot make one row twice as tall as
+   the next. */
+.plugin-row-summary {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plugin-row-meta {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+.plugin-row-chevron {
+  color: var(--muted);
+}
+/* The detail is the same content, one level in: a header, the facts, whatever
+   the plugin needs configured, and the two actions the server says it supports. */
+.plugin-detail {
+  display: grid;
+  min-width: 0;
+  align-content: start;
   gap: 14px;
 }
-.plugin-card {
+.plugin-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  justify-self: start;
+  padding: 4px 8px 4px 4px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+.plugin-back:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.plugin-detail-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.plugin-detail-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  margin-top: 1px;
+  color: var(--blue);
+}
+.plugin-detail-heading {
+  min-width: 0;
+  flex: 1;
+}
+.plugin-detail-heading h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.plugin-detail-summary {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.plugin-facts {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  font-size: 12px;
+}
+.plugin-facts > div {
+  display: flex;
+  gap: 10px;
+}
+.plugin-facts dt {
+  flex: 0 0 84px;
+  color: var(--muted);
+}
+.plugin-facts dd {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  word-break: break-all;
+}
+.plugin-facts code {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 11px;
+  color: var(--text);
+  user-select: text;
+}
+.plugin-format-extensions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.plugin-detail-body {
   display: grid;
   min-width: 0;
   align-content: start;
   gap: 10px;
-  padding: 15px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface-subtle);
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
 }
-.plugin-card > header {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
+.plugin-actions {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
 }
-.plugin-card > header > svg {
-  flex: 0 0 auto;
-  margin-top: 2px;
-  color: var(--blue);
-}
-.plugin-card-heading {
-  min-width: 0;
-  flex: 1;
-}
-.plugin-card h3 {
+.plugin-state-note {
   margin: 0;
-  font-size: 14px;
-}
-/* Which integration this plugs into. A card titled「机器人」or「网页登录」
-   says nothing on its own, so the owner is always shown. */
-.plugin-card-owner {
-  margin: 2px 0 0;
   color: var(--muted);
-  font-size: 12px;
-}
-.plugin-card-summary {
-  margin: 0;
   font-size: 12px;
   line-height: 1.6;
 }
-.plugin-card-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+/* The result of a removal, shown where the row used to be: the detail page it
+   happened on is gone by the time this renders. */
+.plugin-notice {
   margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--blue);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+.plugin-form {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 10px;
+}
+/* A plugin that failed to load must be visibly different from one that was
+   never installed, or the two are indistinguishable to the user. */
+.plugin-failure {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid #d92d20;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+.plugin-failure strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
 }
 .plugin-tag {
   padding: 2px 7px;
@@ -1903,47 +2073,19 @@ input:disabled {
   font-size: 12px;
   line-height: 1.6;
 }
-.plugin-card-body {
-  display: grid;
-  min-width: 0;
-  align-content: start;
-  gap: 10px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
+/* Which integration this details. The same job as `.plugin-row-owner`, on the
+   level a user reaches after clicking — kept name-identical to what it was on
+   the card so the two levels read the same. */
+.plugin-card-owner {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
 }
 .plugin-form {
   display: grid;
   min-width: 0;
   align-content: start;
   gap: 10px;
-}
-/* A plugin that failed to load must be visibly different from one that was
-   never installed, or the two are indistinguishable to the user. */
-.plugin-load-failures {
-  display: grid;
-  gap: 6px;
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
-.plugin-load-failures strong {
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 500;
-}
-.plugin-load-failures ul {
-  margin: 0;
-  padding-left: 18px;
-}
-.plugin-failure-source {
-  display: block;
-  color: var(--muted);
-  font-family: var(--mono, ui-monospace, SFMono-Regular, monospace);
-  font-size: 11px;
-  word-break: break-all;
 }
 .plugin-directory {
   display: grid;

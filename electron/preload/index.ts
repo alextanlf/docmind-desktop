@@ -43,6 +43,7 @@ import {
   PluginManifestSchema,
   PluginDiagnosticSchema,
   PluginDirectorySchema,
+  PluginStateSchema,
   BatchImportSchema,
   BatchItemPageSchema,
   BrowserInstallResultSchema,
@@ -224,6 +225,9 @@ const api: DocMindApi = {
     diagnostics: () =>
       invoke(IPC_CHANNELS.pluginsDiagnostics, PluginDiagnosticSchema.array()),
     directory: () => invoke(IPC_CHANNELS.pluginsDirectory, PluginDirectorySchema),
+    setEnabled: (plugin, enabled) =>
+      invoke(IPC_CHANNELS.pluginsSetEnabled, PluginStateSchema, plugin, enabled),
+    uninstall: (plugin) => invoke(IPC_CHANNELS.pluginsUninstall, PluginStateSchema, plugin),
   },
   repositories: {
     list: () => invoke(IPC_CHANNELS.repositoriesList, RepositorySchema.array()),

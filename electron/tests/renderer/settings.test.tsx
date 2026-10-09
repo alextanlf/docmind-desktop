@@ -6,10 +6,13 @@ import { SettingsView } from "../../renderer/src/features/settings/SettingsView"
 import { settingsModules } from "../../renderer/src/features/settings/settings-modules";
 import { clientErrorMessage } from "../../renderer/src/features/settings/settings.queries";
 import {
+  brokenPlugin,
   installDocMindApi,
   loggedOutRemote,
   pluginManifests,
   readySettings,
+  switchedOffPlugin,
+  texPluginPath,
 } from "./test-docmind-api";
 
 function renderSettings() {
@@ -37,19 +40,46 @@ async function openSection(label: string) {
 }
 
 /**
- * A plugin's card, located by its title.
+ * The plugin page's two levels, located the way a user gets between them.
  *
- * Every card is labelled by its own heading, so a bare `getByLabelText("语雀
- * API")` also matches the `<article>` and not just the credential input —
- * scoping to the card first is what makes "the input inside this plugin's card"
- * unambiguous.
+ * The list is a set of rows and the detail is one plugin behind a click, so a
+ * test that cares about a credential form has to open the plugin first — the
+ * same journey the user makes. Rows are matched on the label they *start* with:
+ * a row's accessible name is everything it shows (label, owner, summary,
+ * status), and asserting the whole string would break every time a status label
+ * changes.
  */
-function pluginCard(title: string): HTMLElement {
-  return screen.getByRole("heading", { name: title, level: 3 }).closest("article")!;
+function pluginSection(): HTMLElement {
+  return screen.getByRole("heading", { name: "插件" }).closest("section")!;
+}
+
+function pluginRows(): HTMLElement[] {
+  // `queryAll`: "no rows" is a state these tests assert, and the `getAll`
+  // variant throws on it rather than returning an empty list.
+  return within(pluginSection()).queryAllByRole("listitem");
+}
+
+async function pluginRow(label: string): Promise<HTMLElement> {
+  const pattern = new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
+  return screen.findByRole("button", { name: pattern });
+}
+
+function pluginDetail(title: string): HTMLElement {
+  return screen.getByRole("heading", { name: title, level: 3 }).closest(".plugin-detail")!;
+}
+
+async function openPlugin(label: string): Promise<HTMLElement> {
+  fireEvent.click(await pluginRow(label));
+  return pluginDetail(label);
+}
+
+async function backToList(): Promise<void> {
+  fireEvent.click(screen.getByRole("button", { name: "返回插件列表" }));
+  await screen.findByLabelText("搜索插件");
 }
 
 function pluginInput(title: string): HTMLElement {
-  return within(pluginCard(title)).getByLabelText(title);
+  return within(pluginDetail(title)).getByLabelText(title);
 }
 
 describe("设置", () => {
@@ -227,89 +257,90 @@ describe("设置", () => {
     expect(api.embedding.prepare).not.toHaveBeenCalled();
     expect(screen.queryByRole("progressbar", { name: "Embedding 加载进度" })).not.toBeInTheDocument();
 
-    expect(await screen.findByRole("button", { name: "登录语雀网页登录" })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "登录语雀网页登录" }));
+    // The login control is one level in now: the list says what a plugin is for,
+    // the detail is where it is connected.
+    const detail = await openPlugin("语雀网页登录");
+    const login = await within(detail).findByRole("button", { name: "登录语雀网页登录" });
+    expect(login).toBeVisible();
+    fireEvent.click(login);
     expect(api.remote.login).toHaveBeenCalledWith("yuque");
   });
 
-  it("renders one flat card per plugin with no grouping and no vendor list", async () => {
+  it("lists one row per plugin with no grouping and no vendor list", async () => {
     const api = installDocMindApi({
       remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
     });
     renderSettings();
     await openSection("插件");
 
-    // One card per credential channel — 「语雀网页登录」 and 「语雀 API」 are
-    // two things a user chooses between, so they are two cards rather than one
-    // vendor card with two rows in it.
-    await screen.findByRole("heading", { name: "语雀网页登录", level: 3 });
+    // One row per credential channel — 「语雀网页登录」 and 「语雀 API」 are two
+    // things a user chooses between, so they are two rows rather than one vendor
+    // row with two lines in it.
+    await pluginRow("语雀网页登录");
     for (const label of ["语雀 API", "飞书自建应用", "飞书账号授权", "飞书机器人"]) {
-      expect(screen.getByRole("heading", { name: label, level: 3 })).toBeVisible();
+      expect(await pluginRow(label)).toBeVisible();
     }
+    expect(pluginRows()).toHaveLength(pluginManifests.length);
 
-    // The regression this page exists to prevent: cards used to be partitioned
+    // The regression this page exists to prevent: rows used to be partitioned
     // into 「知识库来源」/「通知」, which made a bot webhook read as a third way
     // to import documents. There must be no such sections anywhere on the page.
     expect(screen.queryByRole("region", { name: "知识库来源" })).toBeNull();
     expect(screen.queryByRole("region", { name: "通知" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "知识库来源" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "通知" })).toBeNull();
-    // And no sub-headings inside the plugin page itself: every card is a peer,
+    // And no sub-headings inside the plugin page itself: every row is a peer,
     // with nothing above it but the search box. Scoped to the section because
     // other settings pages legitimately have their own sub-headings.
-    const plugins = screen.getByRole("heading", { name: "插件" }).closest("section")!;
-    expect(within(plugins).queryAllByRole("heading", { level: 4 })).toHaveLength(0);
-    expect(within(plugins).queryAllByRole("region")).toHaveLength(0);
+    expect(within(pluginSection()).queryAllByRole("heading", { level: 4 })).toHaveLength(0);
+    expect(within(pluginSection()).queryAllByRole("region")).toHaveLength(0);
 
     // A single request for the whole catalogue. The old layout needed one
     // credential request per provider just to decide its groupings.
     expect(api.plugins.list).toHaveBeenCalledTimes(1);
     expect(api.remote.listProviders).not.toHaveBeenCalled();
 
-    // Each card says which integration it plugs into. Without the owner a card
-    // titled 「机器人」 or 「网页登录」 identifies nothing.
-    const card = screen.getByRole("heading", { name: "飞书机器人", level: 3 }).closest("article")!;
-    expect(within(card).getByText("飞书文档")).toBeVisible();
-
+    // Each row says which integration it plugs into and what it is for. Without
+    // the owner a row titled 「机器人」 or 「网页登录」 identifies nothing.
+    const row = await pluginRow("飞书机器人");
+    expect(within(row).getByText("飞书文档")).toBeVisible();
+    expect(within(row).getByText("导入完成或失败时，往群里发一条通知")).toBeVisible();
     // Purpose survives as a tag, not as a section divider.
-    expect(within(card).getByText("通知")).toBeVisible();
-    const sourceCard = screen
-      .getByRole("heading", { name: "语雀 API", level: 3 })
-      .closest("article")!;
-    expect(within(sourceCard).getByText("知识库")).toBeVisible();
+    expect(within(row).getByText("通知")).toBeVisible();
+    expect(within(await pluginRow("语雀 API")).getByText("知识库")).toBeVisible();
   });
 
-  it("renders a card for a contributed document format", async () => {
+  it("describes a contributed document format without inventing a credential", async () => {
     installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
     renderSettings();
     await openSection("插件");
 
-    const card = (
-      await screen.findByRole("heading", { name: "TeX 文档", level: 3 })
-    ).closest("article")!;
+    await pluginRow("TeX 文档");
+    const detail = await openPlugin("TeX 文档");
 
-    // A format card states what it adds rather than offering a credential form.
-    expect(within(card).getByText("文档格式")).toBeVisible();
-    expect(within(card).getByText(".tex")).toBeVisible();
-    expect(within(card).getByText(".latex")).toBeVisible();
+    // A format states what it adds rather than offering a credential form.
+    expect(within(detail).getByText("文档格式")).toBeVisible();
+    expect(within(detail).getByText("支持的文件类型")).toBeVisible();
+    expect(within(detail).getByText(".tex")).toBeVisible();
+    expect(within(detail).getByText(".latex")).toBeVisible();
     // It stores no credential, so neither a secret field nor a login button
     // belongs on it — the old two-way body would have drawn a login button.
-    expect(within(card).queryByRole("button", { name: /登录/ })).toBeNull();
-    expect(within(card).queryByRole("textbox")).toBeNull();
+    expect(within(detail).queryByRole("button", { name: /登录/ })).toBeNull();
+    expect(within(detail).queryByRole("textbox")).toBeNull();
     // And it reports no connection, because there is nothing to connect.
-    expect(within(card).queryByText("未连接")).toBeNull();
+    expect(within(detail).queryByText("未连接")).toBeNull();
   });
 
-  it("finds a format card through the search box by its extension", async () => {
+  it("finds a format row through the search box by its extension", async () => {
     installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
     renderSettings();
     await openSection("插件");
 
-    await screen.findByRole("heading", { name: "语雀网页登录", level: 3 });
+    await pluginRow("语雀网页登录");
     fireEvent.change(screen.getByLabelText("搜索插件"), { target: { value: ".latex" } });
 
-    expect(screen.getByRole("heading", { name: "TeX 文档", level: 3 })).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "语雀 API", level: 3 })).toBeNull();
+    expect(await pluginRow("TeX 文档")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^语雀 API/ })).toBeNull();
   });
 
   it("searches plugins by label, owner, summary and declared keywords", async () => {
@@ -317,40 +348,54 @@ describe("设置", () => {
     renderSettings();
     await openSection("插件");
 
-    await screen.findByRole("heading", { name: "语雀网页登录", level: 3 });
+    await pluginRow("语雀网页登录");
     const search = screen.getByLabelText("搜索插件");
 
     // All three Feishu channels match on the owner alone, across all three
-    // cards — the owner is searchable, not just the title.
+    // rows — the owner is searchable, not just the title.
     fireEvent.change(search, { target: { value: "飞书" } });
-    expect(screen.getByRole("heading", { name: "飞书机器人", level: 3 })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "飞书自建应用", level: 3 })).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "语雀 API", level: 3 })).toBeNull();
+    expect(await pluginRow("飞书机器人")).toBeVisible();
+    expect(await pluginRow("飞书自建应用")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^语雀 API/ })).toBeNull();
 
     // An alias only the plugin declares:「lark」appears in no label at all.
     fireEvent.change(search, { target: { value: "lark" } });
-    expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(3);
+    expect(pluginRows()).toHaveLength(3);
 
     // The summary is searchable, which is why a plugin whose summary mentions a
     // token matches on it too — 「语雀 API」 declares「用个人访问令牌读取…」.
     fireEvent.change(search, { target: { value: "访问令牌" } });
-    expect(screen.getByRole("heading", { name: "Acme 访问令牌", level: 3 })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "语雀 API", level: 3 })).toBeVisible();
+    expect(await pluginRow("Acme 访问令牌")).toBeVisible();
+    expect(await pluginRow("语雀 API")).toBeVisible();
     // A summary that mentions no plugin at all — nothing to match.
-    expect(screen.queryByRole("heading", { name: "飞书机器人", level: 3 })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^飞书机器人/ })).toBeNull();
 
     // Terms are ANDed, so a second word narrows instead of widening.
     fireEvent.change(search, { target: { value: "语雀 令牌" } });
-    expect(screen.getByRole("heading", { name: "语雀 API", level: 3 })).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "语雀网页登录", level: 3 })).toBeNull();
+    expect(await pluginRow("语雀 API")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^语雀网页登录/ })).toBeNull();
 
     // A miss explains itself instead of showing an empty page.
     fireEvent.change(search, { target: { value: "不存在的东西" } });
-    expect(screen.queryAllByRole("heading", { level: 3 })).toHaveLength(0);
+    expect(pluginRows()).toHaveLength(0);
     expect(screen.getByText(/换个关键词试试/)).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "清除搜索" }));
-    expect(screen.getAllByRole("heading", { level: 3 }).length).toBeGreaterThan(3);
+    expect(pluginRows().length).toBeGreaterThan(3);
+  });
+
+  it("finds a plugin by its own name, which no label contains", async () => {
+    // 「docmind-tex」 is what someone who cloned it calls it, and the name appears
+    // in no label on the page — it reaches the search through the provenance.
+    installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
+    renderSettings();
+    await openSection("插件");
+
+    await pluginRow("语雀网页登录");
+    fireEvent.change(screen.getByLabelText("搜索插件"), { target: { value: "docmind-tex" } });
+
+    expect(await pluginRow("TeX 文档")).toBeVisible();
+    expect(pluginRows()).toHaveLength(1);
   });
 
   it("presents an installed third-party plugin with no vendor-specific code", async () => {
@@ -358,56 +403,58 @@ describe("设置", () => {
     renderSettings();
     await openSection("插件");
 
-    //「acme」 exists nowhere in DocMind's own source. If this card renders, the
+    //「acme」 exists nowhere in DocMind's own source. If this row renders, the
     // page really is driven by the catalogue rather than by a hard-coded list.
-    const card = await screen.findByRole("article", { name: /Acme 访问令牌/ });
-    expect(within(card).getByText("Acme Wiki")).toBeVisible();
-    expect(within(card).getByText("用个人访问令牌读取 Acme Wiki")).toBeVisible();
-    // Declared version and homepage both surface.
-    expect(within(card).getByText("v0.1.0")).toBeVisible();
-    expect(within(card).getByRole("link", { name: "了解更多" })).toBeVisible();
+    await pluginRow("Acme 访问令牌");
+    const detail = await openPlugin("Acme 访问令牌");
+
+    expect(within(detail).getByText("Acme Wiki")).toBeVisible();
+    expect(within(detail).getByText("用个人访问令牌读取 Acme Wiki")).toBeVisible();
+    // Declared version, homepage and category all surface.
+    expect(within(detail).getByText("v0.1.0")).toBeVisible();
+    expect(within(detail).getByRole("link", { name: "了解更多" })).toBeVisible();
+    // And where it came from, which the card could not know: it is installed as
+    // a package, so it can be switched off but not removed from here.
+    expect(within(detail).getByText("已安装的插件包")).toBeVisible();
+    expect(within(detail).getByRole("button", { name: "停用插件" })).toBeVisible();
+    expect(within(detail).queryByRole("button", { name: "移除插件" })).toBeNull();
+    expect(
+      within(detail).getByText("这个插件以插件包的形式安装，DocMind 不能替你移除它。"),
+    ).toBeVisible();
   });
 
-  it("reports plugins that failed to load instead of hiding them", async () => {
+  it("keeps a plugin that failed to load visible, with the reason", async () => {
     installDocMindApi({
-      plugins: {
-        diagnostics: vi.fn().mockResolvedValue([
-          {
-            name: "acme",
-            error: "ImportError: no module",
-            source: "/Users/someone/.docmind/plugins/docmind-tex",
-          },
-        ]),
-      },
+      plugins: { list: vi.fn().mockResolvedValue([...pluginManifests, brokenPlugin]) },
     });
     renderSettings();
     await openSection("插件");
 
-    // A plugin that silently failed is indistinguishable from one that was
-    // never installed, so the user could not tell "broken" from "does not exist".
-    expect(await screen.findByText("以下插件加载失败")).toBeVisible();
-    expect(screen.getByText(/no module/)).toBeVisible();
-    // And the directory is named: with several clones on disk, that is the one
-    // piece of information that says which one to fix.
-    expect(screen.getByText("/Users/someone/.docmind/plugins/docmind-tex")).toBeVisible();
+    // A plugin that silently failed is indistinguishable from one that was never
+    // installed, so the row carries the reason rather than only the name — and
+    // it stays reachable so the user can remove the clone that broke.
+    const row = await pluginRow("docmind-heavy");
+    expect(within(row).getByText(/docmind_absent_dependency/)).toBeVisible();
+    expect(within(row).getByText("加载失败")).toBeVisible();
+
+    const detail = await openPlugin("docmind-heavy");
+    expect(within(detail).getByRole("alert")).toHaveTextContent("ImportError");
+    expect(within(detail).getByText("插件目录")).toBeVisible();
   });
 
-  it("does not show a directory for a plugin that loaded", async () => {
-    installDocMindApi({
-      plugins: {
-        // Every plugin produces a record, including the ones that worked. The
-        // panel must key off the error, not off the record's existence.
-        diagnostics: vi
-          .fn()
-          .mockResolvedValue([{ name: "acme", error: "", source: "/tmp/acme" }]),
-      },
-    });
+  it("names a directory only for a plugin that came from one", async () => {
+    installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
     renderSettings();
     await openSection("插件");
-    await screen.findByRole("searchbox");
 
-    expect(screen.queryByText("以下插件加载失败")).not.toBeInTheDocument();
-    expect(screen.queryByText("/tmp/acme")).not.toBeInTheDocument();
+    const installed = await openPlugin("Acme 访问令牌");
+    expect(within(installed).queryByText(/\/tmp\//)).toBeNull();
+    await backToList();
+
+    // A directory is the one source a user can act on, so it is the one that
+    // gets named — it is the thing they cloned and the thing they need to edit.
+    const checkout = await openPlugin("TeX 文档");
+    expect(within(checkout).getByText(texPluginPath)).toBeVisible();
   });
 
   it("tells the user where to put a plugin", async () => {
@@ -426,6 +473,23 @@ describe("设置", () => {
     expect(screen.getByText(/重启 DocMind 后生效/)).toBeVisible();
   });
 
+  it("keeps the search when a plugin is opened and the list is returned to", async () => {
+    installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
+    renderSettings();
+    await openSection("插件");
+
+    await pluginRow("语雀网页登录");
+    fireEvent.change(screen.getByLabelText("搜索插件"), { target: { value: "飞书" } });
+    await openPlugin("飞书机器人");
+
+    // The list unmounts while a detail is open, so a search box that owned its
+    // own text would come back empty — and the user would have to type the same
+    // thing again to get back to where they were.
+    await backToList();
+    expect(screen.getByLabelText("搜索插件")).toHaveValue("飞书");
+    expect(pluginRows()).toHaveLength(3);
+  });
+
   it("saves a plugin credential under its own provider and channel", async () => {
     const api = installDocMindApi({
       remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
@@ -433,13 +497,13 @@ describe("设置", () => {
     renderSettings();
     await openSection("插件");
 
-    // Located through the card, not by index: the grid order is whatever the
-    // catalogue returned, and an index would silently start pointing at a
-    // different plugin's form the moment one is added or removed.
-    await screen.findByRole("heading", { name: "飞书自建应用", level: 3 });
+    // Located through the plugin it belongs to, not by index: the list order is
+    // whatever the catalogue returned, and an index would silently start
+    // pointing at a different plugin's form the moment one is added or removed.
+    const feishu = await openPlugin("飞书自建应用");
     const field = pluginInput("飞书自建应用");
     fireEvent.change(field, { target: { value: "cli_a1b2:s3cret" } });
-    fireEvent.click(field.closest("article")!.querySelector("button")!);
+    fireEvent.click(within(feishu).getByRole("button", { name: "保存并验证" }));
 
     await waitFor(() =>
       expect(api.remote.saveCredential).toHaveBeenCalledWith("feishu", "app", {
@@ -448,9 +512,10 @@ describe("设置", () => {
     );
     expect(api.remote.testCredential).toHaveBeenCalledWith("feishu", "app");
 
-    const yuqueApi = pluginInput("语雀 API");
-    fireEvent.change(yuqueApi, { target: { value: "yuque-token" } });
-    fireEvent.click(yuqueApi.closest("article")!.querySelector("button")!);
+    await backToList();
+    const yuque = await openPlugin("语雀 API");
+    fireEvent.change(pluginInput("语雀 API"), { target: { value: "yuque-token" } });
+    fireEvent.click(within(yuque).getByRole("button", { name: "保存并验证" }));
     await waitFor(() =>
       expect(api.remote.saveCredential).toHaveBeenCalledWith("yuque", "api", {
         secret: "yuque-token",
@@ -495,7 +560,7 @@ describe("设置", () => {
 
     // A URL-shaped credential must not be labelled "… Token", and the form
     // has to surface the plugin's own placeholder and help link.
-    await screen.findByRole("heading", { name: "飞书机器人", level: 3 });
+    const webhook = await openPlugin("飞书机器人");
     const webhookInput = pluginInput("飞书机器人");
     expect(webhookInput).toHaveAttribute(
       "placeholder",
@@ -503,8 +568,10 @@ describe("设置", () => {
     );
     // The help link comes from the plugin manifest rather than any hard-coded
     // vendor string, so a third-party plugin's link renders the same way.
-    expect(screen.getAllByRole("link", { name: /添加机器人/ })).toHaveLength(1);
+    expect(within(webhook).getAllByRole("link", { name: /添加机器人/ })).toHaveLength(1);
     // Plugins supply their own placeholder too, instead of the generic copy.
+    await backToList();
+    await openPlugin("语雀 API");
     expect(pluginInput("语雀 API")).toHaveAttribute("placeholder", "粘贴语雀个人访问令牌");
   });
 
@@ -517,23 +584,27 @@ describe("设置", () => {
     renderSettings();
     await openSection("插件");
 
-    await screen.findByRole("heading", { name: "语雀 API", level: 3 });
-    // The login affordance appears only after the plugin's status query lands,
-    // so it is awaited rather than assumed.
-    expect(
-      await screen.findByRole("button", { name: "登录语雀网页登录" }),
-    ).toBeVisible();
-    expect(
-      await screen.findByRole("button", { name: "登录飞书账号授权" }),
-    ).toBeVisible();
-    // hasSecret: false → no credential field at all. Scoped to the card so the
-    // query cannot accidentally hit a different plugin's input.
-    expect(within(pluginCard("语雀网页登录")).queryByLabelText("语雀网页登录")).toBeNull();
+    // hasSecret: false → the login affordance and no credential field at all.
+    // The login entry appears only after the plugin's status query lands, so it
+    // is awaited rather than assumed.
+    const web = await openPlugin("语雀网页登录");
+    expect(await within(web).findByRole("button", { name: "登录语雀网页登录" })).toBeVisible();
+    expect(within(web).queryByLabelText("语雀网页登录")).toBeNull();
+
     // hasSecret: true → the field, no login button.
-    expect(screen.queryByRole("button", { name: /登录飞书自建应用/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /登录飞书机器人/ })).toBeNull();
-    // The help link belongs to the API plugin alone.
-    expect(screen.getAllByRole("link", { name: /获取令牌/ })).toHaveLength(1);
+    await backToList();
+    const app = await openPlugin("飞书自建应用");
+    expect(pluginInput("飞书自建应用")).toBeVisible();
+    expect(within(app).queryByRole("button", { name: /登录飞书自建应用/ })).toBeNull();
+
+    // The help link belongs to the channel that declares one, not to every
+    // channel of that provider.
+    await backToList();
+    const api = await openPlugin("语雀 API");
+    expect(within(api).getAllByRole("link", { name: /获取令牌/ })).toHaveLength(1);
+    await backToList();
+    const other = await openPlugin("飞书账号授权");
+    expect(within(other).queryByRole("link", { name: /获取令牌/ })).toBeNull();
   });
 
   it("installs the browser when a plugin declares it and login reports it missing", async () => {
@@ -552,7 +623,8 @@ describe("设置", () => {
 
     // The affordance exists because the manifest declares browserInstall plus
     // the error code its absence raises — not because the vendor is recognised.
-    fireEvent.click(await screen.findByRole("button", { name: "登录语雀网页登录" }));
+    const detail = await openPlugin("语雀网页登录");
+    fireEvent.click(await within(detail).findByRole("button", { name: "登录语雀网页登录" }));
     fireEvent.click(await screen.findByRole("button", { name: "安装浏览器" }));
 
     expect(await screen.findByText("语雀浏览器已安装")).toBeVisible();
@@ -579,8 +651,151 @@ describe("设置", () => {
 
     // browserInstall is false for every Feishu channel, so the button must not
     // appear even when login fails — a vendor-name check would have shown it.
-    expect((await screen.findAllByRole("button", { name: "重新检查" })).length).toBeGreaterThan(0);
-    expect(screen.queryByRole("button", { name: "安装浏览器" })).toBeNull();
+    // The channel is one that renders a login entry, since that is the only
+    // form the affordance belongs to.
+    const detail = await openPlugin("飞书账号授权");
+    expect((await within(detail).findAllByRole("button", { name: "重新检查" })).length).toBeGreaterThan(0);
+    expect(within(detail).queryByRole("button", { name: "安装浏览器" })).toBeNull();
+  });
+
+  it("switches a plugin off and says when that takes effect", async () => {
+    const api = installDocMindApi({ plugins: { list: vi.fn().mockResolvedValue([...pluginManifests, switchedOffPlugin]) } });
+    renderSettings();
+    await openSection("插件");
+
+    // A plugin with no cards of its own is still a row, marked as switched off:
+    // the alternative is a plugin that vanishes when turned off, which could
+    // never be turned back on.
+    const row = await pluginRow("docmind-pages");
+    expect(within(row).getByText("已停用")).toBeVisible();
+    expect(within(row).getByText("把 Apple Pages 文档导入 DocMind")).toBeVisible();
+
+    const detail = await openPlugin("docmind-pages");
+    expect(within(detail).getByText("/tmp/docmind-data/plugins/docmind-pages")).toBeVisible();
+    expect(
+      within(detail).getByText("已停用，重启 DocMind 后生效。"),
+    ).toBeVisible();
+
+    fireEvent.click(within(detail).getByRole("button", { name: "启用插件" }));
+
+    await waitFor(() => expect(api.plugins.setEnabled).toHaveBeenCalledWith("docmind-pages", true));
+  });
+
+  it("switches a loaded plugin off", async () => {
+    const api = installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
+    renderSettings();
+    await openSection("插件");
+
+    const detail = await openPlugin("TeX 文档");
+    fireEvent.click(within(detail).getByRole("button", { name: "停用插件" }));
+
+    await waitFor(() => expect(api.plugins.setEnabled).toHaveBeenCalledWith("docmind-tex", false));
+  });
+
+  it("shows the switch in its new position as soon as the catalogue says so", async () => {
+    // The backend reflects the switch in the catalogue it serves — the plugin
+    // still runs until the restart, but it is no longer announced as on — so the
+    // page must not need a restart to show the new position either. Otherwise
+    // the user clicks 停用, the button does not move, and it reads as broken.
+    const switchedOff = pluginManifests.map((plugin) =>
+      plugin.id === "tex:core"
+        ? { ...plugin, origin: { ...plugin.origin!, enabled: false, active: false } }
+        : plugin,
+    );
+    installDocMindApi({
+      remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
+      plugins: {
+        list: vi.fn().mockResolvedValueOnce(pluginManifests).mockResolvedValue(switchedOff),
+      },
+    });
+    renderSettings();
+    await openSection("插件");
+
+    const detail = await openPlugin("TeX 文档");
+    fireEvent.click(within(detail).getByRole("button", { name: "停用插件" }));
+
+    const after = pluginDetail("TeX 文档");
+    expect(await within(after).findByRole("button", { name: "启用插件" })).toBeVisible();
+    expect(within(after).getByText("已停用，重启 DocMind 后生效。")).toBeVisible();
+    expect(within(after).getByText("已停用")).toBeVisible();
+  });
+
+  it("offers a built-in plugin no switch, and says why", async () => {
+    installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
+    renderSettings();
+    await openSection("插件");
+
+    // DocMind's own integrations are installed by the application rather than
+    // found on disk, so there is nothing here to switch off or move. Stated,
+    // because a missing control with no explanation reads as a bug.
+    const detail = await openPlugin("语雀 API");
+    expect(within(detail).queryByRole("button", { name: "停用插件" })).toBeNull();
+    expect(within(detail).queryByRole("button", { name: "启用插件" })).toBeNull();
+    expect(within(detail).queryByRole("button", { name: "移除插件" })).toBeNull();
+    expect(within(detail).getByText("随 DocMind 提供，不能单独停用或移除。")).toBeVisible();
+    expect(within(detail).getByText("随 DocMind 提供")).toBeVisible();
+  });
+
+  it("removes a directory plugin only after a confirmation that says it is not a delete", async () => {
+    const api = installDocMindApi({ plugins: { list: vi.fn().mockResolvedValue([...pluginManifests, switchedOffPlugin]) } });
+    renderSettings();
+    await openSection("插件");
+
+    const detail = await openPlugin("docmind-pages");
+    fireEvent.click(within(detail).getByRole("button", { name: "移除插件" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "确认移除插件" });
+    // The confirmation has to say the files survive: "remove" reads as "delete"
+    // otherwise, and this moves a checkout the user cloned themselves.
+    expect(dialog).toHaveTextContent("插件文件不会被删除");
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认移除" }));
+
+    await waitFor(() => expect(api.plugins.uninstall).toHaveBeenCalledWith("docmind-pages"));
+    // The row is gone, so the message belongs to the list the user lands on —
+    // and it names where the plugin went rather than claiming it was deleted.
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "/tmp/docmind-data/removed-plugins/docmind-pages",
+    );
+    expect(screen.getByLabelText("搜索插件")).toBeVisible();
+  });
+
+  it("cannot remove a plugin without confirming", async () => {
+    const api = installDocMindApi({ plugins: { list: vi.fn().mockResolvedValue([...pluginManifests, switchedOffPlugin]) } });
+    renderSettings();
+    await openSection("插件");
+
+    const detail = await openPlugin("docmind-pages");
+    fireEvent.click(within(detail).getByRole("button", { name: "移除插件" }));
+    const dialog = await screen.findByRole("dialog", { name: "确认移除插件" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+
+    expect(api.plugins.uninstall).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "确认移除插件" })).not.toBeInTheDocument();
+  });
+
+  it("reports a refused action instead of pretending it worked", async () => {
+    const api = installDocMindApi({
+      plugins: {
+        list: vi.fn().mockResolvedValue([...pluginManifests, switchedOffPlugin]),
+        setEnabled: vi.fn().mockRejectedValue({
+          code: "PLUGIN_NOT_TOGGLEABLE",
+          message: "随 DocMind 提供，不能停用",
+          retryable: false,
+        }),
+      },
+    });
+    renderSettings();
+    await openSection("插件");
+
+    const detail = await openPlugin("docmind-pages");
+    fireEvent.click(within(detail).getByRole("button", { name: "启用插件" }));
+
+    expect(await within(pluginDetail("docmind-pages")).findByRole("alert")).toBeVisible();
+    // And the switch is still where it was: a failed write must not look applied.
+    expect(
+      within(pluginDetail("docmind-pages")).getByRole("button", { name: "启用插件" }),
+    ).toBeVisible();
+    expect(api.plugins.setEnabled).toHaveBeenCalledTimes(1);
   });
 
   it("confirms and clears only diagnostic screenshots, then refetches settings", async () => {

@@ -21,6 +21,8 @@ export const IPC_CHANNELS = {
   pluginsList: "plugins:list",
   pluginsDiagnostics: "plugins:diagnostics",
   pluginsDirectory: "plugins:directory",
+  pluginsSetEnabled: "plugins:setEnabled",
+  pluginsUninstall: "plugins:uninstall",
   repositoriesList: "repositories:list",
   repositoriesCreate: "repositories:create",
   repositoriesUpdate: "repositories:update",

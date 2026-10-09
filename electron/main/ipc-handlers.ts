@@ -44,6 +44,7 @@ import {
   PluginManifestSchema,
   PluginDiagnosticSchema,
   PluginDirectorySchema,
+  PluginStateSchema,
   BatchImportSchema,
   BatchItemPageSchema,
   BrowserInstallResultSchema,
@@ -124,6 +125,21 @@ const BYTE_OFFSET = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
  * way out; the value is user input, so it is validated like any other.
  */
 const PLUGIN_QUERY = z.string().trim().max(200);
+/**
+ * A plugin's name, and nothing else.
+ *
+ * The request never carries a path: the server resolves the name against the
+ * plugins discovery found and takes the directory from its own scan. This
+ * pattern is the client-side half of that — a name that could be a path never
+ * leaves this process, so a bug in the server's resolution cannot be reached
+ * from a compromised renderer either.
+ */
+const PLUGIN_NAME = z
+  .string()
+  .trim()
+  .min(1)
+  .max(120)
+  .regex(/^[A-Za-z0-9._-]+$/);
 const REMOTE_PROVIDER = z
   .string()
   .trim()
@@ -261,6 +277,18 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
       proxy.requestJson("/api/plugins/diagnostics", {}, z.array(PluginDiagnosticSchema)),
     [IPC_CHANNELS.pluginsDirectory]: () =>
       proxy.requestJson("/api/plugins/directory", {}, PluginDirectorySchema),
+    [IPC_CHANNELS.pluginsSetEnabled]: (_event, plugin, enabled) =>
+      proxy.requestJson(
+        `/api/plugins/${encodeURIComponent(parse(PLUGIN_NAME, plugin))}/enabled`,
+        jsonInit("PUT", { enabled: parse(z.boolean(), enabled) }),
+        PluginStateSchema,
+      ),
+    [IPC_CHANNELS.pluginsUninstall]: (_event, plugin) =>
+      proxy.requestJson(
+        `/api/plugins/${encodeURIComponent(parse(PLUGIN_NAME, plugin))}`,
+        jsonInit("DELETE"),
+        PluginStateSchema,
+      ),
     [IPC_CHANNELS.repositoriesList]: () =>
       proxy.requestJson("/api/repositories", {}, z.array(RepositorySchema)),
     [IPC_CHANNELS.repositoriesCreate]: (_event, input) =>
