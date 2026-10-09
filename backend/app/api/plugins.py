@@ -128,6 +128,14 @@ async def set_plugin_enabled(
             False,
         )
     _state(request).set_enabled(record.name, enabled=body.enabled)
+    # 🔴 The in-memory record is updated too, and this is not bookkeeping: the
+    # catalogue is built from these records, so a switch that only touched the
+    # file would leave the row reading 「已启用」 until the next start — the user
+    # clicks a button, nothing moves, and the honest "takes effect at the next
+    # start" notice never gets a chance to appear. Its contributions stay: they
+    # *are* still loaded in this process, so hiding their cards would be the
+    # opposite lie.
+    record.disabled = not body.enabled
     return PluginStateView(plugin=record.name, enabled=body.enabled)
 
 
@@ -161,4 +169,24 @@ async def remove_plugin(request: Request, plugin: str) -> PluginStateView:
     # has no state, and leaving its name behind would make a later install of the
     # same name start out switched off.
     _state(request).forget(record.name)
+    _forget(request, record)
     return PluginStateView(plugin=record.name, enabled=False, removed_to=str(destination))
+
+
+def _forget(request: Request, record: PluginRecord) -> None:
+    """Take a removed plugin out of the installed set this process is serving.
+
+    The files are gone, so the catalogue must stop deriving rows from this
+    record — otherwise the page would keep listing the plugin the user just took
+    out, with a remove button that now fails. Whatever the plugin registered
+    (a format, a provider) stays registered until the restart the response asks
+    for: unloading it here would be a second, half-done uninstall.
+    """
+    host = getattr(request.app.state, "plugin_host", None)
+    if host is None:
+        return
+    # Compared by identity: two plugins may legitimately declare the same name —
+    # that is the conflict discovery reports — and an equality-based removal
+    # would take out whichever one came first.
+    host.plugins[:] = [existing for existing in host.plugins if existing is not record]
+    record.contributions.clear()

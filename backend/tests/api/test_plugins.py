@@ -919,6 +919,60 @@ def test_switching_a_plugin_off_is_persisted_and_says_a_restart_is_needed(
     assert state.is_disabled("docmind-tex")
 
 
+def test_switching_a_plugin_off_is_visible_without_a_restart(
+    client: TestClient, auth_headers, tmp_path
+) -> None:
+    """The served catalogue reflects the switch immediately.
+
+    Rows are derived from the records this process holds, so a switch that only
+    wrote the preference file would leave the card reading 「已启用」 until the
+    next start — and the honest "takes effect at the next start" notice would
+    never appear, because the state it keys off never changed.
+    """
+    host = client.app.state.plugin_host
+    record = PluginRecord(
+        name="docmind-tex",
+        source=SOURCE_DIRECTORY,
+        path=tmp_path / "plugins" / "docmind-tex",
+    )
+    install_contribution(host, _tex_contribution(), plugin=record)
+    _known(client, tmp_path)
+
+    response = client.put(
+        "/api/plugins/docmind-tex/enabled", json={"enabled": False}, headers=auth_headers
+    )
+
+    assert response.status_code == 200, response.text
+    card = PluginCatalog(host).manifests()[0]
+    assert card.id == "tex:core"
+    assert card.origin is not None
+    assert card.origin.enabled is False
+    assert card.origin.active is False
+    # Its card stays. The plugin *is* still loaded in this process, so dropping
+    # it here would be the same lie in the other direction.
+    assert card.kind == KIND_DOCUMENT_FORMAT
+
+
+def test_switching_a_plugin_back_on_is_visible_too(
+    client: TestClient, auth_headers, tmp_path
+) -> None:
+    """Dirty input: the switch is moved twice in one session."""
+    host = client.app.state.plugin_host
+    record = PluginRecord(
+        name="docmind-tex", source=SOURCE_DIRECTORY, path=tmp_path / "plugins" / "docmind-tex"
+    )
+    install_contribution(host, _tex_contribution(), plugin=record)
+    _known(client, tmp_path)
+
+    client.put("/api/plugins/docmind-tex/enabled", json={"enabled": False}, headers=auth_headers)
+    client.put("/api/plugins/docmind-tex/enabled", json={"enabled": True}, headers=auth_headers)
+
+    origin = PluginCatalog(host).manifests()[0].origin
+    assert origin is not None
+    assert origin.enabled is True
+    assert origin.active is True
+
+
 def test_a_plugin_can_be_switched_back_on(client: TestClient, auth_headers, tmp_path) -> None:
     state = _known(client, tmp_path, _directory_plugin(tmp_path))
     state.set_enabled("docmind-tex", enabled=False)
@@ -1017,6 +1071,13 @@ def test_removing_a_plugin_moves_its_directory_and_drops_its_switch(
     # The switch goes with the files. A name left behind would make a later
     # install of the same plugin start out switched off.
     assert state.disabled() == frozenset()
+    # And the row goes with them: continuing to list a plugin whose files are
+    # gone would offer a remove button that now fails.
+    assert [
+        m.id
+        for m in PluginCatalog(client.app.state.plugin_host).manifests()
+        if m.origin is not None and m.origin.plugin == "docmind-tex"
+    ] == []
 
 
 def test_removing_a_distribution_is_refused_with_a_reason(
