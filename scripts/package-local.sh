@@ -233,7 +233,13 @@ fi
 # 签名、框架、rpath 全都正常，日志只有一行
 #   "Node.js environment variables are disabled because this process is invoked by other apps."
 # 于是被误判成打包产物有问题。诊断时务必先 env | grep ELECTRON 确认。
-echo "验证应用可启动（清空 ELECTRON_* 注入）..."
+#
+# 🔴 第二个同源陷阱（2026-10-09 实测）：`open` 会把**调用方的环境**传给被启动的
+# app，所以只清 ELECTRON_* 不够 —— 注入的 `NODE_OPTIONS=--require=…` 同样会让
+# 打包后的 Electron 拒绝初始化，stderr 只有上面那一行加一条
+# `codesign_util.cc:79 task_name_for_pid failure`，而 app 秒退。本机上 agent 宿主
+# 恰好注入 NODE_OPTIONS，所以这一条必须一起 -u 掉。
+echo "验证应用可启动（清空 ELECTRON_* 与 NODE_OPTIONS 注入）..."
 
 # 🔴 第二个坑（比签名问题更隐蔽）：验证必须只认「本次启动的新进程」。
 # pgrep -f 是纯路径匹配，若上一轮装好的实例还在跑（比如上一次验证失败后
@@ -259,8 +265,10 @@ fi
 
 # 记录基线：此刻已存在的 pid 集合。验证时用它把旧进程排除掉。
 baseline_pids="$(pgrep -f "$out_app/Contents/MacOS/" 2>/dev/null || true)"
+# 后端也要基线，否则「有后端在跑」这条会被上一轮遗留的后端满足。
+baseline_backends="$(pgrep -f "backend-runtime/bin/python3" 2>/dev/null || true)"
 
-env -u ELECTRON_RUN_AS_NODE -u ELECTRON_ENABLE_LOGGING open -a "$out_app"
+env -u ELECTRON_RUN_AS_NODE -u ELECTRON_ENABLE_LOGGING -u NODE_OPTIONS open -a "$out_app"
 verify_pid=""
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   sleep 1
@@ -279,12 +287,40 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
 done
 if [[ -z "$verify_pid" ]]; then
   echo "打包产物无法启动：$out_app" >&2
-  echo "排查顺序：① env | grep ELECTRON（RUN_AS_NODE 会让 GUI 模式秒退）" >&2
+  echo "排查顺序：① env | grep -E 'ELECTRON|NODE_OPTIONS'（都会让 GUI 模式秒退）" >&2
   echo "          ② 嵌套 bundle 签名 id 是否与各自 Info.plist 一致" >&2
   echo "          ③ Electron Framework 的 rpath 是否含 ../../../../Frameworks" >&2
   echo "          ④ 直接跑 Contents/MacOS/ 下的二进制看 stderr（日志只写 stdout/stderr）" >&2
   exit 1
 fi
-echo "启动验证通过（pid=${verify_pid}）"
+
+# 🔴 看到 pid 不等于起来了。进程完全可能在 1 秒后自己退出（签名不一致、缺 rpath、
+# 注入的环境变量都会这样），而上面那个循环一看到 pid 就 break —— 于是把秒退报成
+# 「验证通过」，装出一个打不开的 app 还一路绿灯。（2026-10-09 实测：清掉 NODE_OPTIONS
+# 之前，脚本报通过，实际上进程随即消失。）
+# 所以再等一会儿，要求它 settle 之后仍然活着；顺带要求它的后端子进程在跑 —— 后端是
+# whenReady 里才拉起的，它存在就说明主进程真的走过了启动流程，而不只是被 launchd 拉起过。
+verify_settle_seconds="${DOCMIND_VERIFY_SETTLE_SECONDS:-5}"
+sleep "$verify_settle_seconds"
+if ! kill -0 "$verify_pid" 2>/dev/null; then
+  echo "打包产物启动了但随即退出（pid=${verify_pid}，存活不足 ${verify_settle_seconds}s）：$out_app" >&2
+  echo "排查顺序：① env | grep -E 'ELECTRON|NODE_OPTIONS'（都会让 GUI 模式秒退）" >&2
+  echo "          ② 嵌套 bundle 签名 id 是否与各自 Info.plist 一致" >&2
+  echo "          ③ Electron Framework 的 rpath 是否含 ../../../../Frameworks" >&2
+  exit 1
+fi
+# 空基线要单独处理：`grep -vxF ""` 会把每一行都排除掉，于是「有后端在跑」这条
+# 会变成永远失败。
+if [[ -z "$baseline_backends" ]]; then
+  backend_pids="$(pgrep -f "backend-runtime/bin/python3" 2>/dev/null || true)"
+else
+  backend_pids="$(pgrep -f "backend-runtime/bin/python3" 2>/dev/null | grep -vxF "$baseline_backends" || true)"
+fi
+if [[ -z "$backend_pids" ]]; then
+  echo "app 进程在，但它的后端没起来（pid=${verify_pid}）" >&2
+  echo "看 app 的 stderr：直接跑 Contents/MacOS/ 下的二进制，或 open --stderr <文件>" >&2
+  exit 1
+fi
+echo "启动验证通过（pid=${verify_pid}，settle ${verify_settle_seconds}s 后仍存活，后端在跑）"
 
 echo "打包完成：$out_app"
