@@ -45,6 +45,90 @@ def test_settings_view_redacts_key_and_reports_absolute_data_path(
     assert response.json()["screenshotCount"] == 0
     assert "secret-value" not in response.text
     assert "apiKey" not in response.json()
+    # 升级前的旧槽位属于「已保存的那个预设」，所以它报 True，而别的预设报 False。
+    assert response.json()["apiKeys"]["custom"] is True
+    assert response.json()["apiKeys"]["deepseek"] is False
+
+
+def test_api_keys_are_stored_per_preset_and_never_shared(
+    client, auth_headers, app_secret_store: MemorySecretStore
+) -> None:
+    """🔴 回归：key 曾经只有一把全局槽位，「已安全保存」于是跨厂商成立。
+
+    实测表现：在 DeepSeek 存好 key 后切到 Kimi，界面仍显示「已安全保存，留空可
+    保留」，测试连接按钮也照常可点 —— 可那把 key 是 DeepSeek 的，打不通 Kimi。
+    """
+    saved = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "deepseek",
+            "baseUrl": "https://api.deepseek.com/v1",
+            "model": "deepseek-flash",
+            "timeoutSeconds": 30,
+            "apiKey": "deepseek-secret",
+        },
+    )
+    assert saved.status_code == 200
+
+    # 切到另一家，不带 key：它不能沿用 DeepSeek 那把。
+    switched = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "kimi",
+            "baseUrl": "https://api.moonshot.cn/v1",
+            "model": "kimi-k3",
+            "timeoutSeconds": 30,
+        },
+    )
+
+    assert switched.status_code == 200
+    payload = switched.json()
+    assert payload["hasApiKey"] is False
+    assert payload["apiKeys"]["kimi"] is False
+    # 原来那家的 key 还在，切回去就能用 —— 只是不再冒充新预设的。
+    assert payload["apiKeys"]["deepseek"] is True
+    assert app_secret_store.get("model-api-key:deepseek") == "deepseek-secret"
+    assert app_secret_store.get("model-api-key:kimi") is None
+
+
+def test_legacy_single_slot_key_migrates_to_the_preset_that_owned_it(
+    client, auth_headers, app_secret_store: MemorySecretStore
+) -> None:
+    """升级前只有一把全局 key，它属于当时保存的那个预设；首次写入时搬走。"""
+    client.app.state.settings_service.setting_store.set(
+        MODEL_CONFIG_KEY,
+        json.dumps(
+            {
+                "preset": "deepseek",
+                "baseUrl": "https://api.deepseek.com/v1",
+                "model": "deepseek-flash",
+                "timeoutSeconds": 30,
+                "reasoningEffort": "",
+            }
+        ),
+    )
+    app_secret_store.set("model-api-key", "legacy-secret")
+
+    # 迁移前就读得到；而且只对它所属的预设有效，别的预设拿不到。
+    before = client.get("/api/settings", headers=auth_headers).json()
+    assert before["apiKeys"]["deepseek"] is True
+    assert before["apiKeys"]["kimi"] is False
+
+    client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "deepseek",
+            "baseUrl": "https://api.deepseek.com/v1",
+            "model": "deepseek-flash",
+            "timeoutSeconds": 30,
+        },
+    )
+
+    assert app_secret_store.get("model-api-key") is None
+    assert app_secret_store.get("model-api-key:deepseek") == "legacy-secret"
 
 
 def test_keychain_backend_error_is_redacted_from_settings_response(client, auth_headers, monkeypatch) -> None:
@@ -83,7 +167,7 @@ def test_saving_model_config_persists_only_non_secret_values(
     assert response.status_code == 200
     assert response.json()["hasApiKey"] is True
     assert "secret-value" not in response.text
-    assert app_secret_store.get("model-api-key") == "secret-value"
+    assert app_secret_store.get("model-api-key:deepseek") == "secret-value"
     with client.app.state.database.session() as session:
         values = [record.value for record in session.query(SettingRecord).all()]
     assert "secret-value" not in json.dumps(values)
@@ -109,7 +193,7 @@ def test_very_long_api_key_is_never_reflected_in_response_or_sqlite(
 
     assert response.status_code == 200
     assert api_key not in response.text
-    assert app_secret_store.get("model-api-key") == api_key
+    assert app_secret_store.get("model-api-key:custom") == api_key
     with client.app.state.database.session() as session:
         values = [record.value for record in session.query(SettingRecord).all()]
     assert api_key not in json.dumps(values)
@@ -292,7 +376,8 @@ async def test_settings_persistence_failure_restores_previous_api_key() -> None:
         MODEL_CONFIG_KEY: old_config,
         MODEL_KEY_REFERENCE: "model-api-key",
     }
-    assert secret_store.get("model-api-key") == "old-secret"
+    # 迁移把旧槽位挪到了它所属的预设名下，回滚只回滚这次写入的那把。
+    assert secret_store.get("model-api-key:custom") == "old-secret"
 
 
 def test_presets_supply_editable_defaults(client, auth_headers) -> None:
@@ -383,7 +468,7 @@ def test_model_list_serves_curated_choices_before_any_key_is_saved(
 def test_model_list_uses_live_provider_models_and_keeps_saved_model(
     client, auth_headers, app_secret_store: MemorySecretStore
 ) -> None:
-    app_secret_store.set("model-api-key", "k")
+    app_secret_store.set("model-api-key:glm", "k")
 
     class FakeProvider:
         def __init__(self, config, api_key):
@@ -419,7 +504,7 @@ def test_model_list_uses_live_provider_models_and_keeps_saved_model(
 def test_model_list_falls_back_to_curated_when_provider_rejects_listing(
     client, auth_headers, app_secret_store: MemorySecretStore
 ) -> None:
-    app_secret_store.set("model-api-key", "k")
+    app_secret_store.set("model-api-key:mimo", "k")
 
     class FakeProvider:
         def __init__(self, config, api_key):
@@ -504,7 +589,7 @@ def test_model_list_reports_why_it_fell_back_to_the_curated_list(
         async def list_models(self) -> list[AvailableModel]:
             raise DomainError("MODEL_AUTH_FAILED", "API Key 无效", 401)
 
-    app_secret_store.set("model-api-key", "bad-key")
+    app_secret_store.set("model-api-key:openai", "bad-key")
     client.app.state.settings_service.provider_factory = FakeProvider
     client.put(
         "/api/settings/model",
@@ -530,7 +615,7 @@ def test_model_list_reports_why_it_fell_back_to_the_curated_list(
 
 
 def test_model_list_marks_a_successful_live_fetch(client, auth_headers, app_secret_store: MemorySecretStore) -> None:
-    app_secret_store.set("model-api-key", "k")
+    app_secret_store.set("model-api-key:openai", "k")
 
     class FakeProvider:
         def __init__(self, config, api_key):
@@ -612,7 +697,7 @@ def test_zen_model_list_drops_paid_ids_from_the_live_response(
     client, auth_headers, app_secret_store: MemorySecretStore
 ) -> None:
     """Zen 的 /models 会返回全部 86 个 id（含付费），必须过滤后才给前端。"""
-    app_secret_store.set("model-api-key", "k")
+    app_secret_store.set("model-api-key:opencode_zen", "k")
     client.app.state.settings_service.provider_factory = _zen_provider_factory(
         [
             AvailableModel(id="kimi-k3", label="Kimi K3"),
@@ -641,7 +726,7 @@ def test_zen_model_list_falls_back_to_curated_when_no_free_model_is_live(
     client, auth_headers, app_secret_store: MemorySecretStore
 ) -> None:
     """免费档全部轮换下线时，实时列表为空也不能让选择器变空。"""
-    app_secret_store.set("model-api-key", "k")
+    app_secret_store.set("model-api-key:opencode_zen", "k")
     client.app.state.settings_service.provider_factory = _zen_provider_factory(
         [AvailableModel(id="kimi-k3", label="Kimi K3")]
     )
@@ -668,7 +753,7 @@ def test_zen_saved_paid_model_is_not_re_added_to_the_picker(
     client, auth_headers, app_secret_store: MemorySecretStore
 ) -> None:
     """已存的付费 id 不该因为「保持可选」而被塞回免费档列表。"""
-    app_secret_store.set("model-api-key", "k")
+    app_secret_store.set("model-api-key:opencode_zen", "k")
     client.app.state.settings_service.provider_factory = _zen_provider_factory(
         [AvailableModel(id="space-bunny-free", label="Space Bunny Free")]
     )
@@ -694,7 +779,7 @@ def test_zen_saved_paid_model_is_not_re_added_to_the_picker(
 def test_saving_a_paid_model_on_zen_is_rejected(
     client, auth_headers, app_secret_store: MemorySecretStore
 ) -> None:
-    app_secret_store.set("model-api-key", "k")
+    app_secret_store.set("model-api-key:opencode_zen", "k")
 
     response = client.put(
         "/api/settings/model",
@@ -714,7 +799,7 @@ def test_saving_a_paid_model_on_zen_is_rejected(
 def test_saving_a_free_model_on_zen_is_accepted(
     client, auth_headers, app_secret_store: MemorySecretStore
 ) -> None:
-    app_secret_store.set("model-api-key", "k")
+    app_secret_store.set("model-api-key:opencode_zen", "k")
 
     response = client.put(
         "/api/settings/model",
@@ -735,7 +820,7 @@ def test_paid_models_are_still_savable_elsewhere(
     client, auth_headers, app_secret_store: MemorySecretStore
 ) -> None:
     """限制只针对 Zen，不能误伤 OpenAI / Kimi 等付费厂商。"""
-    app_secret_store.set("model-api-key", "k")
+    app_secret_store.set("model-api-key:openai", "k")
 
     response = client.put(
         "/api/settings/model",
@@ -759,7 +844,7 @@ def test_model_connection_returns_latency_without_real_network(
         async def test_connection(self) -> ModelConnectionResult:
             return ModelConnectionResult(connected=True, latency_ms=7)
 
-    app_secret_store.set("model-api-key", "secret-value")
+    app_secret_store.set("model-api-key:custom", "secret-value")
     client.app.state.settings_service.provider_factory = lambda _, __: FakeProvider()
 
     response = client.post("/api/settings/model/test", headers=auth_headers)

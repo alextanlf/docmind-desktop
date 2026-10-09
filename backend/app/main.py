@@ -127,9 +127,8 @@ SYNC_STARTUP_DELAY_SECONDS = 5.0
 
 
 class _RuntimeLLMProvider:
-    def __init__(self, settings_service: SettingsService, secret_store: SecretStore) -> None:
+    def __init__(self, settings_service: SettingsService) -> None:
         self.settings_service = settings_service
-        self.secret_store = secret_store
 
     async def test_connection(self) -> ModelConnectionResult:
         return await self._provider().test_connection()
@@ -139,7 +138,7 @@ class _RuntimeLLMProvider:
             yield delta
 
     def _provider(self) -> LLMProvider:
-        api_key = self.secret_store.get("model-api-key")
+        api_key = self.settings_service.saved_api_key()
         if not api_key:
             raise DomainError(
                 "MODEL_AUTH_FAILED",
@@ -453,9 +452,14 @@ def create_app(
                 routing_mode = app.state.settings_service.runtime().routing.mode
             except DomainError:
                 routing_mode = "cloud_only"
+            config = app.state.settings_service.model()
             if routing_mode == "local_only":
-                return app.state.settings_service.model(), None
-            return app.state.settings_service.model(), _read_secret("model-api-key")
+                return config, None
+            try:
+                # 读已保存预设那把 key：key 是按预设存的，没有「当前厂商」可猜。
+                return config, app.state.settings_service.saved_api_key()
+            except (DomainError, OSError):
+                return config, None
 
         class _LazyTavily:
             name = "tavily"
@@ -472,7 +476,6 @@ def create_app(
 
         cloud_llm_provider = fake_llm_provider or _RuntimeLLMProvider(
             app.state.settings_service,
-            runtime_secret_store,
         )
 
         def _current_local_config():

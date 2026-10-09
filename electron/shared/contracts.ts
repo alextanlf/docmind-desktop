@@ -83,6 +83,10 @@ export const AvailableModelSchema = z.object({
 export const SettingsViewSchema = z.object({
   model: ModelSettingsViewSchema,
   hasApiKey: z.boolean(),
+  // Per preset, not global: a DeepSeek key does not open Kimi. The form used a
+  // single flag and so kept saying 「已安全保存」 after the user switched vendor.
+  // `hasApiKey` survives for the saved preset (first-run gating).
+  apiKeys: z.record(z.string(), z.boolean()).default({}),
   dataPath: z.string(),
   screenshotCount: z.number().int().nonnegative(),
   runtime: z

@@ -70,7 +70,6 @@ export function ModelSettingsForm({
   const [timeoutSeconds, setTimeoutSeconds] = useState(settings.model.timeoutSeconds);
   const [apiKey, setApiKey] = useState("");
   const [clearKey, setClearKey] = useState(false);
-  const [hasSavedKey, setHasSavedKey] = useState(settings.hasApiKey);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [listing, setListing] = useState(false);
@@ -80,6 +79,14 @@ export function ModelSettingsForm({
   const revisionRef = useRef(0);
   const activeOperationRef = useRef<{ kind: "save" | "test"; revision: number } | null>(null);
   const busy = saving || testing;
+  // 🔴 key 是按预设存的，不是全局的：一把 DeepSeek 的 key 打不通 Kimi。这里必须
+  // 按当前预设查，不能拿 settings.hasApiKey（它只描述「已保存的那一家」）冒充 ——
+  // 那正是「切到别家仍显示已安全保存」的来源。
+  //
+  // `clearKey` 只影响这把 key 还算不算数，槽位本身还在，所以「清除已保存的 API
+  // Key」勾选框的可见性看槽位，否则勾上之后按钮自己就消失了。
+  const storedKeyForPreset = settings.apiKeys?.[preset] ?? false;
+  const hasSavedKey = storedKeyForPreset && !clearKey;
   // 🔴 不要把掩码当受控 value 回填输入框。此前 `value={hasSavedKey ? "••••••••" : apiKey}`
   // 让用户聚焦后输入的每个字符都变成 "••••••••x"，onChange 拿到含掩码的串，
   // 提交时 `apiKey: "••••••••x"` 被写进钥匙串 —— 真实密钥被覆盖且无法恢复。
@@ -136,6 +143,10 @@ export function ModelSettingsForm({
       settings.modelCapabilities[nextPreset]?.[nextModel.toLowerCase()]?.defaultReasoningEffort ?? "",
     );
     setLiveModels([]);
+    // 半填的 key 属于上一个预设，不能跟着带到新预设去（那会把 DeepSeek 的 key
+    // 存到 Kimi 名下）；清除勾选同理，它针对的是上一个预设的槽位。
+    setApiKey("");
+    setClearKey(false);
     invalidateConnection();
   }
 
@@ -205,14 +216,17 @@ export function ModelSettingsForm({
       appQueryClient.setQueryData(settingsKeys.root, saved);
       if (activeOperationRef.current !== operation || revisionRef.current !== operation.revision)
         return;
-      setHasSavedKey(saved.hasApiKey);
+      // No local "hasSavedKey" to sync: it is derived from the refetched view's
+      // apiKeys map, which the line above already replaced.
       setApiKey("");
       setClearKey(false);
       setNeedsSave(false);
       setMessage({ tone: "success", text: "设置已保存" });
       activeOperationRef.current = null;
       setSaving(false);
-      if (saved.hasApiKey && !clearKey) {
+      // Only test when this preset actually has a key now; otherwise the backend
+      // would answer "请先配置 API Key" for a save that was meant to be keyless.
+      if (!clearKey && saved.apiKeys?.[preset]) {
         await runConnectionTest();
       }
     } catch (error) {
@@ -388,7 +402,7 @@ export function ModelSettingsForm({
           />
         </label>
       </div>
-      {hasSavedKey ? (
+      {storedKeyForPreset ? (
         <label className="checkbox-row">
           <input
             checked={clearKey}

@@ -4,13 +4,22 @@ import App from "../../renderer/src/App";
 import { appQueryClient } from "../../renderer/src/app/query-client";
 import { installDocMindApi, loggedOutRemote, readySettings } from "./test-docmind-api";
 
+/**
+ * A snapshot with no API key anywhere.
+ *
+ * `hasApiKey` and `apiKeys` must agree: the form reads the per-preset map (a
+ * DeepSeek key does not open Kimi), so a fixture that only clears the global
+ * flag would still read as "key saved" for the selected preset.
+ */
+const noKeySettings = { ...readySettings, hasApiKey: false, apiKeys: {} };
+
 describe("首次设置", () => {
   beforeEach(() => appQueryClient.clear());
 
   it("shows only the model step and does not check Yuque at startup", async () => {
     const api = installDocMindApi({
       settings: {
-        get: vi.fn().mockResolvedValue({ ...readySettings, hasApiKey: false }),
+        get: vi.fn().mockResolvedValue(noKeySettings),
       },
       remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
     });
@@ -28,7 +37,7 @@ describe("首次设置", () => {
   it("enters the workspace after the model test without requiring Yuque", async () => {
     const api = installDocMindApi({
       settings: {
-        get: vi.fn().mockResolvedValue({ ...readySettings, hasApiKey: false }),
+        get: vi.fn().mockResolvedValue(noKeySettings),
       },
       remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
     });
@@ -54,7 +63,7 @@ describe("首次设置", () => {
   it("invalidates a successful model test after edits, saves, or key clearing", async () => {
     installDocMindApi({
       settings: {
-        get: vi.fn().mockResolvedValue({ ...readySettings, hasApiKey: false }),
+        get: vi.fn().mockResolvedValue(noKeySettings),
       },
       remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
     });
@@ -87,7 +96,7 @@ describe("首次设置", () => {
   it("keeps onboarding focus inside the required modal", async () => {
     installDocMindApi({
       settings: {
-        get: vi.fn().mockResolvedValue({ ...readySettings, hasApiKey: false }),
+        get: vi.fn().mockResolvedValue(noKeySettings),
       },
       remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
     });
@@ -118,7 +127,7 @@ describe("首次设置", () => {
   it("lets the user skip model setup after confirming the consequence", async () => {
     const api = installDocMindApi({
       settings: {
-        get: vi.fn().mockResolvedValue({ ...readySettings, hasApiKey: false }),
+        get: vi.fn().mockResolvedValue(noKeySettings),
       },
     });
     render(<App />);
@@ -141,7 +150,7 @@ describe("首次设置", () => {
   it("returns to the form when cancelling the skip confirmation", async () => {
     installDocMindApi({
       settings: {
-        get: vi.fn().mockResolvedValue({ ...readySettings, hasApiKey: false }),
+        get: vi.fn().mockResolvedValue(noKeySettings),
       },
     });
     render(<App />);
@@ -157,9 +166,7 @@ describe("首次设置", () => {
   it("does not show onboarding when a previous session skipped setup", async () => {
     const api = installDocMindApi({
       settings: {
-        get: vi
-          .fn()
-          .mockResolvedValue({ ...readySettings, hasApiKey: false, modelSetupSkipped: true }),
+        get: vi.fn().mockResolvedValue({ ...noKeySettings, modelSetupSkipped: true }),
       },
     });
 
@@ -173,7 +180,7 @@ describe("首次设置", () => {
   it("still enters the workspace when persisting the skip fails", async () => {
     installDocMindApi({
       settings: {
-        get: vi.fn().mockResolvedValue({ ...readySettings, hasApiKey: false }),
+        get: vi.fn().mockResolvedValue(noKeySettings),
         skipModelSetup: vi.fn().mockRejectedValue({ code: "BACKEND_UNAVAILABLE", retryable: false }),
       },
     });

@@ -104,6 +104,47 @@ describe("设置", () => {
     );
   });
 
+  it("stops claiming a key is saved once the vendor that owns it is switched away", async () => {
+    installDocMindApi();
+    renderSettings();
+
+    // DeepSeek holds the stored key (readySettings.apiKeys.deepseek).
+    expect(await screen.findByLabelText("API Key")).toHaveAttribute(
+      "placeholder",
+      "已安全保存，留空可保留",
+    );
+    expect(screen.getByRole("button", { name: "测试连接" })).toBeEnabled();
+
+    fireEvent.change(screen.getByLabelText("模型预设"), { target: { value: "kimi" } });
+
+    // 🔴 回归：key 不是通用的。换一家之后必须改口说「请输入」，并禁用测试连接，
+    // 否则用户会以为手里那把 DeepSeek 的 key 能打通 Kimi。
+    expect(await screen.findByLabelText("API Key")).toHaveAttribute(
+      "placeholder",
+      "请输入 API Key",
+    );
+    expect(screen.queryByRole("checkbox", { name: "清除已保存的 API Key" })).toBeNull();
+    expect(screen.getByRole("button", { name: "测试连接" })).toBeDisabled();
+  });
+
+  it("restores the saved-key indicator when switching back to its own vendor", async () => {
+    installDocMindApi();
+    renderSettings();
+
+    fireEvent.change(await screen.findByLabelText("模型预设"), { target: { value: "kimi" } });
+    expect(await screen.findByLabelText("API Key")).toHaveAttribute(
+      "placeholder",
+      "请输入 API Key",
+    );
+
+    // 切回去必须恢复 —— key 还在那把槽里，没被换家时清掉。
+    fireEvent.change(screen.getByLabelText("模型预设"), { target: { value: "deepseek" } });
+    expect(await screen.findByLabelText("API Key")).toHaveAttribute(
+      "placeholder",
+      "已安全保存，留空可保留",
+    );
+  });
+
   it("maps model errors to an actionable Chinese message", async () => {
     installDocMindApi({
       settings: {

@@ -196,6 +196,13 @@ class ModelPresetCapabilities(WireModel):
 class SettingsView(WireModel):
     model: ModelSettingsView
     has_api_key: bool
+    # Per-preset "a key is stored for this vendor". API keys are not
+    # interchangeable between vendors, so a single boolean could only ever
+    # describe the saved preset — the form read it as "the key you see applies
+    # to whatever preset is selected", which was false the moment the user
+    # switched. The bare `has_api_key` stays for the saved preset so the
+    # first-run gate keeps its meaning.
+    api_keys: dict[str, bool] = Field(default_factory=dict)
     data_path: str
     screenshot_count: int
     runtime: RuntimeSettingsInput | None = None

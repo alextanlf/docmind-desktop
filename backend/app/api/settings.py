@@ -42,7 +42,11 @@ from app.storage.repositories import SettingStore
 MODEL_CONFIG_KEY = "model.config"
 MODEL_KEY_REFERENCE = "model.api_key_ref"
 MODEL_SETUP_SKIPPED_KEY = "model.setup_skipped"
-MODEL_API_KEY_NAME = "model-api-key"
+# 每个预设各存一把 key：厂商之间不通用，共用一个槽位会让「已安全保存」在新预设
+# 下变成一句谎话 —— 用户切到 Kimi 后仍被告知那把 DeepSeek 的 key 还在生效，而它
+# 根本打不通 Kimi。带预设后缀的槽位才是常态，下面这个裸名字只剩迁移用途。
+MODEL_API_KEY_PREFIX = "model-api-key"
+LEGACY_MODEL_API_KEY_NAME = MODEL_API_KEY_PREFIX
 LOCAL_RUNTIME_CONFIG_KEY = "local-model.config"
 # Read-only: an install that saved runtime settings before the local-model
 # rename still holds its server address and model under this key.
@@ -52,6 +56,15 @@ RAG_CONFIG_KEY = "rag.config"
 ProviderFactory = Callable[[ModelConfig, str], LLMProvider]
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+
+
+def model_api_key_name(preset: str) -> str:
+    """钥匙串里某个预设的 key 槽位名。
+
+    key 属于厂商而不属于应用，所以槽位以预设为粒度 —— 这也是 `custom` 只能记住
+    一把 key 的原因，那是预设本身的粒度所限。
+    """
+    return f"{MODEL_API_KEY_PREFIX}:{preset}"
 
 
 class SettingsService:
@@ -81,8 +94,48 @@ class SettingsService:
         except ValueError as error:
             raise DomainError("SETTINGS_INVALID", "模型设置无效，请重新配置", 500) from error
 
-    def has_api_key(self) -> bool:
-        return bool(self.secret_store.get(MODEL_API_KEY_NAME))
+    def _api_key(self, preset: str, saved_preset: str) -> str | None:
+        """某个预设的 key，未迁移的旧槽位只在它所属的预设上回退。
+
+        旧版本只有一个全局槽位，它属于**写入时保存的那个预设**。在第一次写 key
+        把它搬走之前，只有那个预设读得到它 —— 别的预设不能借，那正是这个 bug 的
+        根源。
+        """
+        stored = self.secret_store.get(model_api_key_name(preset))
+        if stored:
+            return stored
+        if preset == saved_preset:
+            return self.secret_store.get(LEGACY_MODEL_API_KEY_NAME) or None
+        return None
+
+    def has_api_key(self, preset: str | None = None, *, saved_preset: str | None = None) -> bool:
+        owner = saved_preset if saved_preset is not None else self.model().preset
+        return bool(self._api_key(preset or owner, owner))
+
+    def saved_api_key(self) -> str | None:
+        """已保存配置该用的 key；路由为 local_only 时代表「不需要 key」，由调用方判断。"""
+        owner = self.model().preset
+        return self._api_key(owner, owner)
+
+    def _migrate_legacy_api_key(self) -> None:
+        """把升级前唯一的槽位搬到它所属预设的槽位。
+
+        必须在写新配置**之前**调用：此刻 `self.model()` 还是旧配置，指向当初写入
+        这把 key 的那个预设。搬完删掉旧槽，否则 `_api_key` 的回退会让「清空 key」
+        删不干净（删了新槽，旧槽又把它顶回来）。
+        """
+        legacy = self.secret_store.get(LEGACY_MODEL_API_KEY_NAME)
+        if not legacy:
+            return
+        try:
+            owner = self.model().preset
+        except DomainError:
+            # 配置读不出来就不知道这把 key 属于谁 —— 留在旧槽里，别猜。保存本身
+            # 也不该因为一份坏配置而失败（它正要覆盖掉这份配置）。
+            return
+        if not self.secret_store.get(model_api_key_name(owner)):
+            self.secret_store.set(model_api_key_name(owner), legacy)
+        self.secret_store.delete(LEGACY_MODEL_API_KEY_NAME)
 
     def model_setup_skipped(self) -> bool:
         return self.setting_store.get(MODEL_SETUP_SKIPPED_KEY) == "1"
@@ -114,21 +167,26 @@ class SettingsService:
             )
         config = ModelSettingsView(**payload)
         serialized_config = config.model_dump_json()
+        key_name = model_api_key_name(update.preset)
+        # 任何一次保存都把旧槽位搬走，包括「只改预设、不带 key」这种：不搬的话，
+        # 旧 key 会在新预设上被回退读出来，等于换个名字重演同一个 bug。
+        self._migrate_legacy_api_key()
         if update.api_key is None:
             # Saving any model config means the user engaged with setup, so a
-            # previous skip no longer applies.
+            # previous skip no longer applies — and the key of *this* preset is
+            # left untouched, which is what makes switching back restore it.
             self.setting_store.set_many(
                 {MODEL_CONFIG_KEY: serialized_config, MODEL_SETUP_SKIPPED_KEY: "0"}
             )
             return config
 
-        previous_api_key = self.secret_store.get(MODEL_API_KEY_NAME)
+        previous_api_key = self.secret_store.get(key_name)
         if update.api_key == "":
-            self.secret_store.delete(MODEL_API_KEY_NAME)
+            self.secret_store.delete(key_name)
             key_reference = ""
         else:
-            self.secret_store.set(MODEL_API_KEY_NAME, update.api_key)
-            key_reference = MODEL_API_KEY_NAME
+            self.secret_store.set(key_name, update.api_key)
+            key_reference = key_name
         try:
             self.setting_store.set_many(
                 {
@@ -139,14 +197,14 @@ class SettingsService:
             )
         except Exception:
             if previous_api_key is None:
-                self.secret_store.delete(MODEL_API_KEY_NAME)
+                self.secret_store.delete(key_name)
             else:
-                self.secret_store.set(MODEL_API_KEY_NAME, previous_api_key)
+                self.secret_store.set(key_name, previous_api_key)
             raise
         return config
 
     async def test_model(self) -> ModelConnectionResult:
-        api_key = self.secret_store.get(MODEL_API_KEY_NAME)
+        api_key = self.saved_api_key()
         if not api_key:
             raise DomainError(
                 "MODEL_AUTH_FAILED", "请先配置 API Key", 400, False, "保存 API Key 后重试"
@@ -175,7 +233,9 @@ class SettingsService:
             if probe.model:
                 config = config.model_copy(update={"model": probe.model})
         curated = preset_models(preset)
-        api_key = self.secret_store.get(MODEL_API_KEY_NAME)
+        # 表单草稿里的 key 优先；否则用**被探测预设自己的槽位** —— 拿已保存预设
+        # 的 key 去列另一个厂商的模型，只会得到一场 401。
+        api_key = self._api_key(preset, saved.preset)
         if probe is not None and probe.api_key:
             api_key = probe.api_key
         if not api_key:
@@ -221,9 +281,17 @@ class SettingsService:
         return ModelListView(models=models, source="live")
 
     def view(self, settings: AppSettings) -> SettingsView:
+        saved = self.model()
+        # 每个预设各报各的「有没有 key」，前端的「已安全保存」据此判断。给单个
+        # 布尔值时它只能描述「已保存的那家」，切了预设就变成谎话。
+        api_keys = {
+            preset: self.has_api_key(preset, saved_preset=saved.preset)
+            for preset in MODEL_PRESETS
+        }
         return SettingsView(
-            model=self.model(),
-            has_api_key=self.has_api_key(),
+            model=saved,
+            has_api_key=api_keys.get(saved.preset, False),
+            api_keys=api_keys,
             data_path=str(settings.data_dir.resolve()),
             screenshot_count=_screenshot_count(settings.screenshots_dir),
             runtime=self.runtime(),

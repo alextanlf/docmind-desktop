@@ -52,7 +52,7 @@ npm run dev
 
 ### 4. 首次配置
 
-启动后，在设置中选择模型服务，并填写 API Key。DocMind 支持 DeepSeek、Qwen、OpenAI 和自定义 OpenAI-compatible 服务。
+启动后，在设置中选择模型服务，并填写 API Key。DocMind 支持 DeepSeek、Qwen、OpenAI 和自定义 OpenAI-compatible 服务。每个服务商各存各的 Key —— Key 不通用，换一家要另填一份，切回原来那家会自动恢复。
 
 API Key 只保存在系统凭据存储中（macOS Keychain / Windows 凭据管理器），不会写入 SQLite、诊断信息或日志。Windows 上的凭据被显式限制为仅本机保存，不会随域漫游配置同步到其他电脑。
 

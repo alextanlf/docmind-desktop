@@ -30,6 +30,9 @@ export const readySettings: SettingsView = {
     reasoningEffort: "high",
   },
   hasApiKey: true,
+  // Keys are per vendor. Only DeepSeek has one here, which is what makes the
+  // "switching to Kimi must stop claiming 已安全保存" case testable.
+  apiKeys: { deepseek: true },
   dataPath: "/Users/test/Library/Application Support/DocMind",
   screenshotCount: 2,
   modelSetupSkipped: false,
