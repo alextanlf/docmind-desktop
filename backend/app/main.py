@@ -175,11 +175,10 @@ def _install_built_ins(host: PluginHost, credential_store: CredentialStore,
                        runtime_settings: AppSettings) -> None:
     """Install DocMind's own integrations, attributed to their records.
 
-    Walks a *snapshot* of each record's contributions, because
-    ``install_contribution`` records the contribution back onto that same
-    record: iterating the live list would append to the list being walked, and
-    the symptom is a provider registering twice — an infinite loop that reports
-    itself as "already registered" rather than as a loop.
+    Walks a snapshot of each record's declared contributions rather than the live
+    list: ``install_contribution`` records what it installed back onto that same
+    list, so iterating it directly is a loop that appends to the thing it is
+    walking.
     """
     for record in _production_contributions(credential_store, runtime_settings):
         for contribution in tuple(record.contributions):

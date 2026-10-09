@@ -441,6 +441,40 @@ def test_plugin_endpoint_requires_a_token(client: TestClient, store) -> None:
     assert client.get("/api/plugins").status_code == 401
 
 
+def test_every_built_in_channel_is_listed_exactly_once(
+    production_client: TestClient, auth_headers
+) -> None:
+    """Regression, found by looking at the real application.
+
+    DocMind's own integrations are *declared* with their contribution already in
+    the record — that declaration is how the built-in names what it installs —
+    and the install path records what it installed back onto the same list. So
+    each one was recorded twice and every 语雀 and 飞书 channel appeared twice on
+    the page. Nothing asserted a count, and no test could: the double only shows
+    up once the built-ins are installed through production wiring, which the
+    shared ``client`` fixture skips.
+    """
+    body = production_client.get("/api/plugins", headers=auth_headers).json()
+
+    ids = [plugin["id"] for plugin in body]
+    assert len(ids) == len(set(ids)), f"清单里有重复项：{ids}"
+    assert ids == [
+        "yuque:web",
+        "yuque:api",
+        "feishu:app",
+        "feishu:user",
+        "feishu:webhook",
+    ]
+    # One plugin behind each pair, so the provenance is not doubled either.
+    assert [plugin["origin"]["plugin"] for plugin in body] == [
+        "yuque",
+        "yuque",
+        "feishu",
+        "feishu",
+        "feishu",
+    ]
+
+
 # -- third-party discovery --------------------------------------------------
 
 

@@ -198,7 +198,12 @@ def install_contribution(
     record = plugin if plugin is not None else PluginRecord(name="", source=SOURCE_BUILTIN)
     if all(existing is not record for existing in host.plugins):
         host.plugins.append(record)
-    record.contributions.append(contribution)
+    # Recorded once. A caller may hand in a record that already declares this very
+    # contribution — DocMind's own integrations are declared that way, because the
+    # declaration is how they name what they install — and appending blindly put
+    # every built-in channel on the page twice over.
+    if all(existing is not contribution for existing in record.contributions):
+        record.contributions.append(contribution)
 
 
 # -- card construction -------------------------------------------------------
