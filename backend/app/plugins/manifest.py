@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.plugins.records import PluginOrigin
 from app.schemas.plugins import PluginManifestView
 
 
@@ -87,6 +88,12 @@ class PluginManifest:
     browser_install: bool = False
     browser_unavailable_code: str | None = None
 
+    # Which plugin this card came from, and what the page may do about it. Filled
+    # in by the catalogue from the record the contribution was installed under;
+    # ``None`` for a contribution installed with no plugin to attribute it to,
+    # where the page shows no provenance and offers no plugin-level action.
+    origin: PluginOrigin | None = None
+
     def view(self) -> PluginManifestView:
         return PluginManifestView(
             id=self.id,
@@ -112,6 +119,7 @@ class PluginManifest:
             account_label=self.account_label,
             browser_install=self.browser_install,
             browser_unavailable_code=self.browser_unavailable_code,
+            origin=self.origin.view() if self.origin is not None else None,
         )
 
 

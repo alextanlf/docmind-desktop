@@ -79,6 +79,8 @@ from app.plugins.contributions import (
     install_contribution,
 )
 from app.plugins.loader import load_plugins
+from app.plugins.records import SOURCE_BUILTIN, PluginRecord
+from app.plugins.state import PluginStateStore
 from app.remote.credentials import CredentialStore
 from app.remote.discovery import RemoteDiscovery
 from app.remote.notifications import NotificationHub
@@ -169,15 +171,35 @@ class _RoutedLLMProvider:
             yield delta
 
 
+def _install_built_ins(host: PluginHost, credential_store: CredentialStore,
+                       runtime_settings: AppSettings) -> None:
+    """Install DocMind's own integrations, attributed to their records.
+
+    Walks a *snapshot* of each record's contributions, because
+    ``install_contribution`` records the contribution back onto that same
+    record: iterating the live list would append to the list being walked, and
+    the symptom is a provider registering twice — an infinite loop that reports
+    itself as "already registered" rather than as a loop.
+    """
+    for record in _production_contributions(credential_store, runtime_settings):
+        for contribution in tuple(record.contributions):
+            install_contribution(host, contribution, plugin=record)
+
+
 def _production_contributions(
     credential_store: CredentialStore,
     runtime_settings: AppSettings,
-) -> tuple[RemoteSourceContribution, ...]:
-    """The built-in contributions, with their configuration probes.
+) -> tuple[PluginRecord, ...]:
+    """The built-in integrations, as plugins with one contribution each.
 
-    Declared as contributions rather than registered directly, so the built-ins
-    and third-party plugins go through the identical install path — there is no
-    "already registered" shortcut for our own integrations.
+    Returned as records rather than bare contributions so DocMind's own
+    integrations reach the plugin page by the same route a third party's do:
+    a card whose provenance is the plugin it came from. They are declared as
+    contributions rather than registered directly, so there is no "already
+    registered" shortcut for our own integrations.
+
+    ``source`` is ``builtin``, which is what keeps the page from offering a
+    switch for something installed by the application rather than found on disk.
     """
 
     def _yuque_api_token() -> str | None:
@@ -190,20 +212,32 @@ def _production_contributions(
         return credential_store.any_verified("yuque", ("web", "api"))
 
     return (
-        RemoteSourceContribution(
-            provider=YuqueProvider(
-                WebDriverYuqueGateway(runtime_settings),
-                YuqueApiGateway(_yuque_api_token),
-                lambda: _yuque_api_token() is not None,
-            ),
-            credential_spec=YUQUE_CREDENTIAL_SPEC,
-            is_configured=_yuque_configured,
+        PluginRecord(
+            name="yuque",
+            source=SOURCE_BUILTIN,
+            contributions=[
+                RemoteSourceContribution(
+                    provider=YuqueProvider(
+                        WebDriverYuqueGateway(runtime_settings),
+                        YuqueApiGateway(_yuque_api_token),
+                        lambda: _yuque_api_token() is not None,
+                    ),
+                    credential_spec=YUQUE_CREDENTIAL_SPEC,
+                    is_configured=_yuque_configured,
+                )
+            ],
         ),
         # Feishu: availability is derived from the credential spec (app or user
         # channel verified) by the registry's default probe.
-        RemoteSourceContribution(
-            provider=FeishuProvider(FeishuTokenManager(credential_store)),
-            credential_spec=FEISHU_CREDENTIAL_SPEC,
+        PluginRecord(
+            name="feishu",
+            source=SOURCE_BUILTIN,
+            contributions=[
+                RemoteSourceContribution(
+                    provider=FeishuProvider(FeishuTokenManager(credential_store)),
+                    credential_spec=FEISHU_CREDENTIAL_SPEC,
+                )
+            ],
         ),
     )
 
@@ -337,19 +371,24 @@ def create_app(
         if fake_services:
             # Fake mode installs no built-ins and skips discovery, so tests see
             # a deterministic catalogue.
-            app.state.plugin_diagnostics = None
+            app.state.plugin_discovery = None
+            app.state.plugin_state = None
         else:
             if not registry_injected:
-                for contribution in _production_contributions(
-                    credential_store, runtime_settings
-                ):
-                    install_contribution(host, contribution)
-            app.state.plugin_diagnostics = load_plugins(host, runtime_settings.plugins_dir)
+                _install_built_ins(host, credential_store, runtime_settings)
+            # The user's own switches, read before discovery because a
+            # switched-off plugin must not be imported at all.
+            plugin_state = PluginStateStore(runtime_settings.data_dir)
+            app.state.plugin_state = plugin_state
+            app.state.plugin_discovery = load_plugins(
+                host, runtime_settings.plugins_dir, state=plugin_state
+            )
         host_notifications = host.notifications
         app.state.plugin_host = host
-        # The plugin page is a read model over the installed contributions, so
-        # there is no second catalogue to keep in sync — installing one is
-        # enough to make its card appear.
+        # The plugin page is a read model over the plugins installed on the host,
+        # so there is no second catalogue to keep in sync — installing one is
+        # enough to make its row appear, and switching one off is enough to make
+        # its row say so.
         app.state.plugin_catalog = PluginCatalog(host)
         if host_notifications is not None:
             app.state.notifications = host_notifications

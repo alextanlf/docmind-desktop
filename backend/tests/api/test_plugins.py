@@ -13,15 +13,19 @@ What is locked here:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
+import app.plugins.uninstall as removal
 from app.document.builtin_formats import builtin_registry
 from app.document.formats import DocumentFormat, FormatConflictError
 from app.plugins import loader
 from app.plugins.catalog import PluginCatalog
 from app.plugins.contributions import (
     KIND_DOCUMENT_FORMAT,
+    KIND_PLUGIN,
     KIND_REMOTE_SOURCE,
     DocumentFormatContribution,
     PluginHost,
@@ -30,6 +34,13 @@ from app.plugins.contributions import (
 )
 from app.plugins.loader import load_plugins
 from app.plugins.manifest import PluginManifest, merge_keywords
+from app.plugins.records import (
+    SOURCE_BUILTIN,
+    SOURCE_DIRECTORY,
+    SOURCE_DISTRIBUTION,
+    PluginRecord,
+)
+from app.plugins.state import PluginStateStore
 from app.remote.credentials import (
     CredentialChannelSpec,
     CredentialStore,
@@ -550,7 +561,14 @@ def test_a_plugin_whose_format_conflicts_is_reported_not_ignored(
     assert [item["name"] for item in diagnostics.failed] == ["squatter"]
     assert ".pdf" in next(item["error"] for item in diagnostics.failed)
     assert host.formats.for_extension(".pdf").name == "pdf"
-    assert PluginCatalog(host).manifests() == []
+    # Nothing half-applied — but the plugin that failed is a row rather than
+    # nothing at all. A plugin that vanished on failure would be indistinguishable
+    # from one that was never installed, which is the same reasoning the
+    # diagnostics channel exists for, applied to the page this time.
+    rows = PluginCatalog(host).manifests()
+    assert [m.kind for m in rows] == [KIND_PLUGIN]
+    assert rows[0].origin is not None
+    assert rows[0].origin.error is not None and ".pdf" in rows[0].origin.error
 
 
 def test_diagnostics_endpoint_exposes_failures(client: TestClient, auth_headers) -> None:
@@ -558,7 +576,7 @@ def test_diagnostics_endpoint_exposes_failures(client: TestClient, auth_headers)
         def as_dicts(self):
             return [{"name": "broken", "error": "boom"}]
 
-    client.app.state.plugin_diagnostics = _Diag()
+    client.app.state.plugin_discovery = _Diag()
 
     response = client.get("/api/plugins/diagnostics", headers=auth_headers)
 
@@ -718,3 +736,333 @@ def test_plugin_directory_endpoint_reports_the_data_directory(
 
 def test_plugin_directory_endpoint_requires_a_token(client: TestClient) -> None:
     assert client.get("/api/plugins/directory").status_code == 401
+
+
+# -- where a row came from ---------------------------------------------------
+#
+# Every row names the plugin behind it, because the plugin is the unit the page
+# can act on: 「语雀 API」 is not something a user can switch off, the plugin that
+# declares it is. These tests pin the three provenances and, more importantly,
+# what each one may be offered.
+
+
+def _installed(host: PluginHost, contribution, record: PluginRecord) -> None:
+    install_contribution(host, contribution, plugin=record)
+
+
+def test_a_card_names_the_plugin_it_came_from(store: CredentialStore) -> None:
+    host = _host(store=store)
+    _installed(
+        host,
+        _tex_contribution(),
+        PluginRecord(
+            name="docmind-tex",
+            source=SOURCE_DIRECTORY,
+            path=Path("/plugins/docmind-tex"),
+            version="0.1.0",
+        ),
+    )
+
+    manifest = PluginCatalog(host).manifests()[0]
+
+    assert manifest.origin is not None
+    assert manifest.origin.plugin == "docmind-tex"
+    assert manifest.origin.path == "/plugins/docmind-tex"
+    assert manifest.origin.version == "0.1.0"
+    assert manifest.origin.enabled is True
+    assert manifest.origin.active is True
+    # A directory is the one copy of a plugin the user put there, so it is the
+    # only one both actions apply to.
+    assert manifest.origin.toggleable is True
+    assert manifest.origin.removable is True
+
+
+def test_a_built_in_integration_offers_no_switch(store: CredentialStore) -> None:
+    host = _host(store=store)
+    _installed(host, _remote(_DocsProvider()), PluginRecord(name="acme", source=SOURCE_BUILTIN))
+
+    origin = PluginCatalog(host).manifests()[0].origin
+
+    assert origin is not None
+    assert origin.source == SOURCE_BUILTIN
+    # Installed by the application, not found on disk: there is nothing here to
+    # switch off or take out, and a button that cannot work is worse than an
+    # absent one.
+    assert origin.toggleable is False
+    assert origin.removable is False
+
+
+def test_an_installed_distribution_can_be_switched_off_but_not_removed(
+    store: CredentialStore,
+) -> None:
+    host = _host(store=store)
+    _installed(
+        host,
+        _tex_contribution(),
+        PluginRecord(name="docmind-tex", source=SOURCE_DISTRIBUTION),
+    )
+
+    origin = PluginCatalog(host).manifests()[0].origin
+
+    assert origin is not None
+    assert origin.toggleable is True
+    # The packaged runtime ships no installer, so there is nothing that could
+    # remove it and the page must not imply otherwise.
+    assert origin.removable is False
+    assert origin.path is None
+
+
+def test_a_contribution_with_no_plugin_to_name_offers_no_plugin_action(
+    store: CredentialStore,
+) -> None:
+    """Dirty input: a contribution installed straight onto a host.
+
+    There is nothing to attribute it to, so the page shows no provenance line
+    and no action — which beats guessing what it was part of.
+    """
+    host = _host(_remote(_DocsProvider()), store=store)
+
+    manifest = PluginCatalog(host).manifests()[0]
+
+    assert manifest.origin is None
+    assert manifest.id == "acme:web"
+
+
+def test_a_switched_off_plugin_is_a_row_of_its_own(store: CredentialStore) -> None:
+    """A switched-off plugin has no cards, so it has to be a row built from its
+    own record — otherwise nothing on the page could switch it back on."""
+    host = _host(_remote(_DocsProvider()), store=store)
+    host.plugins.append(
+        PluginRecord(
+            name="docmind-tex",
+            source=SOURCE_DIRECTORY,
+            path=Path("/plugins/docmind-tex"),
+            label="docmind-tex",
+            summary="把 LaTeX 源文件导入 DocMind",
+            version="0.1.0",
+            disabled=True,
+        )
+    )
+
+    rows = PluginCatalog(host).manifests()
+
+    assert [m.id for m in rows] == ["acme:web", "acme:api", "docmind-tex@directory"]
+    off = rows[-1]
+    assert off.kind == KIND_PLUGIN
+    assert off.label == "docmind-tex"
+    assert off.summary == "把 LaTeX 源文件导入 DocMind"
+    assert off.origin is not None
+    assert off.origin.enabled is False
+    assert off.origin.active is False
+    assert off.origin.error is None
+    # And it is still findable — by its own name, which appears in no label of
+    # any card it used to contribute.
+    assert [m.id for m in PluginCatalog(host).search("docmind-tex")] == [
+        "docmind-tex@directory"
+    ]
+    assert [m.id for m in PluginCatalog(host).search("LaTeX")] == ["docmind-tex@directory"]
+
+
+def test_a_card_is_findable_by_its_plugins_name(store: CredentialStore) -> None:
+    """The renderer's filter is kept in step with this rule by hand."""
+    host = _host(store=store)
+    _installed(
+        host,
+        _tex_contribution(),
+        PluginRecord(name="docmind-tex", source=SOURCE_DIRECTORY, path=Path("/plugins/tex")),
+    )
+
+    assert [m.id for m in PluginCatalog(host).search("docmind-tex")] == ["tex:core"]
+
+
+# -- the two writes ----------------------------------------------------------
+
+
+def _known(client: TestClient, tmp_path, *records: PluginRecord) -> PluginStateStore:
+    """Put plugins and a preference file on a running app.
+
+    The app is built once per test session with production wiring, so a test
+    injects what discovery would have found rather than building a second app
+    with a plugin directory on disk — the discovery side is covered directly in
+    ``tests/plugins``.
+    """
+    state = PluginStateStore(tmp_path / "state")
+    client.app.state.plugin_state = state
+    for record in records:
+        client.app.state.plugin_host.plugins.append(record)
+    return state
+
+
+def _directory_plugin(tmp_path, name: str = "docmind-tex") -> PluginRecord:
+    return PluginRecord(name=name, source=SOURCE_DIRECTORY, path=tmp_path / "plugins" / name)
+
+
+def test_switching_a_plugin_off_is_persisted_and_says_a_restart_is_needed(
+    client: TestClient, auth_headers, tmp_path
+) -> None:
+    state = _known(client, tmp_path, _directory_plugin(tmp_path))
+
+    response = client.put(
+        "/api/plugins/docmind-tex/enabled", json={"enabled": False}, headers=auth_headers
+    )
+
+    assert response.status_code == 200, response.text
+    # `restartRequired` is stated rather than left for the page to know:
+    # discovery runs once per process, so nothing the user just changed is live
+    # yet, and a silent response would read as a switch that did nothing.
+    assert response.json() == {
+        "plugin": "docmind-tex",
+        "enabled": False,
+        "restartRequired": True,
+        "removedTo": None,
+    }
+    assert state.is_disabled("docmind-tex")
+
+
+def test_a_plugin_can_be_switched_back_on(client: TestClient, auth_headers, tmp_path) -> None:
+    state = _known(client, tmp_path, _directory_plugin(tmp_path))
+    state.set_enabled("docmind-tex", enabled=False)
+
+    response = client.put(
+        "/api/plugins/docmind-tex/enabled", json={"enabled": True}, headers=auth_headers
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["enabled"] is True
+    assert state.disabled() == frozenset()
+
+
+def test_the_switch_refuses_a_built_in(client: TestClient, auth_headers, tmp_path) -> None:
+    _known(client, tmp_path, PluginRecord(name="yuque", source=SOURCE_BUILTIN))
+
+    response = client.put(
+        "/api/plugins/yuque/enabled", json={"enabled": False}, headers=auth_headers
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "PLUGIN_NOT_TOGGLEABLE"
+
+
+def test_the_switch_refuses_a_plugin_nobody_installed(
+    client: TestClient, auth_headers, tmp_path
+) -> None:
+    """Dirty input: a name that is not a plugin.
+
+    The name is resolved against discovery, never used as given — this is the
+    step that keeps "switch a plugin off" from being "write any name into the
+    preference file", and it is why the path a removal moves comes from our own
+    scan rather than from the request.
+    """
+    state = _known(client, tmp_path)
+
+    response = client.put(
+        "/api/plugins/not-a-plugin/enabled", json={"enabled": False}, headers=auth_headers
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "PLUGIN_UNKNOWN"
+    assert state.disabled() == frozenset()
+
+
+def test_a_name_that_looks_like_a_path_is_still_just_a_name(
+    client: TestClient, auth_headers, tmp_path
+) -> None:
+    """Dirty input: a traversal-shaped plugin name.
+
+    Whatever the router makes of it, the answer is the same — 404 or a plain
+    refusal, never a file operation. Asserted on the preference file rather than
+    on a status code, because the property under test is that nothing was acted
+    on.
+    """
+    state = _known(client, tmp_path, _directory_plugin(tmp_path))
+
+    client.put(
+        "/api/plugins/..%2F..%2Fetc%2Fpasswd/enabled",
+        json={"enabled": False},
+        headers=auth_headers,
+    )
+
+    assert state.disabled() == frozenset()
+
+
+def test_removing_a_plugin_moves_its_directory_and_drops_its_switch(
+    client: TestClient, auth_headers, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plugins_dir = client.app.state.settings.plugins_dir
+    root = plugins_dir / "docmind-tex"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "pyproject.toml").write_text("[project]\nname = 'docmind-tex'\n", encoding="utf-8")
+    graveyard = tmp_path / "graveyard"
+    monkeypatch.setattr(removal, "_container", lambda data_dir: graveyard)
+    state = _known(
+        client,
+        tmp_path,
+        PluginRecord(
+            name="docmind-tex", source=SOURCE_DIRECTORY, path=root, disabled=True
+        ),
+    )
+    state.set_enabled("docmind-tex", enabled=False)
+
+    response = client.delete("/api/plugins/docmind-tex", headers=auth_headers)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["enabled"] is False
+    assert body["restartRequired"] is True
+    # Where it went, rather than a claim about the trash: the destination
+    # differs per platform, and the user needs to know where to look.
+    assert body["removedTo"] == str(graveyard / "docmind-tex")
+    assert not root.exists()
+    assert (graveyard / "docmind-tex" / "pyproject.toml").is_file()
+    # The switch goes with the files. A name left behind would make a later
+    # install of the same plugin start out switched off.
+    assert state.disabled() == frozenset()
+
+
+def test_removing_a_distribution_is_refused_with_a_reason(
+    client: TestClient, auth_headers, tmp_path
+) -> None:
+    _known(client, tmp_path, PluginRecord(name="docmind-tex", source=SOURCE_DISTRIBUTION))
+
+    response = client.delete("/api/plugins/docmind-tex", headers=auth_headers)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "PLUGIN_NOT_REMOVABLE"
+
+
+def test_removing_a_built_in_is_refused(client: TestClient, auth_headers, tmp_path) -> None:
+    _known(client, tmp_path, PluginRecord(name="yuque", source=SOURCE_BUILTIN))
+
+    response = client.delete("/api/plugins/yuque", headers=auth_headers)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "PLUGIN_NOT_REMOVABLE"
+
+
+def test_the_switch_endpoints_require_a_token(client: TestClient, tmp_path) -> None:
+    _known(client, tmp_path, _directory_plugin(tmp_path))
+
+    assert (
+        client.put("/api/plugins/docmind-tex/enabled", json={"enabled": False}).status_code == 401
+    )
+    assert client.delete("/api/plugins/docmind-tex").status_code == 401
+
+
+def test_a_plugin_list_with_no_switch_file_reports_unavailable(
+    client: TestClient, auth_headers, tmp_path
+) -> None:
+    """A build with no preference file has nothing to write the switch into.
+
+    Reported rather than swallowed: a switch that silently did nothing is
+    indistinguishable from one that worked, and the user would leave the page
+    believing a plugin had been turned off.
+    """
+    _known(client, tmp_path, _directory_plugin(tmp_path))
+    client.app.state.plugin_state = None
+
+    response = client.put(
+        "/api/plugins/docmind-tex/enabled", json={"enabled": False}, headers=auth_headers
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "PLUGIN_CATALOG_UNAVAILABLE"

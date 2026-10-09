@@ -83,6 +83,11 @@ class SourceRootDeclaration:
     #: checkout slug rather than the plugin's own name.
     distribution: str | None = None
     version: str | None = None
+    #: ``[project] description``. Declared copy, used only when the plugin is
+    #: not loaded: a switched-off or broken plugin has no cards to take its
+    #: one-line introduction from, and importing it to ask would defeat the
+    #: point of switching it off.
+    description: str | None = None
 
     @property
     def module(self) -> str:
@@ -154,12 +159,14 @@ def read_declaration(root: Path, group: str) -> SourceRootDeclaration | None:
         )
     distribution = project.get("name")
     version = project.get("version")
+    description = project.get("description")
     return SourceRootDeclaration(
         name=str(name),
         target=target,
         root=root,
         distribution=distribution if isinstance(distribution, str) else None,
         version=version if isinstance(version, str) else None,
+        description=description if isinstance(description, str) else None,
     )
 
 

@@ -26,6 +26,7 @@ from typing import ClassVar
 
 from app.document.formats import DocumentFormat, FormatRegistry
 from app.plugins.manifest import PluginManifest, merge_keywords
+from app.plugins.records import SOURCE_BUILTIN, PluginRecord
 from app.remote.credentials import CredentialStore, ProviderCredentialSpec
 from app.remote.notifications import NotificationHub, NotificationTarget
 from app.remote.provider import ProviderIdentity, RemoteProvider
@@ -36,6 +37,11 @@ from app.remote.registry import ProviderRegistry
 #: to the class that owns them so a kind cannot be half-introduced.
 KIND_REMOTE_SOURCE = "remote_source"
 KIND_DOCUMENT_FORMAT = "document_format"
+#: Not a capability. A plugin that contributes no card right now — switched off,
+#: or failed to load — is still a row on the page, because a plugin that
+#: disappeared when it was switched off could not be switched back on. The
+#: renderer draws no body for it: there is nothing to configure until it loads.
+KIND_PLUGIN = "plugin"
 
 
 @dataclass
@@ -51,10 +57,24 @@ class PluginHost:
     formats: FormatRegistry
     credentials: CredentialStore
     notifications: NotificationHub | None = None
-    #: Every contribution that installed successfully, in install order. The
-    #: catalogue reads this, so a plugin that failed to install contributes no
-    #: card — a half-registered plugin must not look installed.
-    contributions: list[object] = field(default_factory=list)
+    #: Every plugin that installed successfully, in install order. The catalogue
+    #: reads this, so a plugin that failed to install contributes no card — a
+    #: half-registered plugin must not look installed. A plugin with no cards at
+    #: all is here too: it is still something the user installed, switched off or
+    #: needs to fix.
+    plugins: list[PluginRecord] = field(default_factory=list)
+
+    @property
+    def contributions(self) -> list[object]:
+        """Every installed contribution, in install order.
+
+        Derived from the plugins rather than tracked beside them: which
+        contribution belongs to which plugin is exactly what the settings page
+        has to show, so two lists would be two answers to one question.
+        """
+        return [
+            contribution for record in self.plugins for contribution in record.contributions
+        ]
 
 
 @dataclass(frozen=True)
@@ -151,12 +171,21 @@ class DocumentFormatContribution:
         ]
 
 
-def install_contribution(host: PluginHost, contribution: object) -> None:
-    """Install one contribution and record it.
+def install_contribution(
+    host: PluginHost, contribution: object, *, plugin: PluginRecord | None = None
+) -> None:
+    """Install one contribution and record it against the plugin it came from.
 
     Recording happens only after ``install`` succeeds, which is what keeps a
     half-registered plugin from rendering a card for something that does not
     work.
+
+    ``plugin`` is how the page learns where a card came from, and so which
+    switch and remove button belong beside it. A caller with no plugin to name —
+    a test, or a host that installs a single contribution directly — gets an
+    unnamed record rather than no record at all: the card still appears, it
+    simply offers no plugin-level action, which beats guessing what it was part
+    of.
     """
     install = getattr(contribution, "install", None)
     cards = getattr(contribution, "cards", None)
@@ -166,7 +195,10 @@ def install_contribution(host: PluginHost, contribution: object) -> None:
             "expected an object with install() and cards()"
         )
     install(host)
-    host.contributions.append(contribution)
+    record = plugin if plugin is not None else PluginRecord(name="", source=SOURCE_BUILTIN)
+    if all(existing is not record for existing in host.plugins):
+        host.plugins.append(record)
+    record.contributions.append(contribution)
 
 
 # -- card construction -------------------------------------------------------

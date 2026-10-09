@@ -37,12 +37,13 @@ from app.document.builtin_formats import builtin_registry
 from app.document.formats import DocumentFormat
 from app.plugins import DocumentFormatContribution
 from app.plugins.catalog import PluginCatalog
-from app.plugins.contributions import PluginHost
+from app.plugins.contributions import KIND_PLUGIN, PluginHost
 
 #: The group under test. Read from the loader rather than hardcoded so a rename
 #: cannot leave this file asserting on a string nothing declares any more.
 from app.plugins.loader import PLUGIN_ENTRY_POINT_GROUP as GROUP
 from app.plugins.loader import load_plugins
+from app.plugins.records import SOURCE_DIRECTORY
 from app.plugins.source_roots import (
     SOURCE_MANIFEST,
     SourceRootError,
@@ -51,6 +52,7 @@ from app.plugins.source_roots import (
     iter_roots,
     read_declaration,
 )
+from app.plugins.state import PluginStateStore
 from app.remote.registry import ProviderRegistry
 from tests.conftest import RUNTIME_TOKEN, build_app
 
@@ -549,11 +551,21 @@ def test_a_directory_plugin_wins_over_an_installed_one(
     diagnostics = load_plugins(host, plugins)
 
     assert host.formats.for_extension(".tex").name == "tex"
-    assert [m.id for m in PluginCatalog(host).manifests()] == ["tex:core"]
-    # The loser is reported rather than quietly dropped, and the conflict names
-    # the format that won.
+    rows = PluginCatalog(host).manifests()
+    assert [m.id for m in rows] == ["tex:core", "docmind-tex@distribution"]
+    # The winner's row says which plugin it came from — the checkout, not the
+    # installed copy — which is what a page needs to name the thing it is running.
+    assert rows[0].origin is not None
+    assert rows[0].origin.source == SOURCE_DIRECTORY
+    # The loser is reported rather than quietly dropped: as a diagnostic, and as
+    # a row of its own, so it is visible on the page instead of only in a panel
+    # the user has to scroll to.
     assert [item["name"] for item in diagnostics.failed] == ["docmind-tex"]
     assert "tex" in diagnostics.failed[0]["error"]
+    assert rows[1].kind == KIND_PLUGIN
+    assert rows[1].origin is not None
+    assert rows[1].origin.error is not None and "tex" in rows[1].origin.error
+    assert rows[1].origin.active is False
 
 
 def test_diagnostics_have_one_shape_whether_a_plugin_loaded_or_not(
@@ -595,6 +607,154 @@ def test_the_default_does_not_scan_a_real_plugin_directory(
     assert diagnostics.loaded == []
     assert host.formats.for_extension(".tex") is None
     assert str(home_plugins / "docmind-tex") not in sys.path
+
+
+# -- the user's switches ----------------------------------------------------
+
+
+def test_a_switched_off_plugin_is_not_imported_at_all(tmp_path: Path, store) -> None:
+    """The whole difference between a switch and a filter on the page.
+
+    A plugin the user switched off must have no code running, and joining
+    ``sys.path`` is the first half of running it. Asserting only that its card is
+    absent would pass for the implementation this test exists to rule out.
+    """
+    plugins = tmp_path / "plugins"
+    root = _write_plugin(plugins / "docmind-tex")
+    state = PluginStateStore(tmp_path / "data")
+    state.set_enabled("docmind-tex", enabled=False)
+    host = _host(store)
+
+    diagnostics = load_plugins(host, plugins, state=state)
+
+    assert diagnostics.loaded == []
+    assert str(root) not in sys.path
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module(_MODULE)
+    assert host.formats.for_extension(".tex") is None
+
+
+def test_a_switched_off_plugin_still_gets_a_row(tmp_path: Path, store) -> None:
+    """Otherwise it could never be switched back on.
+
+    The row also proves the copy came from the declaration on disk rather than
+    from an import: a plugin that was imported and failed carries an error, and
+    this one cannot — nothing about it was executed.
+    """
+    plugins = tmp_path / "plugins"
+    root = _write_plugin(plugins / "docmind-tex")
+    state = PluginStateStore(tmp_path / "data")
+    state.set_enabled("docmind-tex", enabled=False)
+    host = _host(store)
+
+    load_plugins(host, plugins, state=state)
+
+    rows = PluginCatalog(host).manifests()
+    assert [m.kind for m in rows] == [KIND_PLUGIN]
+    origin = rows[0].origin
+    assert origin is not None
+    assert origin.plugin == "docmind-tex"
+    assert origin.enabled is False
+    assert origin.active is False
+    assert origin.error is None
+    assert origin.path == str(root)
+    assert origin.toggleable is True
+    assert origin.removable is True
+    # Copy read from ``[project]``, the only description available without
+    # importing the plugin the user just switched off.
+    assert rows[0].label == "docmind-tex"
+    assert rows[0].version == "0.1.0"
+
+
+def test_a_switched_off_plugin_carries_its_own_description(tmp_path: Path, store) -> None:
+    """The one-line introduction on a row that has no cards to take it from."""
+    plugins = tmp_path / "plugins"
+    root = plugins / "docmind-tex"
+    root.mkdir(parents=True)
+    (root / "unimportable.py").write_text(
+        'raise RuntimeError("a switched-off plugin must never be imported")\n', encoding="utf-8"
+    )
+    (root / SOURCE_MANIFEST).write_text(
+        "\n".join(
+            [
+                "[project]",
+                'name = "docmind-tex"',
+                'version = "0.2.0"',
+                'description = "把 LaTeX 源文件导入 DocMind"',
+                "",
+                f'[project.entry-points."{GROUP}"]',
+                'docmind-tex = "unimportable:plugin"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state = PluginStateStore(tmp_path / "data")
+    state.set_enabled("docmind-tex", enabled=False)
+    host = _host(store)
+
+    load_plugins(host, plugins, state=state)
+
+    row = PluginCatalog(host).manifests()[0]
+    assert row.label == "docmind-tex"
+    assert row.summary == "把 LaTeX 源文件导入 DocMind"
+    assert row.version == "0.2.0"
+    # That module raises on import, so anything but "never imported" would have
+    # surfaced here as an error.
+    assert row.origin is not None and row.origin.error is None
+
+
+def test_switching_a_plugin_back_on_loads_it(tmp_path: Path, store) -> None:
+    plugins = tmp_path / "plugins"
+    _write_plugin(plugins / "docmind-tex")
+    state = PluginStateStore(tmp_path / "data")
+    state.set_enabled("docmind-tex", enabled=False)
+    host = _host(store)
+
+    load_plugins(host, plugins, state=state)
+    state.set_enabled("docmind-tex", enabled=True)
+    diagnostics = load_plugins(host, plugins, state=state)
+
+    assert diagnostics.loaded == [
+        {"name": "docmind-tex", "source": str(plugins / "docmind-tex")}
+    ]
+    assert host.formats.for_extension(".tex").name == "tex"
+
+
+def test_a_switched_off_name_covers_both_sources_of_the_same_plugin(
+    tmp_path: Path, store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dirty input: one plugin name, declared as a directory *and* installed.
+
+    The user's decision is about the plugin, not about which copy of it they
+    have — two rows would make one switch look like two, and the copy that was
+    not listed would still be loading the code they turned off.
+    """
+    plugins = tmp_path / "plugins"
+    _write_plugin(plugins / "docmind-tex")
+    installed = DocumentFormatContribution(
+        format=DocumentFormat(
+            name="tex_installed",
+            label="TeX（已安装）",
+            media_type="text/x-tex-installed",
+            extensions=(".tex",),
+            parse=lambda document: document,  # type: ignore[arg-type,return-value]
+        ),
+        label="TeX（已安装）",
+    )
+    monkeypatch.setattr(
+        "app.plugins.loader._installed_candidates",
+        lambda: [_FakeDistribution("docmind-tex", installed)],
+    )
+    state = PluginStateStore(tmp_path / "data")
+    state.set_enabled("docmind-tex", enabled=False)
+    host = _host(store)
+
+    diagnostics = load_plugins(host, plugins, state=state)
+
+    assert diagnostics.loaded == []
+    assert host.formats.for_extension(".tex") is None
+    assert [m.id for m in PluginCatalog(host).manifests()] == ["docmind-tex@directory"]
 
 
 # -- configuration ----------------------------------------------------------
