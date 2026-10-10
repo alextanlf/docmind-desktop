@@ -3,6 +3,7 @@ export const IPC_CHANNELS = {
   localModelModels: "localModel:models",
   settingsGet: "settings:get",
   settingsSaveModel: "settings:saveModel",
+  settingsDeleteModelProvider: "settings:deleteModelProvider",
   settingsTestModel: "settings:testModel",
   settingsListModels: "settings:listModels",
   settingsSkipModelSetup: "settings:skipModelSetup",

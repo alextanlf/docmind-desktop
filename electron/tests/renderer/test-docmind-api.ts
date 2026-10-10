@@ -28,11 +28,16 @@ export const readySettings: SettingsView = {
     model: "deepseek-flash",
     timeoutSeconds: 30,
     reasoningEffort: "high",
+    // 只有自定义供应商才有显示名；内置预设的名字在渲染层的内置表里。
+    label: "",
   },
   hasApiKey: true,
   // Keys are per vendor. Only DeepSeek has one here, which is what makes the
   // "switching to Kimi must stop claiming 已安全保存" case testable.
   apiKeys: { deepseek: true },
+  // 用户自建的服务商。默认没有 —— 「自定义」现在是一张可增删的列表，不再是
+  // 预设枚举里的一个固定值。
+  customProviders: [],
   dataPath: "/Users/test/Library/Application Support/DocMind",
   screenshotCount: 2,
   modelSetupSkipped: false,
@@ -656,6 +661,7 @@ export function installDocMindApi(overrides?: {
     settings: {
       get: vi.fn().mockResolvedValue(readySettings),
       saveModel: vi.fn().mockResolvedValue(readySettings),
+      deleteModelProvider: vi.fn().mockResolvedValue(readySettings),
       testModel: vi.fn().mockResolvedValue({ connected: true, latencyMs: 86 }),
       listModels: vi.fn().mockResolvedValue({ models: [], source: "live", notice: null }),
       skipModelSetup: vi.fn().mockResolvedValue(readySettings),

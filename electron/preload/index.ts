@@ -162,6 +162,12 @@ const api: DocMindApi = {
         ModelSettingsInputSchema.parse(input),
       ),
     testModel: () => invoke(IPC_CHANNELS.settingsTestModel, ModelConnectionResultSchema),
+    deleteModelProvider: (providerId) =>
+      invoke(
+        IPC_CHANNELS.settingsDeleteModelProvider,
+        SettingsViewSchema,
+        z.string().min(1).max(20).parse(providerId),
+      ),
     listModels: (input) =>
       invoke(IPC_CHANNELS.settingsListModels, ModelListViewSchema, ModelListProbeSchema.parse(input ?? {})),
     skipModelSetup: () => invoke(IPC_CHANNELS.settingsSkipModelSetup, SettingsViewSchema),

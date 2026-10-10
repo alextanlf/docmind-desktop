@@ -55,13 +55,36 @@ export const MODEL_PRESET_IDS = [
 export const ModelPresetSchema = z.enum(MODEL_PRESET_IDS);
 export type ModelPreset = z.infer<typeof ModelPresetSchema>;
 
+/**
+ * 自定义供应商的预设名：`custom:<档案 id>`。
+ *
+ * 内置厂商是固定枚举，用户自建的厂商是一张可以增删的列表 —— 只有把厂商 id 编进
+ * 预设名，第二家自定义厂商才有自己的配置和钥匙串槽位。`custom` 这个裸值只剩
+ * 升级前的老配置在用，后端读到它时会归到固定的 `default` 那条档案上。
+ */
+export const CUSTOM_PRESET_PREFIX = "custom:";
+/** 升级前那家「没有名字的自定义厂商」的 preset 字面量。只剩读老配置时用。 */
+export const LEGACY_CUSTOM_PRESET = "custom";
+/** 没有档案行的那家「未命名自定义」的固定 id，与后端 DEFAULT_CUSTOM_PROVIDER_ID 一致。 */
+export const DEFAULT_CUSTOM_PROVIDER_ID = "default";
+/** 表单「新建」用的占位 id：保存时后端换成随机 id，绝不落库。 */
+export const NEW_CUSTOM_PROVIDER_ID = "new";
+
+export const customPreset = (providerId: string) => `${CUSTOM_PRESET_PREFIX}${providerId}`;
+export const isCustomPreset = (preset: string) => preset.startsWith(CUSTOM_PRESET_PREFIX);
+export const customProviderId = (preset: string): string | null =>
+  isCustomPreset(preset) ? preset.slice(CUSTOM_PRESET_PREFIX.length) : null;
+
 export const ModelSettingsInputSchema = z.object({
-  preset: ModelPresetSchema,
+  // 不是 ModelPresetSchema：预设里还有 `custom:<档案 id>`，枚举不完。
+  preset: z.string().trim().min(1).max(32),
   reasoningEffort: z.string().max(32).default(""),
   baseUrl: z.string().max(500),
   model: z.string().max(200),
   timeoutSeconds: z.number().positive().max(300),
   apiKey: z.string().max(2_000).nullable().optional(),
+  // 自定义供应商的显示名；内置预设留空（它们的名字在前端的内置表里）。
+  label: z.string().max(60).default(""),
 });
 export const ModelSettingsViewSchema = z.object({
   reasoningEffort: z.string().max(32).default(""),
@@ -69,7 +92,26 @@ export const ModelSettingsViewSchema = z.object({
   baseUrl: z.string(),
   model: z.string(),
   timeoutSeconds: z.number(),
+  label: z.string().max(60).default(""),
 });
+
+/**
+ * 一家用户自建的服务商。
+ *
+ * `removable` 是视图状态而不是档案字段：升级前裸的 `custom`、表单刚点「新建」
+ * 还没保存、以及首次启动的空白配置都会在读取时按配置合成一条，删掉它只会再合成
+ * 一次 —— 界面据此决定「删除」按钮出不出现，后端也不接受删除这类条目。
+ */
+export const CustomProviderSchema = z.object({
+  id: z.string().min(1).max(20),
+  label: z.string().min(1).max(60),
+  baseUrl: z.string(),
+  model: z.string(),
+  timeoutSeconds: z.number(),
+  reasoningEffort: z.string().default(""),
+  removable: z.boolean().default(false),
+});
+export type CustomProvider = z.infer<typeof CustomProviderSchema>;
 export const ConnectionTestResultSchema = z.object({
   connected: z.boolean(),
   message: z.string(),
@@ -87,6 +129,9 @@ export const SettingsViewSchema = z.object({
   // single flag and so kept saying 「已安全保存」 after the user switched vendor.
   // `hasApiKey` survives for the saved preset (first-run gating).
   apiKeys: z.record(z.string(), z.boolean()).default({}),
+  // 用户自建的服务商，可增删。列表里始终包含当前选中的那一家（没有档案行时由
+  // 后端按已保存的配置合成），否则下拉框会缺少当前值。
+  customProviders: z.array(CustomProviderSchema).default([]),
   dataPath: z.string(),
   screenshotCount: z.number().int().nonnegative(),
   runtime: z
@@ -954,6 +999,8 @@ export interface DocMindApi {
   settings: {
     get(): Promise<SettingsView>;
     saveModel(input: ModelSettingsInput): Promise<SettingsView>;
+    /** 删掉一家自定义供应商：它的档案、它的 API Key，以及指向它的当前配置。 */
+    deleteModelProvider(providerId: string): Promise<SettingsView>;
     testModel(): Promise<ModelConnectionResult>;
     listModels(input?: ModelListProbe): Promise<ModelListView>;
     skipModelSetup(): Promise<SettingsView>;

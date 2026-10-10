@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_CUSTOM_PROVIDER_ID, customPreset } from "../../shared/contracts";
 import { AppProviders } from "../../renderer/src/app/AppProviders";
 import { appQueryClient } from "../../renderer/src/app/query-client";
 import { SettingsView } from "../../renderer/src/features/settings/SettingsView";
@@ -143,6 +144,131 @@ describe("设置", () => {
       "placeholder",
       "已安全保存，留空可保留",
     );
+  });
+
+  it("lists every custom provider by its own name and keeps their keys apart", async () => {
+    const gateway = {
+      id: "gateway01",
+      label: "公司网关",
+      baseUrl: "https://gateway.example/v1",
+      model: "gpt-5.6-terra",
+      timeoutSeconds: 30,
+      reasoningEffort: "",
+      removable: true,
+    };
+    const relay = {
+      id: "relay01",
+      label: "某中转站",
+      baseUrl: "https://relay.example/v1",
+      model: "deepseek-flash",
+      timeoutSeconds: 45,
+      reasoningEffort: "",
+      removable: true,
+    };
+    const settings = {
+      ...readySettings,
+      model: {
+        ...readySettings.model,
+        preset: customPreset(gateway.id),
+        baseUrl: gateway.baseUrl,
+        model: gateway.model,
+        label: gateway.label,
+      },
+      apiKeys: { ...readySettings.apiKeys, [customPreset(gateway.id)]: true },
+      customProviders: [gateway, relay],
+    };
+    installDocMindApi({ settings: { get: vi.fn().mockResolvedValue(settings) } });
+    renderSettings();
+
+    // 🔴 回归：自定义厂商曾经只能是下拉框里那个写死的「自定义」，用户起的名字
+    // （公司网关 / 某中转站）没有任何地方可以显示。
+    const presetSelect = await screen.findByLabelText("模型预设");
+    expect(within(presetSelect).getByRole("option", { name: "公司网关" })).toBeInTheDocument();
+    expect(within(presetSelect).getByRole("option", { name: "某中转站" })).toBeInTheDocument();
+    expect(screen.getByLabelText("供应商名称")).toHaveValue("公司网关");
+    expect(screen.getByLabelText("Base URL")).toHaveValue("https://gateway.example/v1");
+    expect(screen.getByLabelText("API Key")).toHaveAttribute(
+      "placeholder",
+      "已安全保存，留空可保留",
+    );
+
+    fireEvent.change(presetSelect, { target: { value: customPreset(relay.id) } });
+
+    // 切过去带上的是那一家自己的连接配置，key 也按那一家报：中转站还没存过 key，
+    // 不能沿用网关那把。
+    expect(await screen.findByLabelText("供应商名称")).toHaveValue("某中转站");
+    expect(screen.getByLabelText("Base URL")).toHaveValue("https://relay.example/v1");
+    expect(screen.getByLabelText("模型名称")).toHaveValue("deepseek-flash");
+    expect(screen.getByLabelText("超时时间（秒）")).toHaveValue(45);
+    expect(screen.getByLabelText("API Key")).toHaveAttribute("placeholder", "请输入 API Key");
+  });
+
+  it("deletes a custom provider only after an explicit confirmation", async () => {
+    const provider = {
+      id: "relay01",
+      label: "某中转站",
+      baseUrl: "https://relay.example/v1",
+      model: "deepseek-flash",
+      timeoutSeconds: 30,
+      reasoningEffort: "",
+      removable: true,
+    };
+    const afterDelete = {
+      ...readySettings,
+      model: {
+        ...readySettings.model,
+        preset: customPreset(DEFAULT_CUSTOM_PROVIDER_ID),
+        baseUrl: "",
+        model: "",
+        label: "自定义",
+      },
+      apiKeys: { ...readySettings.apiKeys, [customPreset(DEFAULT_CUSTOM_PROVIDER_ID)]: false },
+      // 没有档案行的那一家是后端按当前配置合成的，所以 removable=False。
+      customProviders: [
+        {
+          id: DEFAULT_CUSTOM_PROVIDER_ID,
+          label: "自定义",
+          baseUrl: "",
+          model: "",
+          timeoutSeconds: 30,
+          reasoningEffort: "",
+          removable: false,
+        },
+      ],
+    };
+    const deleteModelProvider = vi.fn().mockResolvedValue(afterDelete);
+    installDocMindApi({
+      settings: {
+        get: vi.fn().mockResolvedValue({
+          ...readySettings,
+          model: {
+            ...readySettings.model,
+            preset: customPreset(provider.id),
+            baseUrl: provider.baseUrl,
+            model: provider.model,
+            label: provider.label,
+          },
+          apiKeys: { ...readySettings.apiKeys, [customPreset(provider.id)]: true },
+          customProviders: [provider],
+        }),
+        deleteModelProvider,
+      },
+    });
+    renderSettings();
+
+    // 两步确认：第一次点击只把后果说清楚，不能已经把 key 删了。
+    fireEvent.click(await screen.findByRole("button", { name: "删除该供应商" }));
+    expect(deleteModelProvider).not.toHaveBeenCalled();
+    expect(screen.getByText(/将删除「某中转站」/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
+
+    await waitFor(() => expect(deleteModelProvider).toHaveBeenCalledWith("relay01"));
+    expect(await screen.findByText("已删除「某中转站」")).toBeInTheDocument();
+    // 删掉的是当前在用的那家：表单跟着后端回落到「未命名」那家，而合成的条目没有
+    // 可删的档案，按钮随之消失。
+    expect(screen.getByLabelText("供应商名称")).toHaveValue("自定义");
+    expect(screen.queryByRole("button", { name: "删除该供应商" })).toBeNull();
   });
 
   it("maps model errors to an actionable Chinese message", async () => {
@@ -1014,9 +1140,12 @@ describe("设置", () => {
     const api = installDocMindApi();
     renderSettings();
 
-    // The custom preset ships no curated models, so the picker degrades to free
-    // text and an arbitrary model id stays saveable.
-    fireEvent.change(await screen.findByLabelText("模型预设"), { target: { value: "custom" } });
+    // A custom provider ships no curated models, so the picker degrades to free
+    // text and an arbitrary model id stays saveable. 「新建」是自定义供应商那一组
+    // 里的入口 —— `custom` 这个裸预设已经不再出现在下拉框里。
+    fireEvent.change(await screen.findByLabelText("模型预设"), {
+      target: { value: "custom:new" },
+    });
     const field = await screen.findByLabelText("模型名称");
     expect(field.tagName).toBe("INPUT");
     fireEvent.change(field, { target: { value: "my-own-model" } });
@@ -1024,7 +1153,7 @@ describe("设置", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
     await waitFor(() =>
       expect(api.settings.saveModel).toHaveBeenLastCalledWith(
-        expect.objectContaining({ preset: "custom", model: "my-own-model" }),
+        expect.objectContaining({ preset: "custom:new", model: "my-own-model" }),
       ),
     );
   });

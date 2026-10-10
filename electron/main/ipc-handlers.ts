@@ -146,6 +146,14 @@ const REMOTE_PROVIDER = z
   .min(1)
   .max(64)
   .regex(/^[A-Za-z0-9_-]+$/);
+// 自定义供应商的档案 id：小写字母数字，与后端 CustomProvider.id 的模式一致 ——
+// 它要进 URL 路径，不能让调用方塞进别的东西。
+const CUSTOM_PROVIDER_ID = z
+  .string()
+  .trim()
+  .min(1)
+  .max(20)
+  .regex(/^[a-z0-9]+$/);
 const parse = <T>(schema: z.ZodType<T>, value: unknown): T => {
   const result = schema.safeParse(value);
   if (!result.success) throw new DocMindClientError("INVALID_REQUEST", "请求参数无效");
@@ -181,6 +189,14 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
       proxy.requestJson(
         "/api/settings/model",
         jsonInit("PUT", parse(ModelSettingsInputSchema, input)),
+        SettingsViewSchema,
+      ),
+    [IPC_CHANNELS.settingsDeleteModelProvider]: (_event, providerId) =>
+      proxy.requestJson(
+        `/api/settings/model/providers/${encodeURIComponent(
+          parse(CUSTOM_PROVIDER_ID, providerId),
+        )}`,
+        jsonInit("DELETE"),
         SettingsViewSchema,
       ),
     [IPC_CHANNELS.settingsTestModel]: () =>

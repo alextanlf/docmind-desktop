@@ -7,27 +7,41 @@
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
 
+from app.core.llm import model_label
 from app.core.model_capabilities import (
     REASONING_EFFORT_LABELS,
     REASONING_EFFORT_VALUES,
     TEMPERATURE_MIN_DETERMINISTIC,
     accepts_temperature,
+    capability_basis,
     clamp_temperature,
     default_reasoning_effort,
     reasoning_levels,
     reasoning_params,
+    registered_models,
     supports_reasoning_control,
 )
 from app.schemas.settings import (
     FREE_ONLY_PRESETS,
     MODEL_CATALOG,
+    MODEL_CATALOG_DOC_SOURCES,
+    MODEL_CATALOG_KEYLESS_MODELS_ENDPOINTS,
+    MODEL_CATALOG_MAX_AGE_DAYS,
+    MODEL_CATALOG_MAX_AGE_DAYS_BY_PRESET,
+    MODEL_CATALOG_REVIEWED_AT,
     MODEL_PRESETS,
+    RETIRED_MODELS,
+    catalog_max_age_days,
+    catalog_review_today,
     is_free_model,
+    is_retired_model,
     preset_models,
+    stale_catalogs,
 )
 
 # 遍历「预设里列出的每个模型」，确保没有漏登记或登记错。
@@ -95,7 +109,9 @@ def test_kimi_k27_code_thinking_is_forced_on() -> None:
 # 所以「开思考 + 高强度」应该发 reasoning_effort，而不是 thinking。
 def test_deepseek_uses_thinking_type_for_the_toggle() -> None:
     assert reasoning_levels("deepseek", "deepseek-flash") == ("off", "low", "high", "max")
-    assert reasoning_params("deepseek", "deepseek-flash", "off") == {"thinking": {"type": "disabled"}}
+    assert reasoning_params("deepseek", "deepseek-flash", "off") == {
+        "thinking": {"type": "disabled"}
+    }
     assert reasoning_params("deepseek", "deepseek-flash", "high") == {"reasoning_effort": "high"}
     assert reasoning_params("deepseek", "deepseek-flash", "max") == {"reasoning_effort": "max"}
     assert default_reasoning_effort("deepseek", "deepseek-flash") == "high"
@@ -262,15 +278,79 @@ def test_every_reasoning_value_has_a_label() -> None:
 def test_no_preset_defaults_to_a_retired_model() -> None:
     """厂商已下线的模型不能作为**直连**预设的默认。
 
-    仅适用于直连厂商：OpenCode 是聚合网关，它自己仍在提供 mimo-v2.5，
-    该下线公告只约束小米官方端点。
+    判据取自 `RETIRED_MODELS`，按厂商分组查，所以聚合网关不需要特殊豁免：
+    OpenCode 至今仍在提供 mimo-v2.5，而小米官方的下线公告只登记在
+    ``RETIRED_MODELS["mimo"]`` 下，`RETIRED_MODELS["opencode_go"]` 是空的。
+    旧版本用一张全局集合 + `gateways` 跳过表来表达同一件事，那等于在下游手工
+    维护"谁不受约束"，加一家网关就会漏。
     """
-    direct_vendor_retired = {"deepseek-chat", "deepseek-reasoner", "mimo-v2.5", "mimo-v2.5-pro"}
-    gateways = {"opencode_zen", "opencode_go"}
     for preset, (_base_url, model) in MODEL_PRESETS.items():
-        if preset in gateways:
-            continue
-        assert model not in direct_vendor_retired, f"{preset} 默认模型 {model} 已下线"
+        assert not is_retired_model(preset, model), f"{preset} 默认模型 {model} 已下线"
+
+
+def test_catalogue_never_lists_a_retired_model() -> None:
+    """目录里绝不能出现已下线的模型 —— 这是"读过下线公告"的可执行形式。
+
+    用户选中一个已下线的 id 之后才知道它调不通，而这一步本来只需要有人读过
+    厂商公告。公告读到了就必须落到 `RETIRED_MODELS`：只读不记，这条断言不会
+    生效，目录也照样能收进那个死 id。
+    """
+    for preset, catalog in MODEL_CATALOG.items():
+        retired = RETIRED_MODELS.get(preset, frozenset())
+        leaked = sorted(set(catalog) & retired)
+        assert not leaked, f"{preset} 目录里混入已下线模型 {leaked}"
+
+
+# 下线的 id 分两类，必须逐个归类，不能靠"厂商有没有能力表"推断。
+#
+# 判据是**这个 id 当初登记过没有**，而不是**它的厂商有没有登记过别的模型**：
+# openai 预设登记了 gpt-5.x/6.x，但 gpt-5-mini 从来没有登记过，用厂商粒度判断
+# 会得出"openai 有档位，所以 gpt-5-mini 也该有"这种错误结论。
+_RETIRED_IDS_WITH_PROFILES: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("deepseek", "deepseek-chat"),
+        ("deepseek", "deepseek-reasoner"),
+        ("mimo", "mimo-v2.5"),
+        ("mimo", "mimo-v2.5-pro"),
+    }
+)
+
+# ⚠️ 已知缺口，不是"没问题"：这三个 id 下线时能力表里就没有它们，于是老配置会落
+# 进 `_NO_CONTROL` —— 不发档位，temperature 照发。对 gpt-5-mini / gpt-5.1 来说
+# 这大概率是错的（OpenAI 推理家族拒绝非默认 temperature，会 400），但补登记需要
+# 先查到官方参数，不能靠猜字段值。列在这里是为了让缺口**可见且被追踪**：将来
+# 补登记时把它移到上面那组即可，归类断言会强制这个动作。
+_RETIRED_IDS_WITHOUT_PROFILES: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("qwen", "qwen-plus"),
+        ("openai", "gpt-5-mini"),
+        ("openai", "gpt-5.1"),
+    }
+)
+
+
+def test_every_retired_id_is_classified() -> None:
+    """登记进 RETIRED_MODELS 的每个 id，都要在上述两组里归好类。
+
+    没有这条，"新读到一个下线公告 → 加一行 RETIRED_MODELS"这个动作就只完成了
+    一半：能力表认不认得它、老配置会不会静默降级，全凭运气。
+    """
+    declared = _RETIRED_IDS_WITH_PROFILES | _RETIRED_IDS_WITHOUT_PROFILES
+    actual = {(preset, model) for preset, models in RETIRED_MODELS.items() for model in models}
+    assert declared == actual, (
+        f"未归类：{sorted(actual - declared)}；已失效：{sorted(declared - actual)}"
+    )
+
+
+def test_retired_ids_with_profiles_keep_them() -> None:
+    """有档位的下线 id 必须继续解析出档位。
+
+    删掉这些登记不会报错、不会 400，只会让老配置里的思考档位静默消失 ——
+    用户没有任何提示。所以这里把它们逐个钉住。
+    """
+    for preset, model in sorted(_RETIRED_IDS_WITH_PROFILES):
+        assert (preset, model) in registered_models(), f"{preset}/{model} 不再被能力表认得"
+        assert reasoning_levels(preset, model), f"{preset}/{model} 的档位登记被删空了"
 
 
 def test_opencode_base_urls_match_official_docs() -> None:
@@ -297,6 +377,140 @@ def test_preset_defaults_match_catalogue_heads() -> None:
 def test_catalogue_has_no_duplicate_ids_per_preset() -> None:
     for preset, catalog in MODEL_CATALOG.items():
         assert len(set(catalog)) == len(catalog), f"{preset} 目录里有重复 id"
+
+
+def test_every_catalogued_preset_declares_its_capability_basis() -> None:
+    """每家上了目录的厂商，都必须**明确**声明它的能力数据从哪来。
+
+    缺省路径（`_profile` 落进 `_NO_CONTROL`）是静默成功的：不发厂商专属字段、
+    不报 400，界面上只是少了几个档位。于是"新增一家厂商时忘了做能力决定"这个
+    错误没有任何症状 —— 除非有人去逐行读能力表。这条断言把那个隐形状态变成
+    构建失败，逼着新增厂商的人二选一：逐个登记模型，或显式声明整家走兜底。
+    """
+    for preset in MODEL_CATALOG:
+        assert capability_basis(preset) != "implicit", (
+            f"{preset} 已在 MODEL_CATALOG 里，却既没有模型级能力条目，"
+            f"也没有写进 _PRESET_FALLBACK —— 能力数据落在了隐式缺省上"
+        )
+
+
+def test_every_registered_model_has_a_display_label() -> None:
+    """登记了参数能力的模型，必须在显示名表里有名字。
+
+    能力表是逐个模型核对官方文档的产物；显示名表是用户实际看到的东西。只在能力
+    表里登记、显示名表里没有，意味着这份核对结果只生效了一半：模型选择框里会把
+    原始 id 直接摆给用户，而同厂商其他模型都是可读的名字。
+
+    反向不成立，也不该断言："能力表里的模型都在目录里"会逼着人把 deepseek-chat
+    这类历史 id 误标成在售 —— 见 `registered_models` 的说明。
+    """
+    unlabeled = sorted(
+        f"{preset}/{model}" for preset, model in registered_models() if model_label(model) == model
+    )
+    assert not unlabeled, f"这些模型登记了能力却没有显示名：{unlabeled}"
+
+
+# ------------------------------------------------------------- 目录陈旧度闸门
+def test_every_catalogued_preset_records_when_and_where_to_review() -> None:
+    """每份要核对的目录，都要同时有"什么时候核对的"和"去哪核对"。
+
+    两张表必须逐键对齐：只有日期没有来源，闸门响的时候不知道该看哪一页；只有来源
+    没有日期，闸门永远不会响。`custom` 两边都没有 —— 它没有厂商目录可核对。
+    """
+    catalogued = {preset for preset, models in MODEL_CATALOG.items() if models}
+    assert set(MODEL_CATALOG_REVIEWED_AT) == catalogued
+    assert set(MODEL_CATALOG_DOC_SOURCES) == catalogued
+
+
+def test_doc_sources_are_public_pages_not_the_api_endpoint() -> None:
+    """来源必须是公开文档页，**不能**是厂商自己的 API 端点。
+
+    DocMind 装在用户机子上，key 只在用户自己的钥匙串里。把厂商 `/models` 这类需要
+    凭据的地址写成"核对来源"，等于把闸门接到一条要求凭据、而凭据不能离开用户机器
+    的路径上 —— 这条断言把那个错误挡在数据层。
+    """
+    for preset, sources in MODEL_CATALOG_DOC_SOURCES.items():
+        assert sources, f"{preset} 没有登记任何核对来源"
+        base_url = MODEL_PRESETS[preset][0]
+        for url in sources:
+            assert url.startswith("https://"), f"{preset} 的来源不是 https：{url}"
+            assert not url.startswith(base_url), f"{preset} 的来源是它自己的 API 端点：{url}"
+
+
+def test_review_dates_are_iso_and_not_in_the_future() -> None:
+    """日期要能被解析，且不能是未来。
+
+    容忍超前 1 天：口径是 UTC（见 `catalog_review_today`），而人贴日期看的是自己
+    桌上的日历 —— 东半球的工作日会领先 UTC 一天。这条断言要抓的是 `2062-10-04`
+    这类笔误，不是时区差。
+    """
+    today = catalog_review_today()
+    for preset, reviewed in MODEL_CATALOG_REVIEWED_AT.items():
+        try:
+            parsed = date.fromisoformat(reviewed)
+        except ValueError:
+            pytest.fail(f"{preset} 的核对日期 {reviewed!r} 不是 YYYY-MM-DD")
+        assert parsed <= today + timedelta(days=1), f"{preset} 的核对日期 {reviewed} 在未来"
+
+
+def test_no_catalogue_is_past_its_review_deadline() -> None:
+    """闸门本体：超过核对周期的目录会让构建失败。
+
+    厂商不会通知我们它昨天上了什么新模型，所以"有没有人去看过"是唯一能离线检查
+    的东西。没有这条，目录会一直停在某次改动的那天，而用户看到的是一个已经改名或
+    下线的 id —— 且往往是在**没有 key 的首次设置**里看到，那时 live `/models`
+    还没法兜底。
+
+    到期时该做什么、不该做什么写在失败信息里 —— 这条断言响的时候，读它的人正是
+    需要那两句话的人。
+    """
+    stale = stale_catalogs()
+    assert not stale, (
+        "这些预设的模型目录已超过核对周期，可能已经包含改名/下线的 id：\n"
+        + "\n".join(
+            f"  - {preset}: 最后核对 {reviewed}，已过 {age} 天（上限 {limit} 天）"
+            f"\n      → {', '.join(MODEL_CATALOG_DOC_SOURCES[preset])}"
+            for preset, reviewed, age, limit in stale
+        )
+        + "\n\n请对照上面的**公开文档页**核对 MODEL_CATALOG（改完把"
+        + "\nMODEL_CATALOG_REVIEWED_AT 贴到当天），或重抓免 key 的 /models 端点。"
+        + "\n⚠️ 不要用用户机子上的 API key 去做这件事 —— key 不能离开用户机器。"
+    )
+
+
+def test_the_staleness_gate_actually_fires() -> None:
+    """守卫自身的守卫：闸门必须真的会响。
+
+    否则它可能就是一段永远返回空列表的装饰 —— 而"永远绿"和"没问题"在读数的
+    人眼里一模一样。这里把时钟推到所有周期之外，要求它把每一家都报出来。
+    """
+    worst_limit = max([MODEL_CATALOG_MAX_AGE_DAYS, *MODEL_CATALOG_MAX_AGE_DAYS_BY_PRESET.values()])
+    far_future = catalog_review_today() + timedelta(days=worst_limit + 1)
+    reported = {preset for preset, *_rest in stale_catalogs(today=far_future)}
+    assert reported == set(MODEL_CATALOG_REVIEWED_AT)
+
+
+def test_the_rotating_pools_review_window_is_tighter_in_effect() -> None:
+    """Zen 的周期必须真的更短，而且这个"更短"要体现在判定上，不能只是个数。"""
+    zen_limit = catalog_max_age_days("opencode_zen")
+    assert zen_limit < MODEL_CATALOG_MAX_AGE_DAYS
+
+    reviewed = date.fromisoformat(MODEL_CATALOG_REVIEWED_AT["opencode_zen"])
+    just_past_zen = reviewed + timedelta(days=zen_limit + 1)
+    stale = {preset for preset, *_rest in stale_catalogs(today=just_past_zen)}
+    assert "opencode_zen" in stale, "紧周期没有生效"
+    # 同一天按默认周期算它还不该到期 —— 否则"周期更短"就是句空话。
+    assert just_past_zen <= reviewed + timedelta(days=MODEL_CATALOG_MAX_AGE_DAYS)
+
+
+def test_keyless_endpoints_are_only_declared_for_known_presets() -> None:
+    """免 key 端点表不能指向不存在的预设，也不能冒充文档页。"""
+    for preset, endpoint in MODEL_CATALOG_KEYLESS_MODELS_ENDPOINTS.items():
+        assert preset in MODEL_CATALOG, f"{preset} 不在目录里"
+        assert endpoint.startswith("https://"), f"{preset} 的端点不是 https：{endpoint}"
+        assert endpoint not in MODEL_CATALOG_DOC_SOURCES.get(preset, ()), (
+            f"{preset} 把机器抓取的端点写进了需要人读的文档页里"
+        )
 
 
 # ------------------------------------------------------------- 免费档限制

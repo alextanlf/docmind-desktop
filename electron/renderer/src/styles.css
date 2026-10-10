@@ -1679,6 +1679,11 @@ button:disabled {
 .form-field-wide {
   grid-column: 2;
 }
+/* 「供应商名称」只在自定义预设下出现，会让网格里普通单元格的个数变成奇数 ——
+   Base URL 此时独占一整行，否则它后面的宽单元格会把后续字段整体错位、留下空洞。 */
+.form-field-full {
+  grid-column: 1 / -1;
+}
 input:not([type="checkbox"]):not([type="radio"]),
 select {
   width: 100%;
@@ -1740,6 +1745,16 @@ input:disabled {
 .form-message-error,
 .error-copy {
   color: var(--red) !important;
+}
+/* 删除自定义供应商的确认行：单独一行，不跟「保存/测试」抢右对齐的那一排。 */
+.provider-delete-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .status-row {

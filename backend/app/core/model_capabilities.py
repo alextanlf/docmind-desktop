@@ -274,6 +274,35 @@ def _profile(preset: str, model: str) -> dict[str, object]:
     return _PRESET_FALLBACK.get(preset, _NO_CONTROL)
 
 
+def capability_basis(preset: str) -> str:
+    """这家厂商的能力数据**是怎么来的**。给契约测试与巡检工具用，不参与请求构造。
+
+    - ``"registered"``: 目录里的模型逐个显式登记过（deepseek / kimi / glm / mimo / openai）
+    - ``"fallback"``:   整家走兜底，明确决定不下发任何厂商专属字段（网关、qwen、custom、local）
+    - ``"implicit"``:   两者都没声明，落进 `_NO_CONTROL`
+
+    🔴 为什么要把第三种单列出来：新增一家厂商时，只要 MODEL_CATALOG 加了行、
+    `_PRESET_FALLBACK` 忘了加，所有取值路径都会**静默成功** —— 不发推理字段、
+    不报 400，只是用户界面上的"深度"少了几个档位。没人会注意到"少了一个决定"，
+    因为缺省值本身就是合法的。`implicit` 就是把这个隐形状态变成一个可断言的值。
+    """
+    if any(key[0] == preset for key in _MODEL_CAPABILITIES):
+        return "registered"
+    if preset in _PRESET_FALLBACK:
+        return "fallback"
+    return "implicit"
+
+
+def registered_models() -> frozenset[tuple[str, str]]:
+    """显式登记了参数能力的 (preset, model) 组合；不含走兜底的。
+
+    注意它是 MODEL_CATALOG 的**超集**，这不是 bug：能力表要认得旧配置里存的历史
+    id（deepseek-chat 等），也覆盖网关背后那些没进目录的模型。所以别在这上面断言
+    "能力表里的模型都必须出现在目录里" —— 那会逼着人把历史 id 误标成"在售"。
+    """
+    return frozenset(_MODEL_CAPABILITIES)
+
+
 def reasoning_levels(preset: str, model: str) -> tuple[str, ...]:
     """该「厂商 + 模型」组合支持的用户可选档位；空元组表示不支持调节。"""
     return tuple(_profile(preset, model).get("levels") or ())

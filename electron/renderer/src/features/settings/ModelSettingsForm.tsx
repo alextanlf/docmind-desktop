@@ -1,6 +1,13 @@
-import { CheckCircle2, LoaderCircle, PlugZap, RefreshCw, Save } from "lucide-react";
+import { CheckCircle2, LoaderCircle, PlugZap, RefreshCw, Save, Trash2 } from "lucide-react";
 import { useRef, useState, type FormEvent } from "react";
 import type { AvailableModel, ModelPreset, SettingsView } from "../../../../shared/contracts";
+import {
+  DEFAULT_CUSTOM_PROVIDER_ID,
+  LEGACY_CUSTOM_PRESET,
+  NEW_CUSTOM_PROVIDER_ID,
+  customPreset,
+  isCustomPreset,
+} from "../../../../shared/contracts";
 import { appQueryClient } from "../../app/query-client";
 import { clientErrorMessage, settingsKeys } from "./settings.queries";
 
@@ -27,8 +34,22 @@ const PRESETS = {
     model: "mimo-v2.6-pro",
   },
   openai: { label: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-5.6-terra" },
+  // 升级前唯一的那家自定义厂商。它现在只是老配置的字面量与内置表的一部分，
+  // **不出现在下拉框里** —— 自定义厂商改成了一张可增删的列表，由「自定义供应商」
+  // 那一组渲染（见下面的 optgroup）。`contracts.test.ts` 要求这张表与
+  // MODEL_PRESET_IDS 逐字对齐，所以它不能删。
   custom: { label: "自定义", baseUrl: "", model: "" },
 } as const satisfies Record<ModelPreset, { label: string; baseUrl: string; model: string }>;
+
+/** 下拉框里「内置服务商」那一组；`custom` 是过去式，交给自定义那一组渲染。 */
+const BUILTIN_PRESETS = (Object.keys(PRESETS) as ModelPreset[]).filter(
+  (value) => value !== LEGACY_CUSTOM_PRESET,
+);
+
+/** 「新建」的占位预设，后端保存时才分配真 id。 */
+const NEW_CUSTOM_VALUE = customPreset(NEW_CUSTOM_PROVIDER_ID);
+/** 没有档案行的那家「未命名自定义」；升级前裸的 `custom` 也归到它名下。 */
+const DEFAULT_CUSTOM_VALUE = customPreset(DEFAULT_CUSTOM_PROVIDER_ID);
 
 // 档位标签直接对应厂商原生值。后端下发的 levels 就是官方文档里的档位
 // （Kimi K3 = low/high/max，GLM-4.6 = 开/关两态，GPT-5.6 = none…xhigh），
@@ -61,9 +82,24 @@ export function ModelSettingsForm({
   onConnectionSuccess,
   onConnectionInvalidated,
 }: Props) {
-  const initialPreset =
-    settings.model.preset in PRESETS ? (settings.model.preset as ModelPreset) : "custom";
-  const [preset, setPreset] = useState<ModelPreset>(initialPreset);
+  // 下拉框的可选项 = 内置厂商 + 用户自建的每一家 + 「新建」。当前预设一定在里面：
+  // 后端会把「还没有档案行的自定义配置」也合成一条，所以这里不需要再兜底成
+  // 「另一家」—— 那正是表单曾经显示出一个用户从未选择过的厂商的原因。
+  const providers = settings.customProviders;
+  const providerOptions = new Set([
+    ...BUILTIN_PRESETS,
+    ...providers.map((provider) => customPreset(provider.id)),
+  ]);
+  const initialPreset = providerOptions.has(settings.model.preset)
+    ? settings.model.preset
+    : settings.model.preset === LEGACY_CUSTOM_PRESET
+      ? DEFAULT_CUSTOM_VALUE
+      : NEW_CUSTOM_VALUE;
+  const [preset, setPreset] = useState<string>(initialPreset);
+  const [label, setLabel] = useState(
+    providers.find((provider) => customPreset(provider.id) === initialPreset)?.label ??
+      (isCustomPreset(initialPreset) ? settings.model.label : ""),
+  );
   const [baseUrl, setBaseUrl] = useState(settings.model.baseUrl);
   const [model, setModel] = useState(settings.model.model);
   const [reasoningEffort, setReasoningEffort] = useState(settings.model.reasoningEffort);
@@ -73,12 +109,17 @@ export function ModelSettingsForm({
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [listing, setListing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [liveModels, setLiveModels] = useState<AvailableModel[]>([]);
   const [needsSave, setNeedsSave] = useState(false);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const revisionRef = useRef(0);
   const activeOperationRef = useRef<{ kind: "save" | "test"; revision: number } | null>(null);
   const busy = saving || testing;
+  // 当前预设对应的自定义档案。`custom:new` 没有档案 —— 它是「还没保存的新建」。
+  const currentProvider = providers.find((provider) => customPreset(provider.id) === preset);
+  const customPresetSelected = isCustomPreset(preset);
   // 🔴 key 是按预设存的，不是全局的：一把 DeepSeek 的 key 打不通 Kimi。这里必须
   // 按当前预设查，不能拿 settings.hasApiKey（它只描述「已保存的那一家」）冒充 ——
   // 那正是「切到别家仍显示已安全保存」的来源。
@@ -131,22 +172,40 @@ export function ModelSettingsForm({
     onConnectionInvalidated?.();
   }
 
-  function changePreset(nextPreset: ModelPreset) {
-    const next = PRESETS[nextPreset];
-    const nextModel = next.model;
+  function changePreset(nextPreset: string) {
+    // 下拉框的选项由服务端下发的档案列表决定，理论上不会给出别的值；真给了也
+    // 不能把表单打挂 —— `PRESETS` 里没有、又不是自定义预设的值直接忽略。
+    if (!isCustomPreset(nextPreset) && !(nextPreset in PRESETS)) return;
     setPreset(nextPreset);
-    setBaseUrl(next.baseUrl);
-    setModel(nextModel);
-    // A level valid for the old model may be rejected by the new one, so fall
-    // back to that model's documented default. Empty means "vendor default".
-    setReasoningEffort(
-      settings.modelCapabilities[nextPreset]?.[nextModel.toLowerCase()]?.defaultReasoningEffort ?? "",
-    );
     setLiveModels([]);
+    setConfirmingDelete(false);
     // 半填的 key 属于上一个预设，不能跟着带到新预设去（那会把 DeepSeek 的 key
     // 存到 Kimi 名下）；清除勾选同理，它针对的是上一个预设的槽位。
     setApiKey("");
     setClearKey(false);
+    if (isCustomPreset(nextPreset)) {
+      // 每一家自定义供应商带着自己的地址、模型、超时和推理档位 —— 这正是把它们
+      // 存成档案（而不是共用一个 `custom` 槽位）换来的东西。没有档案的就是
+      // 「新建」，从空表单开始。
+      const provider = providers.find((item) => customPreset(item.id) === nextPreset);
+      setLabel(provider?.label ?? "");
+      setBaseUrl(provider?.baseUrl ?? "");
+      setModel(provider?.model ?? "");
+      setTimeoutSeconds(provider?.timeoutSeconds ?? 30);
+      setReasoningEffort(provider?.reasoningEffort ?? "");
+    } else {
+      const next = PRESETS[nextPreset as ModelPreset];
+      const nextModel = next.model;
+      setLabel("");
+      setBaseUrl(next.baseUrl);
+      setModel(nextModel);
+      // A level valid for the old model may be rejected by the new one, so fall
+      // back to that model's documented default. Empty means "vendor default".
+      setReasoningEffort(
+        settings.modelCapabilities[nextPreset]?.[nextModel.toLowerCase()]?.defaultReasoningEffort ??
+          "",
+      );
+    }
     invalidateConnection();
   }
 
@@ -211,11 +270,17 @@ export function ModelSettingsForm({
         model: model.trim(),
         timeoutSeconds,
         reasoningEffort,
+        // 内置预设不落「显示名」：它们的名字来自上面那张内置表。
+        label: isCustomPreset(preset) ? label.trim() : "",
         apiKey: submittedKey,
       });
       appQueryClient.setQueryData(settingsKeys.root, saved);
       if (activeOperationRef.current !== operation || revisionRef.current !== operation.revision)
         return;
+      // 刚「新建」的那家：后端分配了真正的档案 id，表单要跟着换到它名下。不然下
+      // 一次保存还带着 `custom:new`，会再建一家出来。
+      if (saved.model.preset !== preset) setPreset(saved.model.preset);
+      if (saved.model.label) setLabel(saved.model.label);
       // No local "hasSavedKey" to sync: it is derived from the refetched view's
       // apiKeys map, which the line above already replaced.
       setApiKey("");
@@ -226,7 +291,7 @@ export function ModelSettingsForm({
       setSaving(false);
       // Only test when this preset actually has a key now; otherwise the backend
       // would answer "请先配置 API Key" for a save that was meant to be keyless.
-      if (!clearKey && saved.apiKeys?.[preset]) {
+      if (!clearKey && saved.apiKeys?.[saved.model.preset]) {
         await runConnectionTest();
       }
     } catch (error) {
@@ -273,6 +338,41 @@ export function ModelSettingsForm({
     await runConnectionTest();
   }
 
+  async function removeProvider() {
+    const provider = currentProvider;
+    if (!provider || activeOperationRef.current || deleting) return;
+    setDeleting(true);
+    setMessage(null);
+    try {
+      const saved = await window.docmind.settings.deleteModelProvider(provider.id);
+      appQueryClient.setQueryData(settingsKeys.root, saved);
+      // 一切以服务端返回的视图为准：删掉的是当前在用的那家时它会回落到「未命名」
+      // 槽位，表单不能继续显示一个已经不存在的供应商。
+      const fallback = saved.customProviders.find(
+        (item) => customPreset(item.id) === saved.model.preset,
+      );
+      setPreset(saved.model.preset);
+      setLabel(fallback?.label ?? saved.model.label);
+      setBaseUrl(saved.model.baseUrl);
+      setModel(saved.model.model);
+      setTimeoutSeconds(saved.model.timeoutSeconds);
+      setReasoningEffort(saved.model.reasoningEffort);
+      setLiveModels([]);
+      setApiKey("");
+      setClearKey(false);
+      setConfirmingDelete(false);
+      // 删除已经落库，界面与后端一致，所以不是「待保存」；只把上一家的连接结论作废。
+      setNeedsSave(false);
+      revisionRef.current += 1;
+      onConnectionInvalidated?.();
+      setMessage({ tone: "success", text: `已删除「${provider.label}」` });
+    } catch (error) {
+      setMessage({ tone: "error", text: clientErrorMessage(error) });
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <form className="model-form" onSubmit={save}>
       <div className="form-grid">
@@ -281,16 +381,41 @@ export function ModelSettingsForm({
           <select
             disabled={busy}
             value={preset}
-            onChange={(event) => changePreset(event.target.value as ModelPreset)}
+            onChange={(event) => changePreset(event.target.value)}
           >
-            {Object.entries(PRESETS).map(([value, option]) => (
-              <option key={value} value={value}>
-                {option.label}
-              </option>
-            ))}
+            <optgroup label="内置服务商">
+              {BUILTIN_PRESETS.map((value) => (
+                <option key={value} value={value}>
+                  {PRESETS[value].label}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="自定义供应商">
+              {providers.map((provider) => (
+                <option key={provider.id} value={customPreset(provider.id)}>
+                  {provider.label}
+                </option>
+              ))}
+              <option value={NEW_CUSTOM_VALUE}>＋ 新建自定义供应商</option>
+            </optgroup>
           </select>
         </label>
-        <label className="form-field-wide">
+        {customPresetSelected ? (
+          <label>
+            <span>供应商名称</span>
+            <input
+              disabled={busy}
+              maxLength={60}
+              onChange={(event) => {
+                setLabel(event.target.value);
+                invalidateConnection();
+              }}
+              placeholder="例如：公司网关、某中转站"
+              value={label}
+            />
+          </label>
+        ) : null}
+        <label className={customPresetSelected ? "form-field-full" : "form-field-wide"}>
           <span>Base URL</span>
           <input
             disabled={busy}
@@ -424,6 +549,49 @@ export function ModelSettingsForm({
           {message.tone === "success" ? <CheckCircle2 aria-hidden="true" size={16} /> : null}
           {message.text}
         </p>
+      ) : null}
+      {/* 只有落了档案的那一家才可删。升级前裸的 `custom`、还没保存的「新建」都是
+          按已保存的配置合成出来的条目，删掉它下次读还会再合成一条 —— 后端也会拒绝，
+          所以这里不给出这个按钮。确认做成两步，避免为一个手滑弹一个模态框。 */}
+      {currentProvider?.removable ? (
+        <div className="provider-delete-row">
+          {confirmingDelete ? (
+            <>
+              <span>将删除「{currentProvider.label}」及其已保存的 API Key，此操作无法撤销。</span>
+              <button
+                className="button button-danger"
+                disabled={busy || deleting}
+                onClick={() => void removeProvider()}
+                type="button"
+              >
+                {deleting ? (
+                  <LoaderCircle aria-hidden="true" className="spin" size={16} />
+                ) : (
+                  <Trash2 aria-hidden="true" size={16} />
+                )}
+                {deleting ? "删除中…" : "确认删除"}
+              </button>
+              <button
+                className="button button-secondary"
+                disabled={deleting}
+                onClick={() => setConfirmingDelete(false)}
+                type="button"
+              >
+                取消
+              </button>
+            </>
+          ) : (
+            <button
+              className="button button-danger-quiet"
+              disabled={busy}
+              onClick={() => setConfirmingDelete(true)}
+              type="button"
+            >
+              <Trash2 aria-hidden="true" size={16} />
+              删除该供应商
+            </button>
+          )}
+        </div>
       ) : null}
       <div className="form-actions">
         <button

@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 
 from app.api.errors import DomainError
-from app.api.settings import MODEL_CONFIG_KEY, MODEL_KEY_REFERENCE, SettingsService
+from app.api.settings import (
+    MODEL_CONFIG_KEY,
+    MODEL_CUSTOM_PROVIDERS_KEY,
+    MODEL_KEY_REFERENCE,
+    SettingsService,
+)
 from app.core.llm import AvailableModel, ModelConnectionResult
 from app.core.secrets import KeyringSecretStore, MemorySecretStore
 from app.schemas.settings import ModelSettingsUpdate
@@ -27,9 +32,10 @@ def test_all_settings_mutations_are_protected_by_runtime_token(client) -> None:
         ),
         client.post("/api/settings/model/test"),
         client.post("/api/settings/diagnostics/clear"),
+        client.delete("/api/settings/model/providers/abc123"),
     ]
 
-    assert [response.status_code for response in responses] == [401, 401, 401]
+    assert [response.status_code for response in responses] == [401, 401, 401, 401]
 
 
 def test_settings_view_redacts_key_and_reports_absolute_data_path(
@@ -46,7 +52,8 @@ def test_settings_view_redacts_key_and_reports_absolute_data_path(
     assert "secret-value" not in response.text
     assert "apiKey" not in response.json()
     # 升级前的旧槽位属于「已保存的那个预设」，所以它报 True，而别的预设报 False。
-    assert response.json()["apiKeys"]["custom"] is True
+    # 没有名字的自定义厂商现在按 custom:default 这一家来报。
+    assert response.json()["apiKeys"]["custom:default"] is True
     assert response.json()["apiKeys"]["deepseek"] is False
 
 
@@ -193,7 +200,8 @@ def test_very_long_api_key_is_never_reflected_in_response_or_sqlite(
 
     assert response.status_code == 200
     assert api_key not in response.text
-    assert app_secret_store.get("model-api-key:custom") == api_key
+    # 没有名字的自定义厂商现在叫 custom:default，槽位也跟着改名。
+    assert app_secret_store.get("model-api-key:custom:default") == api_key
     with client.app.state.database.session() as session:
         values = [record.value for record in session.query(SettingRecord).all()]
     assert api_key not in json.dumps(values)
@@ -372,12 +380,13 @@ async def test_settings_persistence_failure_restores_previous_api_key() -> None:
             )
         )
 
-    assert setting_store.values == {
-        MODEL_CONFIG_KEY: old_config,
-        MODEL_KEY_REFERENCE: "model-api-key",
-    }
+    assert setting_store.values[MODEL_CONFIG_KEY] == old_config
+    assert setting_store.values[MODEL_KEY_REFERENCE] == "model-api-key"
+    # 档案是这次保存的一部分（裸 custom 归到 custom:default 那家），它跟着这次
+    # 写入一起失败，所以存储里不该留下半份档案。
+    assert set(setting_store.values) == {MODEL_CONFIG_KEY, MODEL_KEY_REFERENCE}
     # 迁移把旧槽位挪到了它所属的预设名下，回滚只回滚这次写入的那把。
-    assert secret_store.get("model-api-key:custom") == "old-secret"
+    assert secret_store.get("model-api-key:custom:default") == "old-secret"
 
 
 def test_presets_supply_editable_defaults(client, auth_headers) -> None:
@@ -400,7 +409,291 @@ def test_presets_supply_editable_defaults(client, auth_headers) -> None:
         "timeoutSeconds": 30,
         # Unset effort resolves to the vendor's documented default on save.
         "reasoningEffort": "high",
+        # label 只对自定义供应商有值：内置预设的名字在前端的内置表里，视图不重复
+        # 一份会过期的副本。
+        "label": "",
     }
+
+
+def test_two_custom_providers_keep_their_own_name_and_api_key(
+    client, auth_headers, app_secret_store: MemorySecretStore
+) -> None:
+    """🔴 回归：自定义厂商曾经只可能有「一家」。
+
+    实测表现：配好第一家（公司网关）之后再配第二家（某中转站），第二家直接把
+    第一家的 Base URL、模型和 API Key 一起覆盖掉 —— preset 枚举里 `custom` 只有
+    一个值，钥匙串槽位也就只有 `model-api-key:custom` 一个。
+    """
+    first = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "custom:new",
+            "label": "公司网关",
+            "baseUrl": "https://gateway.example/v1",
+            "model": "gpt-5.6-terra",
+            "timeoutSeconds": 30,
+            "apiKey": "gateway-secret",
+        },
+    )
+    assert first.status_code == 200
+    first_preset = first.json()["model"]["preset"]
+    # 「新建」是个占位 id，落库时必须换成真 id，否则第二家会把第一家顶掉。
+    assert first_preset.startswith("custom:")
+    assert first_preset != "custom:new"
+
+    second = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "custom:new",
+            "label": "某中转站",
+            "baseUrl": "https://relay.example/v1",
+            "model": "deepseek-flash",
+            "timeoutSeconds": 45,
+            "apiKey": "relay-secret",
+        },
+    )
+
+    assert second.status_code == 200
+    payload = second.json()
+    second_preset = payload["model"]["preset"]
+    assert second_preset not in {first_preset, "custom:new"}
+    # 名字、地址、模型都按家存：下拉框显示的就是用户自己起的名字。
+    assert [(p["label"], p["baseUrl"], p["model"]) for p in payload["customProviders"]] == [
+        ("公司网关", "https://gateway.example/v1", "gpt-5.6-terra"),
+        ("某中转站", "https://relay.example/v1", "deepseek-flash"),
+    ]
+    assert all(p["removable"] is True for p in payload["customProviders"])
+    assert payload["model"]["label"] == "某中转站"
+    # 两家各有各的 key 槽位，「已安全保存」不再靠一家冒充另一家。
+    assert payload["apiKeys"][first_preset] is True
+    assert payload["apiKeys"][second_preset] is True
+    assert app_secret_store.get(f"model-api-key:{first_preset}") == "gateway-secret"
+    assert app_secret_store.get(f"model-api-key:{second_preset}") == "relay-secret"
+
+    # 切回第一家：它的地址和 key 都还在。
+    restored = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": first_preset,
+            "label": "公司网关",
+            "baseUrl": "https://gateway.example/v1",
+            "model": "gpt-5.6-terra",
+            "timeoutSeconds": 30,
+        },
+    ).json()
+    assert restored["model"]["preset"] == first_preset
+    assert restored["hasApiKey"] is True
+    assert restored["apiKeys"][second_preset] is True
+
+
+def test_legacy_custom_slot_is_read_as_the_unnamed_provider(
+    client, auth_headers, app_secret_store: MemorySecretStore
+) -> None:
+    """升级前裸的 `custom` 与它的旧槽位，读的时候归到固定 id 的「未命名」那家。"""
+    legacy_config = json.dumps(
+        {
+            "preset": "custom",
+            "baseUrl": "https://old.example/v1",
+            "model": "old-model",
+            "timeoutSeconds": 30,
+            "reasoningEffort": "",
+        }
+    )
+    client.app.state.settings_service.setting_store.set(MODEL_CONFIG_KEY, legacy_config)
+    app_secret_store.set("model-api-key:custom", "old-secret")
+
+    view = client.get("/api/settings", headers=auth_headers).json()
+
+    # 读路径不写库：老配置原样躺着，只是被报成 custom:default 那一家的配置。
+    assert client.app.state.settings_service.setting_store.get(MODEL_CONFIG_KEY) == legacy_config
+    assert view["model"]["preset"] == "custom:default"
+    assert [
+        (provider["id"], provider["label"], provider["removable"])
+        for provider in view["customProviders"]
+    ] == [("default", "自定义", False)]
+    # 旧槽位只有这一家读得到，别家不能借。
+    assert view["apiKeys"]["custom:default"] is True
+    assert "custom" not in view["apiKeys"]
+    assert view["apiKeys"]["deepseek"] is False
+
+    saved = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "custom:default",
+            "label": "我的中转站",
+            "baseUrl": "https://old.example/v1",
+            "model": "old-model",
+            "timeoutSeconds": 30,
+        },
+    ).json()
+
+    # 一起保存之后它才是真档案，于是有了「删除」按钮。
+    assert [
+        (provider["id"], provider["label"], provider["removable"])
+        for provider in saved["customProviders"]
+    ] == [("default", "我的中转站", True)]
+    assert saved["model"]["label"] == "我的中转站"
+    # 旧槽位真的被搬走了：只靠读时回退的话，「清除已保存的 API Key」会删掉新槽位
+    # 之后又被旧槽位顶回来 —— 界面说已删除、实际还能用。
+    assert app_secret_store.get("model-api-key:custom") is None
+    assert app_secret_store.get("model-api-key:custom:default") == "old-secret"
+
+    cleared = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "custom:default",
+            "label": "我的中转站",
+            "baseUrl": "https://old.example/v1",
+            "model": "old-model",
+            "timeoutSeconds": 30,
+            "apiKey": "",
+        },
+    ).json()
+    assert cleared["apiKeys"]["custom:default"] is False
+    assert app_secret_store.get("model-api-key:custom:default") is None
+
+
+def test_a_stale_legacy_slot_cannot_resurrect_a_cleared_key(
+    client, auth_headers, app_secret_store: MemorySecretStore
+) -> None:
+    """新槽位已经有 key 时，旧槽位仍然必须被删掉。
+
+    留着它，「清除已保存的 API Key」删的是新槽位，而读的时候又被旧槽位顶回来 ——
+    界面说已删除，实际那把 key 还能用。
+    """
+    client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "custom",
+            "baseUrl": "https://old.example/v1",
+            "model": "old-model",
+            "timeoutSeconds": 30,
+            "apiKey": "new-slot-secret",
+        },
+    )
+    # 模拟升级残留：新槽位已有 key，旧槽位还躺着一把过期的。
+    app_secret_store.set("model-api-key:custom", "stale-legacy-secret")
+
+    saved = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "custom:default",
+            "label": "我的中转站",
+            "baseUrl": "https://old.example/v1",
+            "model": "old-model",
+            "timeoutSeconds": 30,
+        },
+    ).json()
+    assert app_secret_store.get("model-api-key:custom") is None
+    assert app_secret_store.get("model-api-key:custom:default") == "new-slot-secret"
+    assert saved["apiKeys"]["custom:default"] is True
+
+    cleared = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "custom:default",
+            "label": "我的中转站",
+            "baseUrl": "https://old.example/v1",
+            "model": "old-model",
+            "timeoutSeconds": 30,
+            "apiKey": "",
+        },
+    ).json()
+    assert cleared["apiKeys"]["custom:default"] is False
+
+
+def test_deleting_a_custom_provider_removes_its_key_and_resets_the_active_config(
+    client, auth_headers, app_secret_store: MemorySecretStore
+) -> None:
+    created = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "custom:new",
+            "label": "临时试用",
+            "baseUrl": "https://trial.example/v1",
+            "model": "trial-model",
+            "timeoutSeconds": 30,
+            "apiKey": "trial-secret",
+        },
+    ).json()
+    provider_id = created["model"]["preset"].split(":", 1)[1]
+
+    deleted = client.delete(
+        f"/api/settings/model/providers/{provider_id}", headers=auth_headers
+    )
+
+    assert deleted.status_code == 200
+    payload = deleted.json()
+    # 删掉的正是当前在用的那家：回落到「未命名」槽位，而不是留着一条指向已删除
+    # 供应商、下拉框里根本不存在的配置。那一家的档案没有落库，所以 removable=False。
+    assert payload["model"]["preset"] == "custom:default"
+    assert [
+        (provider["id"], provider["removable"]) for provider in payload["customProviders"]
+    ] == [("default", False)]
+    assert payload["apiKeys"]["custom:default"] is False
+    assert app_secret_store.get(f"model-api-key:custom:{provider_id}") is None
+
+    # 没有档案行的那一家删不掉：它本来就是合成的，删完还会再合成一次。
+    assert (
+        client.delete("/api/settings/model/providers/default", headers=auth_headers).status_code
+        == 404
+    )
+    assert client.delete("/api/settings/model/providers/nope", headers=auth_headers).status_code == 404
+
+
+def test_deleting_an_inactive_provider_leaves_the_active_config_alone(
+    client, auth_headers
+) -> None:
+    client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "deepseek",
+            "baseUrl": "https://api.deepseek.com/v1",
+            "model": "deepseek-flash",
+            "timeoutSeconds": 30,
+        },
+    )
+    created = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "custom:new",
+            "label": "另一家",
+            "baseUrl": "https://other.example/v1",
+            "model": "other-model",
+            "timeoutSeconds": 30,
+        },
+    ).json()
+    provider_id = created["model"]["preset"].split(":", 1)[1]
+    # 先切回内置预设，再删那家自定义的。
+    client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "deepseek",
+            "baseUrl": "https://api.deepseek.com/v1",
+            "model": "deepseek-flash",
+            "timeoutSeconds": 30,
+        },
+    )
+
+    payload = client.delete(
+        f"/api/settings/model/providers/{provider_id}", headers=auth_headers
+    ).json()
+
+    assert payload["model"]["preset"] == "deepseek"
+    assert payload["customProviders"] == []
+    assert not any(key.startswith("custom:") for key in payload["apiKeys"])
 
 
 def test_skip_model_setup_is_protected_by_runtime_token(client) -> None:
@@ -646,6 +939,55 @@ def test_model_list_marks_a_successful_live_fetch(client, auth_headers, app_secr
     assert response.status_code == 200
     assert response.json()["source"] == "live"
     assert response.json()["notice"] is None
+
+
+def test_model_list_follows_the_probed_custom_provider(client, auth_headers) -> None:
+    """🔴 回归：探测自定义预设时不能退回「已保存的那家」。
+
+    实测表现：在下拉框里选了第二家自定义厂商、填好它自己的 key 再点「获取模型
+    列表」，拿到的却是第一家的内置目录和第一家的 key —— 那把 key 打不通第二家，
+    只会得到一场 401。
+    """
+    calls: list[tuple[str, str, str]] = []
+
+    class FakeProvider:
+        def __init__(self, config, api_key):
+            calls.append((config.preset, config.base_url, api_key))
+
+        async def test_connection(self) -> ModelConnectionResult:  # pragma: no cover
+            raise NotImplementedError
+
+        async def list_models(self) -> list[AvailableModel]:
+            return [AvailableModel(id="relay-model", label="Relay Model")]
+
+    client.app.state.settings_service.provider_factory = FakeProvider
+    client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "custom:new",
+            "label": "公司网关",
+            "baseUrl": "https://gateway.example/v1",
+            "model": "gpt-5.6-terra",
+            "timeoutSeconds": 30,
+            "apiKey": "gateway-key",
+        },
+    )
+
+    response = client.post(
+        "/api/settings/model/list",
+        headers=auth_headers,
+        json={
+            "preset": "custom:new",
+            "baseUrl": "https://relay.example/v1",
+            "model": "relay-model",
+            "apiKey": "relay-key",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["source"] == "live"
+    assert calls == [("custom:new", "https://relay.example/v1", "relay-key")]
 
 
 def test_model_list_explains_an_empty_catalogue(client, auth_headers) -> None:
