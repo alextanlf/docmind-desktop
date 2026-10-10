@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_CUSTOM_PROVIDER_ID, customPreset } from "../../shared/contracts";
+import { customPreset } from "../../shared/contracts";
 import { AppProviders } from "../../renderer/src/app/AppProviders";
 import { appQueryClient } from "../../renderer/src/app/query-client";
 import { SettingsView } from "../../renderer/src/features/settings/SettingsView";
@@ -22,6 +22,27 @@ function renderSettings() {
       <SettingsView />
     </AppProviders>,
   );
+}
+
+/**
+ * 「对话模型」页的二级页面 —— 添加与编辑共用同一个弹窗，所以从这里进去。
+ *
+ * 列表只列已经保存下来的配置，所以「编辑」挂在每一行上；「添加」是工具栏上的按钮。
+ * 弹窗里的字段与旧的内联表单是同一套，只是现在描述的是「正在编的这一条」。
+ */
+async function openAddModel(): Promise<HTMLElement> {
+  fireEvent.click(await screen.findByRole("button", { name: "添加模型" }));
+  return screen.getByRole("dialog", { name: "添加模型" });
+}
+
+async function openEditModel(title: string): Promise<HTMLElement> {
+  fireEvent.click(await screen.findByRole("button", { name: `编辑 ${title}` }));
+  return screen.getByRole("dialog", { name: "编辑模型" });
+}
+
+/** 设置页上某个分区的 DOM，用来把断言限制在这一页里。 */
+function settingsSection(label: string): HTMLElement {
+  return screen.getByRole("heading", { name: label }).closest("section")!;
 }
 
 /**
@@ -90,13 +111,15 @@ describe("设置", () => {
     const api = installDocMindApi();
     renderSettings();
 
-    await screen.findByRole("option", { name: /deepseek-flash/ });
+    await openEditModel("DeepSeek · deepseek-flash");
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
     expect(api.settings.saveModel).toHaveBeenLastCalledWith(
-      expect.objectContaining({ apiKey: undefined }),
+      expect.objectContaining({ apiKey: undefined, profileId: "deepseek01" }),
     );
-    await screen.findByText("连接成功，延迟 86 毫秒");
+    await screen.findByText("已保存「DeepSeek · deepseek-flash」");
 
+    // 重新打开这一条：勾上「清除」再保存，才真的把那把 key 删掉。
+    await openEditModel("DeepSeek · deepseek-flash");
     fireEvent.click(screen.getByRole("checkbox", { name: "清除已保存的 API Key" }));
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
     await waitFor(() => expect(api.settings.saveModel).toHaveBeenCalledTimes(2));
@@ -109,14 +132,15 @@ describe("设置", () => {
     installDocMindApi();
     renderSettings();
 
-    // DeepSeek holds the stored key (readySettings.apiKeys.deepseek).
-    expect(await screen.findByLabelText("API Key")).toHaveAttribute(
+    // 新增默认落在 DeepSeek 上，而它有一把存好的 key。
+    await openAddModel();
+    expect(screen.getByLabelText("API Key")).toHaveAttribute(
       "placeholder",
       "已安全保存，留空可保留",
     );
     expect(screen.getByRole("button", { name: "测试连接" })).toBeEnabled();
 
-    fireEvent.change(screen.getByLabelText("模型预设"), { target: { value: "kimi" } });
+    fireEvent.change(screen.getByLabelText("供应商"), { target: { value: "kimi" } });
 
     // 🔴 回归：key 不是通用的。换一家之后必须改口说「请输入」，并禁用测试连接，
     // 否则用户会以为手里那把 DeepSeek 的 key 能打通 Kimi。
@@ -132,143 +156,179 @@ describe("设置", () => {
     installDocMindApi();
     renderSettings();
 
-    fireEvent.change(await screen.findByLabelText("模型预设"), { target: { value: "kimi" } });
+    await openAddModel();
+    fireEvent.change(screen.getByLabelText("供应商"), { target: { value: "kimi" } });
     expect(await screen.findByLabelText("API Key")).toHaveAttribute(
       "placeholder",
       "请输入 API Key",
     );
 
     // 切回去必须恢复 —— key 还在那把槽里，没被换家时清掉。
-    fireEvent.change(screen.getByLabelText("模型预设"), { target: { value: "deepseek" } });
+    fireEvent.change(screen.getByLabelText("供应商"), { target: { value: "deepseek" } });
     expect(await screen.findByLabelText("API Key")).toHaveAttribute(
       "placeholder",
       "已安全保存，留空可保留",
     );
   });
 
-  it("lists every custom provider by its own name and keeps their keys apart", async () => {
+  it("lists every configured model with its provider and model name", async () => {
     const gateway = {
       id: "gateway01",
+      preset: customPreset("gateway01"),
       label: "公司网关",
       baseUrl: "https://gateway.example/v1",
       model: "gpt-5.6-terra",
       timeoutSeconds: 30,
       reasoningEffort: "",
-      removable: true,
+      active: true,
+      hasApiKey: true,
     };
     const relay = {
       id: "relay01",
+      preset: customPreset("relay01"),
       label: "某中转站",
       baseUrl: "https://relay.example/v1",
       model: "deepseek-flash",
       timeoutSeconds: 45,
       reasoningEffort: "",
-      removable: true,
+      active: false,
+      hasApiKey: false,
     };
     const settings = {
       ...readySettings,
       model: {
         ...readySettings.model,
-        preset: customPreset(gateway.id),
+        preset: gateway.preset,
         baseUrl: gateway.baseUrl,
         model: gateway.model,
         label: gateway.label,
       },
-      apiKeys: { ...readySettings.apiKeys, [customPreset(gateway.id)]: true },
-      customProviders: [gateway, relay],
+      apiKeys: { ...readySettings.apiKeys, [gateway.preset]: true },
+      models: [gateway, relay],
     };
     installDocMindApi({ settings: { get: vi.fn().mockResolvedValue(settings) } });
     renderSettings();
 
-    // 🔴 回归：自定义厂商曾经只能是下拉框里那个写死的「自定义」，用户起的名字
-    // （公司网关 / 某中转站）没有任何地方可以显示。
-    const presetSelect = await screen.findByLabelText("模型预设");
-    expect(within(presetSelect).getByRole("option", { name: "公司网关" })).toBeInTheDocument();
-    expect(within(presetSelect).getByRole("option", { name: "某中转站" })).toBeInTheDocument();
-    expect(screen.getByLabelText("供应商名称")).toHaveValue("公司网关");
-    expect(screen.getByLabelText("Base URL")).toHaveValue("https://gateway.example/v1");
-    expect(screen.getByLabelText("API Key")).toHaveAttribute(
-      "placeholder",
-      "已安全保存，留空可保留",
-    );
+    // 🔴 回归：这一页过去是一个「模型预设」下拉框 + 一张表单，用户起的名字
+    // （公司网关 / 某中转站）没有任何地方可以显示，也看不出自己到底配了什么。
+    await screen.findByRole("heading", { name: "对话模型" });
+    const rows = within(settingsSection("对话模型")).getAllByRole("listitem");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("公司网关");
+    expect(rows[0]).toHaveTextContent("gpt-5.6-terra");
+    expect(rows[1]).toHaveTextContent("某中转站");
+    expect(rows[1]).toHaveTextContent("deepseek-flash");
+    // 只有当前在用的那一条带标记，另一条给的是「设为当前」。
+    expect(within(rows[0]).getByText("当前使用")).toBeVisible();
+    expect(within(rows[1]).queryByText("当前使用")).toBeNull();
+    expect(within(rows[1]).getByRole("button", { name: /^设为当前/ })).toBeVisible();
 
-    fireEvent.change(presetSelect, { target: { value: customPreset(relay.id) } });
-
-    // 切过去带上的是那一家自己的连接配置，key 也按那一家报：中转站还没存过 key，
-    // 不能沿用网关那把。
-    expect(await screen.findByLabelText("供应商名称")).toHaveValue("某中转站");
+    // 点「编辑」打开的就是那一条：带的是它自己的连接配置，key 也按它自己报。
+    await openEditModel("某中转站 · deepseek-flash");
+    expect(screen.getByLabelText("供应商名称")).toHaveValue("某中转站");
     expect(screen.getByLabelText("Base URL")).toHaveValue("https://relay.example/v1");
     expect(screen.getByLabelText("模型名称")).toHaveValue("deepseek-flash");
     expect(screen.getByLabelText("超时时间（秒）")).toHaveValue(45);
     expect(screen.getByLabelText("API Key")).toHaveAttribute("placeholder", "请输入 API Key");
   });
 
-  it("deletes a custom provider only after an explicit confirmation", async () => {
-    const provider = {
+  it("switches the model the app answers with, and keeps the marker in sync", async () => {
+    const relay = {
       id: "relay01",
+      preset: customPreset("relay01"),
+      label: "某中转站",
+      baseUrl: "https://relay.example/v1",
+      model: "deepseek-flash",
+      timeoutSeconds: 45,
+      reasoningEffort: "",
+      active: false,
+      hasApiKey: true,
+    };
+    const switched = {
+      ...readySettings,
+      model: {
+        ...readySettings.model,
+        preset: relay.preset,
+        baseUrl: relay.baseUrl,
+        model: relay.model,
+        label: relay.label,
+      },
+      apiKeys: { ...readySettings.apiKeys, [relay.preset]: true },
+      models: [
+        { ...readySettings.models[0], active: false },
+        { ...relay, active: true },
+      ],
+    };
+    const activateModel = vi.fn().mockResolvedValue(switched);
+    installDocMindApi({
+      settings: {
+        get: vi
+          .fn()
+          .mockResolvedValue({ ...readySettings, models: [readySettings.models[0], relay] }),
+        activateModel,
+      },
+    });
+    renderSettings();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "设为当前使用：某中转站 · deepseek-flash" }),
+    );
+
+    await waitFor(() => expect(activateModel).toHaveBeenCalledWith("relay01"));
+    expect(await screen.findByText("已切换到「某中转站 · deepseek-flash」")).toBeVisible();
+    const rows = within(settingsSection("对话模型")).getAllByRole("listitem");
+    expect(within(rows[1]).getByText("当前使用")).toBeVisible();
+    expect(within(rows[0]).queryByText("当前使用")).toBeNull();
+  });
+
+  it("deletes a model only after an explicit confirmation", async () => {
+    const relay = {
+      id: "relay01",
+      preset: customPreset("relay01"),
       label: "某中转站",
       baseUrl: "https://relay.example/v1",
       model: "deepseek-flash",
       timeoutSeconds: 30,
       reasoningEffort: "",
-      removable: true,
+      active: true,
+      hasApiKey: true,
     };
-    const afterDelete = {
+    const configured = {
       ...readySettings,
       model: {
         ...readySettings.model,
-        preset: customPreset(DEFAULT_CUSTOM_PROVIDER_ID),
-        baseUrl: "",
-        model: "",
-        label: "自定义",
+        preset: relay.preset,
+        baseUrl: relay.baseUrl,
+        model: relay.model,
+        label: relay.label,
       },
-      apiKeys: { ...readySettings.apiKeys, [customPreset(DEFAULT_CUSTOM_PROVIDER_ID)]: false },
-      // 没有档案行的那一家是后端按当前配置合成的，所以 removable=False。
-      customProviders: [
-        {
-          id: DEFAULT_CUSTOM_PROVIDER_ID,
-          label: "自定义",
-          baseUrl: "",
-          model: "",
-          timeoutSeconds: 30,
-          reasoningEffort: "",
-          removable: false,
-        },
-      ],
+      apiKeys: { ...readySettings.apiKeys, [relay.preset]: true },
+      models: [{ ...readySettings.models[0], active: false }, relay],
     };
-    const deleteModelProvider = vi.fn().mockResolvedValue(afterDelete);
+    const afterDelete = {
+      ...readySettings,
+      models: [{ ...readySettings.models[0], active: true }],
+    };
+    const deleteModel = vi.fn().mockResolvedValue(afterDelete);
     installDocMindApi({
-      settings: {
-        get: vi.fn().mockResolvedValue({
-          ...readySettings,
-          model: {
-            ...readySettings.model,
-            preset: customPreset(provider.id),
-            baseUrl: provider.baseUrl,
-            model: provider.model,
-            label: provider.label,
-          },
-          apiKeys: { ...readySettings.apiKeys, [customPreset(provider.id)]: true },
-          customProviders: [provider],
-        }),
-        deleteModelProvider,
-      },
+      settings: { get: vi.fn().mockResolvedValue(configured), deleteModel },
     });
     renderSettings();
 
     // 两步确认：第一次点击只把后果说清楚，不能已经把 key 删了。
-    fireEvent.click(await screen.findByRole("button", { name: "删除该供应商" }));
-    expect(deleteModelProvider).not.toHaveBeenCalled();
-    expect(screen.getByText(/将删除「某中转站」/)).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "删除 某中转站 · deepseek-flash" }));
+    expect(deleteModel).not.toHaveBeenCalled();
+    expect(screen.getByText(/将删除「某中转站 · deepseek-flash」/)).toBeInTheDocument();
+    // 这一家只有这一条配置，所以那把 key 会跟着走 —— 删除前必须说清楚。
+    expect(screen.getByText(/API Key 也会一并删除/)).toBeInTheDocument();
+    expect(screen.getByText(/会自动切换到列表里的第一条/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
 
-    await waitFor(() => expect(deleteModelProvider).toHaveBeenCalledWith("relay01"));
-    expect(await screen.findByText("已删除「某中转站」")).toBeInTheDocument();
-    // 删掉的是当前在用的那家：表单跟着后端回落到「未命名」那家，而合成的条目没有
-    // 可删的档案，按钮随之消失。
-    expect(screen.getByLabelText("供应商名称")).toHaveValue("自定义");
-    expect(screen.queryByRole("button", { name: "删除该供应商" })).toBeNull();
+    await waitFor(() => expect(deleteModel).toHaveBeenCalledWith("relay01"));
+    expect(await screen.findByText("已删除「某中转站 · deepseek-flash」")).toBeVisible();
+    // 列表按后端返回的视图刷新：那一条不在了。
+    expect(screen.queryByRole("button", { name: "删除 某中转站 · deepseek-flash" })).toBeNull();
   });
 
   it("maps model errors to an actionable Chinese message", async () => {
@@ -284,7 +344,8 @@ describe("设置", () => {
     });
     renderSettings();
 
-    fireEvent.click(await screen.findByRole("button", { name: "测试连接" }));
+    await openAddModel();
+    fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("API Key 无效，请更新密钥后重试");
   });
 
@@ -336,7 +397,9 @@ describe("设置", () => {
     // Inactive pages are `hidden`, and a role query skips hidden nodes by
     // design, so asserting on them needs the explicit flag.
     expect(screen.getByRole("heading", { name: "对话模型" }).closest("section")).toBeVisible();
-    expect(screen.getByRole("heading", { name: "插件", hidden: true }).closest("section")).not.toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "插件", hidden: true }).closest("section"),
+    ).not.toBeVisible();
 
     const target = within(nav).getByRole("button", { name: "本地数据与诊断" });
     fireEvent.click(target);
@@ -358,15 +421,16 @@ describe("设置", () => {
     const api = installDocMindApi();
     renderSettings();
 
-    const key = await screen.findByLabelText("API Key");
-    fireEvent.change(key, { target: { value: "sk-not-saved-yet" } });
+    // 「本地运行与路由」是一个就地编辑的页面（模型页的输入现在都在二级页里，切页
+    // 时它本来就关着）。半填的内容在切页后必须还在 —— 卸载模块会悄悄丢掉它，那是
+    // 设置页最不该做的事。
+    const address = await screen.findByLabelText("本地服务地址");
+    fireEvent.change(address, { target: { value: "http://127.0.0.1:9999" } });
 
     await openSection("插件");
-    await openSection("对话模型");
+    await openSection("本地运行与路由");
 
-    // Unmounting on switch would silently discard a half-entered key, which is
-    // the one thing a settings form must never do.
-    expect(screen.getByLabelText("API Key")).toHaveValue("sk-not-saved-yet");
+    expect(screen.getByLabelText("本地服务地址")).toHaveValue("http://127.0.0.1:9999");
     // And nothing was saved by looking around.
     expect(api.settings.saveModel).not.toHaveBeenCalled();
   });
@@ -381,12 +445,12 @@ describe("设置", () => {
     // them — which is the a11y behaviour we want, not an obstacle to it.
     await screen.findByRole("heading", { name: "对话模型" });
     const modelPage = screen.getByRole("heading", { name: "对话模型" }).closest("section")!;
-    const pluginPage = screen.getByRole("heading", { name: "插件", hidden: true }).closest(
-      "section",
-    )!;
+    const pluginPage = screen
+      .getByRole("heading", { name: "插件", hidden: true })
+      .closest("section")!;
 
-    expect(modelPage).toHaveTextContent("使用 OpenAI 兼容接口连接模型服务");
-    expect(pluginPage).not.toHaveTextContent("使用 OpenAI 兼容接口连接模型服务");
+    expect(modelPage).toHaveTextContent("管理已配置的模型，并切换当前使用的那一个");
+    expect(pluginPage).not.toHaveTextContent("管理已配置的模型，并切换当前使用的那一个");
     // The plugin page declares no description of its own, so it renders no
     // subtitle line at all rather than inheriting another module's.
     expect(pluginPage.querySelector(".section-heading p")).toBeNull();
@@ -422,7 +486,9 @@ describe("设置", () => {
     expect(screen.queryByRole("button", { name: "加载模型" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "重新加载" })).not.toBeInTheDocument();
     expect(api.embedding.prepare).not.toHaveBeenCalled();
-    expect(screen.queryByRole("progressbar", { name: "Embedding 加载进度" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("progressbar", { name: "Embedding 加载进度" }),
+    ).not.toBeInTheDocument();
 
     // The login control is one level in now: the list says what a plugin is for,
     // the detail is where it is connected.
@@ -821,12 +887,16 @@ describe("设置", () => {
     // The channel is one that renders a login entry, since that is the only
     // form the affordance belongs to.
     const detail = await openPlugin("飞书账号授权");
-    expect((await within(detail).findAllByRole("button", { name: "重新检查" })).length).toBeGreaterThan(0);
+    expect(
+      (await within(detail).findAllByRole("button", { name: "重新检查" })).length,
+    ).toBeGreaterThan(0);
     expect(within(detail).queryByRole("button", { name: "安装浏览器" })).toBeNull();
   });
 
   it("switches a plugin off and says when that takes effect", async () => {
-    const api = installDocMindApi({ plugins: { list: vi.fn().mockResolvedValue([...pluginManifests, switchedOffPlugin]) } });
+    const api = installDocMindApi({
+      plugins: { list: vi.fn().mockResolvedValue([...pluginManifests, switchedOffPlugin]) },
+    });
     renderSettings();
     await openSection("插件");
 
@@ -839,9 +909,7 @@ describe("设置", () => {
 
     const detail = await openPlugin("docmind-pages");
     expect(within(detail).getByText("/tmp/docmind-data/plugins/docmind-pages")).toBeVisible();
-    expect(
-      within(detail).getByText("已停用，重启 DocMind 后生效。"),
-    ).toBeVisible();
+    expect(within(detail).getByText("已停用，重启 DocMind 后生效。")).toBeVisible();
 
     fireEvent.click(within(detail).getByRole("button", { name: "启用插件" }));
 
@@ -849,7 +917,9 @@ describe("设置", () => {
   });
 
   it("switches a loaded plugin off", async () => {
-    const api = installDocMindApi({ remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) } });
+    const api = installDocMindApi({
+      remote: { status: vi.fn().mockResolvedValue(loggedOutRemote) },
+    });
     renderSettings();
     await openSection("插件");
 
@@ -904,7 +974,9 @@ describe("设置", () => {
   });
 
   it("removes a directory plugin only after a confirmation that says it is not a delete", async () => {
-    const api = installDocMindApi({ plugins: { list: vi.fn().mockResolvedValue([...pluginManifests, switchedOffPlugin]) } });
+    const api = installDocMindApi({
+      plugins: { list: vi.fn().mockResolvedValue([...pluginManifests, switchedOffPlugin]) },
+    });
     renderSettings();
     await openSection("插件");
 
@@ -927,7 +999,9 @@ describe("设置", () => {
   });
 
   it("cannot remove a plugin without confirming", async () => {
-    const api = installDocMindApi({ plugins: { list: vi.fn().mockResolvedValue([...pluginManifests, switchedOffPlugin]) } });
+    const api = installDocMindApi({
+      plugins: { list: vi.fn().mockResolvedValue([...pluginManifests, switchedOffPlugin]) },
+    });
     renderSettings();
     await openSection("插件");
 
@@ -1003,10 +1077,13 @@ describe("设置", () => {
     const api = installDocMindApi();
     renderSettings();
 
-    const effort = await screen.findByLabelText("推理强度");
-    // The saved level from settings is preselected.
+    await openAddModel();
+    const effort = screen.getByLabelText("推理强度");
+    // The new profile starts at the model's documented default.
     expect(effort).toHaveValue("high");
-    expect(within(effort as HTMLSelectElement).getByRole("option", { name: "关闭思考（off）" })).toBeVisible();
+    expect(
+      within(effort as HTMLSelectElement).getByRole("option", { name: "关闭思考（off）" }),
+    ).toBeVisible();
 
     fireEvent.change(effort, { target: { value: "low" } });
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
@@ -1022,13 +1099,18 @@ describe("设置", () => {
     const api = installDocMindApi();
     renderSettings();
 
-    fireEvent.change(await screen.findByLabelText("模型预设"), { target: { value: "kimi" } });
+    await openAddModel();
+    fireEvent.change(screen.getByLabelText("供应商"), { target: { value: "kimi" } });
     const effort = await screen.findByLabelText("推理强度");
     // Kimi K3 always reasons, so no "off" even though DeepSeek (same "thinking"
     // concept) allows it. Its levels are the vendor's own (low/high/max), and
     // the documented default is max.
-    expect(within(effort as HTMLSelectElement).queryByRole("option", { name: "关闭思考（off）" })).toBeNull();
-    expect(within(effort as HTMLSelectElement).getByRole("option", { name: "最高（max）" })).toBeVisible();
+    expect(
+      within(effort as HTMLSelectElement).queryByRole("option", { name: "关闭思考（off）" }),
+    ).toBeNull();
+    expect(
+      within(effort as HTMLSelectElement).getByRole("option", { name: "最高（max）" }),
+    ).toBeVisible();
     expect(effort).toHaveValue("max");
 
     // Switching to K2.6 changes the allowed levels for the same vendor: it is a
@@ -1051,7 +1133,8 @@ describe("设置", () => {
     installDocMindApi();
     renderSettings();
 
-    fireEvent.change(await screen.findByLabelText("模型预设"), { target: { value: "glm" } });
+    await openAddModel();
+    fireEvent.change(screen.getByLabelText("供应商"), { target: { value: "glm" } });
     // GLM-4.6 can be switched off, GLM-5.3 cannot.
     expect(
       within(screen.getByLabelText("推理强度") as HTMLSelectElement).getByRole("option", {
@@ -1071,7 +1154,8 @@ describe("设置", () => {
     const api = installDocMindApi();
     renderSettings();
 
-    fireEvent.change(await screen.findByLabelText("模型预设"), {
+    await openAddModel();
+    fireEvent.change(screen.getByLabelText("供应商"), {
       target: { value: "opencode_zen" },
     });
 
@@ -1089,8 +1173,8 @@ describe("设置", () => {
     const api = installDocMindApi();
     renderSettings();
 
-    const preset = await screen.findByLabelText("模型预设");
-    fireEvent.change(preset, { target: { value: "kimi" } });
+    await openAddModel();
+    fireEvent.change(screen.getByLabelText("供应商"), { target: { value: "kimi" } });
     const picker = await screen.findByLabelText("模型名称");
     expect(picker).toHaveValue("kimi-k3");
 
@@ -1119,12 +1203,15 @@ describe("设置", () => {
 
     // Choosing "自定义…" must reveal a text field, and the typed id must
     // survive saving even though the provider never reported it.
-    fireEvent.change(await screen.findByLabelText("模型预设"), { target: { value: "kimi" } });
+    await openAddModel();
+    fireEvent.change(screen.getByLabelText("供应商"), { target: { value: "kimi" } });
     // Pick "自定义…" from the dropdown, which swaps in a text field.
     fireEvent.change(await screen.findByLabelText("模型名称"), {
-      target: { value: "__custom__" } });
+      target: { value: "__custom__" },
+    });
     fireEvent.change(screen.getByLabelText("模型名称"), {
-      target: { value: "kimi-internal-build" } });
+      target: { value: "kimi-internal-build" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "获取模型列表" }));
     await screen.findByText("已获取 2 个可用模型");
 
@@ -1143,7 +1230,8 @@ describe("设置", () => {
     // A custom provider ships no curated models, so the picker degrades to free
     // text and an arbitrary model id stays saveable. 「新建」是自定义供应商那一组
     // 里的入口 —— `custom` 这个裸预设已经不再出现在下拉框里。
-    fireEvent.change(await screen.findByLabelText("模型预设"), {
+    await openAddModel();
+    fireEvent.change(screen.getByLabelText("供应商"), {
       target: { value: "custom:new" },
     });
     const field = await screen.findByLabelText("模型名称");
@@ -1170,11 +1258,13 @@ describe("设置", () => {
     const api = installDocMindApi({ settings: { listModels } });
     renderSettings();
 
-    fireEvent.click(await screen.findByRole("button", { name: "获取模型列表" }));
+    await openAddModel();
+    fireEvent.click(screen.getByRole("button", { name: "获取模型列表" }));
 
     expect(await screen.findByText("已获取 2 个可用模型")).toBeVisible();
+    // 探测带的是这份草稿 —— 「获取模型列表」问的是眼前正在编的这一条。
     expect(listModels).toHaveBeenCalledWith(
-      expect.objectContaining({ baseUrl: "https://api.deepseek.com" }),
+      expect.objectContaining({ preset: "deepseek", baseUrl: "https://api.deepseek.com/v1" }),
     );
     // The freshly fetched model becomes selectable and can be saved.
     const picker = screen.getByLabelText("模型名称");
@@ -1188,10 +1278,15 @@ describe("设置", () => {
   });
 
   it("reports a provider that returns no models instead of silently showing none", async () => {
-    installDocMindApi({ settings: { listModels: vi.fn().mockResolvedValue({ models: [], source: "live", notice: null }) } });
+    installDocMindApi({
+      settings: {
+        listModels: vi.fn().mockResolvedValue({ models: [], source: "live", notice: null }),
+      },
+    });
     renderSettings();
 
-    fireEvent.click(await screen.findByRole("button", { name: "获取模型列表" }));
+    await openAddModel();
+    fireEvent.click(screen.getByRole("button", { name: "获取模型列表" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("该服务商未返回模型列表");
   });
@@ -1207,7 +1302,8 @@ describe("设置", () => {
     installDocMindApi({ settings: { listModels } });
     renderSettings();
 
-    fireEvent.change(await screen.findByLabelText("模型预设"), { target: { value: "openai" } });
+    await openAddModel();
+    fireEvent.change(screen.getByLabelText("供应商"), { target: { value: "openai" } });
     fireEvent.click(screen.getByRole("button", { name: "获取模型列表" }));
 
     await waitFor(() => expect(listModels).toHaveBeenCalled());
@@ -1228,7 +1324,8 @@ describe("设置", () => {
     });
     renderSettings();
 
-    fireEvent.click(await screen.findByRole("button", { name: "获取模型列表" }));
+    await openAddModel();
+    fireEvent.click(screen.getByRole("button", { name: "获取模型列表" }));
 
     // The reason must reach the user instead of "已获取 N 个可用模型".
     expect(await screen.findByRole("alert")).toHaveTextContent("未填写 API Key");
@@ -1247,7 +1344,8 @@ describe("设置", () => {
     });
     renderSettings();
 
-    fireEvent.click(await screen.findByRole("button", { name: "获取模型列表" }));
+    await openAddModel();
+    fireEvent.click(screen.getByRole("button", { name: "获取模型列表" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("API Key 无效");
   });

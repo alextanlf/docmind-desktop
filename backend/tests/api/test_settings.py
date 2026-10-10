@@ -10,6 +10,7 @@ from app.api.settings import (
     MODEL_CONFIG_KEY,
     MODEL_CUSTOM_PROVIDERS_KEY,
     MODEL_KEY_REFERENCE,
+    MODEL_PROFILES_KEY,
     SettingsService,
 )
 from app.core.llm import AvailableModel, ModelConnectionResult
@@ -32,10 +33,11 @@ def test_all_settings_mutations_are_protected_by_runtime_token(client) -> None:
         ),
         client.post("/api/settings/model/test"),
         client.post("/api/settings/diagnostics/clear"),
-        client.delete("/api/settings/model/providers/abc123"),
+        client.delete("/api/settings/model/profiles/abc123"),
+        client.post("/api/settings/model/activate", json={"profileId": "abc123"}),
     ]
 
-    assert [response.status_code for response in responses] == [401, 401, 401, 401]
+    assert [response.status_code for response in responses] == [401, 401, 401, 401, 401]
 
 
 def test_settings_view_redacts_key_and_reports_absolute_data_path(
@@ -265,9 +267,9 @@ def test_model_base_url_is_normalized_without_discarding_compatible_path(
     assert response.status_code == 200
     assert response.json()["model"]["baseUrl"] == expected
     with client.app.state.database.session() as session:
-        stored = session.get(SettingRecord, "model.config")
+        stored = session.get(SettingRecord, MODEL_PROFILES_KEY)
     assert stored is not None
-    assert json.loads(stored.value)["baseUrl"] == expected
+    assert json.loads(stored.value)[0]["baseUrl"] == expected
 
 
 def test_omitted_key_preserves_existing_key_and_empty_key_deletes_it(
@@ -415,7 +417,59 @@ def test_presets_supply_editable_defaults(client, auth_headers) -> None:
     }
 
 
-def test_two_custom_providers_keep_their_own_name_and_api_key(
+
+
+def test_configured_models_start_empty_until_something_is_saved(client, auth_headers) -> None:
+    """设置页只列「已配置过的模型」：一条都没配时列表就是空的。
+
+    升级前那张表是一个「模型预设」下拉框，里面全是用户没配过的内置厂商，于是
+    「我到底配了什么」在界面上根本看不出来。
+    """
+    view = client.get("/api/settings", headers=auth_headers).json()
+
+    assert view["models"] == []
+    # 一条都没有时，上层（聊天、路由）读到的仍是那份空配置，照旧报「请先配置 API Key」。
+    assert view["model"]["preset"] == "custom:default"
+    assert view["hasApiKey"] is False
+
+
+def test_saved_models_are_listed_with_provider_and_model_name(client, auth_headers) -> None:
+    client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "deepseek",
+            "baseUrl": "https://api.deepseek.com/v1",
+            "model": "deepseek-flash",
+            "timeoutSeconds": 30,
+        },
+    )
+    client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "custom:new",
+            "label": "公司网关",
+            "baseUrl": "https://gateway.example/v1",
+            "model": "gpt-5.6-terra",
+            "timeoutSeconds": 30,
+        },
+    )
+
+    view = client.get("/api/settings", headers=auth_headers).json()
+    gateway = view["models"][1]
+
+    # 每行都带着供应商与模型名，顺序就是保存顺序；刚配的那条是当前使用的。
+    assert [(item["model"], item["label"], item["active"]) for item in view["models"]] == [
+        ("deepseek-flash", "", False),
+        ("gpt-5.6-terra", "公司网关", True),
+    ]
+    assert view["models"][0]["preset"] == "deepseek"
+    assert gateway["preset"].startswith("custom:")
+    assert view["model"]["preset"] == gateway["preset"]
+
+
+def test_two_custom_models_keep_their_own_name_and_api_key(
     client, auth_headers, app_secret_store: MemorySecretStore
 ) -> None:
     """🔴 回归：自定义厂商曾经只可能有「一家」。
@@ -435,9 +489,8 @@ def test_two_custom_providers_keep_their_own_name_and_api_key(
             "timeoutSeconds": 30,
             "apiKey": "gateway-secret",
         },
-    )
-    assert first.status_code == 200
-    first_preset = first.json()["model"]["preset"]
+    ).json()
+    first_preset = first["model"]["preset"]
     # 「新建」是个占位 id，落库时必须换成真 id，否则第二家会把第一家顶掉。
     assert first_preset.startswith("custom:")
     assert first_preset != "custom:new"
@@ -453,40 +506,290 @@ def test_two_custom_providers_keep_their_own_name_and_api_key(
             "timeoutSeconds": 45,
             "apiKey": "relay-secret",
         },
-    )
+    ).json()
 
-    assert second.status_code == 200
-    payload = second.json()
-    second_preset = payload["model"]["preset"]
+    second_preset = second["model"]["preset"]
     assert second_preset not in {first_preset, "custom:new"}
-    # 名字、地址、模型都按家存：下拉框显示的就是用户自己起的名字。
-    assert [(p["label"], p["baseUrl"], p["model"]) for p in payload["customProviders"]] == [
+    # 名字、地址、模型都按家存：列表显示的就是用户自己起的名字。
+    assert [(item["label"], item["baseUrl"], item["model"]) for item in second["models"]] == [
         ("公司网关", "https://gateway.example/v1", "gpt-5.6-terra"),
         ("某中转站", "https://relay.example/v1", "deepseek-flash"),
     ]
-    assert all(p["removable"] is True for p in payload["customProviders"])
-    assert payload["model"]["label"] == "某中转站"
+    assert second["model"]["label"] == "某中转站"
     # 两家各有各的 key 槽位，「已安全保存」不再靠一家冒充另一家。
-    assert payload["apiKeys"][first_preset] is True
-    assert payload["apiKeys"][second_preset] is True
+    assert second["apiKeys"][first_preset] is True
+    assert second["apiKeys"][second_preset] is True
     assert app_secret_store.get(f"model-api-key:{first_preset}") == "gateway-secret"
     assert app_secret_store.get(f"model-api-key:{second_preset}") == "relay-secret"
 
-    # 切回第一家：它的地址和 key 都还在。
-    restored = client.put(
+
+def test_saving_the_same_provider_and_model_twice_updates_one_row(client, auth_headers) -> None:
+    """同一个「供应商 + 模型」再存一次是编辑，不是攒出第二行。"""
+    body = {
+        "preset": "deepseek",
+        "baseUrl": "https://api.deepseek.com/v1",
+        "model": "deepseek-flash",
+        "timeoutSeconds": 30,
+    }
+    client.put("/api/settings/model", headers=auth_headers, json=body)
+
+    again = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={**body, "baseUrl": "https://gateway.example/v1"},
+    ).json()
+
+    assert len(again["models"]) == 1
+    assert again["models"][0]["baseUrl"] == "https://gateway.example/v1"
+    assert again["model"]["baseUrl"] == "https://gateway.example/v1"
+
+
+def test_editing_a_model_by_profile_id_updates_it_in_place(client, auth_headers) -> None:
+    """「编辑」是改那一条：id 不变，也不新增一行。"""
+    created = client.put(
         "/api/settings/model",
         headers=auth_headers,
         json={
-            "preset": first_preset,
+            "preset": "deepseek",
+            "baseUrl": "https://api.deepseek.com/v1",
+            "model": "deepseek-flash",
+            "timeoutSeconds": 30,
+        },
+    ).json()
+    profile_id = created["models"][0]["id"]
+
+    edited = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "profileId": profile_id,
+            "preset": "deepseek",
+            "baseUrl": "https://api.deepseek.com/v1",
+            "model": "deepseek-v4-pro",
+            "timeoutSeconds": 45,
+        },
+    ).json()
+
+    assert [(item["id"], item["model"], item["timeoutSeconds"]) for item in edited["models"]] == [
+        (profile_id, "deepseek-v4-pro", 45)
+    ]
+    assert edited["model"]["model"] == "deepseek-v4-pro"
+
+
+def test_saving_with_an_unknown_profile_id_is_rejected(client, auth_headers) -> None:
+    """表单拿着一条已经被删掉的配置在保存：报错，而不是悄悄新建一条同名的。"""
+    response = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "profileId": "nosuchprofile",
+            "preset": "deepseek",
+            "baseUrl": "https://api.deepseek.com/v1",
+            "model": "deepseek-flash",
+            "timeoutSeconds": 30,
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "MODEL_PROFILE_NOT_FOUND"
+    assert client.get("/api/settings", headers=auth_headers).json()["models"] == []
+
+
+def test_activating_a_model_switches_what_the_app_uses(client, auth_headers) -> None:
+    first = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "deepseek",
+            "baseUrl": "https://api.deepseek.com/v1",
+            "model": "deepseek-flash",
+            "timeoutSeconds": 30,
+        },
+    ).json()
+    deepseek_id = first["models"][0]["id"]
+    client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "custom:new",
             "label": "公司网关",
             "baseUrl": "https://gateway.example/v1",
             "model": "gpt-5.6-terra",
             "timeoutSeconds": 30,
         },
+    )
+
+    switched = client.post(
+        "/api/settings/model/activate",
+        headers=auth_headers,
+        json={"profileId": deepseek_id},
+    )
+
+    assert switched.status_code == 200
+    payload = switched.json()
+    assert payload["model"]["preset"] == "deepseek"
+    assert [(item["model"], item["active"]) for item in payload["models"]] == [
+        ("deepseek-flash", True),
+        ("gpt-5.6-terra", False),
+    ]
+
+
+def test_activating_an_unknown_model_is_rejected(client, auth_headers) -> None:
+    response = client.post(
+        "/api/settings/model/activate", headers=auth_headers, json={"profileId": "nosuchprofile"}
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "MODEL_PROFILE_NOT_FOUND"
+
+
+def test_two_models_of_one_provider_share_the_key_and_deleting_one_keeps_it(
+    client, auth_headers, app_secret_store: MemorySecretStore
+) -> None:
+    """key 属于厂商，不属于某一次选择：同一家的两条配置共用一个槽位。"""
+    first = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "deepseek",
+            "baseUrl": "https://api.deepseek.com/v1",
+            "model": "deepseek-flash",
+            "timeoutSeconds": 30,
+            "apiKey": "deepseek-secret",
+        },
     ).json()
-    assert restored["model"]["preset"] == first_preset
-    assert restored["hasApiKey"] is True
-    assert restored["apiKeys"][second_preset] is True
+    assert first["models"][0]["hasApiKey"] is True
+
+    second = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "deepseek",
+            "baseUrl": "https://api.deepseek.com/v1",
+            "model": "deepseek-v4-pro",
+            "timeoutSeconds": 30,
+        },
+    ).json()
+    assert [(item["model"], item["hasApiKey"]) for item in second["models"]] == [
+        ("deepseek-flash", True),
+        ("deepseek-v4-pro", True),
+    ]
+
+    # 删掉不带 key 的那条：另一条还在用这个槽位，key 必须留着。
+    remaining = client.delete(
+        f"/api/settings/model/profiles/{second['models'][1]['id']}", headers=auth_headers
+    ).json()
+    assert app_secret_store.get("model-api-key:deepseek") == "deepseek-secret"
+    assert remaining["models"][0]["hasApiKey"] is True
+
+    # 删掉最后一条：槽位跟着走，否则下次再配同一家会被报成「已安全保存」。
+    emptied = client.delete(
+        f"/api/settings/model/profiles/{remaining['models'][0]['id']}", headers=auth_headers
+    ).json()
+    assert emptied["models"] == []
+    assert app_secret_store.get("model-api-key:deepseek") is None
+
+
+def test_deleting_the_active_model_falls_back_to_a_remaining_one(client, auth_headers) -> None:
+    client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "deepseek",
+            "baseUrl": "https://api.deepseek.com/v1",
+            "model": "deepseek-flash",
+            "timeoutSeconds": 30,
+        },
+    )
+    created = client.put(
+        "/api/settings/model",
+        headers=auth_headers,
+        json={
+            "preset": "custom:new",
+            "label": "临时试用",
+            "baseUrl": "https://trial.example/v1",
+            "model": "trial-model",
+            "timeoutSeconds": 30,
+            "apiKey": "trial-secret",
+        },
+    ).json()
+    custom_id = created["models"][1]["id"]
+
+    payload = client.delete(
+        f"/api/settings/model/profiles/{custom_id}", headers=auth_headers
+    ).json()
+
+    # 删掉的正是当前在用的那条：剩下的第一条顶上，而不是留着一条指向已删除记录的
+    # active id —— 那样聊天会继续打一个已经不存在的配置。
+    assert payload["model"]["preset"] == "deepseek"
+    assert [item["active"] for item in payload["models"]] == [True]
+    assert not any(key.startswith("custom:") for key in payload["apiKeys"])
+
+    # 一条都不剩时列表为空，上层回落到那份空配置。
+    emptied = client.delete(
+        f"/api/settings/model/profiles/{payload['models'][0]['id']}", headers=auth_headers
+    ).json()
+    assert emptied["models"] == []
+    assert emptied["model"]["preset"] == "custom:default"
+
+
+def test_deleting_an_unknown_model_is_rejected(client, auth_headers) -> None:
+    response = client.delete("/api/settings/model/profiles/nosuchprofile", headers=auth_headers)
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "MODEL_PROFILE_NOT_FOUND"
+
+
+def test_legacy_providers_and_config_are_read_into_the_model_list(client, auth_headers) -> None:
+    """升级前的两份数据（供应商档案 + 那份唯一配置）读成一张列表，且读路径不写库。"""
+    legacy = json.dumps(
+        [
+            {
+                "id": "relay01",
+                "label": "某中转站",
+                "baseUrl": "https://relay.example/v1",
+                "model": "deepseek-flash",
+                "timeoutSeconds": 45,
+                "reasoningEffort": "",
+            }
+        ]
+    )
+    store = client.app.state.settings_service.setting_store
+    store.set(MODEL_CUSTOM_PROVIDERS_KEY, legacy)
+    store.set(
+        MODEL_CONFIG_KEY,
+        json.dumps(
+            {
+                "preset": "deepseek",
+                "baseUrl": "https://api.deepseek.com/v1",
+                "model": "deepseek-flash",
+                "timeoutSeconds": 30,
+                "reasoningEffort": "",
+            }
+        ),
+    )
+
+    view = client.get("/api/settings", headers=auth_headers).json()
+
+    # 读路径不写库：老数据原样躺着，只是被报成一张列表。
+    assert store.get(MODEL_CUSTOM_PROVIDERS_KEY) == legacy
+    assert store.get(MODEL_PROFILES_KEY) is None
+    assert [(item["id"], item["preset"], item["model"], item["label"]) for item in view["models"]] == [
+        ("relay01", "custom:relay01", "deepseek-flash", "某中转站"),
+        ("legacy", "deepseek", "deepseek-flash", ""),
+    ]
+    # 升级前生效的是那份唯一配置，所以它才是当前使用的那一条。
+    assert view["model"]["preset"] == "deepseek"
+
+    # 第一次写操作把它们落成正式列表（id 不变，界面上的按钮因此不会指空）。
+    activated = client.post(
+        "/api/settings/model/activate", headers=auth_headers, json={"profileId": "relay01"}
+    ).json()
+    assert [item["preset"] for item in json.loads(store.get(MODEL_PROFILES_KEY))] == [
+        "custom:relay01",
+        "deepseek",
+    ]
+    assert activated["model"]["preset"] == "custom:relay01"
 
 
 def test_legacy_custom_slot_is_read_as_the_unnamed_provider(
@@ -502,18 +805,19 @@ def test_legacy_custom_slot_is_read_as_the_unnamed_provider(
             "reasoningEffort": "",
         }
     )
-    client.app.state.settings_service.setting_store.set(MODEL_CONFIG_KEY, legacy_config)
+    store = client.app.state.settings_service.setting_store
+    store.set(MODEL_CONFIG_KEY, legacy_config)
     app_secret_store.set("model-api-key:custom", "old-secret")
 
     view = client.get("/api/settings", headers=auth_headers).json()
 
     # 读路径不写库：老配置原样躺着，只是被报成 custom:default 那一家的配置。
-    assert client.app.state.settings_service.setting_store.get(MODEL_CONFIG_KEY) == legacy_config
+    assert store.get(MODEL_CONFIG_KEY) == legacy_config
     assert view["model"]["preset"] == "custom:default"
     assert [
-        (provider["id"], provider["label"], provider["removable"])
-        for provider in view["customProviders"]
-    ] == [("default", "自定义", False)]
+        (item["id"], item["preset"], item["label"], item["model"], item["active"])
+        for item in view["models"]
+    ] == [("default", "custom:default", "自定义", "old-model", True)]
     # 旧槽位只有这一家读得到，别家不能借。
     assert view["apiKeys"]["custom:default"] is True
     assert "custom" not in view["apiKeys"]
@@ -531,11 +835,7 @@ def test_legacy_custom_slot_is_read_as_the_unnamed_provider(
         },
     ).json()
 
-    # 一起保存之后它才是真档案，于是有了「删除」按钮。
-    assert [
-        (provider["id"], provider["label"], provider["removable"])
-        for provider in saved["customProviders"]
-    ] == [("default", "我的中转站", True)]
+    assert [(item["id"], item["label"]) for item in saved["models"]] == [("default", "我的中转站")]
     assert saved["model"]["label"] == "我的中转站"
     # 旧槽位真的被搬走了：只靠读时回退的话，「清除已保存的 API Key」会删掉新槽位
     # 之后又被旧槽位顶回来 —— 界面说已删除、实际还能用。
@@ -609,50 +909,52 @@ def test_a_stale_legacy_slot_cannot_resurrect_a_cleared_key(
     ).json()
     assert cleared["apiKeys"]["custom:default"] is False
 
-
-def test_deleting_a_custom_provider_removes_its_key_and_resets_the_active_config(
+def test_model_connection_tests_the_form_draft_instead_of_the_saved_model(
     client, auth_headers, app_secret_store: MemorySecretStore
 ) -> None:
-    created = client.put(
+    """二级页面里测的是正在编的那一条，不是当前使用的那条。
+
+    表单草稿带着 preset / 地址 / 模型来测；不带草稿的请求（旧调用）仍测已保存的
+    配置，所以两条路径都要成立。
+    """
+    seen: list[tuple[str, str]] = []
+
+    class FakeProvider:
+        def __init__(self, config) -> None:
+            seen.append((config.preset, config.model))
+
+        async def test_connection(self) -> ModelConnectionResult:
+            return ModelConnectionResult(connected=True, latency_ms=3)
+
+    client.app.state.settings_service.provider_factory = lambda config, _key: FakeProvider(config)
+    client.put(
         "/api/settings/model",
         headers=auth_headers,
         json={
-            "preset": "custom:new",
-            "label": "临时试用",
-            "baseUrl": "https://trial.example/v1",
-            "model": "trial-model",
+            "preset": "deepseek",
+            "baseUrl": "https://api.deepseek.com/v1",
+            "model": "deepseek-flash",
             "timeoutSeconds": 30,
-            "apiKey": "trial-secret",
+            "apiKey": "deepseek-secret",
         },
-    ).json()
-    provider_id = created["model"]["preset"].split(":", 1)[1]
-
-    deleted = client.delete(
-        f"/api/settings/model/providers/{provider_id}", headers=auth_headers
     )
+    app_secret_store.set("model-api-key:kimi", "kimi-secret")
 
-    assert deleted.status_code == 200
-    payload = deleted.json()
-    # 删掉的正是当前在用的那家：回落到「未命名」槽位，而不是留着一条指向已删除
-    # 供应商、下拉框里根本不存在的配置。那一家的档案没有落库，所以 removable=False。
-    assert payload["model"]["preset"] == "custom:default"
-    assert [
-        (provider["id"], provider["removable"]) for provider in payload["customProviders"]
-    ] == [("default", False)]
-    assert payload["apiKeys"]["custom:default"] is False
-    assert app_secret_store.get(f"model-api-key:custom:{provider_id}") is None
-
-    # 没有档案行的那一家删不掉：它本来就是合成的，删完还会再合成一次。
-    assert (
-        client.delete("/api/settings/model/providers/default", headers=auth_headers).status_code
-        == 404
+    drafted = client.post(
+        "/api/settings/model/test",
+        headers=auth_headers,
+        json={"preset": "kimi", "baseUrl": "https://api.moonshot.cn/v1", "model": "kimi-k2.6"},
     )
-    assert client.delete("/api/settings/model/providers/nope", headers=auth_headers).status_code == 404
+    saved = client.post("/api/settings/model/test", headers=auth_headers)
+
+    assert [drafted.status_code, saved.status_code] == [200, 200]
+    assert seen == [("kimi", "kimi-k2.6"), ("deepseek", "deepseek-flash")]
 
 
-def test_deleting_an_inactive_provider_leaves_the_active_config_alone(
+def test_model_connection_reports_a_missing_key_for_the_drafted_provider(
     client, auth_headers
 ) -> None:
+    """草稿那家没有 key 就报「请先配置 API Key」，而不是借当前在用的那把去打。"""
     client.put(
         "/api/settings/model",
         headers=auth_headers,
@@ -661,39 +963,19 @@ def test_deleting_an_inactive_provider_leaves_the_active_config_alone(
             "baseUrl": "https://api.deepseek.com/v1",
             "model": "deepseek-flash",
             "timeoutSeconds": 30,
-        },
-    )
-    created = client.put(
-        "/api/settings/model",
-        headers=auth_headers,
-        json={
-            "preset": "custom:new",
-            "label": "另一家",
-            "baseUrl": "https://other.example/v1",
-            "model": "other-model",
-            "timeoutSeconds": 30,
-        },
-    ).json()
-    provider_id = created["model"]["preset"].split(":", 1)[1]
-    # 先切回内置预设，再删那家自定义的。
-    client.put(
-        "/api/settings/model",
-        headers=auth_headers,
-        json={
-            "preset": "deepseek",
-            "baseUrl": "https://api.deepseek.com/v1",
-            "model": "deepseek-flash",
-            "timeoutSeconds": 30,
+            "apiKey": "deepseek-secret",
         },
     )
 
-    payload = client.delete(
-        f"/api/settings/model/providers/{provider_id}", headers=auth_headers
-    ).json()
+    response = client.post(
+        "/api/settings/model/test",
+        headers=auth_headers,
+        json={"preset": "kimi", "baseUrl": "https://api.moonshot.cn/v1", "model": "kimi-k3"},
+    )
 
-    assert payload["model"]["preset"] == "deepseek"
-    assert payload["customProviders"] == []
-    assert not any(key.startswith("custom:") for key in payload["apiKeys"])
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "MODEL_AUTH_FAILED"
+
 
 
 def test_skip_model_setup_is_protected_by_runtime_token(client) -> None:

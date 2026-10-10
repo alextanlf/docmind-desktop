@@ -31,11 +31,14 @@ from app.schemas.settings import (
     MODEL_CATALOG,
     MODEL_PRESETS,
     NEW_CUSTOM_PROVIDER_ID,
-    CustomProvider,
+    ConfiguredModel,
+    LegacyCustomProvider,
+    ModelActivation,
     ModelConnectionResult,
     ModelListProbe,
     ModelListView,
     ModelPresetCapabilities,
+    ModelProfile,
     ModelSettingsUpdate,
     ModelSettingsView,
     SettingsView,
@@ -50,8 +53,13 @@ from app.storage.repositories import SettingStore
 MODEL_CONFIG_KEY = "model.config"
 MODEL_KEY_REFERENCE = "model.api_key_ref"
 MODEL_SETUP_SKIPPED_KEY = "model.setup_skipped"
-# 用户自建的服务商档案列表。内置预设写死在代码里，自定义的必须落库 —— 这就是
-# 「自定义只能有一家、只能存一把 key」消失的地方。
+# 用户已配置的模型列表。一个条目就是「一家供应商 + 一个模型 + 一份连接参数」，
+# 所以内置厂商也能有多条（同一把 key，不同的模型/档位），自定义厂商也能有多条
+# （同一家中转站上的两个模型）。`MODEL_ACTIVE_PROFILE_KEY` 指出此刻在用的是哪一条。
+MODEL_PROFILES_KEY = "model.profiles"
+MODEL_ACTIVE_PROFILE_KEY = "model.active_profile"
+# 升级前那套「自定义供应商档案」列表。它把连接参数和模型绑成一条供应商记录，
+# 内置厂商根本不在里面。现在只读它做迁移，见 `_synthesize_profiles`。
 MODEL_CUSTOM_PROVIDERS_KEY = "model.custom_providers"
 # 每个预设各存一把 key：厂商之间不通用，共用一个槽位会让「已安全保存」在新预设
 # 下变成一句谎话 —— 用户切到 Kimi 后仍被告知那把 DeepSeek 的 key 还在生效，而它
@@ -70,6 +78,21 @@ RAG_CONFIG_KEY = "rag.config"
 ProviderFactory = Callable[[ModelConfig, str], LLMProvider]
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+
+
+def new_profile_id() -> str:
+    """一条模型配置的 id。和供应商 id 同样限定小写字母数字 —— 它要进 URL。"""
+    return uuid4().hex[:12]
+
+
+def same_model(left: str, right: str) -> bool:
+    """同一个模型 id 的宽松比较。
+
+    用户手打的 `DeepSeek-Flash ` 和下拉框里的 `deepseek-flash` 是同一个模型；不这
+    样比的话，「添加」会把同一个模型攒成第二行，而两行共用一把 key、行为也一样。
+    """
+    return left.strip().casefold() == right.strip().casefold()
+
 
 
 def model_api_key_name(preset: str) -> str:
@@ -97,26 +120,195 @@ class SettingsService:
         self.resolver = resolver or _SettingsResolver()
         self.credential_store = credential_store
 
-    def model(self) -> ModelSettingsView:
+    # ── 已配置的模型列表 ────────────────────────────────────────────────────
+    #
+    # 存储只有两处：`MODEL_PROFILES_KEY` 是那张列表本身，`MODEL_ACTIVE_PROFILE_KEY`
+    # 指出此刻在用的是哪一条。升级前的两份数据（唯一的 `model.config` + 自定义供应
+    # 商档案）在**读**的时候合成一张列表，第一次写操作才落库 —— 和升级前对裸
+    # `custom` 的处理一致：读路径不写库，所以「删除」之后不会被重新迁移回来。
+
+    def _stored_profiles(self) -> list[ModelProfile] | None:
+        raw = self.setting_store.get(MODEL_PROFILES_KEY)
+        if raw is None:
+            return None
+        try:
+            return [ModelProfile.model_validate(item) for item in json.loads(raw)]
+        except ValueError as error:
+            raise DomainError("SETTINGS_INVALID", "模型配置列表无效，请重新配置", 500) from error
+
+    def _legacy_custom_providers(self) -> list[LegacyCustomProvider]:
+        raw = self.setting_store.get(MODEL_CUSTOM_PROVIDERS_KEY)
+        if not raw:
+            return []
+        try:
+            return [LegacyCustomProvider.model_validate(item) for item in json.loads(raw)]
+        except ValueError as error:
+            raise DomainError(
+                "SETTINGS_INVALID", "自定义模型供应商配置无效，请重新配置", 500
+            ) from error
+
+    def _saved_config(self, *, strict: bool) -> ModelSettingsView | None:
+        """升级前那份唯一的配置；裸的 `custom` 归一成 `custom:default`。
+
+        `strict` 只给「还没有列表」的路径用：那时这份配置就是全部数据，读不出来
+        必须报错，而不是静默显示成「一个模型都没配」。
+        """
         raw = self.setting_store.get(MODEL_CONFIG_KEY)
         if raw is None:
-            base_url, model = MODEL_PRESETS[LEGACY_CUSTOM_PRESET]
-            return ModelSettingsView(
-                preset=custom_preset(DEFAULT_CUSTOM_PROVIDER_ID),
-                base_url=base_url,
-                model=model,
-                timeout_seconds=30,
-            )
+            return None
         try:
             view = ModelSettingsView.model_validate_json(raw)
         except ValueError as error:
-            raise DomainError("SETTINGS_INVALID", "模型设置无效，请重新配置", 500) from error
-        # 升级前那家自定义厂商的 preset 是裸的 "custom"，也没有档案行。读的时候
-        # 就把它当成固定 id 的「未命名」那一家的 preset —— 不写库，所以「删除供应
-        # 商」之后不会被重新迁移回来。视图层再按这份配置合成它的档案行。
+            if strict:
+                raise DomainError("SETTINGS_INVALID", "模型设置无效，请重新配置", 500) from error
+            return None
         if view.preset == LEGACY_CUSTOM_PRESET:
             return view.model_copy(update={"preset": custom_preset(DEFAULT_CUSTOM_PROVIDER_ID)})
         return view
+
+    def _synthesize_profiles(self) -> list[ModelProfile]:
+        """把升级前的两份数据合成一张列表。
+
+        id 必须每次读都算出同一个值：界面拿着 id 来编辑、删除、切换，随机 id 会
+        让按钮指着一条下一次刷新就不存在的记录。自定义供应商沿用它的档案 id（key
+        槽位 `custom:<id>` 因此原样继续有效），那份唯一配置用供应商 id 或 `legacy`。
+        """
+        profiles: list[ModelProfile] = []
+        taken: set[str] = set()
+        for provider in self._legacy_custom_providers():
+            if provider.id in taken:
+                continue
+            taken.add(provider.id)
+            profiles.append(
+                ModelProfile(
+                    id=provider.id,
+                    preset=custom_preset(provider.id),
+                    label=provider.label,
+                    base_url=provider.base_url,
+                    model=provider.model,
+                    timeout_seconds=provider.timeout_seconds,
+                    reasoning_effort=provider.reasoning_effort,
+                )
+            )
+        saved = self._saved_config(strict=True)
+        if saved is None:
+            return profiles
+        if any(
+            profile.preset == saved.preset and same_model(profile.model, saved.model)
+            for profile in profiles
+        ):
+            return profiles
+        base = custom_provider_id(saved.preset) or "legacy"
+        profile_id = base
+        suffix = 0
+        while profile_id in taken:
+            suffix += 1
+            profile_id = f"{base[:18]}{suffix}"
+        profiles.append(
+            ModelProfile(
+                id=profile_id,
+                preset=saved.preset,
+                # 升级前那家「没有名字的自定义厂商」没有显示名，用兜底名 —— 列表行
+                # 总得有个供应商名字可以显示。
+                label=(
+                    (saved.label or DEFAULT_CUSTOM_LABEL)
+                    if custom_provider_id(saved.preset) is not None
+                    else ""
+                ),
+                base_url=saved.base_url,
+                model=saved.model,
+                timeout_seconds=saved.timeout_seconds,
+                reasoning_effort=saved.reasoning_effort,
+            )
+        )
+        return profiles
+
+    def _profiles_with_origin(self) -> tuple[list[ModelProfile], bool]:
+        """已配置的模型，以及它是落库的还是刚从升级前数据合成出来的。"""
+        stored = self._stored_profiles()
+        if stored is not None:
+            return stored, False
+        return self._synthesize_profiles(), True
+
+    def _active_id(self, profiles: list[ModelProfile], *, legacy: bool) -> str:
+        """当前使用的那一条的 id；没有可用的就回落到第一条。"""
+        stored = self.setting_store.get(MODEL_ACTIVE_PROFILE_KEY)
+        if stored and any(profile.id == stored for profile in profiles):
+            return stored
+        # 升级前没有「当前档案」这个字段：那时生效的就是那份唯一配置。只有列表还
+        # 没落库时才需要去认它，落库之后 `MODEL_ACTIVE_PROFILE_KEY` 就是唯一答案。
+        if legacy:
+            saved = self._saved_config(strict=False)
+            if saved is not None:
+                exact = next(
+                    (
+                        profile
+                        for profile in profiles
+                        if profile.preset == saved.preset and same_model(profile.model, saved.model)
+                    ),
+                    None,
+                )
+                if exact is not None:
+                    return exact.id
+                same_provider = next(
+                    (profile for profile in profiles if profile.preset == saved.preset), None
+                )
+                if same_provider is not None:
+                    return same_provider.id
+        return profiles[0].id if profiles else ""
+
+    def _write_profiles(self, profiles: list[ModelProfile], active_id: str) -> None:
+        self.setting_store.set_many(
+            {
+                MODEL_PROFILES_KEY: json.dumps(
+                    [profile.model_dump(exclude={"active", "has_api_key"}) for profile in profiles],
+                    ensure_ascii=False,
+                ),
+                MODEL_ACTIVE_PROFILE_KEY: active_id,
+            }
+        )
+
+    def active_profile(self) -> ModelProfile | None:
+        profiles, legacy = self._profiles_with_origin()
+        if not profiles:
+            return None
+        active_id = self._active_id(profiles, legacy=legacy)
+        return next((profile for profile in profiles if profile.id == active_id), profiles[0])
+
+    def model(self) -> ModelSettingsView:
+        """此刻生效的模型配置。聊天、路由、连接测试都读它。"""
+        profile = self.active_profile()
+        if profile is None:
+            # 一条都没配：给出和升级前「首次启动」一样的空配置，让上层照旧报
+            # 「请先配置 API Key」，而不是在这里抛异常。
+            return ModelSettingsView(
+                preset=custom_preset(DEFAULT_CUSTOM_PROVIDER_ID),
+                base_url="",
+                model="",
+                timeout_seconds=30,
+            )
+        return ModelSettingsView(
+            preset=profile.preset,
+            base_url=profile.base_url,
+            model=profile.model,
+            timeout_seconds=profile.timeout_seconds,
+            reasoning_effort=profile.reasoning_effort,
+            label=profile.label,
+        )
+
+    def configured_models(self) -> list[ConfiguredModel]:
+        """设置页那张列表：每一条配置 + 它是不是当前在用、有没有 key。"""
+        profiles, legacy = self._profiles_with_origin()
+        active_id = self._active_id(profiles, legacy=legacy)
+        saved_preset = self.model().preset
+        return [
+            ConfiguredModel(
+                **profile.model_dump(),
+                active=profile.id == active_id,
+                has_api_key=self.has_api_key(profile.preset, saved_preset=saved_preset),
+            )
+            for profile in profiles
+        ]
 
     def _api_key(self, preset: str, saved_preset: str) -> str | None:
         """某个预设的 key，未迁移的旧槽位只在它所属的预设上回退。
@@ -186,106 +378,35 @@ class SettingsService:
                 self.secret_store.set(target_name, legacy)
             self.secret_store.delete(legacy_name)
 
-    def custom_providers(self) -> list[CustomProvider]:
-        """已落库的自定义供应商档案，按用户创建顺序。"""
-        raw = self.setting_store.get(MODEL_CUSTOM_PROVIDERS_KEY)
-        if not raw:
-            return []
-        try:
-            return [CustomProvider.model_validate(item) for item in json.loads(raw)]
-        except ValueError as error:
-            raise DomainError(
-                "SETTINGS_INVALID", "自定义模型供应商配置无效，请重新配置", 500
-            ) from error
+    def delete_model(self, profile_id: str) -> None:
+        """删掉一条已配置的模型。
 
-    def _serialize_custom_providers(self, providers: list[CustomProvider]) -> str:
-        # `removable` 是视图状态，不是档案字段：写进存储的话，下一次读出来的档案
-        # 会凭空多一个 removable，而它的真假取决于当时是谁在读。
-        return json.dumps(
-            [provider.model_dump(exclude={"removable"}) for provider in providers],
-            ensure_ascii=False,
-        )
-
-    def _write_custom_providers(self, providers: list[CustomProvider]) -> None:
-        self.setting_store.set(
-            MODEL_CUSTOM_PROVIDERS_KEY, self._serialize_custom_providers(providers)
-        )
-
-    def custom_providers_view(self, saved: ModelSettingsView) -> list[CustomProvider]:
-        """下拉框要显示的供应商列表，始终包含当前选中的那一家。
-
-        当前预设是自定义、却没有对应档案行的情况有三种：升级前裸的 `custom`、
-        表单刚点了「新建」还没保存、以及首次启动的空配置。这里按已保存的配置合成
-        一条 `removable=False` 的条目 —— 否则下拉框没有当前值，表单会落到另一家
-        身上，显示出一个用户从未选择过的厂商。
+        只有这个供应商的最后一条配置被删掉时才顺带删 key 槽位：同一家厂商可以有两
+        条配置（两个模型共用一把 key），删掉其中一条不该把另一条的凭据也带走。
         """
-        stored = self.custom_providers()
-        view = [provider.model_copy(update={"removable": True}) for provider in stored]
-        saved_id = custom_provider_id(saved.preset)
-        if saved_id is None or any(provider.id == saved_id for provider in stored):
-            return view
-        return [
-            *view,
-            CustomProvider(
-                id=saved_id,
-                label=saved.label or DEFAULT_CUSTOM_LABEL,
-                base_url=saved.base_url,
-                model=saved.model,
-                timeout_seconds=saved.timeout_seconds,
-                reasoning_effort=saved.reasoning_effort,
-            ),
-        ]
+        profiles, legacy = self._profiles_with_origin()
+        target = next((profile for profile in profiles if profile.id == profile_id), None)
+        if target is None:
+            raise DomainError("MODEL_PROFILE_NOT_FOUND", "该模型配置不存在", 404)
+        active_id = self._active_id(profiles, legacy=legacy)
+        remaining = [profile for profile in profiles if profile.id != target.id]
+        if not any(profile.preset == target.preset for profile in remaining):
+            self.secret_store.delete(model_api_key_name(target.preset))
+            if target.preset == custom_preset(DEFAULT_CUSTOM_PROVIDER_ID):
+                # 它那把 key 可能还在升级前的旧槽位里躺着，否则删完仍会被回退读出来。
+                self.secret_store.delete(model_api_key_name(LEGACY_CUSTOM_PRESET))
+        if active_id == target.id:
+            # 删掉的正是当前在用的那条：用剩下的第一条顶上。留着指向已删除记录的
+            # active id，聊天就会继续打一个已经不存在的配置。
+            active_id = remaining[0].id if remaining else ""
+        self._write_profiles(remaining, active_id)
 
-    def _upsert_custom_provider(
-        self,
-        providers: list[CustomProvider],
-        provider_id: str,
-        label: str,
-        payload: dict,
-    ) -> str:
-        """把表单这一份草稿写回档案，返回新的档案列表（JSON）。新的一家追加在
-        末尾，下拉框顺序因此稳定；写库由调用方与配置一起做，见 `save_model`。"""
-        provider = CustomProvider(
-            id=provider_id,
-            label=label,
-            base_url=str(payload.get("baseUrl") or ""),
-            model=str(payload.get("model") or ""),
-            timeout_seconds=float(payload.get("timeoutSeconds") or 30),
-            reasoning_effort=str(payload.get("reasoningEffort") or ""),
-        )
-        return self._serialize_custom_providers(
-            [*[p for p in providers if p.id != provider_id], provider]
-        )
-
-    def delete_custom_provider(self, provider_id: str) -> None:
-        """删掉一家自定义供应商：档案、它的 key，以及指向它的当前配置。
-
-        没有档案行的那一家（`removable=False`）删不掉：它本来就是合成的，删完还会
-        再合成一次，看起来像删除按钮失灵。界面因此不显示这个按钮，这里也不接受。
-        """
-        providers = self.custom_providers()
-        if not any(provider.id == provider_id for provider in providers):
-            raise DomainError("MODEL_PROVIDER_NOT_FOUND", "该自定义供应商不存在", 404)
-        preset = custom_preset(provider_id)
-        self._write_custom_providers([p for p in providers if p.id != provider_id])
-        self.secret_store.delete(model_api_key_name(preset))
-        if provider_id == DEFAULT_CUSTOM_PROVIDER_ID:
-            # 它那把 key 可能还在升级前的旧槽位里躺着，否则删完仍会被回退读出来。
-            self.secret_store.delete(model_api_key_name(LEGACY_CUSTOM_PRESET))
-        if self.model().preset == preset:
-            # 删掉的正是当前在用的那家：回落到「未命名」槽位。留着旧配置会让表单
-            # 选中一个下拉框里不存在的预设。
-            self.setting_store.set_many(
-                {
-                    MODEL_CONFIG_KEY: ModelSettingsView(
-                        preset=LEGACY_CUSTOM_PRESET,
-                        base_url="",
-                        model="",
-                        timeout_seconds=30,
-                    ).model_dump_json(),
-                    MODEL_KEY_REFERENCE: "",
-                }
-            )
+    def activate_model(self, profile_id: str) -> None:
+        """把某一条配置设为当前使用。"""
+        profiles, _ = self._profiles_with_origin()
+        if not any(profile.id == profile_id for profile in profiles):
+            raise DomainError("MODEL_PROFILE_NOT_FOUND", "该模型配置不存在", 404)
+        self._write_profiles(profiles, profile_id)
 
     def model_setup_skipped(self) -> bool:
         return self.setting_store.get(MODEL_SETUP_SKIPPED_KEY) == "1"
@@ -293,10 +414,16 @@ class SettingsService:
     def skip_model_setup(self) -> None:
         self.setting_store.set(MODEL_SETUP_SKIPPED_KEY, "1")
 
-    async def save_model(self, update: ModelSettingsUpdate) -> ModelSettingsView:
-        # 预设有三类：内置厂家的固定 id、`custom:<档案 id>`、以及表单「新建」用的
-        # `custom:new`（保存时才分配真正的 id）。升级前裸的 `custom` 归到那家
-        # 「未命名」的固定档案上，老客户端与老表单因此仍然能存进去。
+    async def save_model(self, update: ModelSettingsUpdate) -> ModelProfile:
+        """新增或更新一条模型配置。
+
+        预设有三类：内置厂家的固定 id、`custom:<供应商 id>`、以及表单「新建」用的
+        `custom:new`（保存时才分配真正的 id）。升级前裸的 `custom` 归到那家
+        「未命名」的供应商上，老客户端因此仍然能存进去。
+
+        带 `profile_id` 就是编辑那一条；不带就是新增 —— 但先按「供应商 + 模型」认
+        一条已有的，所以「添加」同一个模型两次是编辑，不是攒出两行一模一样的配置。
+        """
         preset = update.preset
         if preset == LEGACY_CUSTOM_PRESET:
             preset = custom_preset(DEFAULT_CUSTOM_PROVIDER_ID)
@@ -307,19 +434,37 @@ class SettingsService:
             preset = custom_preset(provider_id)
         if provider_id is None and preset not in MODEL_PRESETS:
             raise DomainError("MODEL_PRESET_INVALID", "模型预设无效", 422)
-        providers = self.custom_providers()
+        profiles, legacy = self._profiles_with_origin()
         if (
             provider_id is not None
             and not creating
+            # `default` 是升级前那家「没有名字的自定义供应商」的固定 id：老客户端
+            # （以及把 preset 写成裸 `custom` 的调用）还能照旧存进来，不必先有一条
+            # 档案。别的 id 指名一家已经不存在的供应商时必须报错。
             and provider_id != DEFAULT_CUSTOM_PROVIDER_ID
-            and not any(provider.id == provider_id for provider in providers)
+            and not any(profile.preset == preset for profile in profiles)
         ):
-            # 表单拿着一个已经被删掉的供应商在保存：宁可报错，也不能悄悄新建一家
-            # 同名同 id 的，那会把「删除」变成一句谎话。
+            # 表单拿着一家已经被删掉的供应商在保存：宁可报错，也不能悄悄新建一家
+            # 同 id 的，那会把「删除」变成一句谎话。
             raise DomainError("MODEL_PROVIDER_NOT_FOUND", "该自定义供应商已不存在，请重新选择", 422)
-        # `WireModel.model_dump` emits alias keys, so the effort key is camelCase.
-        payload = update.model_dump(exclude={"api_key"})
-        payload["preset"] = preset
+        target: ModelProfile | None = None
+        if update.profile_id is not None:
+            target = next(
+                (profile for profile in profiles if profile.id == update.profile_id), None
+            )
+            if target is None:
+                raise DomainError(
+                    "MODEL_PROFILE_NOT_FOUND", "该模型配置已不存在，请刷新后重试", 404
+                )
+        else:
+            target = next(
+                (
+                    profile
+                    for profile in profiles
+                    if profile.preset == preset and same_model(profile.model, update.model)
+                ),
+                None,
+            )
         # A free-only preset bills the account for anything else, and the picker
         # cannot stop a hand-typed id, so the restriction is enforced on save.
         if not is_free_model(preset, str(update.model or "")):
@@ -331,90 +476,88 @@ class SettingsService:
                 "OpenCode Zen 免费档会随官方活动轮换",
             )
         # An unset effort means "use the vendor's documented default" rather
-        # than "off", so switching presets never silently keeps a stale level
+        # than "off", so switching models never silently keeps a stale level
         # that the new vendor does not accept.
-        if not payload.get("reasoningEffort"):
-            payload["reasoningEffort"] = default_reasoning_effort(
-                preset, str(payload.get("model") or "")
-            )
+        reasoning_effort = update.reasoning_effort or default_reasoning_effort(preset, update.model)
+        label = ""
         if provider_id is not None:
             # 名字留空就沿用它原来的名字，都没有才用兜底名 —— 改 Base URL 时不该
-            # 顺手把用户起的名字清掉。
-            label = (update.label or "").strip() or next(
-                (provider.label for provider in providers if provider.id == provider_id),
-                "",
+            # 顺手把用户起的名字清掉。同一家供应商的第二条配置沿用第一家起的名字。
+            label = (update.label or "").strip() or (
+                target.label
+                if target is not None
+                else next((profile.label for profile in profiles if profile.preset == preset), "")
             )
-            payload["label"] = label or DEFAULT_CUSTOM_LABEL
+            label = label or DEFAULT_CUSTOM_LABEL
+        profile = ModelProfile(
+            id=target.id if target is not None else new_profile_id(),
+            preset=preset,
+            label=label,
+            base_url=update.base_url,
+            model=update.model,
+            timeout_seconds=update.timeout_seconds,
+            reasoning_effort=reasoning_effort,
+        )
+        active_id = self._active_id(profiles, legacy=legacy)
+        if target is None:
+            profiles = [*profiles, profile]
+            # 刚配好的那一条就是用户此刻要用的：否则列表里多出一条谁也不认识的
+            # 配置，聊天用的还是上一个模型。
+            active_id = profile.id
         else:
-            # 内置预设没有「显示名」，落一份空值，免得切到自定义时残留上一家的名字。
-            payload["label"] = ""
-        config = ModelSettingsView(**payload)
-        serialized_config = config.model_dump_json()
+            profiles = [profile if item.id == target.id else item for item in profiles]
         key_name = model_api_key_name(preset)
         # 任何一次保存都把旧槽位搬走，包括「只改预设、不带 key」这种：不搬的话，
         # 旧 key 会在新预设上被回退读出来，等于换个名字重演同一个 bug。
         self._migrate_legacy_api_key()
-        # 档案和配置必须一起落库（同一次 set_many）：写失败的保存不该在列表里留下
-        # 一家用户从没保存成功的供应商，也不该让配置指向一条不存在的档案。
-        provider_values: dict[str, str] = {}
-        if provider_id is not None:
-            provider_values[MODEL_CUSTOM_PROVIDERS_KEY] = self._upsert_custom_provider(
-                providers, provider_id, str(payload.get("label") or ""), payload
-            )
-        if update.api_key is None:
+        values: dict[str, str] = {
+            MODEL_PROFILES_KEY: json.dumps(
+                [item.model_dump() for item in profiles], ensure_ascii=False
+            ),
+            MODEL_ACTIVE_PROFILE_KEY: active_id,
             # Saving any model config means the user engaged with setup, so a
-            # previous skip no longer applies — and the key of *this* preset is
-            # left untouched, which is what makes switching back restore it.
-            self.setting_store.set_many(
-                {
-                    MODEL_CONFIG_KEY: serialized_config,
-                    MODEL_SETUP_SKIPPED_KEY: "0",
-                    **provider_values,
-                }
-            )
-            return config
-
+            # previous skip no longer applies.
+            MODEL_SETUP_SKIPPED_KEY: "0",
+        }
+        if update.api_key is None:
+            # 不带 key 的保存不碰这个槽位，这正是「切回来 key 还在」的原因。
+            self.setting_store.set_many(values)
+            return profile
         previous_api_key = self.secret_store.get(key_name)
         if update.api_key == "":
             self.secret_store.delete(key_name)
-            key_reference = ""
+            values[MODEL_KEY_REFERENCE] = ""
         else:
             self.secret_store.set(key_name, update.api_key)
-            key_reference = key_name
+            values[MODEL_KEY_REFERENCE] = key_name
         try:
-            self.setting_store.set_many(
-                {
-                    MODEL_CONFIG_KEY: serialized_config,
-                    MODEL_KEY_REFERENCE: key_reference,
-                    MODEL_SETUP_SKIPPED_KEY: "0",
-                    **provider_values,
-                }
-            )
+            self.setting_store.set_many(values)
         except Exception:
             if previous_api_key is None:
                 self.secret_store.delete(key_name)
             else:
                 self.secret_store.set(key_name, previous_api_key)
             raise
-        return config
+        return profile
 
-    async def test_model(self) -> ModelConnectionResult:
-        api_key = self.saved_api_key()
+    async def test_model(self, probe: ModelListProbe | None = None) -> ModelConnectionResult:
+        """测一次连接。带草稿的就是「测我正在编的这一条」。"""
+        config, _, api_key = self._probe_target(probe)
         if not api_key:
             raise DomainError(
                 "MODEL_AUTH_FAILED", "请先配置 API Key", 400, False, "保存 API Key 后重试"
             )
-        return await self.provider_factory(
-            ModelConfig(**self.model().model_dump()), api_key
-        ).test_connection()
+        return await self.provider_factory(config, api_key).test_connection()
 
-    async def list_models(self, probe: ModelListProbe | None = None) -> ModelListView:
-        """List models for the provider the form is currently describing.
+    def _probe_target(
+        self, probe: ModelListProbe | None
+    ) -> tuple[ModelConfig, str, str | None]:
+        """把表单草稿解析成「要连接的配置 + 供应商 + 该用的那把 key」。
 
-        The form's draft wins over the saved config, **including the preset**:
-        the picker is driven by what the user just chose, and falling back to the
-        saved preset would show a catalogue for a vendor they are not configuring.
-        `GET /models` still overrides the curated list when the provider answers.
+        草稿优先于已保存的配置，**包括 preset**：二级页面正在编的是一个还没落库的
+        模型，拿「当前使用」的那条去连只会得到一个和眼前表单无关的结论。key 同理
+        —— 草稿里的 key 优先，否则用**被探测供应商自己的**槽位，拿别家的 key 去连
+        只会得到一场 401。
         """
         saved = self.model()
         config = ModelConfig(**saved.model_dump())
@@ -431,12 +574,20 @@ class SettingsService:
                 config = config.model_copy(update={"base_url": probe.base_url})
             if probe.model:
                 config = config.model_copy(update={"model": probe.model})
-        curated = preset_models(preset)
-        # 表单草稿里的 key 优先；否则用**被探测预设自己的槽位** —— 拿已保存预设
-        # 的 key 去列另一个厂商的模型，只会得到一场 401。
         api_key = self._api_key(preset, saved.preset)
-        if probe is not None and probe.api_key:
-            api_key = probe.api_key
+        if probe is not None and probe.api_key is not None:
+            # 空串是「这把 key 不算数」（用户勾了清除），不能被回退成槽位里那把旧的；
+            # 只有整份草稿都没带 key 时才沿用已保存的那把。
+            api_key = probe.api_key or None
+        return config, preset, api_key
+
+    async def list_models(self, probe: ModelListProbe | None = None) -> ModelListView:
+        """List models for the provider the form is currently describing.
+
+        `GET /models` still overrides the curated list when the provider answers.
+        """
+        config, preset, api_key = self._probe_target(probe)
+        curated = preset_models(preset)
         if not api_key:
             # Not an error: plenty of gateways list their models unauthenticated,
             # and the curated list is a valid answer. Say which one the user got.
@@ -481,13 +632,14 @@ class SettingsService:
 
     def view(self, settings: AppSettings) -> SettingsView:
         saved = self.model()
-        providers = self.custom_providers_view(saved)
-        # 每个预设各报各的「有没有 key」，前端的「已安全保存」据此判断。给单个
-        # 布尔值时它只能描述「已保存的那家」，切了预设就变成谎话。
+        models = self.configured_models()
+        # 每个供应商各报各的「有没有 key」，二级页面据此决定显示「已安全保存」还是
+        # 「请输入 API Key」。给单个布尔值时它只能描述「当前在用的那家」，切一下供
+        # 应商就变成谎话。
         #
-        # 自定义供应商也在这张表里，按 `custom:<档案 id>` 逐家一份 —— 这正是
-        # 「custom 只能记住一把 key」被修掉的地方：两家自定义厂商各有各的槽位。
-        # 裸的 `custom` 不再是可选项，它已经归到 `custom:default` 那家名下。
+        # 自定义供应商也在这张表里，按 `custom:<供应商 id>` 逐家一份 —— 两条配置共用
+        # 一家供应商时它们指向同一个槽位，这正是 key 属于厂商而不属于某次选择的体现。
+        # 裸的 `custom` 不再是可选项，它已经归到 `custom:default` 名下。
         api_keys = {
             preset: self.has_api_key(preset, saved_preset=saved.preset)
             for preset in MODEL_PRESETS
@@ -495,17 +647,23 @@ class SettingsService:
         }
         api_keys.update(
             {
-                custom_preset(provider.id): self.has_api_key(
-                    custom_preset(provider.id), saved_preset=saved.preset
-                )
-                for provider in providers
+                model.preset: self.has_api_key(model.preset, saved_preset=saved.preset)
+                for model in models
+                if custom_provider_id(model.preset) is not None
             }
+        )
+        # 一条配置都没有时，`model()` 报的是那份空配置（`custom:default`）。它不在
+        # 上面任何一张表里，但界面要按它问「这家有没有 key」—— 少了这一条，升级后
+        # 仅剩旧槽位那把 key 的安装会被报成「一把 key 都没有」。
+        api_keys.setdefault(
+            saved.preset, self.has_api_key(saved.preset, saved_preset=saved.preset)
         )
         return SettingsView(
             model=saved,
             has_api_key=api_keys.get(saved.preset, False),
             api_keys=api_keys,
-            custom_providers=providers,
+            models=models,
+
             data_path=str(settings.data_dir.resolve()),
             screenshot_count=_screenshot_count(settings.screenshots_dir),
             runtime=self.runtime(),
@@ -615,12 +773,20 @@ async def save_model(update: ModelSettingsUpdate, request: Request) -> SettingsV
 
 @router.post("/model/test", response_model=ModelConnectionResult)
 async def test_model(request: Request) -> ModelConnectionResult:
-    return await _service(request).test_model()
+    # The body is optional: a request without one tests the model in use, while the
+    # settings dialog sends its draft so the answer describes what is on screen.
+    return await _service(request).test_model(await _optional_probe(request))
 
 
-@router.delete("/model/providers/{provider_id}", response_model=SettingsView)
-async def delete_model_provider(provider_id: str, request: Request) -> SettingsView:
-    _service(request).delete_custom_provider(provider_id)
+@router.delete("/model/profiles/{profile_id}", response_model=SettingsView)
+async def delete_model(profile_id: str, request: Request) -> SettingsView:
+    _service(request).delete_model(profile_id)
+    return _service(request).view(_settings(request))
+
+
+@router.post("/model/activate", response_model=SettingsView)
+async def activate_model(activation: ModelActivation, request: Request) -> SettingsView:
+    _service(request).activate_model(activation.profile_id)
     return _service(request).view(_settings(request))
 
 
@@ -633,15 +799,19 @@ async def skip_model_setup(request: Request) -> SettingsView:
 @router.post("/model/list", response_model=ModelListView)
 async def list_models(request: Request) -> ModelListView:
     # The body is optional: a request without one lists the saved provider.
-    probe: ModelListProbe | None = None
-    raw = await request.body()
-    if raw:
-        try:
-            probe = ModelListProbe.model_validate_json(raw)
-        except ValueError as error:
-            raise DomainError("INVALID_REQUEST", "请求参数无效", 422) from error
-    models = await _service(request).list_models(probe)
+    models = await _service(request).list_models(await _optional_probe(request))
     return models
+
+
+async def _optional_probe(request: Request) -> ModelListProbe | None:
+    """表单草稿，可为空。空请求体表示「用已保存的配置」。"""
+    raw = await request.body()
+    if not raw:
+        return None
+    try:
+        return ModelListProbe.model_validate_json(raw)
+    except ValueError as error:
+        raise DomainError("INVALID_REQUEST", "请求参数无效", 422) from error
 
 
 @router.post("/runtime", response_model=SettingsView)

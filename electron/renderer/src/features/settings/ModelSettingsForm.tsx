@@ -1,55 +1,18 @@
-import { CheckCircle2, LoaderCircle, PlugZap, RefreshCw, Save, Trash2 } from "lucide-react";
+import { CheckCircle2, LoaderCircle, PlugZap, RefreshCw, Save } from "lucide-react";
 import { useRef, useState, type FormEvent } from "react";
-import type { AvailableModel, ModelPreset, SettingsView } from "../../../../shared/contracts";
-import {
-  DEFAULT_CUSTOM_PROVIDER_ID,
-  LEGACY_CUSTOM_PRESET,
-  NEW_CUSTOM_PROVIDER_ID,
-  customPreset,
-  isCustomPreset,
+import type {
+  AvailableModel,
+  ConfiguredModel,
+  ModelPreset,
+  SettingsView,
 } from "../../../../shared/contracts";
+import { NEW_CUSTOM_PROVIDER_ID, customPreset, isCustomPreset } from "../../../../shared/contracts";
 import { appQueryClient } from "../../app/query-client";
+import { BUILTIN_PRESETS, PRESETS, presetDefaults } from "./model-presets";
 import { clientErrorMessage, settingsKeys } from "./settings.queries";
-
-const PRESETS = {
-  deepseek: { label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-flash" },
-  qwen: {
-    label: "通义千问",
-    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    model: "qwen3.8-max",
-  },
-  kimi: { label: "Kimi (月之暗面)", baseUrl: "https://api.moonshot.cn/v1", model: "kimi-k3" },
-  glm: { label: "智谱 GLM", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4.6" },
-  mimo: { label: "小米 MiMo", baseUrl: "https://api.xiaomimimo.com/v1", model: "mimo-v2.6-pro" },
-  // Zen is restricted to its free tier by the backend; the label must not imply
-  // that paid ids are selectable here.
-  opencode_zen: {
-    label: "OpenCode Zen（仅免费模型）",
-    baseUrl: "https://opencode.ai/zen/v1",
-    model: "mimo-v2.6-flash-free",
-  },
-  opencode_go: {
-    label: "OpenCode Go（$10/月订阅）",
-    baseUrl: "https://opencode.ai/zen/go/v1",
-    model: "mimo-v2.6-pro",
-  },
-  openai: { label: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-5.6-terra" },
-  // 升级前唯一的那家自定义厂商。它现在只是老配置的字面量与内置表的一部分，
-  // **不出现在下拉框里** —— 自定义厂商改成了一张可增删的列表，由「自定义供应商」
-  // 那一组渲染（见下面的 optgroup）。`contracts.test.ts` 要求这张表与
-  // MODEL_PRESET_IDS 逐字对齐，所以它不能删。
-  custom: { label: "自定义", baseUrl: "", model: "" },
-} as const satisfies Record<ModelPreset, { label: string; baseUrl: string; model: string }>;
-
-/** 下拉框里「内置服务商」那一组；`custom` 是过去式，交给自定义那一组渲染。 */
-const BUILTIN_PRESETS = (Object.keys(PRESETS) as ModelPreset[]).filter(
-  (value) => value !== LEGACY_CUSTOM_PRESET,
-);
 
 /** 「新建」的占位预设，后端保存时才分配真 id。 */
 const NEW_CUSTOM_VALUE = customPreset(NEW_CUSTOM_PROVIDER_ID);
-/** 没有档案行的那家「未命名自定义」；升级前裸的 `custom` 也归到它名下。 */
-const DEFAULT_CUSTOM_VALUE = customPreset(DEFAULT_CUSTOM_PROVIDER_ID);
 
 // 档位标签直接对应厂商原生值。后端下发的 levels 就是官方文档里的档位
 // （Kimi K3 = low/high/max，GLM-4.6 = 开/关两态，GPT-5.6 = none…xhigh），
@@ -69,75 +32,82 @@ const EFFORT_LABELS: Record<string, string> = {
 
 const CUSTOM_MODEL_VALUE = "__custom__";
 
+/** 默认新增哪一家：内置表的第一家，它有内置地址、默认模型和模型目录。 */
+const DEFAULT_NEW_PRESET: string = BUILTIN_PRESETS[0] ?? "deepseek";
+
 type Props = {
   settings: SettingsView;
+  /** 正在编辑的那一条配置；新增时为 `null`。 */
+  profile?: ConfiguredModel | null;
   testButtonLabel?: string;
+  /** 保存成功。参数是后端返回的整份视图 —— 弹窗据此关闭，列表据此刷新。 */
+  onSaved?: (settings: SettingsView) => void;
   onConnectionSuccess?: () => void;
   onConnectionInvalidated?: () => void;
+  /** 有的话渲染「取消」；引导页内联使用时没有可取消的去处。 */
+  onCancel?: () => void;
 };
 
+/**
+ * 一条模型配置的编辑表单 —— 添加与编辑共用它。
+ *
+ * 🔴 它**不再编辑「当前那一个模型」**，而是编辑列表里被点开的那一条：内置厂商
+ * 因此可以存好几条（同一把 key、不同模型），自定义厂商的连接参数也只属于它自己。
+ * 「测试连接」与「获取模型列表」都把这份还没保存的草稿发给后端，所以按钮问的是
+ * 眼前这一条，而不是当前在用的那条 —— 后者会给出一个与表单无关的结论。
+ */
 export function ModelSettingsForm({
   settings,
+  profile = null,
   testButtonLabel = "测试连接",
+  onSaved,
   onConnectionSuccess,
   onConnectionInvalidated,
+  onCancel,
 }: Props) {
-  // 下拉框的可选项 = 内置厂商 + 用户自建的每一家 + 「新建」。当前预设一定在里面：
-  // 后端会把「还没有档案行的自定义配置」也合成一条，所以这里不需要再兜底成
-  // 「另一家」—— 那正是表单曾经显示出一个用户从未选择过的厂商的原因。
-  const providers = settings.customProviders;
-  const providerOptions = new Set([
-    ...BUILTIN_PRESETS,
-    ...providers.map((provider) => customPreset(provider.id)),
-  ]);
-  const initialPreset = providerOptions.has(settings.model.preset)
-    ? settings.model.preset
-    : settings.model.preset === LEGACY_CUSTOM_PRESET
-      ? DEFAULT_CUSTOM_VALUE
-      : NEW_CUSTOM_VALUE;
+  const initialPreset = profile?.preset ?? DEFAULT_NEW_PRESET;
+  const initialModel = profile?.model ?? presetDefaults(initialPreset).model;
   const [preset, setPreset] = useState<string>(initialPreset);
-  const [label, setLabel] = useState(
-    providers.find((provider) => customPreset(provider.id) === initialPreset)?.label ??
-      (isCustomPreset(initialPreset) ? settings.model.label : ""),
+  const [label, setLabel] = useState(profile?.label ?? "");
+  const [baseUrl, setBaseUrl] = useState(profile?.baseUrl ?? presetDefaults(initialPreset).baseUrl);
+  const [model, setModel] = useState(initialModel);
+  const [reasoningEffort, setReasoningEffort] = useState(
+    profile?.reasoningEffort ||
+      settings.modelCapabilities[initialPreset]?.[initialModel.trim().toLowerCase()]
+        ?.defaultReasoningEffort ||
+      "",
   );
-  const [baseUrl, setBaseUrl] = useState(settings.model.baseUrl);
-  const [model, setModel] = useState(settings.model.model);
-  const [reasoningEffort, setReasoningEffort] = useState(settings.model.reasoningEffort);
-  const [timeoutSeconds, setTimeoutSeconds] = useState(settings.model.timeoutSeconds);
+  const [timeoutSeconds, setTimeoutSeconds] = useState(profile?.timeoutSeconds ?? 30);
   const [apiKey, setApiKey] = useState("");
   const [clearKey, setClearKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [listing, setListing] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [liveModels, setLiveModels] = useState<AvailableModel[]>([]);
-  const [needsSave, setNeedsSave] = useState(false);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const revisionRef = useRef(0);
   const activeOperationRef = useRef<{ kind: "save" | "test"; revision: number } | null>(null);
   const busy = saving || testing;
-  // 当前预设对应的自定义档案。`custom:new` 没有档案 —— 它是「还没保存的新建」。
-  const currentProvider = providers.find((provider) => customPreset(provider.id) === preset);
   const customPresetSelected = isCustomPreset(preset);
-  // 🔴 key 是按预设存的，不是全局的：一把 DeepSeek 的 key 打不通 Kimi。这里必须
-  // 按当前预设查，不能拿 settings.hasApiKey（它只描述「已保存的那一家」）冒充 ——
-  // 那正是「切到别家仍显示已安全保存」的来源。
+  // 这个供应商的下拉框选项 = 用户已经配过的每一家自定义供应商。同名同 id 的多条
+  // 配置共用一个选项 —— 选了它就是把这一家的连接参数填进来。
+  const customConnections = customConnectionsOf(settings.models);
+  // 🔴 key 是按供应商存的，不是全局的：一把 DeepSeek 的 key 打不通 Kimi。这里必须
+  // 按当前选中的供应商查，不能拿 settings.hasApiKey（它只描述当前在用的那条）冒充。
   //
-  // `clearKey` 只影响这把 key 还算不算数，槽位本身还在，所以「清除已保存的 API
-  // Key」勾选框的可见性看槽位，否则勾上之后按钮自己就消失了。
+  // `clearKey` 只影响这把 key 还算不算数，槽位本身还在，所以「清除已保存的 API Key」
+  // 勾选框的可见性看槽位，否则勾上之后按钮自己就消失了。
   const storedKeyForPreset = settings.apiKeys?.[preset] ?? false;
-  const hasSavedKey = storedKeyForPreset && !clearKey;
   // 🔴 不要把掩码当受控 value 回填输入框。此前 `value={hasSavedKey ? "••••••••" : apiKey}`
   // 让用户聚焦后输入的每个字符都变成 "••••••••x"，onChange 拿到含掩码的串，
   // 提交时 `apiKey: "••••••••x"` 被写进钥匙串 —— 真实密钥被覆盖且无法恢复。
   // 「已保存」的提示走 placeholder，value 恒为用户真实输入。
+  const typedKey = apiKey.trim();
+  const keyAvailable = typedKey !== "" || (storedKeyForPreset && !clearKey);
 
   // A picker is only useful when the provider actually offers choices. The
   // curated catalogue (or a fetched live list) supplies them; with neither, the
-  // field stays free text so any model id remains typeable. The current value
-  // is shown alongside those choices but never becomes the sole option, which
-  // would turn an empty catalogue into a one-item dropdown.
+  // field stays free text so any model id remains typeable.
   const curatedModels = settings.modelPresets[preset] ?? [];
   const knownModels = (() => {
     const merged = [...curatedModels];
@@ -167,43 +137,39 @@ export function ModelSettingsForm({
 
   function invalidateConnection() {
     revisionRef.current += 1;
-    setNeedsSave(true);
     setMessage(null);
     onConnectionInvalidated?.();
   }
 
   function changePreset(nextPreset: string) {
     // 下拉框的选项由服务端下发的档案列表决定，理论上不会给出别的值；真给了也
-    // 不能把表单打挂 —— `PRESETS` 里没有、又不是自定义预设的值直接忽略。
+    // 不能把表单打挂 —— 内置表里没有、又不是自定义预设的值直接忽略。
     if (!isCustomPreset(nextPreset) && !(nextPreset in PRESETS)) return;
     setPreset(nextPreset);
     setLiveModels([]);
-    setConfirmingDelete(false);
-    // 半填的 key 属于上一个预设，不能跟着带到新预设去（那会把 DeepSeek 的 key
-    // 存到 Kimi 名下）；清除勾选同理，它针对的是上一个预设的槽位。
+    // 半填的 key 属于上一个供应商，不能跟着带到新的一家去（那会把 DeepSeek 的 key
+    // 存到 Kimi 名下）；清除勾选同理，它针对的是上一家的槽位。
     setApiKey("");
     setClearKey(false);
     if (isCustomPreset(nextPreset)) {
-      // 每一家自定义供应商带着自己的地址、模型、超时和推理档位 —— 这正是把它们
-      // 存成档案（而不是共用一个 `custom` 槽位）换来的东西。没有档案的就是
-      // 「新建」，从空表单开始。
-      const provider = providers.find((item) => customPreset(item.id) === nextPreset);
-      setLabel(provider?.label ?? "");
-      setBaseUrl(provider?.baseUrl ?? "");
-      setModel(provider?.model ?? "");
-      setTimeoutSeconds(provider?.timeoutSeconds ?? 30);
-      setReasoningEffort(provider?.reasoningEffort ?? "");
+      // 每一家自定义供应商带着自己的地址、模型、超时和推理档位。选「新建」就是
+      // 从空表单开始，后端保存时才分配真 id。
+      const existing = settings.models.find((item) => item.preset === nextPreset) ?? null;
+      setLabel(existing?.label ?? "");
+      setBaseUrl(existing?.baseUrl ?? "");
+      setModel(existing?.model ?? "");
+      setTimeoutSeconds(existing?.timeoutSeconds ?? 30);
+      setReasoningEffort(existing?.reasoningEffort ?? "");
     } else {
-      const next = PRESETS[nextPreset as ModelPreset];
-      const nextModel = next.model;
+      const preset = PRESETS[nextPreset as ModelPreset];
       setLabel("");
-      setBaseUrl(next.baseUrl);
-      setModel(nextModel);
+      setBaseUrl(preset.baseUrl);
+      setModel(preset.model);
       // A level valid for the old model may be rejected by the new one, so fall
       // back to that model's documented default. Empty means "vendor default".
       setReasoningEffort(
-        settings.modelCapabilities[nextPreset]?.[nextModel.toLowerCase()]?.defaultReasoningEffort ??
-          "",
+        settings.modelCapabilities[nextPreset]?.[preset.model.toLowerCase()]
+          ?.defaultReasoningEffort ?? "",
       );
     }
     invalidateConnection();
@@ -214,23 +180,29 @@ export function ModelSettingsForm({
     // Same reasoning as switching preset: reset to the new model's default so a
     // level the vendor does not accept is never sent.
     setReasoningEffort(
-      settings.modelCapabilities[preset]?.[nextModel.trim().toLowerCase()]?.defaultReasoningEffort ?? "",
+      settings.modelCapabilities[preset]?.[nextModel.trim().toLowerCase()]
+        ?.defaultReasoningEffort ?? "",
     );
     invalidateConnection();
+  }
+
+  /** 这一份草稿。测试连接与获取模型列表都带着它走，所以答案描述的是眼前的表单。 */
+  function draftProbe() {
+    return {
+      preset,
+      baseUrl: baseUrl.trim() || undefined,
+      model: model.trim() || undefined,
+      // 显式清空就是「这把 key 不算数」，不能被后端回退成槽位里那把旧的。
+      apiKey: clearKey ? "" : typedKey || undefined,
+    };
   }
 
   async function refreshModels() {
     if (listing) return;
     setListing(true);
     setMessage(null);
-    const submittedKey = clearKey ? "" : apiKey.trim() || undefined;
     try {
-      const result = await window.docmind.settings.listModels({
-        preset,
-        baseUrl: baseUrl.trim() || undefined,
-        model: model.trim() || undefined,
-        apiKey: submittedKey,
-      });
+      const result = await window.docmind.settings.listModels(draftProbe());
       setLiveModels(result.models);
       if (result.models.length === 0) {
         setMessage({
@@ -259,41 +231,33 @@ export function ModelSettingsForm({
     if (activeOperationRef.current) return;
     const operation = { kind: "save" as const, revision: revisionRef.current };
     activeOperationRef.current = operation;
-    onConnectionInvalidated?.();
+    // 保存**不**作废刚验证过的连接结论：存下去的就是刚才测的那一份。真改过内容的话
+    // 那次编辑已经作废了它，这里再作废一次只会逼用户为同一份配置测两遍。
     setSaving(true);
     setMessage(null);
     try {
-      const submittedKey = clearKey ? "" : apiKey.trim() || undefined;
       const saved = await window.docmind.settings.saveModel({
+        // 带 id 就是改这一条；不带就是新增，后端先按「供应商 + 模型」认一条已有的。
+        profileId: profile?.id,
         preset,
         baseUrl: baseUrl.trim(),
         model: model.trim(),
         timeoutSeconds,
         reasoningEffort,
-        // 内置预设不落「显示名」：它们的名字来自上面那张内置表。
+        // 内置预设不落「显示名」：它们的名字来自内置表。
         label: isCustomPreset(preset) ? label.trim() : "",
-        apiKey: submittedKey,
+        apiKey: clearKey ? "" : typedKey || undefined,
       });
       appQueryClient.setQueryData(settingsKeys.root, saved);
       if (activeOperationRef.current !== operation || revisionRef.current !== operation.revision)
         return;
-      // 刚「新建」的那家：后端分配了真正的档案 id，表单要跟着换到它名下。不然下
-      // 一次保存还带着 `custom:new`，会再建一家出来。
-      if (saved.model.preset !== preset) setPreset(saved.model.preset);
-      if (saved.model.label) setLabel(saved.model.label);
-      // No local "hasSavedKey" to sync: it is derived from the refetched view's
-      // apiKeys map, which the line above already replaced.
       setApiKey("");
       setClearKey(false);
-      setNeedsSave(false);
       setMessage({ tone: "success", text: "设置已保存" });
       activeOperationRef.current = null;
       setSaving(false);
-      // Only test when this preset actually has a key now; otherwise the backend
-      // would answer "请先配置 API Key" for a save that was meant to be keyless.
-      if (!clearKey && saved.apiKeys?.[saved.model.preset]) {
-        await runConnectionTest();
-      }
+      // 保存后的视图由调用方接管：弹窗要关，列表要换，引导页要往下走。
+      onSaved?.(saved);
     } catch (error) {
       if (activeOperationRef.current !== operation || revisionRef.current !== operation.revision)
         return;
@@ -312,7 +276,7 @@ export function ModelSettingsForm({
     setTesting(true);
     setMessage(null);
     try {
-      const result = await window.docmind.settings.testModel();
+      const result = await window.docmind.settings.testModel(draftProbe());
       if (activeOperationRef.current !== operation || revisionRef.current !== operation.revision)
         return;
       if (!result.connected) {
@@ -334,50 +298,15 @@ export function ModelSettingsForm({
   }
 
   async function testConnection() {
-    if (activeOperationRef.current || needsSave || !hasSavedKey) return;
+    if (activeOperationRef.current || !model.trim() || !keyAvailable) return;
     await runConnectionTest();
-  }
-
-  async function removeProvider() {
-    const provider = currentProvider;
-    if (!provider || activeOperationRef.current || deleting) return;
-    setDeleting(true);
-    setMessage(null);
-    try {
-      const saved = await window.docmind.settings.deleteModelProvider(provider.id);
-      appQueryClient.setQueryData(settingsKeys.root, saved);
-      // 一切以服务端返回的视图为准：删掉的是当前在用的那家时它会回落到「未命名」
-      // 槽位，表单不能继续显示一个已经不存在的供应商。
-      const fallback = saved.customProviders.find(
-        (item) => customPreset(item.id) === saved.model.preset,
-      );
-      setPreset(saved.model.preset);
-      setLabel(fallback?.label ?? saved.model.label);
-      setBaseUrl(saved.model.baseUrl);
-      setModel(saved.model.model);
-      setTimeoutSeconds(saved.model.timeoutSeconds);
-      setReasoningEffort(saved.model.reasoningEffort);
-      setLiveModels([]);
-      setApiKey("");
-      setClearKey(false);
-      setConfirmingDelete(false);
-      // 删除已经落库，界面与后端一致，所以不是「待保存」；只把上一家的连接结论作废。
-      setNeedsSave(false);
-      revisionRef.current += 1;
-      onConnectionInvalidated?.();
-      setMessage({ tone: "success", text: `已删除「${provider.label}」` });
-    } catch (error) {
-      setMessage({ tone: "error", text: clientErrorMessage(error) });
-    } finally {
-      setDeleting(false);
-    }
   }
 
   return (
     <form className="model-form" onSubmit={save}>
       <div className="form-grid">
         <label>
-          <span>模型预设</span>
+          <span>供应商</span>
           <select
             disabled={busy}
             value={preset}
@@ -391,8 +320,8 @@ export function ModelSettingsForm({
               ))}
             </optgroup>
             <optgroup label="自定义供应商">
-              {providers.map((provider) => (
-                <option key={provider.id} value={customPreset(provider.id)}>
+              {customConnections.map((provider) => (
+                <option key={provider.preset} value={provider.preset}>
                   {provider.label}
                 </option>
               ))}
@@ -521,7 +450,7 @@ export function ModelSettingsForm({
               setApiKey(event.target.value);
               invalidateConnection();
             }}
-            placeholder={hasSavedKey ? "已安全保存，留空可保留" : "请输入 API Key"}
+            placeholder={storedKeyForPreset ? "已安全保存，留空可保留" : "请输入 API Key"}
             type="password"
             value={apiKey}
           />
@@ -550,49 +479,6 @@ export function ModelSettingsForm({
           {message.text}
         </p>
       ) : null}
-      {/* 只有落了档案的那一家才可删。升级前裸的 `custom`、还没保存的「新建」都是
-          按已保存的配置合成出来的条目，删掉它下次读还会再合成一条 —— 后端也会拒绝，
-          所以这里不给出这个按钮。确认做成两步，避免为一个手滑弹一个模态框。 */}
-      {currentProvider?.removable ? (
-        <div className="provider-delete-row">
-          {confirmingDelete ? (
-            <>
-              <span>将删除「{currentProvider.label}」及其已保存的 API Key，此操作无法撤销。</span>
-              <button
-                className="button button-danger"
-                disabled={busy || deleting}
-                onClick={() => void removeProvider()}
-                type="button"
-              >
-                {deleting ? (
-                  <LoaderCircle aria-hidden="true" className="spin" size={16} />
-                ) : (
-                  <Trash2 aria-hidden="true" size={16} />
-                )}
-                {deleting ? "删除中…" : "确认删除"}
-              </button>
-              <button
-                className="button button-secondary"
-                disabled={deleting}
-                onClick={() => setConfirmingDelete(false)}
-                type="button"
-              >
-                取消
-              </button>
-            </>
-          ) : (
-            <button
-              className="button button-danger-quiet"
-              disabled={busy}
-              onClick={() => setConfirmingDelete(true)}
-              type="button"
-            >
-              <Trash2 aria-hidden="true" size={16} />
-              删除该供应商
-            </button>
-          )}
-        </div>
-      ) : null}
       <div className="form-actions">
         <button
           className="button button-secondary"
@@ -617,8 +503,8 @@ export function ModelSettingsForm({
         </button>
         <button
           className="button button-primary"
-          disabled={!hasSavedKey || needsSave || busy}
-          onClick={testConnection}
+          disabled={!keyAvailable || !model.trim() || busy}
+          onClick={() => void testConnection()}
           type="button"
         >
           {testing ? (
@@ -628,7 +514,29 @@ export function ModelSettingsForm({
           )}
           {testButtonLabel}
         </button>
+        {onCancel ? (
+          <button
+            className="button button-secondary"
+            disabled={busy}
+            onClick={onCancel}
+            type="button"
+          >
+            取消
+          </button>
+        ) : null}
       </div>
     </form>
   );
+}
+
+/** 下拉框里那一组「已有的自定义供应商」：同 id 的多条配置只出一个选项。 */
+function customConnectionsOf(models: ConfiguredModel[]): ConfiguredModel[] {
+  const seen = new Set<string>();
+  const connections: ConfiguredModel[] = [];
+  for (const item of models) {
+    if (!isCustomPreset(item.preset) || seen.has(item.preset)) continue;
+    seen.add(item.preset);
+    connections.push(item);
+  }
+  return connections;
 }

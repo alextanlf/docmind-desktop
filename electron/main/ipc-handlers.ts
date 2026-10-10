@@ -22,7 +22,7 @@ import {
   ImportJobSchema,
   MessageSchema,
   ModelConnectionResultSchema,
-  ModelListProbeSchema,
+  ModelProbeSchema,
   ModelListViewSchema,
   ModelSettingsInputSchema,
   ModelStatusSchema,
@@ -146,9 +146,9 @@ const REMOTE_PROVIDER = z
   .min(1)
   .max(64)
   .regex(/^[A-Za-z0-9_-]+$/);
-// 自定义供应商的档案 id：小写字母数字，与后端 CustomProvider.id 的模式一致 ——
+// 模型配置的档案 id：小写字母数字，与后端 ModelProfile.id 的模式一致 ——
 // 它要进 URL 路径，不能让调用方塞进别的东西。
-const CUSTOM_PROVIDER_ID = z
+const MODEL_PROFILE_ID = z
   .string()
   .trim()
   .min(1)
@@ -191,28 +191,32 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         jsonInit("PUT", parse(ModelSettingsInputSchema, input)),
         SettingsViewSchema,
       ),
-    [IPC_CHANNELS.settingsDeleteModelProvider]: (_event, providerId) =>
+    [IPC_CHANNELS.settingsDeleteModel]: (_event, profileId) =>
       proxy.requestJson(
-        `/api/settings/model/providers/${encodeURIComponent(
-          parse(CUSTOM_PROVIDER_ID, providerId),
-        )}`,
+        `/api/settings/model/profiles/${encodeURIComponent(parse(MODEL_PROFILE_ID, profileId))}`,
         jsonInit("DELETE"),
         SettingsViewSchema,
       ),
-    [IPC_CHANNELS.settingsTestModel]: () =>
-      proxy.requestJson("/api/settings/model/test", jsonInit("POST"), ModelConnectionResultSchema),
+    [IPC_CHANNELS.settingsActivateModel]: (_event, profileId) =>
+      proxy.requestJson(
+        "/api/settings/model/activate",
+        jsonInit("POST", { profileId: parse(MODEL_PROFILE_ID, profileId) }),
+        SettingsViewSchema,
+      ),
+    [IPC_CHANNELS.settingsTestModel]: (_event, input) =>
+      proxy.requestJson(
+        "/api/settings/model/test",
+        jsonInit("POST", parse(ModelProbeSchema, input ?? {})),
+        ModelConnectionResultSchema,
+      ),
     [IPC_CHANNELS.settingsListModels]: (_event, input) =>
       proxy.requestJson(
         "/api/settings/model/list",
-        jsonInit("POST", parse(ModelListProbeSchema, input ?? {})),
+        jsonInit("POST", parse(ModelProbeSchema, input ?? {})),
         ModelListViewSchema,
       ),
     [IPC_CHANNELS.settingsSkipModelSetup]: () =>
-      proxy.requestJson(
-        "/api/settings/model/skip-setup",
-        jsonInit("POST"),
-        SettingsViewSchema,
-      ),
+      proxy.requestJson("/api/settings/model/skip-setup", jsonInit("POST"), SettingsViewSchema),
     [IPC_CHANNELS.settingsClearDiagnostics]: () =>
       proxy.requestVoid("/api/settings/diagnostics/clear", jsonInit("POST")),
     [IPC_CHANNELS.settingsSaveRuntime]: (_event, input) =>
@@ -246,16 +250,10 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         BrowserInstallResultSchema,
       ),
     [IPC_CHANNELS.remoteListProviders]: () =>
-      proxy.requestJson(
-        "/api/remote/providers",
-        {},
-        z.array(RemoteProviderSummarySchema),
-      ),
+      proxy.requestJson("/api/remote/providers", {}, z.array(RemoteProviderSummarySchema)),
     [IPC_CHANNELS.remoteListCredentials]: (_event, provider) =>
       proxy.requestJson(
-        `/api/remote/providers/${encodeURIComponent(
-          parse(REMOTE_PROVIDER, provider),
-        )}/credentials`,
+        `/api/remote/providers/${encodeURIComponent(parse(REMOTE_PROVIDER, provider))}/credentials`,
         {},
         z.array(RemoteCredentialChannelSchema),
       ),
@@ -727,7 +725,8 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
     [IPC_CHANNELS.appRestart]: () => {
       const relaunch = dependencies.app?.relaunch ?? electronIpc.app?.relaunch;
       const quit = dependencies.app?.quit ?? electronIpc.app?.quit;
-      if (!relaunch || !quit) throw new DocMindClientError("APP_RESTART_UNAVAILABLE", "无法重启应用");
+      if (!relaunch || !quit)
+        throw new DocMindClientError("APP_RESTART_UNAVAILABLE", "无法重启应用");
       relaunch.call(dependencies.app ?? electronIpc.app);
       quit.call(dependencies.app ?? electronIpc.app);
     },

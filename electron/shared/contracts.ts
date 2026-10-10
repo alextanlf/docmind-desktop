@@ -69,6 +69,8 @@ export const LEGACY_CUSTOM_PRESET = "custom";
 export const DEFAULT_CUSTOM_PROVIDER_ID = "default";
 /** 表单「新建」用的占位 id：保存时后端换成随机 id，绝不落库。 */
 export const NEW_CUSTOM_PROVIDER_ID = "new";
+/** 自定义供应商没填名字时的兜底显示名，与后端 DEFAULT_CUSTOM_LABEL 一致。 */
+export const DEFAULT_CUSTOM_LABEL = "自定义";
 
 export const customPreset = (providerId: string) => `${CUSTOM_PRESET_PREFIX}${providerId}`;
 export const isCustomPreset = (preset: string) => preset.startsWith(CUSTOM_PRESET_PREFIX);
@@ -76,8 +78,11 @@ export const customProviderId = (preset: string): string | null =>
   isCustomPreset(preset) ? preset.slice(CUSTOM_PRESET_PREFIX.length) : null;
 
 export const ModelSettingsInputSchema = z.object({
-  // 不是 ModelPresetSchema：预设里还有 `custom:<档案 id>`，枚举不完。
+  // 不是 ModelPresetSchema：预设里还有 `custom:<供应商 id>`，枚举不完。
   preset: z.string().trim().min(1).max(32),
+  // 编辑已有配置时带的档案 id。不带就是新增：后端会先按「供应商 + 模型」认一条
+  // 已有的，所以同一个模型再存一次是编辑，不会攒出两行。
+  profileId: z.string().min(1).max(20).optional(),
   reasoningEffort: z.string().max(32).default(""),
   baseUrl: z.string().max(500),
   model: z.string().max(200),
@@ -86,6 +91,10 @@ export const ModelSettingsInputSchema = z.object({
   // 自定义供应商的显示名；内置预设留空（它们的名字在前端的内置表里）。
   label: z.string().max(60).default(""),
 });
+/** 档案 id：小写字母数字。删除 / 切换当前都按它寻址。 */
+export const ModelProfileIdSchema = z
+  .string()
+  .regex(/^[a-z0-9]{1,20}$/, "档案 id 只能是小写字母或数字");
 export const ModelSettingsViewSchema = z.object({
   reasoningEffort: z.string().max(32).default(""),
   preset: z.string(),
@@ -96,22 +105,28 @@ export const ModelSettingsViewSchema = z.object({
 });
 
 /**
- * 一家用户自建的服务商。
+ * 一条已配置的模型 —— 设置页列表里的一行。
  *
- * `removable` 是视图状态而不是档案字段：升级前裸的 `custom`、表单刚点「新建」
- * 还没保存、以及首次启动的空白配置都会在读取时按配置合成一条，删掉它只会再合成
- * 一次 —— 界面据此决定「删除」按钮出不出现，后端也不接受删除这类条目。
+ * `preset` 是**供应商标识**（内置预设 id，或 `custom:<供应商 id>`），API Key 槽位
+ * 按它分，所以同一家供应商下的两条配置共用一个槽位（key 属于厂商）。`id` 是这条
+ * 配置自己的标识，编辑 / 删除 / 切换当前都按它寻址。
+ *
+ * `active`（应用此刻用的是它）与 `hasApiKey`（这个供应商槽位里有没有 key）是视图
+ * 状态，不是落库字段：后端现算，写进存储只会在下次读出来时变成过期的副本。
  */
-export const CustomProviderSchema = z.object({
+export const ConfiguredModelSchema = z.object({
   id: z.string().min(1).max(20),
-  label: z.string().min(1).max(60),
+  preset: z.string().min(1).max(32),
+  // 自定义供应商的显示名；内置预设留空，名字在前端那张内置表里。
+  label: z.string().max(60).default(""),
   baseUrl: z.string(),
   model: z.string(),
   timeoutSeconds: z.number(),
   reasoningEffort: z.string().default(""),
-  removable: z.boolean().default(false),
+  active: z.boolean().default(false),
+  hasApiKey: z.boolean().default(false),
 });
-export type CustomProvider = z.infer<typeof CustomProviderSchema>;
+export type ConfiguredModel = z.infer<typeof ConfiguredModelSchema>;
 export const ConnectionTestResultSchema = z.object({
   connected: z.boolean(),
   message: z.string(),
@@ -129,9 +144,10 @@ export const SettingsViewSchema = z.object({
   // single flag and so kept saying 「已安全保存」 after the user switched vendor.
   // `hasApiKey` survives for the saved preset (first-run gating).
   apiKeys: z.record(z.string(), z.boolean()).default({}),
-  // 用户自建的服务商，可增删。列表里始终包含当前选中的那一家（没有档案行时由
-  // 后端按已保存的配置合成），否则下拉框会缺少当前值。
-  customProviders: z.array(CustomProviderSchema).default([]),
+  // 用户已配置的模型，一条一行 —— 设置页「对话模型」只显示这张表。它取代了原来
+  // 那个「模型预设」下拉框：那里面既有内置厂商（可能一个都没配）又有自定义厂商
+  // （可能配了好几条），用户看不出自己到底配了什么。
+  models: z.array(ConfiguredModelSchema).default([]),
   dataPath: z.string(),
   screenshotCount: z.number().int().nonnegative(),
   runtime: z
@@ -189,10 +205,14 @@ export const ModelConnectionResultSchema = z.object({
   latencyMs: z.number().int().nonnegative(),
 });
 
-export const ModelListProbeSchema = z.object({
-  // The preset must be sent: the backend falls back to the *saved* preset's
-  // catalogue without it, so a user picking a vendor they never saved would
-  // get an empty list.
+/**
+ * 一份还没保存的表单草稿。
+ *
+ * 「获取模型列表」和「测试连接」都带着它走：二级页面里正在编的是一个还没落库的
+ * 模型，不把草稿送过去，两个按钮问的都是当前使用的那条配置，给出的答案与眼前
+ * 表单无关。`preset` 必须在：没有它，后端只会回落到已保存预设的内置列表。
+ */
+export const ModelProbeSchema = z.object({
   preset: z.string().max(32).optional(),
   baseUrl: z.string().max(500).optional(),
   model: z.string().max(200).optional(),
@@ -894,7 +914,7 @@ export type SettingsView = z.infer<typeof SettingsViewSchema>;
 export type ConnectionTestResult = z.infer<typeof ConnectionTestResultSchema>;
 export type ModelConnectionResult = z.infer<typeof ModelConnectionResultSchema>;
 export type AvailableModel = z.infer<typeof AvailableModelSchema>;
-export type ModelListProbe = z.infer<typeof ModelListProbeSchema>;
+export type ModelProbe = z.infer<typeof ModelProbeSchema>;
 export type ModelListView = z.infer<typeof ModelListViewSchema>;
 export type ModelStatus = z.infer<typeof ModelStatusSchema>;
 export type RemoteStatus = z.infer<typeof RemoteStatusSchema>;
@@ -999,10 +1019,13 @@ export interface DocMindApi {
   settings: {
     get(): Promise<SettingsView>;
     saveModel(input: ModelSettingsInput): Promise<SettingsView>;
-    /** 删掉一家自定义供应商：它的档案、它的 API Key，以及指向它的当前配置。 */
-    deleteModelProvider(providerId: string): Promise<SettingsView>;
-    testModel(): Promise<ModelConnectionResult>;
-    listModels(input?: ModelListProbe): Promise<ModelListView>;
+    /** 删掉一条已配置的模型；它是这家供应商最后一条时，API Key 也一并删除。 */
+    deleteModel(profileId: string): Promise<SettingsView>;
+    /** 把某一条配置设为当前使用 —— 应用同一时间只用一个模型回答。 */
+    activateModel(profileId: string): Promise<SettingsView>;
+    /** 带草稿就测正在编的那一条；不带则测当前使用的那条。 */
+    testModel(input?: ModelProbe): Promise<ModelConnectionResult>;
+    listModels(input?: ModelProbe): Promise<ModelListView>;
     skipModelSetup(): Promise<SettingsView>;
     clearDiagnostics(): Promise<void>;
     saveRuntime(input: z.infer<typeof RuntimeSettingsInputSchema>): Promise<SettingsView>;

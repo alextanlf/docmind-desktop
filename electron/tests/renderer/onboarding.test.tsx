@@ -71,23 +71,30 @@ describe("首次设置", () => {
 
     const next = await screen.findByRole("button", { name: "进入工作台" });
     fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "sk-private-value" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
-    await screen.findByText("连接成功，延迟 86 毫秒");
+    // 测的是表单里这份草稿，所以 key 还没保存也能测。
+    const testConnection = screen.getByRole("button", { name: "测试模型连接" });
+    fireEvent.click(testConnection);
+    expect(await screen.findByText("连接成功，延迟 86 毫秒")).toBeVisible();
     await waitFor(() => expect(next).toBeEnabled());
 
-    const testConnection = screen.getByRole("button", { name: "测试模型连接" });
-
+    // 改了模型名，刚才那条连接结论就不再适用 —— 可以拿新的草稿再测一次。
+    // 走「自定义…」让这个字段变成可输入的文本框：目录里的 id 是下拉选项，改不成
+    // 一个任意值。
+    fireEvent.change(screen.getByLabelText("模型名称"), { target: { value: "__custom__" } });
     fireEvent.change(screen.getByLabelText("模型名称"), { target: { value: "changed-model" } });
     expect(next).toBeDisabled();
-    expect(testConnection).toBeDisabled();
-
-    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
-    await screen.findByText("连接成功，延迟 86 毫秒");
-    expect(next).toBeEnabled();
     expect(testConnection).toBeEnabled();
 
     fireEvent.click(testConnection);
     await waitFor(() => expect(next).toBeEnabled());
+
+    // 保存不会让刚验证过的连接结论失效：存下去的就是刚才测的那一份。
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+    await screen.findByText("设置已保存");
+    expect(testConnection).toBeEnabled();
+    expect(next).toBeEnabled();
+
+    // 勾上「清除」之后既没有草稿 key、槽位也不算数了：不能再测，也就不能进工作台。
     fireEvent.click(screen.getByRole("checkbox", { name: "清除已保存的 API Key" }));
     expect(next).toBeDisabled();
     expect(testConnection).toBeDisabled();
@@ -103,7 +110,7 @@ describe("首次设置", () => {
     render(<App />);
 
     const dialog = await screen.findByRole("dialog", { name: "开始使用 DocMind" });
-    const first = screen.getByRole("combobox", { name: "模型预设" });
+    const first = screen.getByRole("combobox", { name: "供应商" });
     // The last focusable control is now the skip action in the footer.
     const last = screen.getByRole("button", { name: "跳过" });
     await waitFor(() => expect(first).toHaveFocus());
@@ -181,7 +188,9 @@ describe("首次设置", () => {
     installDocMindApi({
       settings: {
         get: vi.fn().mockResolvedValue(noKeySettings),
-        skipModelSetup: vi.fn().mockRejectedValue({ code: "BACKEND_UNAVAILABLE", retryable: false }),
+        skipModelSetup: vi
+          .fn()
+          .mockRejectedValue({ code: "BACKEND_UNAVAILABLE", retryable: false }),
       },
     });
     render(<App />);
@@ -229,7 +238,11 @@ describe("首次设置", () => {
       settings: {
         get: vi
           .fn()
-          .mockRejectedValue({ code: "BACKEND_PROTOCOL_ERROR", message: "格式无效", retryable: true }),
+          .mockRejectedValue({
+            code: "BACKEND_PROTOCOL_ERROR",
+            message: "格式无效",
+            retryable: true,
+          }),
       },
       app: { restart },
     });

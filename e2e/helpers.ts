@@ -8,7 +8,7 @@ type ImportOptions = {
 };
 
 export async function completeFakeOnboarding(page: Page): Promise<void> {
-  await page.getByLabel("模型预设").selectOption("deepseek");
+  await page.getByLabel("供应商").selectOption("deepseek");
   await page.getByLabel("API Key").fill("fake-key");
   await page.getByRole("button", { name: "保存设置" }).click();
   await page.getByRole("button", { name: "测试模型连接" }).click();

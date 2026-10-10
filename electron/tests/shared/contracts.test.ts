@@ -10,7 +10,7 @@ import {
 /**
  * The preset list is copied between three places that share no type link:
  *   1. this package: `MODEL_PRESET_IDS` in shared/contracts.ts
- *   2. the renderer form: `PRESETS` in ModelSettingsForm.tsx
+ *   2. the renderer form: `PRESETS` in features/settings/model-presets.ts
  *   3. the backend:     `MODEL_PRESETS` in backend/app/schemas/settings.py
  * A new vendor must be added to all three. These assertions fail loudly when
  * only some of them are updated.
@@ -19,7 +19,7 @@ const readRepoFile = (relativePath: string): string =>
   readFileSync(fileURLToPath(new URL(relativePath, import.meta.url)), "utf8");
 
 const rendererPresetsSource = (): string =>
-  readRepoFile("../../renderer/src/features/settings/ModelSettingsForm.tsx");
+  readRepoFile("../../renderer/src/features/settings/model-presets.ts");
 
 const backendPresetsSource = (): string => readRepoFile("../../../backend/app/schemas/settings.py");
 

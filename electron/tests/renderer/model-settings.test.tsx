@@ -18,11 +18,13 @@ function deferred<T>() {
 function renderModelSettings(callbacks?: {
   onConnectionSuccess?: () => void;
   onConnectionInvalidated?: () => void;
+  profile?: (typeof readySettings.models)[number] | null;
 }) {
   return render(
     <ModelSettingsForm
       onConnectionInvalidated={callbacks?.onConnectionInvalidated}
       onConnectionSuccess={callbacks?.onConnectionSuccess}
+      profile={callbacks?.profile ?? null}
       // These cases drive the free-text path on purpose: they need to set
       // arbitrary model ids mid-operation to prove stale results are dropped.
       settings={freeTextSettings}
@@ -58,7 +60,7 @@ describe("模型设置并发", () => {
 
     expect(onConnectionSuccess).not.toHaveBeenCalled();
     expect(screen.queryByText(/连接成功/)).not.toBeInTheDocument();
-    expect(test).toBeDisabled();
+    expect(test).toBeEnabled();
   });
 
   it("keeps edits dirty when an older save resolves", async () => {
@@ -80,7 +82,6 @@ describe("模型设置并发", () => {
     await act(async () => pendingSave.resolve(freeTextSettings));
 
     expect(screen.queryByText("设置已保存")).not.toBeInTheDocument();
-    expect(test).toBeDisabled();
     expect(model).toHaveValue("newer-change");
   });
 
@@ -113,5 +114,50 @@ describe("模型设置并发", () => {
     expect(secondTestModel).not.toHaveBeenCalled();
     await act(async () => pendingSave.resolve(freeTextSettings));
     await waitFor(() => expect(screen.getByRole("button", { name: "测试连接" })).toBeEnabled());
+  });
+
+  it("edits the opened profile instead of whatever happens to be in use", async () => {
+    const api = installDocMindApi();
+    const relay = {
+      id: "relay01",
+      preset: "custom:relay01",
+      label: "某中转站",
+      baseUrl: "https://relay.example/v1",
+      model: "relay-model",
+      timeoutSeconds: 45,
+      reasoningEffort: "",
+      active: false,
+      hasApiKey: false,
+    };
+    renderModelSettings({ profile: relay });
+
+    // 表单带的是被点开的那一条，而不是当前使用的那条（freeTextSettings 里那条是
+    // DeepSeek），保存也要带它的档案 id —— 否则「编辑」会变成再建一条。
+    expect(screen.getByLabelText("Base URL")).toHaveValue("https://relay.example/v1");
+    expect(screen.getByLabelText("模型名称")).toHaveValue("relay-model");
+    expect(screen.getByLabelText("供应商名称")).toHaveValue("某中转站");
+
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+
+    await waitFor(() =>
+      expect(api.settings.saveModel).toHaveBeenLastCalledWith(
+        expect.objectContaining({ profileId: "relay01", preset: "custom:relay01" }),
+      ),
+    );
+  });
+
+  it("tests the draft, not the saved model", async () => {
+    const testModel = vi.fn().mockResolvedValue({ connected: true, latencyMs: 12 });
+    installDocMindApi({ settings: { testModel } });
+    renderModelSettings();
+
+    fireEvent.change(screen.getByLabelText("模型名称"), { target: { value: "draft-model" } });
+    fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+
+    await waitFor(() =>
+      expect(testModel).toHaveBeenLastCalledWith(
+        expect.objectContaining({ preset: "deepseek", model: "draft-model" }),
+      ),
+    );
   });
 });

@@ -3,7 +3,8 @@ export const IPC_CHANNELS = {
   localModelModels: "localModel:models",
   settingsGet: "settings:get",
   settingsSaveModel: "settings:saveModel",
-  settingsDeleteModelProvider: "settings:deleteModelProvider",
+  settingsDeleteModel: "settings:deleteModel",
+  settingsActivateModel: "settings:activateModel",
   settingsTestModel: "settings:testModel",
   settingsListModels: "settings:listModels",
   settingsSkipModelSetup: "settings:skipModelSetup",
@@ -85,8 +86,7 @@ export const IPC_CHANNELS = {
 
 const STREAM_EVENT_PREFIX = "stream:event:";
 
-export const streamEventChannel = (requestId: string) =>
-  `${STREAM_EVENT_PREFIX}${requestId}`;
+export const streamEventChannel = (requestId: string) => `${STREAM_EVENT_PREFIX}${requestId}`;
 
 /**
  * 走「推送」语义的通道集合：preload 侧一律用 `ipcRenderer.send`，

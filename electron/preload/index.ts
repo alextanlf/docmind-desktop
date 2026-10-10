@@ -21,8 +21,9 @@ import {
   IpcResultSchema,
   MessageSchema,
   ModelConnectionResultSchema,
-  ModelListProbeSchema,
   ModelListViewSchema,
+  ModelProbeSchema,
+  ModelProfileIdSchema,
   ModelSettingsInputSchema,
   ModelStatusSchema,
   RepositorySchema,
@@ -161,15 +162,31 @@ const api: DocMindApi = {
         SettingsViewSchema,
         ModelSettingsInputSchema.parse(input),
       ),
-    testModel: () => invoke(IPC_CHANNELS.settingsTestModel, ModelConnectionResultSchema),
-    deleteModelProvider: (providerId) =>
+    // 带上表单草稿就是「测我正在编的这一条」；不带则测当前使用的那条配置。
+    testModel: (input) =>
       invoke(
-        IPC_CHANNELS.settingsDeleteModelProvider,
+        IPC_CHANNELS.settingsTestModel,
+        ModelConnectionResultSchema,
+        ModelProbeSchema.parse(input ?? {}),
+      ),
+    deleteModel: (profileId) =>
+      invoke(
+        IPC_CHANNELS.settingsDeleteModel,
         SettingsViewSchema,
-        z.string().min(1).max(20).parse(providerId),
+        ModelProfileIdSchema.parse(profileId),
+      ),
+    activateModel: (profileId) =>
+      invoke(
+        IPC_CHANNELS.settingsActivateModel,
+        SettingsViewSchema,
+        ModelProfileIdSchema.parse(profileId),
       ),
     listModels: (input) =>
-      invoke(IPC_CHANNELS.settingsListModels, ModelListViewSchema, ModelListProbeSchema.parse(input ?? {})),
+      invoke(
+        IPC_CHANNELS.settingsListModels,
+        ModelListViewSchema,
+        ModelProbeSchema.parse(input ?? {}),
+      ),
     skipModelSetup: () => invoke(IPC_CHANNELS.settingsSkipModelSetup, SettingsViewSchema),
     clearDiagnostics: () => invoke(IPC_CHANNELS.settingsClearDiagnostics, z.undefined()),
     saveRuntime: (input) =>
@@ -228,8 +245,7 @@ const api: DocMindApi = {
         PluginManifestSchema.array(),
         typeof query === "string" && query.trim() ? query.trim().slice(0, 200) : undefined,
       ),
-    diagnostics: () =>
-      invoke(IPC_CHANNELS.pluginsDiagnostics, PluginDiagnosticSchema.array()),
+    diagnostics: () => invoke(IPC_CHANNELS.pluginsDiagnostics, PluginDiagnosticSchema.array()),
     directory: () => invoke(IPC_CHANNELS.pluginsDirectory, PluginDirectorySchema),
     setEnabled: (plugin, enabled) =>
       invoke(IPC_CHANNELS.pluginsSetEnabled, PluginStateSchema, plugin, enabled),

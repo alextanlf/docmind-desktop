@@ -327,15 +327,14 @@ def preset_models(preset: str) -> list[AvailableModel]:
     ]
 
 
-class CustomProvider(WireModel):
-    """一家用户自建的 OpenAI 兼容供应商。
+class LegacyCustomProvider(WireModel):
+    """升级前那套「用户自建供应商」档案，**只用于读老数据**。
 
-    它是「一份连接配置 + 一个 API Key 槽位」的载体。内置预设由代码定义，一家一个；
-    自定义供应商由用户增删，数量不定，所以必须落库成列表 —— 只用一个 `custom`
-    预设字符串既表达不了「第二家」，也就只能记住一把 key。
+    它把「一份连接配置 + 一个模型」当成供应商本身，所以一家供应商只能有一个模型，
+    而且内置厂商根本不在这张表里。现在的档案是 `ModelProfile`：一条记录就是一个
+    模型配置，内置厂商也能有多条。迁移只读这个类型，不再写它。
 
-    `id` 只出现在预设 id 的后缀与钥匙串槽位名里，所以限定小写字母数字：它要能安全
-    地进 URL、进钥匙串条目名，也不能长得让 `custom:<id>` 超过预设字段的长度上限。
+    `id` 跟着迁移成 key 槽位名的一部分，所以仍然限定小写字母数字。
     """
 
     id: str = Field(pattern=r"^[a-z0-9]{1,20}$")
@@ -344,18 +343,52 @@ class CustomProvider(WireModel):
     model: str = ""
     timeout_seconds: float = Field(default=30, gt=0, le=300)
     reasoning_effort: str = ""
-    # 只给界面看：这一项背后是否真有一条档案可删。升级前裸的 `custom`、还没保存过
-    # 的新建、以及首次启动的空白配置都会在读取时被合成为一条，删掉它只会再合成
-    # 一次，所以「删除」按钮不该出现。它属于视图而不是档案，落库时被
-    # `_serialize_custom_providers` 摘掉。
-    removable: bool = False
+
+
+class ModelProfile(ModelConfig):
+    """一条已保存的模型配置 —— 设置页列表里的一行。
+
+    这是落库的形状：`preset` 是**供应商标识**（内置预设 id，或 `custom:<供应商
+    id>`），API Key 槽位按它分；同一家供应商下的多条模型配置共用一个槽位，因为
+    key 属于厂商而不属于某一次选择。`label` 只有自定义供应商才有值。
+
+    `id` 是这条配置自己的标识，与供应商标识无关：同一家自定义供应商也可以有第二
+    条模型配置，两条各有各的 id、共用 `custom:<供应商 id>` 那个槽位。限定小写字母
+    数字是为了它能安全地进 URL（删除/切换都按 id 寻址）。
+    """
+
+    id: str = Field(pattern=r"^[a-z0-9]{1,20}$")
+    # 自定义供应商的显示名。内置预设留空：它们的名字由前端那张内置表提供，落库
+    # 只会多一份会过期的副本。
+    label: str = Field(default="", max_length=60)
+
+
+class ConfiguredModel(ModelProfile):
+    """一条配置 + 两个只有视图知道的事实。
+
+    `active` 是「应用现在用的是它」，`hasApiKey` 是这个供应商槽位里有没有 key。
+    两者都由服务层现算，落库时被摘掉 —— 写进存储的话，它们会在下一次读出来时
+    变成一份过期的副本。
+    """
+
+    active: bool = False
+    has_api_key: bool = False
 
 
 class ModelSettingsUpdate(ModelConfig):
     api_key: str | None = None
+    # 编辑已有配置时带的档案 id。不带就是新增：同一家供应商下同一个模型会复用
+    # 已有那条（见 `SettingsService.save_model`），所以「添加」不会攒出重复行。
+    profile_id: str | None = Field(default=None, pattern=r"^[a-z0-9]{1,20}$")
     # 自定义供应商的显示名。内置预设留空：它们的名字由前端那张内置表提供，落库
     # 只会多一份会过期的副本。
     label: str = Field(default="", max_length=60)
+
+
+class ModelActivation(WireModel):
+    """把某一条已保存的配置设为当前使用。"""
+
+    profile_id: str = Field(pattern=r"^[a-z0-9]{1,20}$")
 
 
 class ModelListProbe(WireModel):
@@ -424,9 +457,10 @@ class SettingsView(WireModel):
     # switched. The bare `has_api_key` stays for the saved preset so the
     # first-run gate keeps its meaning.
     api_keys: dict[str, bool] = Field(default_factory=dict)
-    # 用户自建的服务商，可增删。列表里始终包含当前选中的那一家（没有档案行时由
-    # 服务层按已保存的配置合成），否则下拉框会缺少当前值、表单会显示成另一家。
-    custom_providers: list[CustomProvider] = Field(default_factory=list)
+    # 用户已配置的模型，一条一行。设置页「对话模型」只显示这张表 —— 不再有「当前
+    # 预设下拉框」，因为那里面既有内置厂商（可能一个都没配）又有自定义厂商（可能
+    # 配了好几条），用户看不出自己到底配了什么。`active` 标出应用正在用的那一条。
+    models: list[ConfiguredModel] = Field(default_factory=list)
     data_path: str
     screenshot_count: int
     runtime: RuntimeSettingsInput | None = None
@@ -458,12 +492,15 @@ __all__ = [
     "NEW_CUSTOM_PROVIDER_ID",
     "RETIRED_MODELS",
     "AvailableModel",
-    "CustomProvider",
+    "ConfiguredModel",
+    "LegacyCustomProvider",
+    "ModelActivation",
     "ModelConfig",
     "ModelConnectionResult",
     "ModelListProbe",
     "ModelListView",
     "ModelPresetCapabilities",
+    "ModelProfile",
     "ModelSettingsUpdate",
     "ModelSettingsView",
     "ModelSetupSkip",

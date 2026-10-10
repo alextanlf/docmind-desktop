@@ -2189,6 +2189,124 @@ progress::-webkit-progress-bar {
   font-size: 12px;
 }
 
+/* 对话模型：一张「已配置了什么」的列表，加上一个共用的编辑弹窗。
+   列表行沿用插件页那套结构（图标 + 两行文字 + 右侧动作），因为两者都是
+   「先看清有什么，再决定动哪一个」。 */
+.model-settings {
+  display: grid;
+  gap: 14px;
+}
+.model-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.model-toolbar-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.model-empty {
+  margin: 0;
+  padding: 18px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.model-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+}
+.model-row:hover {
+  border-color: var(--line-strong);
+}
+.model-row-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--blue);
+}
+.model-row-text {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 3px;
+}
+.model-row-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14px;
+}
+/* 供应商与模型名并排：一行说的就是「用哪家、用哪个」，两个都要看得见。 */
+.model-row-model {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-row-summary {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-row-meta {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+.model-notice {
+  margin: 0;
+  color: var(--green);
+  font-size: 12px;
+}
+
+/* 二级页面：添加与编辑用的是同一个表单，所以弹窗也只有一种。 */
+.model-dialog {
+  display: grid;
+  width: min(640px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 18px 46px rgb(16 24 40 / 18%);
+}
+.model-dialog-header {
+  padding: 20px 22px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.model-dialog-header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.model-dialog-body {
+  overflow: auto;
+  padding: 18px 22px 22px;
+}
+
 .dialog-backdrop {
   position: fixed;
   z-index: 50;

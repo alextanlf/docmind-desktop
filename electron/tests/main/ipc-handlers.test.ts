@@ -14,7 +14,8 @@ function dependencies() {
       cancel: vi.fn(),
       cleanup: vi.fn(),
     },
-    stagedFiles: { chooseAndStage: vi.fn(), stageDirectory: vi.fn() },    shellOpenExternal: vi.fn(),
+    stagedFiles: { chooseAndStage: vi.fn(), stageDirectory: vi.fn() },
+    shellOpenExternal: vi.fn(),
     ipcMain: {
       handle: vi.fn(),
       on: vi.fn(),
@@ -36,6 +37,48 @@ describe("IPC handlers", () => {
     const deps = dependencies();
     const handlers = registerIpcHandlers(deps);
     expect(() => handlers["documents:read"]({} as any, "not-a-uuid")).toThrow(/请求参数无效/);
+    expect(deps.proxy.requestJson).not.toHaveBeenCalled();
+  });
+
+  it("routes model profile actions to their own backend endpoints", async () => {
+    const deps = dependencies();
+    const handlers = registerIpcHandlers(deps);
+
+    await handlers["settings:deleteModel"]({} as any, "relay01");
+    expect(deps.proxy.requestJson).toHaveBeenLastCalledWith(
+      "/api/settings/model/profiles/relay01",
+      expect.objectContaining({ method: "DELETE" }),
+      expect.anything(),
+    );
+
+    await handlers["settings:activateModel"]({} as any, "relay01");
+    expect(deps.proxy.requestJson).toHaveBeenLastCalledWith(
+      "/api/settings/model/activate",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ profileId: "relay01" }),
+      }),
+      expect.anything(),
+    );
+
+    // 测的是表单草稿：预设必须跟着走，否则后端只会去测当前使用的那一条。
+    await handlers["settings:testModel"]({} as any, { preset: "kimi", model: "kimi-k3" });
+    expect(deps.proxy.requestJson).toHaveBeenLastCalledWith(
+      "/api/settings/model/test",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ preset: "kimi", model: "kimi-k3" }),
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("rejects malformed model profile ids before interpolation", () => {
+    const deps = dependencies();
+    const handlers = registerIpcHandlers(deps);
+    // 档案 id 要进 URL 路径，不能让调用方塞进 `../` 之类的东西。
+    expect(() => handlers["settings:deleteModel"]({} as any, "../admin")).toThrow(/请求参数无效/);
+    expect(() => handlers["settings:activateModel"]({} as any, "NOPE")).toThrow(/请求参数无效/);
     expect(deps.proxy.requestJson).not.toHaveBeenCalled();
   });
 
@@ -139,9 +182,9 @@ describe("IPC handlers", () => {
       expect.objectContaining({ method: "DELETE" }),
       expect.anything(),
     );
-    expect(() => handlers["remote:saveCredential"]({} as any, "yuque", "../x", { secret: "t" })).toThrow(
-      /请求参数无效/,
-    );
+    expect(() =>
+      handlers["remote:saveCredential"]({} as any, "yuque", "../x", { secret: "t" }),
+    ).toThrow(/请求参数无效/);
   });
 
   it("proxies repository parent updates through the repository route", async () => {
@@ -149,11 +192,7 @@ describe("IPC handlers", () => {
     const handlers = registerIpcHandlers(deps);
     const repositoryId = "00000000-0000-0000-0000-000000000021";
 
-    await handlers["repositories:update"](
-      {} as any,
-      repositoryId,
-      { remoteParentId: "wikParent" },
-    );
+    await handlers["repositories:update"]({} as any, repositoryId, { remoteParentId: "wikParent" });
 
     expect(deps.proxy.requestJson).toHaveBeenLastCalledWith(
       `/api/repositories/${repositoryId}`,

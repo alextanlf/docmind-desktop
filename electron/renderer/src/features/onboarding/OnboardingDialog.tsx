@@ -31,7 +31,9 @@ export function OnboardingDialog({ onComplete }: { onComplete: () => void }) {
     );
   }
   if (settings.isError) {
-    return <SettingsLoadErrorDialog error={settings.error} onRetry={() => void settings.refetch()} />;
+    return (
+      <SettingsLoadErrorDialog error={settings.error} onRetry={() => void settings.refetch()} />
+    );
   }
 
   if (confirmingSkip) {
@@ -44,7 +46,11 @@ export function OnboardingDialog({ onComplete }: { onComplete: () => void }) {
           之后可随时在「设置 - 模型」中补上。
         </p>
         <div className="form-actions">
-          <button className="button button-secondary" onClick={() => setConfirmingSkip(false)} type="button">
+          <button
+            className="button button-secondary"
+            onClick={() => setConfirmingSkip(false)}
+            type="button"
+          >
             返回配置
           </button>
           <button
@@ -83,7 +89,7 @@ export function OnboardingDialog({ onComplete }: { onComplete: () => void }) {
         <div className="onboarding-step-title">
           <span>步骤 1</span>
           <h2>配置模型</h2>
-          <p>先保存设置并验证模型服务，成功后即可进入工作台。</p>
+          <p>选一家供应商，填上模型名称与 API Key；测试连接通过后即可进入工作台。</p>
         </div>
         <ModelSettingsForm
           onConnectionInvalidated={() => setModelConnected(false)}

@@ -14,7 +14,7 @@ import type { ReactNode } from "react";
 import { Cpu, HardDrive, KeyRound, Puzzle } from "lucide-react";
 import type { SettingsView } from "../../../../shared/contracts";
 import { DiagnosticsSection } from "./DiagnosticsSection";
-import { ModelSettingsForm } from "./ModelSettingsForm";
+import { ModelSettings } from "./ModelSettings";
 import { PluginSettings } from "./PluginSettings";
 import { RuntimeModelSettings } from "./RuntimeModelSettings";
 import { registerModule } from "./settings-modules";
@@ -46,7 +46,7 @@ function useLoadedSettings() {
  */
 function settingsSection(
   Section: (props: { settings: SettingsView }) => ReactNode,
-): (() => ReactNode) {
+): () => ReactNode {
   return function SettingsSectionModule() {
     const settings = useLoadedSettings();
     if (!settings) return null;
@@ -54,7 +54,7 @@ function settingsSection(
   };
 }
 
-const ModelModule = settingsSection(ModelSettingsForm);
+const ModelModule = settingsSection(ModelSettings);
 const RuntimeModule = settingsSection(RuntimeModelSettings);
 const DiagnosticsModule = settingsSection(DiagnosticsSection);
 
@@ -72,7 +72,7 @@ export const BUILTIN_SETTINGS_MODULES_LOADED = true;
 registerModule({
   id: "settings-model",
   label: "对话模型",
-  description: "使用 OpenAI 兼容接口连接模型服务",
+  description: "管理已配置的模型，并切换当前使用的那一个",
   icon: KeyRound,
   order: 10,
   render: () => <ModelModule />,
