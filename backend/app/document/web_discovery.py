@@ -5,12 +5,14 @@ import os
 import re
 from collections import deque
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 from uuid import uuid4
 
 from bs4 import BeautifulSoup
 
 from app.api.errors import DomainError
+from app.document.politeness import DomainRateLimiter
+from app.document.reachability import Reachability, ReachabilityProbe, rejection_reason
 from app.document.safe_http import SafeHttpClient, canonicalize_url, in_scope, path_prefix_for_entry
 from app.schemas.batches import (
     CachedSourceRef,
@@ -25,8 +27,21 @@ from app.storage.models import CrawlEntryRecord
 class WebDiscovery:
     """Bounded, same-origin crawler producing immutable local snapshots."""
 
-    def __init__(self, client: SafeHttpClient, cache_root: Path, *, max_bytes: int = 20 * 1024 * 1024, frontier=None) -> None:
+    def __init__(
+        self,
+        client: SafeHttpClient,
+        cache_root: Path,
+        *,
+        max_bytes: int = 20 * 1024 * 1024,
+        frontier=None,
+        probe: ReachabilityProbe | None = None,
+        limiter: DomainRateLimiter | None = None,
+    ) -> None:
         self.client, self.cache_root, self.max_bytes, self.frontier = client, Path(cache_root), max_bytes, frontier
+        # 两个都可选：没有它们时行为与从前一致（一次失败就是一次 fetch_failed），
+        # 但生产环境会传进来 —— 它们是「抓不到」能说出原因、以及不会被站点当成
+        # 扫描器的前提。
+        self.probe, self.limiter = probe, limiter
 
     async def discover(self, request: DiscoveryRequest, emit) -> DiscoveryResult:
         if request.source_kind != "web":
@@ -71,12 +86,16 @@ class WebDiscovery:
                 rejected.append({"canonical_url": url, "reason": "robots_denied", "message": "robots.txt 禁止抓取"});
                 if self.frontier: self.frontier.mark_rejected(row.id if 'row' in locals() and row else "", error_code="ROBOTS_DENIED")
                 continue
+            host = urlsplit(url).hostname or ""
+            if not await self._ready_to_fetch(host, url, row, rejected):
+                continue
             try: snap = await self.client.get(url, max_bytes=self.max_bytes,
                                               scope_origin=entry, scope_prefix=prefix)
             except DomainError as e:
-                rejected.append({"canonical_url": url, "reason": "fetch_failed", "message": e.message})
-                if self.frontier and row: self.frontier.mark_rejected(row.id, error_code=e.code)
+                await self._record_fetch_failure(e, host, url, row, rejected)
                 continue
+            if self.limiter is not None:
+                self.limiter.succeeded(host)
             media = snap.media_type
             if media not in {"text/html", "text/markdown", "application/pdf"}:
                 rejected.append({"canonical_url": url, "reason": "unsupported_media", "message": "不支持的媒体类型"})
@@ -108,3 +127,46 @@ class WebDiscovery:
             await emit(DiscoveryProgress(stage="discovering", visited=len(seen), candidate_count=len(sources), rejected_count=len(rejected), message="网页发现中"))
         await emit(DiscoveryProgress(stage="awaiting_confirmation", visited=len(seen), candidate_count=len(sources), rejected_count=len(rejected), message="网页发现完成"))
         return DiscoveryResult(sources=sources, discovery_version=1, rejected=rejected, total_count=len(sources), rejected_count=len(rejected))
+
+    async def _ready_to_fetch(self, host, url, row, rejected) -> bool:
+        """等到该主机可以请求为止；等太久就跳过。
+
+        ``limit_reached`` 的含义在这里被定死：**不是站点拒绝了我们，而是我们主动
+        放弃** —— 因为等下去不值得（一次用户提问不该卡在某个站点的退避里）。
+        它和 ``throttled``（站点在限流我们，值得退避后再来）是两件事。
+        """
+        if self.limiter is None:
+            return True
+        crawl_delay = None
+        if hasattr(self.client, "crawl_delay"):
+            crawl_delay = await self.client.crawl_delay(url, "DocMind/2")
+        if await self.limiter.acquire(host, crawl_delay=crawl_delay):
+            return True
+        rejected.append({
+            "canonical_url": url,
+            "reason": "limit_reached",
+            "message": "该站点要求等待过久，已跳过",
+        })
+        if self.frontier and row:
+            self.frontier.mark_rejected(row.id, error_code="CRAWL_RATE_LIMITED")
+        return False
+
+    async def _record_fetch_failure(self, error, host, url, row, rejected) -> None:
+        """把一次抓取失败翻译成用户能据以决策的原因。
+
+        探测**只在失败路径上**发生，而且结论按主机缓存，所以代价是每个失败主机最多
+        一次额外请求，而不是每个 URL 一次。失败缓存也比成功更长（一次连接超时默认
+        要白等 5 秒），所以同一个打不通的站点不会在每一页上重复付出这个代价。
+        """
+        probe_result = None
+        if self.probe is not None:
+            probe_result = await self.probe.probe(host)
+            if probe_result.state is Reachability.THROTTLED and self.limiter is not None:
+                self.limiter.penalize(host, retry_after_seconds=probe_result.retry_after_seconds)
+        rejected.append({
+            "canonical_url": url,
+            "reason": rejection_reason(error.code, probe_result),
+            "message": error.message,
+        })
+        if self.frontier and row:
+            self.frontier.mark_rejected(row.id, error_code=error.code)

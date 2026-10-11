@@ -55,6 +55,8 @@ from app.core.secrets import KeyringSecretStore, MemorySecretStore, SecretStore
 from app.document.builtin_formats import builtin_registry
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
+from app.document.politeness import DomainRateLimiter
+from app.document.reachability import ReachabilityProbe
 from app.document.safe_http import SafeHttpClient
 from app.document.sources import SourceInspector
 from app.document.web_discovery import WebDiscovery
@@ -425,6 +427,15 @@ def create_app(
             safe_http_client,
             runtime_settings.staging_dir,
             frontier=CrawlEntryStore(database),
+            # 两个都给：没有它们，一次抓取失败只能说「抓取失败」；有了它们，
+            # 「站点拒绝了你」「到不了」「被限流」才会分开，而且同一个站点不会
+            # 被我们连着敲门。
+            probe=ReachabilityProbe(
+                resolver=_SystemResolver(), transport=httpx.AsyncHTTPTransport()
+            ),
+            limiter=DomainRateLimiter(
+                min_interval_seconds=runtime_settings.crawl_min_interval_seconds
+            ),
         )
         remote_discovery = RemoteDiscovery(registry, repository_store, runtime_settings.staging_dir)
         app.state.batch_service = BatchService(

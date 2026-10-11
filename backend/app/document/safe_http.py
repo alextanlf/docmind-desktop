@@ -130,26 +130,35 @@ class SafeHttpClient:
             )
         raise DomainError("CRAWL_SCOPE_REJECTED", "重定向次数超过限制", 400)
 
+    async def _robots_body(self, origin: str) -> str | None:
+        """取该 origin 的 robots.txt 原文，带 300 秒缓存；取不到返回 None。
+
+        失败**不缓存**（与改写前一致）：一个站点临时 5xx 不该让我们 5 分钟内都
+        当它禁止抓取。
+        """
+        now = self.clock.now() if self.clock else time.monotonic()
+        cached = self._robots.get(origin)
+        if cached and cached[0] > now:
+            return cached[1]
+        try:
+            # robots.txt is fetched at the origin root; constrain redirects
+            # to that origin while allowing the root robots path.
+            snap = await self.get(origin + "/robots.txt", max_bytes=128 * 1024,
+                                   scope_origin=origin, scope_prefix="/")
+        except DomainError:
+            return None
+        body = snap.body.decode("utf-8", "replace")
+        self._robots[origin] = (now + 300, body)
+        return body
+
     async def robots_allowed(self, url: str, user_agent: str, *, scope_origin: str | None = None,
                              scope_prefix: str | None = None) -> bool:
         if scope_origin is not None and scope_prefix is not None and not in_scope(url, scope_origin, scope_prefix):
             return False
         p = urlsplit(canonicalize_url(url))
-        origin = f"{p.scheme}://{p.netloc}"
-        now = self.clock.now() if self.clock else time.monotonic()
-        cached = self._robots.get(origin)
-        if cached and cached[0] > now:
-            body = cached[1]
-        else:
-            try:
-                # robots.txt is fetched at the origin root; constrain redirects
-                # to that origin while allowing the root robots path.
-                snap = await self.get(origin + "/robots.txt", max_bytes=128 * 1024,
-                                       scope_origin=origin, scope_prefix="/")
-                body = snap.body.decode("utf-8", "replace")
-            except DomainError:
-                return False
-            self._robots[origin] = (now + 300, body)
+        body = await self._robots_body(f"{p.scheme}://{p.netloc}")
+        if body is None:
+            return False
         path = p.path or "/"
         blocked = False
         active = False
@@ -163,3 +172,31 @@ class SafeHttpClient:
             elif key.lower() == "disallow" and active and val and path.startswith(val):
                 blocked = True
         return not blocked
+
+    async def crawl_delay(self, url: str, user_agent: str) -> float | None:
+        """该站点的 ``Crawl-delay``（秒），没声明或取不到 robots.txt 时为 None。
+
+        这是站点给出的**期望**间隔，由调用方当成本主机的间隔下限 —— 礼貌策略的
+        第一手依据，比我们猜的默认值更该被尊重。
+        """
+        p = urlsplit(canonicalize_url(url))
+        body = await self._robots_body(f"{p.scheme}://{p.netloc}")
+        if body is None:
+            return None
+        delay: float | None = None
+        active = False
+        for line in body.splitlines():
+            line = line.split("#", 1)[0].strip()
+            if not line or ":" not in line:
+                continue
+            key, val = [x.strip() for x in line.split(":", 1)]
+            if key.lower() == "user-agent":
+                active = val == "*" or val.lower() == user_agent.lower()
+            elif key.lower() == "crawl-delay" and active:
+                try:
+                    parsed = float(val)
+                except ValueError:
+                    continue
+                if parsed >= 0:
+                    delay = parsed
+        return delay

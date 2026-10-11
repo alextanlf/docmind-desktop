@@ -160,9 +160,29 @@ class WebBatchRequest(WireModel):
             raise ValueError("网页入口不得包含用户信息")
         return self
 
+#: 一个 URL 为什么没被收录。**这是给用户看的分类，不是内部错误码。**
+#:
+#: 它必须区分四类处置完全不同的情况：站点答复了并拒绝你（换 UA、换路径，或改用它的
+#: 官方 API）、网络层到不了（换镜像或换来源）、法律/地域限制（只能换来源）、以及
+#: 我们主动跳过（不值得等）。``fetch_failed`` 是兜底：说不出原因时不含糊其辞，也不猜。
+CrawlRejectionReason = Literal[
+    "robots_denied",
+    "scope_rejected",
+    "unsupported_media",
+    "limit_reached",
+    "unreachable",
+    "throttled",
+    "http_rejected",
+    "geo_blocked",
+    "tls_error",
+    "proxy_error",
+    "fetch_failed",
+]
+
+
 class CrawlDiagnostic(WireModel):
     canonical_url: HttpUrl
-    reason: Literal["robots_denied", "scope_rejected", "unsupported_media", "limit_reached", "fetch_failed"]
+    reason: CrawlRejectionReason
     message: str
 
 

@@ -35,6 +35,8 @@ from typing import Protocol
 
 import httpx
 
+from app.schemas.batches import CrawlRejectionReason
+
 #: 成功结果的缓存时长。可达性会变（站点挂了又活），所以不能永久缓存。
 DEFAULT_TTL_SECONDS = 6 * 3600.0
 
@@ -294,3 +296,46 @@ class ReachabilityProbe:
         if self.clock is None:
             return time.monotonic()
         return self.clock.now()
+
+
+#: 可达性状态 → 给用户看的拒绝原因。
+#:
+#: 这张表放在 `Reachability` 之后：它是模块级常量，键要引用枚举成员，写在类定义
+#: 之前会在导入时直接 NameError。
+_REASON_BY_STATE: dict[Reachability, CrawlRejectionReason] = {
+    Reachability.UNREACHABLE: "unreachable",
+    Reachability.THROTTLED: "throttled",
+    Reachability.HTTP_REJECTED: "http_rejected",
+    Reachability.GEO_BLOCKED: "geo_blocked",
+    Reachability.TLS_ERROR: "tls_error",
+    Reachability.PROXY_ERROR: "proxy_error",
+}
+
+#: 与可达性无关、但同样会造成「这个 URL 没进来」的内部错误码。
+_REASON_BY_ERROR_CODE: dict[str, CrawlRejectionReason] = {
+    "CRAWL_SCOPE_REJECTED": "scope_rejected",
+    # 超限今天被报成 fetch_failed（"网页抓取失败"），而它是**我们**的限制，
+    # 不是站点的问题 —— 用户该看到的是"太大，跳过"，而不是"抓取失败"。
+    "DOCUMENT_TOO_LARGE": "limit_reached",
+}
+
+
+def rejection_reason(
+    error_code: str | None, probe: ProbeResult | None = None
+) -> CrawlRejectionReason:
+    """把一个抓取失败的内部错误码，翻译成给用户看的原因分类。
+
+    优先级：**确定的错误码**（范围被拒、超过大小上限）先于探测结论 —— 那两种情况
+    已经能说出确切原因，再去猜网络状态只会把清楚的事情说糊。剩下的才看探测结论。
+
+    探测结论为 ``OK`` 或根本没有探测结论时返回 ``fetch_failed``：**宁可说不出原因，
+    也不猜。** 一个"其实站点好好的、只是这次抽风"的失败被标成"不可达"，会让用户
+    去换镜像，而真正该做的是重试。
+    """
+    if error_code is not None and error_code in _REASON_BY_ERROR_CODE:
+        return _REASON_BY_ERROR_CODE[error_code]
+    if probe is not None:
+        mapped = _REASON_BY_STATE.get(probe.state)
+        if mapped is not None:
+            return mapped
+    return "fetch_failed"

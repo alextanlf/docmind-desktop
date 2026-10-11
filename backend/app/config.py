@@ -54,6 +54,15 @@ class AppSettings(BaseSettings):
     staging_manifest_max_bytes: int = Field(default=2 * 1024 * 1024, gt=0)
     batch_max_items: int = Field(default=1000, gt=0)
     sync_interval_seconds: float = Field(default=0.0, ge=0.0)
+    # 同一主机两次网页请求之间的最小间隔（秒）。
+    #
+    # 抓一个 200 页的站点因此至少花 200 秒 —— 这是**有意的礼貌代价**：被抓的站点
+    # 没有义务区分善意爬虫和扫描器，而一次被封的代价远高于多等几分钟（导入本来
+    # 就是带进度的后台任务）。
+    #
+    # 测试/CI 里必须能降到 0，否则一条 200 页的集成用例要跑三分多钟 —— 这个数字
+    # 不是拍脑袋来的：加上默认值以后，正是它让那条用例超时。
+    crawl_min_interval_seconds: float = Field(default=1.0, ge=0.0, le=60.0)
 
     model_config = SettingsConfigDict(env_prefix="DOCMIND_", extra="ignore")
 

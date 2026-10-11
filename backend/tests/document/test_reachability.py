@@ -6,18 +6,22 @@
 """
 from dataclasses import FrozenInstanceError
 from ipaddress import ip_address
+from typing import get_args
 
 import httpx
 import pytest
 
 from app.document.reachability import (
+    _REASON_BY_STATE,
     ProbeResult,
     Reachability,
     ReachabilityProbe,
     classify_error,
     classify_status,
+    rejection_reason,
     retry_after_seconds,
 )
+from app.schemas.batches import CrawlRejectionReason
 
 
 class Resolver:
@@ -234,3 +238,65 @@ def test_probe_result_is_immutable_and_self_describing() -> None:
     with pytest.raises(FrozenInstanceError):
         result.host = "other.test"  # type: ignore[misc]
     assert not result.usable
+
+
+# --- 拒绝原因：内部错误码 → 给用户看的分类 --------------------------------
+
+
+def probe_result(state: Reachability, **kwargs) -> ProbeResult:
+    return ProbeResult(host="docs.test", state=state, detail="", checked_at=0.0, **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("error_code", "state", "expected"),
+    [
+        # 站点拒绝和网络到不了必须分开：一个该换 UA/换路径，一个该换镜像。
+        ("CRAWL_FETCH_FAILED", Reachability.HTTP_REJECTED, "http_rejected"),
+        ("CRAWL_FETCH_FAILED", Reachability.UNREACHABLE, "unreachable"),
+        ("CRAWL_FETCH_FAILED", Reachability.THROTTLED, "throttled"),
+        ("CRAWL_FETCH_FAILED", Reachability.GEO_BLOCKED, "geo_blocked"),
+        ("CRAWL_FETCH_FAILED", Reachability.TLS_ERROR, "tls_error"),
+        ("CRAWL_FETCH_FAILED", Reachability.PROXY_ERROR, "proxy_error"),
+    ],
+)
+def test_fetch_failure_reason_follows_the_probe(
+    error_code: str, state: Reachability, expected: str
+) -> None:
+    assert rejection_reason(error_code, probe_result(state)) == expected
+
+
+def test_scope_and_size_are_decided_by_the_error_code_not_the_network() -> None:
+    """范围被拒和超过大小上限是我们自己的判定，已经能说出确切原因。
+
+    再去看一眼网络状态只会把清楚的事情说糊 —— 尤其 ``DOCUMENT_TOO_LARGE``
+    今天被报成"网页抓取失败"，而它根本不是抓取失败。
+    """
+    assert rejection_reason("CRAWL_SCOPE_REJECTED", probe_result(Reachability.OK)) == "scope_rejected"
+    assert rejection_reason("DOCUMENT_TOO_LARGE", None) == "limit_reached"
+
+
+def test_unexplained_failure_says_so_instead_of_guessing() -> None:
+    """探测说站点好好的（或没探测），就不许把它标成"不可达"。
+
+    标错会让用户去换镜像，而真正该做的是重试。
+    """
+    assert rejection_reason("CRAWL_FETCH_FAILED", probe_result(Reachability.OK)) == "fetch_failed"
+    assert rejection_reason("CRAWL_FETCH_FAILED", None) == "fetch_failed"
+    assert rejection_reason(None, None) == "fetch_failed"
+
+
+def test_every_reason_is_part_of_the_declared_wire_vocabulary() -> None:
+    """映射的取值必须都在 wire 契约里 —— 否则前端拿到一个它不认识的字符串。"""
+    declared = set(get_args(CrawlRejectionReason))
+    produced = {
+        rejection_reason("CRAWL_SCOPE_REJECTED"),
+        rejection_reason("DOCUMENT_TOO_LARGE"),
+        rejection_reason(None, None),
+        *_REASON_BY_STATE.values(),
+    }
+    assert produced <= declared
+    # 「可达」不是一个拒绝原因 —— 少了这一条，有人把 OK 塞进映射表也不会有测试拦住。
+    assert Reachability.OK not in _REASON_BY_STATE
+    # 反向也要看一眼：契约里声明了却没人产生的值就是死值。
+    assert "robots_denied" in declared
+    assert "unsupported_media" in declared

@@ -181,7 +181,12 @@ def _staged_id(source_url: str | None) -> str:
 async def test_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AsyncIterator[TestAppHarness]:
     monkeypatch.setenv("DOCMIND_FAKE_SERVICES", "1")
     settings = AppSettings(
-        session_token=SecretStr(RUNTIME_TOKEN), data_dir=tmp_path / "docmind-data", environment="test"
+        session_token=SecretStr(RUNTIME_TOKEN),
+        data_dir=tmp_path / "docmind-data",
+        environment="test",
+        # 礼貌间隔在生产里是每主机 1 秒；这里必须关掉 —— 否则任何跨几十上百个页面的
+        # 网页导入用例都要多跑几分钟（它是按页计费的等待，不是一次性开销）。
+        crawl_min_interval_seconds=0.0,
     )
     from app.main import create_app
 
