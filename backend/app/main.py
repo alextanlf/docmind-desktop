@@ -15,6 +15,7 @@ from fastapi.exceptions import RequestValidationError
 
 from app.api.auth import require_runtime_token
 from app.api.chat import router as chat_router
+from app.api.corpus import router as corpus_router
 from app.api.documents import recover_document_mutations, save_distillation_document
 from app.api.documents import router as documents_router
 from app.api.embedding import consume_terminal_exception
@@ -52,6 +53,7 @@ from app.core.local_model_service import LocalModelService
 from app.core.model_router import ModelRouter
 from app.core.retrieval import HybridRetriever
 from app.core.secrets import KeyringSecretStore, MemorySecretStore, SecretStore
+from app.corpus.nomination import LLMDomainNominator
 from app.document.builtin_formats import builtin_registry
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
@@ -516,6 +518,9 @@ def create_app(
                     local_service=app.state.local_model_service,
                 )
             )
+        # 来源提名只用聊天模型，不需要任何搜索通道 —— 这正是它存在的理由：在
+        # 「模型不支持内置联网」或「Tavily 额度打满」时，它是仍能工作的那个信号。
+        app.state.domain_nominator = LLMDomainNominator(runtime_llm_provider)
         app.state.search_service = SearchService(
             FallbackSearchProvider(
                 [
@@ -718,6 +723,7 @@ def create_app(
     app.include_router(plugins_router)
     app.include_router(imports_router)
     app.include_router(import_batches_router)
+    app.include_router(corpus_router)
     app.include_router(repositories_router)
     app.include_router(documents_router)
     app.include_router(sessions_router)
