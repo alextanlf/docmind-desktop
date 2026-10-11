@@ -770,6 +770,10 @@ class WebCorpusPageRecord(Base):
     title: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     media_type: Mapped[str] = mapped_column(String(64), default="text/html")
     content_hash: Mapped[str] = mapped_column(String(64), default="")
+    #: 上次抓取拿到的校验器。下次带 `If-None-Match` / `If-Modified-Since` 去问，
+    #: 站点答 304 就省下整个正文的下载与重新切块。
+    etag: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_modified: Mapped[str | None] = mapped_column(Text, nullable=True)
     byte_size: Mapped[int] = mapped_column(Integer, default=0)
     fetched_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()

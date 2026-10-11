@@ -113,8 +113,13 @@ class WebSourcesResponse(WireModel):
 
 class CrawlSummaryView(WireModel):
     domain: str
+    #: 抓取之后的语料规模（不是本次下载了几页）。
     pages: int
     chunks: int
+    #: 内容未变、没有重新切块与重写索引的页数 —— 增量刷新的收益体现在这里。
+    kept_pages: int = 0
+    updated_pages: int = 0
+    removed_pages: int = 0
     skipped_count: int
     #: 因为页数上限提前结束。用户需要知道"这不是全部"。
     truncated: bool

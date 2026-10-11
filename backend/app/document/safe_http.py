@@ -116,7 +116,11 @@ class SafeHttpClient:
                 continue
             if response.status_code >= 400:
                 raise DomainError(
-                    "CRAWL_FETCH_FAILED", "网页抓取失败", 502, response.status_code >= 500
+                    "CRAWL_FETCH_FAILED",
+                    "网页抓取失败",
+                    502,
+                    response.status_code >= 500,
+                    upstream_status=response.status_code,
                 )
             body = response.content
             if len(body) > max_bytes:

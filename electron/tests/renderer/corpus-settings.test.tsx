@@ -157,6 +157,9 @@ describe("网页语料", () => {
             domain: "docs.python.org",
             pages: 12,
             chunks: 48,
+            keptPages: 9,
+            updatedPages: 3,
+            removedPages: 1,
             skippedCount: 3,
             truncated: true,
           },
@@ -170,8 +173,13 @@ describe("网页语料", () => {
 
     await waitFor(() => expect(api.corpus.crawlSource).toHaveBeenCalledWith("docs.python.org"));
     // 本次结果与长期状态是两件事：前者是动作反馈，后者要留在列表上。
-    expect(await screen.findByText(/本次抓到 12 页（48 段），跳过 3 个地址/)).toBeVisible();
-    expect(screen.getByText(/已达到页数上限，这不是全部/)).toBeVisible();
+    // 增量结果要讲清楚：更新了几页、几页没变、清理了几页 —— 否则"抓取"是个黑盒。
+    // 断言整段的 textContent：这句由多个表达式拼成，按单节点匹配会被切碎。
+    const outcome = await screen.findByText(/本次抓取：/);
+    expect(outcome.textContent).toContain("更新 3 页、未变 9 页");
+    expect(outcome.textContent).toContain("清理 1 页已消失的页面");
+    expect(outcome.textContent).toContain("当前共 12 页 / 48 段");
+    expect(outcome.textContent).toContain("已达到页数上限，这不是全部");
     expect(await screen.findByText(/已收录 12 页 \/ 48 段/)).toBeVisible();
   });
 

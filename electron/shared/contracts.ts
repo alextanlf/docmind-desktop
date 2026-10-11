@@ -874,8 +874,13 @@ export const WebSourcesResponseSchema = z.object({
 
 export const CrawlSummarySchema = z.object({
   domain: z.string(),
+  /** 抓取之后的语料规模（不是本次下载了几页）。 */
   pages: z.number().int().nonnegative(),
   chunks: z.number().int().nonnegative(),
+  /** 内容未变、没有重新切块与重写索引的页数 —— 增量刷新的收益体现在这里。 */
+  keptPages: z.number().int().nonnegative().default(0),
+  updatedPages: z.number().int().nonnegative().default(0),
+  removedPages: z.number().int().nonnegative().default(0),
   skippedCount: z.number().int().nonnegative(),
   /** 因为页数上限提前结束 —— 用户需要知道"这不是全部"。 */
   truncated: z.boolean(),

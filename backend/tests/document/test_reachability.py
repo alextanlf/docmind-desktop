@@ -324,3 +324,54 @@ def test_rows_written_before_the_column_existed_are_derived_from_the_error_code(
     assert stored_reason(None, "UNSUPPORTED_MEDIA") == "unsupported_media"
     assert stored_reason(None, "CRAWL_RATE_LIMITED") == "limit_reached"
     assert stored_reason(None, "CRAWL_FETCH_FAILED") == "fetch_failed"
+
+
+# --- 上游状态码：站点亲口说的话，优先于我们的探测 --------------------------
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (451, "geo_blocked"),
+        (429, "throttled"),
+        (503, "throttled"),
+        (403, "http_rejected"),
+        (404, "http_rejected"),
+        (410, "http_rejected"),
+        (500, "http_rejected"),
+    ],
+)
+def test_a_status_code_alone_classifies_the_rejection(status: int, expected: str) -> None:
+    assert rejection_reason("CRAWL_FETCH_FAILED", upstream_status=status) == expected
+
+
+def test_the_status_code_wins_over_a_probe_that_says_otherwise() -> None:
+    """状态码是站点亲口说的，探测是我们在旁边猜；而且有状态码时根本不需要再请求一次。"""
+    assert (
+        rejection_reason(
+            "CRAWL_FETCH_FAILED",
+            probe_result(Reachability.UNREACHABLE),
+            upstream_status=403,
+        )
+        == "http_rejected"
+    )
+
+
+def test_without_a_status_the_probe_is_still_the_only_evidence() -> None:
+    """传输层失败（DNS、超时、TLS）没有状态码可看 —— 那时探测是唯一的依据。"""
+    assert (
+        rejection_reason("CRAWL_FETCH_FAILED", probe_result(Reachability.UNREACHABLE))
+        == "unreachable"
+    )
+
+
+def test_the_pages_own_404_is_distinguishable_at_the_transport_layer() -> None:
+    """抓取层要靠这个区分"站点说这页没了"和"我们没抓到" —— 前者该删本地副本，
+    后者该留着旧的。"""
+    from app.api.errors import DomainError
+
+    error = DomainError(
+        "CRAWL_FETCH_FAILED", "网页抓取失败", 502, False, upstream_status=404
+    )
+    assert error.upstream_status == 404
+    assert error.status_code == 502

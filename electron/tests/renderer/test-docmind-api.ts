@@ -863,7 +863,16 @@ export function installDocMindApi(overrides?: {
       removeSource: vi.fn().mockResolvedValue({ sources: [] }),
       crawlSource: vi.fn().mockResolvedValue({
         sources: [],
-        summary: { domain: "", pages: 0, chunks: 0, skippedCount: 0, truncated: false },
+        summary: {
+          domain: "",
+          pages: 0,
+          chunks: 0,
+          keptPages: 0,
+          updatedPages: 0,
+          removedPages: 0,
+          skippedCount: 0,
+          truncated: false,
+        },
       }),
       ...overrides?.corpus,
     },

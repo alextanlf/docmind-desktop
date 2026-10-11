@@ -17,6 +17,7 @@ class DomainError(Exception):
         action: str | None = None,
         *,
         auth_expired: bool = False,
+        upstream_status: int | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -24,6 +25,11 @@ class DomainError(Exception):
         self.status_code = status_code
         self.retryable = retryable
         self.action = action
+        # 上游（被我们请求的那个站点）返回的状态码。与 `status_code` 是两件事：
+        # 那是**我们**对这个客户端返回的状态码。分开存，是因为下游要靠它区分
+        # "站点说这个页面没了（404/410）"和"我们连不上" —— 前者该删掉本地副本，
+        # 后者该留着旧的。
+        self.upstream_status = upstream_status
         # True 表示「远程凭据已失效、需要用户重新登录」，供通用错误映射层
         # 区分可透传的错误与需要归一化的错误。平台专属的调用方（各 provider）
         # 在抛出点自行声明，通用层因此不需要认识任何平台错误码。

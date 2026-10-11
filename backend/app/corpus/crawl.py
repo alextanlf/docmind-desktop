@@ -31,7 +31,7 @@ from app.document.safe_http import SafeHttpClient, canonicalize_url, in_scope, p
 from app.schemas.batches import CrawlRejectionReason
 from app.schemas.imports import DownloadedDocument
 from app.storage.models import WebCorpusChunkRecord, WebCorpusPageRecord, new_id
-from app.storage.repositories import WebCorpusStore
+from app.storage.repositories import CorpusPageWrite, WebCorpusStore
 
 #: 只收能够解析成正文的类型。与导入路径同一张白名单。
 _SUPPORTED_MEDIA = {"text/html", "text/markdown", "application/pdf"}
@@ -44,8 +44,15 @@ DEFAULT_MAX_DEPTH = 2
 @dataclass(frozen=True)
 class CrawlSummary:
     domain: str
+    #: 抓取**之后**该域名的语料规模（不是这次下载了几页）。
     pages: int
     chunks: int
+    #: 内容未变、没有重新切块与重写索引的页数。增量刷新的收益就体现在这里。
+    kept_pages: int
+    #: 新抓到的、或内容变了因而重写的页数。
+    updated_pages: int
+    #: 有证据表明已消失（404 / 410）因而删掉本地副本的页数。
+    removed_pages: int
     #: (url, 原因) —— 每条都是 `CrawlRejectionReason` 里的取值。
     skipped: tuple[tuple[str, str], ...]
     #: 是否因为页数上限提前结束。用户需要知道"这不是全部"。
@@ -63,6 +70,37 @@ class CrawlSummary:
 
     def failure_reasons(self) -> Counter[str]:
         return Counter(reason for _, reason in self.skipped)
+
+
+def _conditional_headers(previous: WebCorpusPageRecord | None) -> dict[str, str] | None:
+    """带上上次拿到的校验器，让站点有机会直接答 304。
+
+    两个都带上：`ETag` 比 `Last-Modified` 更强（能区分"同一秒内改了两次"），但并非
+    所有站点都给 ETag，而 `Last-Modified` 更常见。
+    """
+    if previous is None:
+        return None
+    headers: dict[str, str] = {}
+    if previous.etag:
+        headers["If-None-Match"] = previous.etag
+    if previous.last_modified:
+        headers["If-Modified-Since"] = previous.last_modified
+    return headers or None
+
+
+def _refresh(previous: WebCorpusPageRecord, snapshot) -> WebCorpusPageRecord:
+    """内容未变时只更新校验器与抓取时间，标题/正文/块都保持原样。"""
+    return WebCorpusPageRecord(
+        id=previous.id,
+        domain=previous.domain,
+        url=previous.url,
+        title=previous.title,
+        media_type=previous.media_type,
+        content_hash=previous.content_hash,
+        byte_size=previous.byte_size,
+        etag=snapshot.headers.get("etag") or previous.etag,
+        last_modified=snapshot.headers.get("last-modified") or previous.last_modified,
+    )
 
 
 class CorpusCrawler:
@@ -100,21 +138,25 @@ class CorpusCrawler:
         entry = canonicalize_url(entry_url or f"https://{domain}/")
         prefix = path_prefix_for_entry(entry)
         queue: deque[tuple[str, int]] = deque([(entry, 0)])
-        seen: set[str] = set()
+        visited: set[str] = set()
         skipped: list[tuple[str, str]] = []
-        pages: list[WebCorpusPageRecord] = []
-        chunks: list[WebCorpusChunkRecord] = []
+        writes: list[CorpusPageWrite] = []
+        gone: list[str] = []
+        existing = {row.url: row for row in self.store.pages(domain)}
+        fetched = 0
+        kept = 0
+        updated = 0
         truncated = False
 
         while queue:
-            if len(pages) >= max_pages:
+            if fetched >= max_pages:
                 truncated = True
                 break
             url, depth = queue.popleft()
             url = canonicalize_url(url)
-            if url in seen or not in_scope(url, entry, prefix):
+            if url in visited or not in_scope(url, entry, prefix):
                 continue
-            seen.add(url)
+            visited.add(url)
 
             if not await self.client.robots_allowed(
                 url, self.user_agent, scope_origin=entry, scope_prefix=prefix
@@ -127,65 +169,98 @@ class CorpusCrawler:
                 skipped.append((url, "limit_reached"))
                 continue
 
+            previous = existing.get(url)
             try:
                 snapshot = await self.client.get(
-                    url, max_bytes=self.max_bytes, scope_origin=entry, scope_prefix=prefix
+                    url,
+                    max_bytes=self.max_bytes,
+                    scope_origin=entry,
+                    scope_prefix=prefix,
+                    headers=_conditional_headers(previous),
                 )
             except DomainError as error:
-                skipped.append((url, await self._failure_reason(error, host)))
+                reason = await self._failure_reason(error, host)
+                skipped.append((url, reason))
+                # 只有站点**明确说**这一页没了（404 / 410）才删本地副本。超时、限流、
+                # 5xx 都不算证据 —— 把不确定当成不存在，会让语料在一次网络抖动后缩水。
+                if getattr(error, "upstream_status", None) in (404, 410) and previous is not None:
+                    gone.append(url)
                 continue
             if self.limiter is not None:
                 self.limiter.succeeded(host)
+            fetched += 1
+
+            # 304：站点说"没变"。正文都没下载，所以这一页上的链接这次不会被重新发现
+            # （新增子页面要等下一次抓到它时才会被发现）；换来的是完全省下下载与切块。
+            if snapshot.status_code == 304 and previous is not None:
+                writes.append(
+                    CorpusPageWrite(page=_refresh(previous, snapshot), chunks=None)
+                )
+                kept += 1
+                continue
 
             if snapshot.media_type not in _SUPPORTED_MEDIA:
                 skipped.append((url, "unsupported_media"))
                 continue
 
-            parsed = self._parse(url, snapshot)
-            if parsed is None:
-                skipped.append((url, "unsupported_media"))
-                continue
-
-            page_id = new_id()
-            title = (parsed.title or url).strip()[:512]
-            pages.append(
-                WebCorpusPageRecord(
-                    id=page_id,
-                    domain=domain,
-                    url=url,
-                    title=title,
-                    media_type=snapshot.media_type,
-                    content_hash=hashlib.sha256(snapshot.body).hexdigest(),
-                    byte_size=len(snapshot.body),
-                )
-            )
-            for draft in self.chunker.chunk(parsed):
-                if not draft.text.strip():
+            digest = hashlib.sha256(snapshot.body).hexdigest()
+            if previous is not None and previous.content_hash == digest:
+                # 200 但内容一致（站点没给校验器）。同样不重新切块。
+                writes.append(CorpusPageWrite(page=_refresh(previous, snapshot), chunks=None))
+                kept += 1
+            else:
+                parsed = self._parse(url, snapshot)
+                if parsed is None:
+                    skipped.append((url, "unsupported_media"))
                     continue
-                chunks.append(
-                    WebCorpusChunkRecord(
-                        page_id=page_id,
-                        domain=domain,
-                        url=url,
-                        title=title,
-                        ordinal=draft.chunk_index,
-                        section_path=draft.section_path,
-                        text=draft.text,
-                        token_count=draft.token_count,
+                page_id = new_id()
+                title = (parsed.title or url).strip()[:512]
+                writes.append(
+                    CorpusPageWrite(
+                        page=WebCorpusPageRecord(
+                            id=page_id,
+                            domain=domain,
+                            url=url,
+                            title=title,
+                            media_type=snapshot.media_type,
+                            content_hash=digest,
+                            byte_size=len(snapshot.body),
+                            etag=snapshot.headers.get("etag"),
+                            last_modified=snapshot.headers.get("last-modified"),
+                        ),
+                        chunks=tuple(
+                            WebCorpusChunkRecord(
+                                page_id=page_id,
+                                domain=domain,
+                                url=url,
+                                title=title,
+                                ordinal=draft.chunk_index,
+                                section_path=draft.section_path,
+                                text=draft.text,
+                                token_count=draft.token_count,
+                            )
+                            for draft in self.chunker.chunk(parsed)
+                            if draft.text.strip()
+                        ),
                     )
                 )
+                updated += 1
 
+            # 有正文就重新发现链接（内容没变的那一支也有正文，不该跳过）。
             if depth < max_depth and snapshot.media_type == "text/html":
                 for link in self._links(snapshot.body, url):
-                    if link not in seen:
+                    if link not in visited:
                         queue.append((link, depth + 1))
 
-        # 整体替换：抓到的写入，没抓到的（页面被删、改版）随之消失。
-        self.store.replace_domain(domain, pages, chunks)
+        self.store.apply_crawl(domain, writes, removed_urls=gone)
+        stats = self.store.stats().get(domain)
         return CrawlSummary(
             domain=domain,
-            pages=len(pages),
-            chunks=len(chunks),
+            pages=stats.pages if stats else 0,
+            chunks=stats.chunks if stats else 0,
+            kept_pages=kept,
+            updated_pages=updated,
+            removed_pages=len(gone),
             skipped=tuple(skipped),
             truncated=truncated,
         )
@@ -201,7 +276,15 @@ class CorpusCrawler:
         return await self.limiter.acquire(host, crawl_delay=crawl_delay)
 
     async def _failure_reason(self, error: DomainError, host: str) -> str:
-        """失败原因。探测只在失败路径上发生，结论按主机缓存。"""
+        """失败原因。
+
+        **有上游状态码就不探测**：站点已经亲口说了是什么问题（404/429/451…），再发一次
+        请求去猜一遍，既慢又是多余的网络往来。只有传输层失败（DNS、超时、TLS）时确实
+        没有状态码可看，才需要探测。
+        """
+        upstream_status = getattr(error, "upstream_status", None)
+        if upstream_status is not None:
+            return rejection_reason(error.code, upstream_status=upstream_status)
         probe_result = None
         if self.probe is not None:
             probe_result = await self.probe.probe(host)

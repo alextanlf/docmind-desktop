@@ -169,8 +169,10 @@ export function CorpusSettings() {
         </p>
         {summary?.domain === source.domain ? (
           <p className="corpus-status" role="status">
-            本次抓到 {summary.pages} 页（{summary.chunks} 段），跳过 {summary.skippedCount} 个地址
-            {summary.truncated ? "；已达到页数上限，这不是全部" : ""}。
+            本次抓取：更新 {summary.updatedPages} 页、未变 {summary.keptPages} 页
+            {summary.removedPages > 0 ? `、清理 ${summary.removedPages} 页已消失的页面` : ""}
+            ，跳过 {summary.skippedCount} 个地址；当前共 {summary.pages} 页 / {summary.chunks} 段
+            {summary.truncated ? "（已达到页数上限，这不是全部）" : ""}。
           </p>
         ) : null}
         <ul className="corpus-evidence">

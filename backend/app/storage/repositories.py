@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import inspect
 import json
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -2005,6 +2005,18 @@ class CorpusStats:
     last_fetched_at: datetime | None
 
 
+@dataclass(frozen=True)
+class CorpusPageWrite:
+    """这次抓取对某一页的结论。
+
+    `chunks is None` 表示**内容未变**：只更新抓取时间与校验器，原有的块一个都不动。
+    这就是增量刷新的意义 —— 没变的页面不重新切块、不重写索引，块的 id 也就不会变。
+    """
+
+    page: WebCorpusPageRecord
+    chunks: tuple[WebCorpusChunkRecord, ...] | None
+
+
 class WebCorpusStore:
     """本地网页语料的读写。
 
@@ -2032,6 +2044,68 @@ class WebCorpusStore:
             session.add_all(pages)
             session.flush()
             session.add_all(chunks)
+
+    def pages(self, domain: str) -> list[WebCorpusPageRecord]:
+        """该域名已有的页面 —— 抓取前用它判断"这一页变了没有"。"""
+        with self.database.session() as session:
+            return list(
+                session.scalars(
+                    select(WebCorpusPageRecord).where(WebCorpusPageRecord.domain == domain)
+                )
+            )
+
+    def apply_crawl(
+        self,
+        domain: str,
+        writes: Sequence[CorpusPageWrite],
+        *,
+        removed_urls: Sequence[str] = (),
+    ) -> None:
+        """按这次抓取的结论更新语料，而不是整域重写。
+
+        `removed_urls` 只该装**有证据表明已经消失**的页面（404 / 410）。没有证据的
+        一律不动：一次超时、一次被限流、或抓取被预算截断，都不代表页面不存在 ——
+        把不确定当成不存在，会让语料在一次网络抖动后凭空缩水。
+        """
+        now = utc_now()
+        with self.database.session() as session:
+            for url in removed_urls:
+                session.execute(
+                    delete(WebCorpusChunkRecord).where(
+                        WebCorpusChunkRecord.domain == domain, WebCorpusChunkRecord.url == url
+                    )
+                )
+                session.execute(
+                    delete(WebCorpusPageRecord).where(
+                        WebCorpusPageRecord.domain == domain, WebCorpusPageRecord.url == url
+                    )
+                )
+            for write in writes:
+                conditions = (
+                    WebCorpusPageRecord.domain == domain,
+                    WebCorpusPageRecord.url == write.page.url,
+                )
+                if write.chunks is None:
+                    session.execute(
+                        update(WebCorpusPageRecord)
+                        .where(*conditions)
+                        .values(
+                            fetched_at=now,
+                            etag=write.page.etag,
+                            last_modified=write.page.last_modified,
+                        )
+                    )
+                    continue
+                session.execute(
+                    delete(WebCorpusChunkRecord).where(
+                        WebCorpusChunkRecord.domain == domain,
+                        WebCorpusChunkRecord.url == write.page.url,
+                    )
+                )
+                session.execute(delete(WebCorpusPageRecord).where(*conditions))
+                session.add(write.page)
+                session.flush()
+                session.add_all(list(write.chunks))
 
     def chunks(self, domains: list[str] | None = None) -> list[WebCorpusChunkRecord]:
         with self.database.session() as session:

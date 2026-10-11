@@ -311,6 +311,27 @@ _REASON_BY_STATE: dict[Reachability, CrawlRejectionReason] = {
     Reachability.PROXY_ERROR: "proxy_error",
 }
 
+#: 上游状态码 → 拒绝原因。**状态码是确定的观察**，优先于"再探一次"。
+_REASON_BY_UPSTREAM_STATUS: dict[int, CrawlRejectionReason] = {
+    451: "geo_blocked",
+    429: "throttled",
+    503: "throttled",
+}
+
+
+def reason_for_status(status: int) -> CrawlRejectionReason:
+    """从上游状态码得出原因。
+
+    这是**首选**的判定依据：状态码是站点亲口说的话，而探测是我们在旁边猜。有了它
+    就不必为了分类再发一次请求 —— 后面那条探测只在传输层失败（DNS、超时、TLS）时
+    才需要，因为那时确实没有状态码可看。
+    """
+    mapped = _REASON_BY_UPSTREAM_STATUS.get(status)
+    if mapped is not None:
+        return mapped
+    return "http_rejected" if status >= 400 else "fetch_failed"
+
+
 #: 与可达性无关、但同样会造成「这个 URL 没进来」的内部错误码。
 #:
 #: 两套拼写都在表里：`CRAWL_*` 是 `safe_http` 抛出的，裸名是爬虫写进
@@ -328,12 +349,15 @@ _REASON_BY_ERROR_CODE: dict[str, CrawlRejectionReason] = {
 
 
 def rejection_reason(
-    error_code: str | None, probe: ProbeResult | None = None
+    error_code: str | None,
+    probe: ProbeResult | None = None,
+    upstream_status: int | None = None,
 ) -> CrawlRejectionReason:
     """把一个抓取失败的内部错误码，翻译成给用户看的原因分类。
 
-    优先级：**确定的错误码**（范围被拒、超过大小上限）先于探测结论 —— 那两种情况
-    已经能说出确切原因，再去猜网络状态只会把清楚的事情说糊。剩下的才看探测结论。
+    优先级：**确定的错误码**（范围被拒、超过大小上限）→ **上游状态码** → 探测结论。
+    状态码排在探测之前：它是站点亲口说的话，而探测是我们在旁边猜；而且有状态码时
+    根本不需要再发一次请求。
 
     探测结论为 ``OK`` 或根本没有探测结论时返回 ``fetch_failed``：**宁可说不出原因，
     也不猜。** 一个"其实站点好好的、只是这次抽风"的失败被标成"不可达"，会让用户
@@ -341,6 +365,8 @@ def rejection_reason(
     """
     if error_code is not None and error_code in _REASON_BY_ERROR_CODE:
         return _REASON_BY_ERROR_CODE[error_code]
+    if upstream_status is not None:
+        return reason_for_status(upstream_status)
     if probe is not None:
         mapped = _REASON_BY_STATE.get(probe.state)
         if mapped is not None:
