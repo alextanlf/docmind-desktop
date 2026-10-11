@@ -2881,3 +2881,106 @@ progress::-webkit-progress-bar {
   line-height: 1.6;
   color: var(--color-text-tertiary, #6b6b6b);
 }
+
+/* 网页语料：决定本地索引收录哪些站点。
+   每行都是「域名 + 可信度 + 信号 + 操作」，下面挂一行行证据 —— 证据是这一页的重点，
+   所以它不能被折叠或省略。 */
+.corpus-settings {
+  display: grid;
+  max-width: 760px;
+  gap: 22px;
+}
+.corpus-settings section {
+  display: grid;
+  gap: 10px;
+}
+.corpus-settings h3 {
+  margin: 0;
+  color: #3d444e;
+  font-size: 14px;
+}
+.corpus-field {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.corpus-field textarea,
+.corpus-field input {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+}
+.corpus-manual {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+}
+.corpus-manual .corpus-field {
+  flex: 1;
+}
+.corpus-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.corpus-list > li {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.corpus-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.corpus-row code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.corpus-row .button {
+  margin-left: auto;
+}
+.corpus-label {
+  color: #3d444e;
+}
+.corpus-entry {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.corpus-badge {
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.corpus-badge.is-verified {
+  border-color: #b7d3bd;
+  background: #eef7f0;
+  color: #2f6b3f;
+}
+.corpus-signals {
+  color: var(--muted);
+  font-size: 12px;
+}
+.corpus-evidence {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.corpus-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}

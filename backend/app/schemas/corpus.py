@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from pydantic import Field
+from datetime import datetime
 
+from pydantic import Field, model_validator
+
+from app.corpus.candidates import normalize_domain
 from app.schemas.common import WireModel
 
 
@@ -50,3 +53,50 @@ class CorpusCandidateRequest(WireModel):
 class CorpusCandidatesResponse(WireModel):
     candidates: list[CorpusCandidateView]
     nomination: CorpusNominationView
+
+
+class WebSourceInput(WireModel):
+    """用户确认收录的一个来源。
+
+    域名在这里就被规整（`normalize_domain`）：写库的、比较的、以后抓取的必须是同一个
+    字符串，否则 `WWW.Example.com` 与 `example.com` 会变成两行，而用户看到的是同一个站。
+    """
+
+    domain: str
+    entry_url: str | None = Field(default=None, max_length=2000)
+    label: str | None = Field(default=None, max_length=200)
+    kind: str | None = Field(default=None, max_length=32)
+    verified: bool = False
+    evidence: list[str] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def _normalize_domain_and_keep_a_pasted_url(self) -> WebSourceInput:
+        raw = self.domain.strip()
+        normalized = normalize_domain(raw)
+        if normalized is None:
+            raise ValueError("不是有效的公开域名")
+        # 用户把完整网址贴在同一个框里时，"从哪开始抓"就是那个网址。只取域名会把
+        # 路径静默丢掉，而路径常常正是他要的那一页（`/docs/guide` 与站点根差别很大）。
+        # 存原样：抓取时由 `canonicalize_url` 统一规整。
+        if self.entry_url is None and "//" in raw and len(raw) <= 2000:
+            self.entry_url = raw
+        self.domain = normalized
+        return self
+
+
+class SaveWebSourcesRequest(WireModel):
+    sources: list[WebSourceInput] = Field(min_length=1, max_length=50)
+
+
+class WebSourceView(WireModel):
+    domain: str
+    entry_url: str | None = None
+    label: str | None = None
+    kind: str | None = None
+    verified: bool
+    evidence: list[str]
+    added_at: datetime
+
+
+class WebSourcesResponse(WireModel):
+    sources: list[WebSourceView]

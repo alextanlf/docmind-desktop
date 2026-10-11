@@ -115,6 +115,7 @@ from app.storage.repositories import (
     VectorCleanupStore,
     VersionStore,
     WebSearchRunStore,
+    WebSourceStore,
 )
 from app.storage.vectorstore import PersistentVectorStore
 from app.sync.conflict import SyncConflictService
@@ -429,6 +430,8 @@ def create_app(
         # 而那是 crawl_entries 里的数据，不是批次汇总里的数字。
         crawl_entries = CrawlEntryStore(database)
         app.state.crawl_entries = crawl_entries
+        # 用户确认收录的网页来源：候选推导的落点，也是后续抓取与索引的唯一输入。
+        app.state.web_sources = WebSourceStore(database)
         web_discovery = WebDiscovery(
             safe_http_client,
             runtime_settings.staging_dir,

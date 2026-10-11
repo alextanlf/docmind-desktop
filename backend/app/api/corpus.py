@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+import json
+from typing import cast
+
 from fastapi import APIRouter, Request
 
-from app.corpus.candidates import NominatedSource, derive_candidates
+from app.corpus.candidates import NominatedSource, derive_candidates, normalize_domain
 from app.corpus.nomination import DomainNominator
 from app.schemas.corpus import (
     CorpusCandidateRequest,
     CorpusCandidatesResponse,
     CorpusCandidateView,
     CorpusNominationView,
+    SaveWebSourcesRequest,
+    WebSourcesResponse,
+    WebSourceView,
 )
+from app.storage.models import WebSourceRecord, utc_now
+from app.storage.repositories import WebSourceStore
 
 router = APIRouter(prefix="/api/corpus", tags=["corpus"])
 
@@ -55,3 +63,72 @@ async def derive_source_candidates(
         ],
         nomination=CorpusNominationView(attempted=attempted, count=len(nominated)),
     )
+
+
+def _store(request: Request) -> WebSourceStore:
+    return cast(WebSourceStore, request.app.state.web_sources)
+
+
+def _source_view(row: WebSourceRecord) -> WebSourceView:
+    return WebSourceView(
+        domain=row.domain,
+        entry_url=row.entry_url,
+        label=row.label,
+        kind=row.kind,
+        verified=row.verified,
+        evidence=list(json.loads(row.evidence_json or "[]")),
+        added_at=row.added_at,
+    )
+
+
+def _sources_response(rows: list[WebSourceRecord]) -> WebSourcesResponse:
+    return WebSourcesResponse(sources=[_source_view(row) for row in rows])
+
+
+@router.get("/sources", response_model=WebSourcesResponse)
+async def list_web_sources(request: Request) -> WebSourcesResponse:
+    """已确认收录的来源 —— 也就是本地网页索引将来的范围。"""
+    return _sources_response(_store(request).list())
+
+
+@router.post("/sources", response_model=WebSourcesResponse)
+async def save_web_sources(
+    request: Request, body: SaveWebSourcesRequest
+) -> WebSourcesResponse:
+    """收录（或更新）来源。传整个清单回来，界面一次请求就能刷新。"""
+    # 同一批加入的来源共用一个时间戳：它们的 added_at 相同，列表就按域名排，
+    # 而不是按"谁先构造"这种用户看不见的顺序 —— 否则刚点完"全部收录"，列表看起来
+    # 是乱的。
+    stamped = utc_now()
+    records = [
+        WebSourceRecord(
+            added_at=stamped,
+            updated_at=stamped,
+            domain=item.domain,
+            entry_url=item.entry_url,
+            label=item.label,
+            kind=item.kind,
+            verified=item.verified,
+            # 同一条证据不重复存：反复点"收录"不该让同一句话堆成十行。
+            evidence_json=json.dumps(
+                list(dict.fromkeys(item.evidence)), ensure_ascii=False
+            ),
+        )
+        for item in body.sources
+    ]
+    return _sources_response(_store(request).upsert(records))
+
+
+@router.delete("/sources/{domain}", response_model=WebSourcesResponse)
+async def remove_web_source(request: Request, domain: str) -> WebSourcesResponse:
+    """移除来源。**删一个本来就不存在的域名也返回成功。**
+
+    界面上的双击、以及两个窗口同时操作，都会产生一次"删一个已经不在的东西"；为此
+    弹一个错误只会让用户以为操作失败了。响应始终是删除后的真实清单，所以调用方
+    不需要区分这两种情况。
+    """
+    store = _store(request)
+    normalized = normalize_domain(domain)
+    if normalized is not None:
+        store.remove(normalized)
+    return _sources_response(store.list())

@@ -648,6 +648,7 @@ export function installDocMindApi(overrides?: {
   app?: Partial<DocMindApi["app"]>;
   sources?: Partial<DocMindApi["sources"]>;
   batches?: Partial<DocMindApi["batches"]>;
+  corpus?: Partial<DocMindApi["corpus"]>;
   memory?: Partial<DocMindApi["memory"]>;
   webSearch?: Partial<DocMindApi["webSearch"]>;
 }) {
@@ -851,6 +852,16 @@ export function installDocMindApi(overrides?: {
       stageDirectory: vi.fn().mockResolvedValue(null),
       listFormats: vi.fn().mockResolvedValue(sourceFormats),
       ...overrides?.sources,
+    },
+    corpus: {
+      candidates: vi.fn().mockResolvedValue({
+        candidates: [],
+        nomination: { attempted: false, count: 0 },
+      }),
+      sources: vi.fn().mockResolvedValue({ sources: [] }),
+      saveSources: vi.fn().mockResolvedValue({ sources: [] }),
+      removeSource: vi.fn().mockResolvedValue({ sources: [] }),
+      ...overrides?.corpus,
     },
     batches: {
       create: vi.fn(),

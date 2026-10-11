@@ -800,6 +800,89 @@ export const BatchDiagnosticsPageSchema = z.object({
 });
 
 export type CrawlRejectionReason = z.infer<typeof CrawlRejectionReasonSchema>;
+
+/**
+ * 网页语料：该抓哪些站点。与后端 `app/schemas/corpus.py` 逐字对齐。
+ *
+ * `signals` 与 `evidence` 是这个功能的核心 —— 一条候选没有理由就等于让用户猜；
+ * `verified` 把"我们核对过的种子表"与"模型的一家之言"分开，两者可信度不同。
+ */
+export const CorpusCandidateSchema = z.object({
+  domain: z.string(),
+  signals: z.array(z.string()),
+  evidence: z.array(z.string()),
+  label: z.string().nullable().optional(),
+  kind: z.string().nullable().optional(),
+  entryUrl: z.string().nullable().optional(),
+  verified: z.boolean(),
+  score: z.number().int(),
+});
+
+export const CorpusNominationSchema = z.object({
+  attempted: z.boolean(),
+  count: z.number().int().nonnegative(),
+});
+
+export const CorpusCandidatesResponseSchema = z.object({
+  candidates: z.array(CorpusCandidateSchema),
+  nomination: CorpusNominationSchema,
+});
+
+export const CorpusCandidateRequestSchema = z.object({
+  text: z.string().max(4000).optional(),
+  explicitDomains: z.array(z.string()).max(50).optional(),
+  documentUrls: z.array(z.string()).max(500).optional(),
+  crawlUrls: z.array(z.string()).max(500).optional(),
+  upstreamUrls: z.array(z.string()).max(500).optional(),
+  nominate: z.boolean().optional(),
+  nominateLimit: z.number().int().min(0).max(10).optional(),
+  limit: z.number().int().min(1).max(50).optional(),
+});
+
+export const WebSourceInputSchema = z.object({
+  domain: z.string().min(1).max(253),
+  entryUrl: z.string().max(2000).optional(),
+  label: z.string().max(200).optional(),
+  kind: z.string().max(32).optional(),
+  verified: z.boolean().optional(),
+  evidence: z.array(z.string()).max(20).optional(),
+});
+
+export const SaveWebSourcesRequestSchema = z.object({
+  sources: z.array(WebSourceInputSchema).min(1).max(50),
+});
+
+export const WebSourceSchema = z.object({
+  domain: z.string(),
+  entryUrl: z.string().nullable().optional(),
+  label: z.string().nullable().optional(),
+  kind: z.string().nullable().optional(),
+  verified: z.boolean(),
+  evidence: z.array(z.string()),
+  addedAt: z.string(),
+});
+
+export const WebSourcesResponseSchema = z.object({
+  sources: z.array(WebSourceSchema),
+});
+
+export type CorpusCandidate = z.infer<typeof CorpusCandidateSchema>;
+export type CorpusCandidateRequest = z.infer<typeof CorpusCandidateRequestSchema>;
+export type CorpusCandidatesResponse = z.infer<typeof CorpusCandidatesResponseSchema>;
+export type WebSource = z.infer<typeof WebSourceSchema>;
+export type WebSourceInput = z.infer<typeof WebSourceInputSchema>;
+export type SaveWebSourcesRequest = z.infer<typeof SaveWebSourcesRequestSchema>;
+export type WebSourcesResponse = z.infer<typeof WebSourcesResponseSchema>;
+
+/** 本地网页索引收录哪些站点。与后端 `/api/corpus` 对齐。 */
+export interface CorpusApi {
+  /** 推导候选来源：每条都带证据。提名不可用时仍会返回种子表的结果。 */
+  candidates(input: CorpusCandidateRequest): Promise<CorpusCandidatesResponse>;
+  sources(): Promise<WebSourcesResponse>;
+  saveSources(input: SaveWebSourcesRequest): Promise<WebSourcesResponse>;
+  /** 幂等：删一个本来就不存在的域名也返回成功，响应始终是删除后的真实清单。 */
+  removeSource(domain: string): Promise<WebSourcesResponse>;
+}
 export type BatchDiagnostic = z.infer<typeof BatchDiagnosticSchema>;
 export type BatchDiagnosticsPage = z.infer<typeof BatchDiagnosticsPageSchema>;
 /**
@@ -1210,6 +1293,7 @@ export interface DocMindApi {
   };
   sources: SourcesApi;
   batches: BatchesApi;
+  corpus: CorpusApi;
   shell: { openExternal(url: string): Promise<void> };
   /** Full app restart — the only recovery when a schema mismatch keeps failing. */
   app: { restart(): Promise<void> };

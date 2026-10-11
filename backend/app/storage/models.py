@@ -721,3 +721,31 @@ class EmbeddingRebuildRecord(Base):
     needs_rebuild: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("1")
     )
+
+
+class WebSourceRecord(Base):
+    """用户决定纳入本地网页索引的来源。
+
+    `domain` 就是主键：候选的同一性按域名算（推导层也按它去重），所以"再加一次同一个
+    域名"天然是更新而不是新增 —— 表结构本身保证了幂等，不需要在应用层查重。
+
+    `evidence_json` 存的是一个字符串数组：**为什么收录它**。用户过两个月回来看这页时，
+    唯一能帮他决定"这个站还要不要"的就是当初的理由，而那正是最容易被省掉的一列。
+    """
+
+    __tablename__ = "web_sources"
+
+    domain: Mapped[str] = mapped_column(String(253), primary_key=True)
+    #: 抓取入口（通常是文档根）。只给域名时为 NULL，由抓取层按域名推导。
+    entry_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    #: 是否来自有人核对过的种子表。模型提名与挖掘出来的都是 False。
+    verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("0"))
+    evidence_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]", server_default=text("'[]'"))
+    added_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
+    )

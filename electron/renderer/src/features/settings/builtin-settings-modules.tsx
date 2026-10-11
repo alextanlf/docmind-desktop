@@ -11,8 +11,9 @@
  * tiebreaker; `order` decides the sequence.
  */
 import type { ReactNode } from "react";
-import { Cpu, KeyRound, Puzzle } from "lucide-react";
+import { Cpu, Globe, KeyRound, Puzzle } from "lucide-react";
 import type { SettingsView } from "../../../../shared/contracts";
+import { CorpusSettings } from "../corpus/CorpusSettings";
 import { ModelSettings } from "./ModelSettings";
 import { PluginSettings } from "./PluginSettings";
 import { RuntimeModelSettings } from "./RuntimeModelSettings";
@@ -83,6 +84,15 @@ registerModule({
   icon: Cpu,
   order: 20,
   render: () => <RuntimeModule />,
+});
+
+registerModule({
+  id: "settings-corpus",
+  label: "网页语料",
+  description: "决定本地网页索引收录哪些站点，以及为什么",
+  icon: Globe,
+  order: 40,
+  render: () => <CorpusSettings />,
 });
 
 registerModule({

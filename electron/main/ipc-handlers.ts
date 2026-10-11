@@ -47,6 +47,10 @@ import {
   PluginStateSchema,
   BatchImportSchema,
   BatchDiagnosticsPageSchema,
+  CorpusCandidateRequestSchema,
+  CorpusCandidatesResponseSchema,
+  SaveWebSourcesRequestSchema,
+  WebSourcesResponseSchema,
   BatchItemPageSchema,
   BrowserInstallResultSchema,
   CreateBatchInputSchema,
@@ -437,6 +441,30 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         headers: { "Last-Event-ID": String(afterSequence) },
         sender: event.sender ?? { send: () => {} },
       });
+    },
+    [IPC_CHANNELS.corpusCandidates]: (_event, input) =>
+      proxy.requestJson(
+        "/api/corpus/candidates",
+        jsonInit("POST", parse(CorpusCandidateRequestSchema, input ?? {})),
+        CorpusCandidatesResponseSchema,
+      ),
+    [IPC_CHANNELS.corpusSources]: () =>
+      proxy.requestJson("/api/corpus/sources", {}, WebSourcesResponseSchema),
+    [IPC_CHANNELS.corpusSaveSources]: (_event, input) =>
+      proxy.requestJson(
+        "/api/corpus/sources",
+        jsonInit("POST", parse(SaveWebSourcesRequestSchema, input)),
+        WebSourcesResponseSchema,
+      ),
+    [IPC_CHANNELS.corpusRemoveSource]: (_event, domain) => {
+      if (typeof domain !== "string" || !domain) {
+        throw new DocMindClientError("INVALID_REQUEST", "域名无效");
+      }
+      return proxy.requestJson(
+        `/api/corpus/sources/${encodeURIComponent(domain)}`,
+        jsonInit("DELETE"),
+        WebSourcesResponseSchema,
+      );
     },
     [IPC_CHANNELS.batchesCreate]: (_event, input) =>
       proxy.requestJson(

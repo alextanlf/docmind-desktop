@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import inspect
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -54,6 +54,7 @@ from app.storage.models import (
     VectorCleanupRecord,
     WebSearchResultRecord,
     WebSearchRunRecord,
+    WebSourceRecord,
 )
 
 
@@ -1908,6 +1909,74 @@ def _normalized_source_metadata(job: ImportJobRecord) -> dict[str, Any]:
 
 def _dump_source_metadata(metadata: dict[str, Any]) -> str:
     return json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
+
+
+class WebSourceStore:
+    """用户决定纳入本地网页索引的来源。
+
+    只读写 `web_sources`：候选怎么推导、抓取怎么进行都不在这里 —— 它的职责是
+    "把用户定下来的那份范围存住"，而已收录来源是后续抓取与索引的唯一输入。
+    """
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def list(self) -> list[WebSourceRecord]:
+        """已收录的来源，最近加入的在前。
+
+        并列时按域名排序：同一批批量加入的记录时间戳相同，没有次级键的话每次刷新
+        顺序都可能变，而用户会以为列表在乱动。
+        """
+        with self.database.session() as session:
+            return list(
+                session.scalars(
+                    select(WebSourceRecord).order_by(
+                        WebSourceRecord.added_at.desc(), WebSourceRecord.domain.asc()
+                    )
+                )
+            )
+
+    def upsert(self, sources: Iterable[WebSourceRecord]) -> list[WebSourceRecord]:
+        """加入或更新来源，返回写入后的完整清单。
+
+        幂等由主键保证（domain 就是主键）。重复加入时**合并证据而不是覆盖**：一个
+        域名可能先因为种子表被收录、后来又因为文档引用被再次加入，两条理由都值得留着
+        —— 只留最新的一条会让用户下次回来看时以为它只有一个来路。
+        """
+        with self.database.session() as session:
+            for source in sources:
+                existing = session.get(WebSourceRecord, source.domain)
+                if existing is None:
+                    session.add(source)
+                    continue
+                merged = list(
+                    dict.fromkeys(
+                        [*json.loads(existing.evidence_json or "[]"), *json.loads(source.evidence_json or "[]")]
+                    )
+                )
+                existing.evidence_json = json.dumps(merged, ensure_ascii=False)
+                existing.updated_at = utc_now()
+                # 元数据只在有值时更新：一次只带域名的"手工添加"不该把种子表带来的
+                # 显示名与抓取入口抹掉。
+                if source.entry_url:
+                    existing.entry_url = source.entry_url
+                if source.label:
+                    existing.label = source.label
+                if source.kind:
+                    existing.kind = source.kind
+                # `bool(...)` 不是多余的：未显式赋值的 ORM 对象在 flush 之前字段是 None，
+                # 而 `False or None` 会把 None 写进 NOT NULL 列（这条曾被测试抓到）。
+                existing.verified = bool(existing.verified or source.verified)
+            session.flush()
+        return self.list()
+
+    def remove(self, domain: str) -> bool:
+        with self.database.session() as session:
+            row = session.get(WebSourceRecord, domain)
+            if row is None:
+                return False
+            session.delete(row)
+            return True
 
 
 class ConversationStore:

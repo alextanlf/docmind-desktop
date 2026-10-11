@@ -47,6 +47,10 @@ import {
   PluginStateSchema,
   BatchImportSchema,
   BatchDiagnosticsPageSchema,
+  CorpusCandidateRequestSchema,
+  CorpusCandidatesResponseSchema,
+  SaveWebSourcesRequestSchema,
+  WebSourcesResponseSchema,
   BatchItemPageSchema,
   BrowserInstallResultSchema,
   CreateBatchInputSchema,
@@ -443,6 +447,23 @@ const api: DocMindApi = {
     stageDirectory: () =>
       invoke(IPC_CHANNELS.sourcesStageDirectory, StagedCollectionSchema.nullable()),
     listFormats: () => invoke(IPC_CHANNELS.sourcesListFormats, SourceFormatSchema.array()),
+  },
+  corpus: {
+    candidates: (input) =>
+      invoke(
+        IPC_CHANNELS.corpusCandidates,
+        CorpusCandidatesResponseSchema,
+        CorpusCandidateRequestSchema.parse(input),
+      ),
+    sources: () => invoke(IPC_CHANNELS.corpusSources, WebSourcesResponseSchema),
+    saveSources: (input) =>
+      invoke(
+        IPC_CHANNELS.corpusSaveSources,
+        WebSourcesResponseSchema,
+        SaveWebSourcesRequestSchema.parse(input),
+      ),
+    removeSource: (domain) =>
+      invoke(IPC_CHANNELS.corpusRemoveSource, WebSourcesResponseSchema, domain),
   },
   batches: {
     create: (input) =>
