@@ -60,9 +60,7 @@ function installObserverStubs() {
     constructor(private readonly callback: ObserverCallback) {}
     observe(target: Element) {
       observedClasses.push(target.className);
-      queueMicrotask(() =>
-        this.callback([{ isIntersecting: true, target }], this),
-      );
+      queueMicrotask(() => this.callback([{ isIntersecting: true, target }], this));
     }
     unobserve() {}
     disconnect() {}

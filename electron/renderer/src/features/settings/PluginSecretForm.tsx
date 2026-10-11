@@ -67,9 +67,7 @@ export function PluginSecretForm({ plugin }: { plugin: PluginManifest }) {
           disabled={busy}
           onChange={(event) => setSecret(event.target.value)}
           placeholder={
-            plugin.configured
-              ? "已保存，留空则保留"
-              : (plugin.secretPlaceholder ?? "输入访问凭据")
+            plugin.configured ? "已保存，留空则保留" : (plugin.secretPlaceholder ?? "输入访问凭据")
           }
           type="password"
           value={secret}

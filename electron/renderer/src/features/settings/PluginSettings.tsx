@@ -167,9 +167,7 @@ export function PluginSettings() {
           <li key={plugin.id}>
             <PluginRow
               plugin={plugin}
-              onOpen={() =>
-                setSelection({ id: plugin.id, plugin: plugin.origin?.plugin ?? null })
-              }
+              onOpen={() => setSelection({ id: plugin.id, plugin: plugin.origin?.plugin ?? null })}
             />
           </li>
         ))}
@@ -438,8 +436,8 @@ function PluginDetail({
           </div>
           <p>
             将把「{plugin.label}」移出插件目录，DocMind 重启后不再加载它。
-            <strong>插件文件不会被删除</strong>，会移到一个可以找回的位置；
-            如果它是你自己 clone 的仓库，之后放回插件目录即可。
+            <strong>插件文件不会被删除</strong>，会移到一个可以找回的位置； 如果它是你自己 clone
+            的仓库，之后放回插件目录即可。
           </p>
           {error ? (
             <p className="error-copy" role="alert">
@@ -450,7 +448,11 @@ function PluginDetail({
             <button className="button button-secondary" onClick={() => setConfirming(false)}>
               取消
             </button>
-            <button className="button button-danger" disabled={busy} onClick={() => void removePlugin()}>
+            <button
+              className="button button-danger"
+              disabled={busy}
+              onClick={() => void removePlugin()}
+            >
               {remove.isPending ? (
                 <LoaderCircle aria-hidden="true" className="spin" size={16} />
               ) : (
@@ -476,9 +478,7 @@ function PluginDirectoryNote({ directory }: { directory?: string }) {
   return (
     <p className="plugin-directory">
       插件目录：<code>{directory}</code>
-      <span>
-        把插件目录（或 git clone 下来的仓库）放进这里，重启 DocMind 后生效。
-      </span>
+      <span>把插件目录（或 git clone 下来的仓库）放进这里，重启 DocMind 后生效。</span>
     </p>
   );
 }

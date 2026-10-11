@@ -312,7 +312,9 @@ describe("resizable side panels", () => {
       "docmind.panel-sizes",
       JSON.stringify({ reference: "wide", sidebar: null }),
     );
-    usePanelSizeStore.setState({ sizes: parseStoredSizes(localStorage.getItem("docmind.panel-sizes")) });
+    usePanelSizeStore.setState({
+      sizes: parseStoredSizes(localStorage.getItem("docmind.panel-sizes")),
+    });
 
     renderWorkspace();
 

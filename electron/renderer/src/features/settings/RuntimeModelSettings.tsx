@@ -1,6 +1,10 @@
 import { useState } from "react";
 import type { RuntimeSettingsInput, SettingsView } from "../../../../shared/contracts";
-import { clientErrorMessage, useLocalModelsQuery, useSaveRuntimeMutation } from "./settings.queries";
+import {
+  clientErrorMessage,
+  useLocalModelsQuery,
+  useSaveRuntimeMutation,
+} from "./settings.queries";
 import { LocalDataPanel } from "./LocalDataPanel";
 import { LocalModelStatusCard } from "./LocalModelStatusCard";
 
@@ -117,8 +121,8 @@ export function RuntimeModelSettings({ settings }: { settings: SettingsView }) {
         />
       </label>
       <p className="runtime-hint">
-        仅当本地服务开启了鉴权时才需要（Ollama 忽略此项）。该值以明文存于本地配置，
-        与云端 API Key 的钥匙串存储方式不同，请勿填写敏感凭据。
+        仅当本地服务开启了鉴权时才需要（Ollama 忽略此项）。该值以明文存于本地配置， 与云端 API Key
+        的钥匙串存储方式不同，请勿填写敏感凭据。
       </p>
       <fieldset>
         <legend>检索</legend>
@@ -129,14 +133,10 @@ export function RuntimeModelSettings({ settings }: { settings: SettingsView }) {
             min={1}
             max={20}
             value={draft.rag.maxSources}
-            onChange={(e) =>
-              update({ rag: { ...draft.rag, maxSources: Number(e.target.value) } })
-            }
+            onChange={(e) => update({ rag: { ...draft.rag, maxSources: Number(e.target.value) } })}
           />
         </label>
-        <p role="status">
-          调高能改善“总结全部”这类全局提问的召回，代价是提示词变长、调用变贵。
-        </p>
+        <p role="status">调高能改善“总结全部”这类全局提问的召回，代价是提示词变长、调用变贵。</p>
         <label>
           记忆召回相似度下限（0–1）
           <input

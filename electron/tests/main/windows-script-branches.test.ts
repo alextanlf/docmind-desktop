@@ -54,7 +54,12 @@ async function fakeRepoWithVenv(venvRelative: string) {
 function runShell(script: string, repo: string, path: string) {
   return run("/bin/bash", ["-c", script], {
     cwd: root,
-    env: { ...process.env, PATH: `${path}:/bin:/usr/bin`, DOCMIND_REPO: root, DOCMIND_FAKE_ROOT: repo },
+    env: {
+      ...process.env,
+      PATH: `${path}:/bin:/usr/bin`,
+      DOCMIND_REPO: root,
+      DOCMIND_FAKE_ROOT: repo,
+    },
   }).then(
     (result) => ({ status: 0, stdout: result.stdout, stderr: result.stderr }),
     (error: any) => ({
@@ -139,7 +144,10 @@ describe("packaged runtime layout expectations", () => {
   // 打包契约：main 进程按平台在 runtime 目录里找解释器，脚本必须产出对应名字。
   // 两边任一侧改了名字而另一侧没改，Windows 包会在启动时静默失败。
   it("keeps the interpreter candidates aligned with the build script", async () => {
-    const contract = await readFile(join(root, "electron/main/backend-runtime-contract.ts"), "utf8");
+    const contract = await readFile(
+      join(root, "electron/main/backend-runtime-contract.ts"),
+      "utf8",
+    );
     const buildScript = await readFile(
       join(root, "backend/scripts/build-backend-runtime.sh"),
       "utf8",
@@ -153,7 +161,10 @@ describe("packaged runtime layout expectations", () => {
   });
 
   it("keeps the entry script name aligned between contract and build script", async () => {
-    const contract = await readFile(join(root, "electron/main/backend-runtime-contract.ts"), "utf8");
+    const contract = await readFile(
+      join(root, "electron/main/backend-runtime-contract.ts"),
+      "utf8",
+    );
     const buildScript = await readFile(
       join(root, "backend/scripts/build-backend-runtime.sh"),
       "utf8",

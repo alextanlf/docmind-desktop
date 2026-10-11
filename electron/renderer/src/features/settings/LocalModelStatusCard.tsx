@@ -33,9 +33,7 @@ export function LocalModelStatusCard({
           ))}
         </ul>
       ) : (
-        <p>
-          服务未加载任何模型。DocMind 不提供模型下载，请在所用工具中加载模型后再选择。
-        </p>
+        <p>服务未加载任何模型。DocMind 不提供模型下载，请在所用工具中加载模型后再选择。</p>
       )}
     </div>
   );

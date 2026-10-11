@@ -3,12 +3,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { appQueryClient } from "../../renderer/src/app/query-client";
 import { RepositoryTree } from "../../renderer/src/features/repositories/RepositoryTree";
-import {
-  document,
-  feishuProviderSummary,
-  installDocMindApi,
-  repository,
-} from "./test-docmind-api";
+import { document, feishuProviderSummary, installDocMindApi, repository } from "./test-docmind-api";
 
 describe("repository sync", () => {
   beforeEach(() => {

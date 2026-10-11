@@ -8,7 +8,13 @@ import { OnboardingDialog } from "./features/onboarding/OnboardingDialog";
 import { SettingsLoadErrorDialog } from "./features/settings/SettingsLoadErrorDialog";
 import { useSettingsQuery } from "./features/settings/settings.queries";
 
-function ResolvedApp({ initialReady, setupSkipped }: { initialReady: boolean; setupSkipped: boolean }) {
+function ResolvedApp({
+  initialReady,
+  setupSkipped,
+}: {
+  initialReady: boolean;
+  setupSkipped: boolean;
+}) {
   // Only the first snapshot decides whether setup is required. Re-reading
   // settings while the dialog is open would unmount it mid-edit: saving a model
   // flips hasApiKey to true, which would drop the dialog before the user could
@@ -53,7 +59,9 @@ function AppContent() {
     );
   }
   const ready = settings.data?.hasApiKey === true;
-  return <ResolvedApp initialReady={ready} setupSkipped={settings.data?.modelSetupSkipped === true} />;
+  return (
+    <ResolvedApp initialReady={ready} setupSkipped={settings.data?.modelSetupSkipped === true} />
+  );
 }
 
 export default function App() {

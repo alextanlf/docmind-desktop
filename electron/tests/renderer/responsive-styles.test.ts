@@ -101,7 +101,9 @@ describe("responsive workspace styles", () => {
     const grid = stylesAt(1440, "workspace-grid");
     expect(grid["--sidebar-width"]).toBe("248px");
     expect(grid["--reference-width"]).toBe("320px");
-    expect(stylesAt(1440, "workspace-grid", "sidebar-is-collapsed")["--sidebar-width"]).toBe("64px");
+    expect(stylesAt(1440, "workspace-grid", "sidebar-is-collapsed")["--sidebar-width"]).toBe(
+      "64px",
+    );
     // The collapsed rail is a fixed 64px: a remembered width must not leak back in.
     expect(stylesAt(1440, "workspace-sidebar", "is-collapsed")["width"]).toBe("64px");
   });

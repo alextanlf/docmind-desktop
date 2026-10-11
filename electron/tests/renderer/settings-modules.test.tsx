@@ -50,11 +50,7 @@ describe("settings module registry", () => {
 
     // Without a stable tiebreak `Array.prototype.sort` may return these in any
     // order, and the nav item under the user's cursor can move between renders.
-    expect(settingsModules().map((entry) => entry.id)).toEqual([
-      "twin-a",
-      "twin-b",
-      "twin-c",
-    ]);
+    expect(settingsModules().map((entry) => entry.id)).toEqual(["twin-a", "twin-b", "twin-c"]);
   });
 
   it("puts the lowest-ordered module first so a new page can become the landing one", () => {

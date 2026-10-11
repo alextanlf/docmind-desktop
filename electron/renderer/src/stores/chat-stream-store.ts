@@ -198,8 +198,7 @@ export const useChatStreamStore = create<ChatStreamState>((set, get) => ({
     if (event.type === "progress" && event.payload.stage === "tool") {
       const name = typeof event.payload.tool === "string" ? event.payload.tool : "";
       const raw = event.payload.status;
-      const status =
-        raw === "running" || raw === "done" || raw === "failed" ? raw : "running";
+      const status = raw === "running" || raw === "done" || raw === "failed" ? raw : "running";
       set({
         toolActivity: name ? { name, status } : null,
         lastSequence: event.sequence,

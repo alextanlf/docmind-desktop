@@ -183,7 +183,13 @@ describe("backend runtime contract", () => {
       expect(() =>
         resolveBackendRuntime(
           {},
-          { packaged: true, repoDir: "/repo", dataDir: "/data", resourcesPath: resources, platform: "win32" },
+          {
+            packaged: true,
+            repoDir: "/repo",
+            dataDir: "/data",
+            resourcesPath: resources,
+            platform: "win32",
+          },
         ),
       ).toThrow("BACKEND_START_FAILED");
     });
@@ -202,7 +208,13 @@ describe("backend runtime contract", () => {
           DOCMIND_BACKEND_ARGS: '["-m","app"]',
           DOCMIND_BACKEND_CWD: cwd,
         },
-        { packaged: true, repoDir: "/repo", dataDir: "/data", resourcesPath: resources, platform: "win32" },
+        {
+          packaged: true,
+          repoDir: "/repo",
+          dataDir: "/data",
+          resourcesPath: resources,
+          platform: "win32",
+        },
       );
       expect(resolved.command).toBe(command);
       expect(resolved.args).toEqual(["-m", "app"]);
@@ -218,7 +230,13 @@ describe("backend runtime contract", () => {
           DOCMIND_BACKEND_ARGS: '["run.py"]',
           DOCMIND_BACKEND_CWD: "/nonexistent/runtime",
         },
-        { packaged: true, repoDir: "/repo", dataDir: "/data", resourcesPath: resources, platform: "win32" },
+        {
+          packaged: true,
+          repoDir: "/repo",
+          dataDir: "/data",
+          resourcesPath: resources,
+          platform: "win32",
+        },
       );
       expect(resolved.cwd).toBe(runtimeDir);
     });
@@ -228,7 +246,13 @@ describe("backend runtime contract", () => {
       expect(() =>
         resolveBackendRuntime(
           {},
-          { packaged: true, repoDir: "/repo", dataDir: "/data", resourcesPath: resources, platform: "win32" },
+          {
+            packaged: true,
+            repoDir: "/repo",
+            dataDir: "/data",
+            resourcesPath: resources,
+            platform: "win32",
+          },
         ),
       ).toThrow("BACKEND_START_FAILED");
     });

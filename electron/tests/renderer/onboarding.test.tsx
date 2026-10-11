@@ -236,13 +236,11 @@ describe("首次设置", () => {
     const restart = vi.fn().mockResolvedValue(undefined);
     installDocMindApi({
       settings: {
-        get: vi
-          .fn()
-          .mockRejectedValue({
-            code: "BACKEND_PROTOCOL_ERROR",
-            message: "格式无效",
-            retryable: true,
-          }),
+        get: vi.fn().mockRejectedValue({
+          code: "BACKEND_PROTOCOL_ERROR",
+          message: "格式无效",
+          retryable: true,
+        }),
       },
       app: { restart },
     });

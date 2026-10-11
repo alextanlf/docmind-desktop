@@ -403,7 +403,9 @@ describe("BackendProxy.requestRange", () => {
   });
 
   it("surfaces backend failures as client errors instead of returning partial bytes", async () => {
-    const request = vi.fn().mockResolvedValue(new Response("range not satisfiable", { status: 416 }));
+    const request = vi
+      .fn()
+      .mockResolvedValue(new Response("range not satisfiable", { status: 416 }));
     const proxy = new BackendProxy({ request, send: vi.fn() });
 
     await expect(proxy.requestRange(route, 999, 1999)).rejects.toMatchObject({

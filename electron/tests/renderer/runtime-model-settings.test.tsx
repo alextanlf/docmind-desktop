@@ -60,7 +60,12 @@ describe("runtime query contracts", () => {
     const result = renderHookHarness(() => useSaveRuntimeMutation());
     await expect(
       result.mutateAsync({
-        local: { baseUrl: "http://127.0.0.1:11434", model: "llama3.2", apiKey: "", timeoutSeconds: 120 },
+        local: {
+          baseUrl: "http://127.0.0.1:11434",
+          model: "llama3.2",
+          apiKey: "",
+          timeoutSeconds: 120,
+        },
         routing: { mode: "local_only" },
         rag: { maxSources: 5, memoryRecallMinSimilarity: 0.65 },
       }),
@@ -93,7 +98,12 @@ describe("retrieval settings form", () => {
     const settings: SettingsView = {
       ...readySettings,
       runtime: {
-        local: { baseUrl: "http://127.0.0.1:11434", model: "llama3.2", apiKey: "", timeoutSeconds: 120 },
+        local: {
+          baseUrl: "http://127.0.0.1:11434",
+          model: "llama3.2",
+          apiKey: "",
+          timeoutSeconds: 120,
+        },
         routing: { mode: "cloud_only" },
         rag: { maxSources: 5, memoryRecallMinSimilarity: 0.65 },
       },
@@ -124,7 +134,12 @@ describe("retrieval settings form", () => {
     const settings = {
       ...readySettings,
       runtime: {
-        local: { baseUrl: "http://127.0.0.1:11434", model: "llama3.2", apiKey: "", timeoutSeconds: 120 },
+        local: {
+          baseUrl: "http://127.0.0.1:11434",
+          model: "llama3.2",
+          apiKey: "",
+          timeoutSeconds: 120,
+        },
         routing: { mode: "cloud_only" as const },
       },
     } as unknown as SettingsView;

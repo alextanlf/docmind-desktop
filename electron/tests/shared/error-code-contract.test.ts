@@ -49,8 +49,6 @@ describe("平台错误码必须在前端有对应文案", () => {
 
   it("未登记码的 fallback 行为本身保持稳定", () => {
     // If this ever changes, the assertion above becomes vacuous.
-    expect(clientErrorMessage({ code: "TOTALLY_UNKNOWN_CODE" })).toBe(
-      "操作失败，请检查设置后重试",
-    );
+    expect(clientErrorMessage({ code: "TOTALLY_UNKNOWN_CODE" })).toBe("操作失败，请检查设置后重试");
   });
 });

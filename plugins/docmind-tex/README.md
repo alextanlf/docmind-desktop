@@ -34,16 +34,16 @@ ln -s ~/code/docmind-desktop/plugins/docmind-tex "$PLUGINS/docmind-tex"
 
 文档结构决定检索质量，所以下面这些不是「尽量保留」，而是**有断言锁住的**：
 
-| LaTeX | 转成 |
-|---|---|
+| LaTeX                                                                               | 转成                                         |
+| ----------------------------------------------------------------------------------- | -------------------------------------------- |
 | `\part` / `\chapter` / `\section` / `\subsection` / `\subsubsection` / `\paragraph` | `#` ~ `######`（固定映射，不按文档重排层级） |
-| `tabular` + booktabs 规则 | GFM 表格 |
-| `\caption` | 表格/图上方一行粗体文本 |
-| `itemize` / `enumerate` / `description`（含嵌套） | markdown 列表 |
-| `lstlisting` / `verbatim` / `minted` | 围栏代码块（保留语言） |
-| `equation` / `align*` / `\[...\]` | `$$` 块，内容**逐字保留** |
-| `$...$` / `\(...\)` | 原样保留，包括 `\frac`、`\mathcal` |
-| `\ref` / `\cite` | `[key]` |
+| `tabular` + booktabs 规则                                                           | GFM 表格                                     |
+| `\caption`                                                                          | 表格/图上方一行粗体文本                      |
+| `itemize` / `enumerate` / `description`（含嵌套）                                   | markdown 列表                                |
+| `lstlisting` / `verbatim` / `minted`                                                | 围栏代码块（保留语言）                       |
+| `equation` / `align*` / `\[...\]`                                                   | `$$` 块，内容**逐字保留**                    |
+| `$...$` / `\(...\)`                                                                 | 原样保留，包括 `\frac`、`\mathcal`           |
+| `\ref` / `\cite`                                                                    | `[key]`                                      |
 
 **故意丢掉的**：`tikzpicture` 等绘图（图本身带不过来，留着就是噪声）、字号颜色命令
 （`\large`、`\color`）、版式命令（`\vspace`、`\clearpage`）、`\label`。

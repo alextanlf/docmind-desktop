@@ -61,10 +61,7 @@ export const HEX_DIGEST_REPLACEMENT = "[redacted]";
  *   token/sha256 values that appear without a variable name. Off by default
  *   because it can over-mask unrelated hex strings.
  */
-export function redactSecrets(
-  value: string,
-  options: { digests?: boolean } = {},
-): string {
+export function redactSecrets(value: string, options: { digests?: boolean } = {}): string {
   let output = value
     .replace(SESSION_TOKEN_PATTERN, SESSION_TOKEN_REPLACEMENT)
     .replace(PATH_SOURCE, maskPath);

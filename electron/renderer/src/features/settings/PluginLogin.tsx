@@ -24,8 +24,7 @@ export function PluginLogin({ plugin }: { plugin: PluginManifest }) {
   const canInstallBrowser = plugin.browserInstall;
   const browserUnavailableCode = plugin.browserUnavailableCode ?? null;
   const isBrowserMissing = (value: unknown): boolean =>
-    browserUnavailableCode !== null &&
-    (value as { code?: string }).code === browserUnavailableCode;
+    browserUnavailableCode !== null && (value as { code?: string }).code === browserUnavailableCode;
 
   useEffect(() => {
     // Logging in changes what repositories exist, so any open picker has to

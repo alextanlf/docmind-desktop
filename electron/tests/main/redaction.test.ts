@@ -3,9 +3,7 @@ import { redactSecrets } from "../../main/redaction";
 
 describe("redactSecrets", () => {
   it("masks the session token in every occurrence", () => {
-    expect(redactSecrets("DOCMIND_SESSION_TOKEN=abc123")).toBe(
-      "DOCMIND_SESSION_TOKEN=[redacted]",
-    );
+    expect(redactSecrets("DOCMIND_SESSION_TOKEN=abc123")).toBe("DOCMIND_SESSION_TOKEN=[redacted]");
     expect(redactSecrets("first DOCMIND_SESSION_TOKEN=a second DOCMIND_SESSION_TOKEN=b")).toBe(
       "first DOCMIND_SESSION_TOKEN=[redacted] second DOCMIND_SESSION_TOKEN=[redacted]",
     );
@@ -67,8 +65,6 @@ describe("redactSecrets", () => {
   });
 
   it("leaves non-path text untouched", () => {
-    expect(redactSecrets("chunk 3 of 12 confidence 0.91")).toBe(
-      "chunk 3 of 12 confidence 0.91",
-    );
+    expect(redactSecrets("chunk 3 of 12 confidence 0.91")).toBe("chunk 3 of 12 confidence 0.91");
   });
 });

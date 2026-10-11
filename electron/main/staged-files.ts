@@ -33,7 +33,6 @@ export type ImportFormat = {
   maxBytes: number;
 };
 
-
 type DirectoryDialogOptions = { properties: ["openDirectory"] };
 type FileDialogOptions = {
   properties: ["openFile"];

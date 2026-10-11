@@ -27,9 +27,8 @@ export function SourceStep({ onContinue }: SourceStepProps) {
   const available = formats.data ?? [];
   // Default to the URL tab until the format list arrives, then to the first
   // format — so the control is never empty while the request is in flight.
-  const active = selected ?? (available[0]?.name ?? null);
-  const activeLabel =
-    available.find((format) => format.name === active)?.label ?? active ?? "";
+  const active = selected ?? available[0]?.name ?? null;
+  const activeLabel = available.find((format) => format.name === active)?.label ?? active ?? "";
 
   async function choose() {
     if (active === null) return;

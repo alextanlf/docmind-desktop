@@ -122,9 +122,7 @@ export class BackendManager {
       DOCMIND_SESSION_TOKEN: this.token,
       DOCMIND_DATA_DIR: this.dataDir,
       DOCMIND_PORT: String(this.runtime.port),
-      ...(this.bundledModelsDir
-        ? { DOCMIND_BUNDLED_MODELS_DIR: this.bundledModelsDir }
-        : {}),
+      ...(this.bundledModelsDir ? { DOCMIND_BUNDLED_MODELS_DIR: this.bundledModelsDir } : {}),
     };
     let startError: Error | undefined;
     let exited = false;

@@ -94,7 +94,11 @@ describe("staged directories", () => {
     await writeFile(join(fixtureRoot, "index.html"), "<h1>Index</h1>\n");
     await writeFile(join(fixtureRoot, "ignored.txt"), "not supported\n");
 
-    const result = await stageDirectoryForTest({ selectedPath: fixtureRoot, dataDir, formats: FORMATS });
+    const result = await stageDirectoryForTest({
+      selectedPath: fixtureRoot,
+      dataDir,
+      formats: FORMATS,
+    });
 
     expect(result).toMatchObject({
       displayName: "fixture",
@@ -165,8 +169,16 @@ describe("staged directories", () => {
     await mkdir(fixtureRoot);
     await writeFile(join(fixtureRoot, "one.md"), "one");
 
-    const first = await stageDirectoryForTest({ selectedPath: fixtureRoot, dataDir, formats: FORMATS });
-    const second = await stageDirectoryForTest({ selectedPath: fixtureRoot, dataDir, formats: FORMATS });
+    const first = await stageDirectoryForTest({
+      selectedPath: fixtureRoot,
+      dataDir,
+      formats: FORMATS,
+    });
+    const second = await stageDirectoryForTest({
+      selectedPath: fixtureRoot,
+      dataDir,
+      formats: FORMATS,
+    });
     const firstManifest = await readManifest(dataDir, first.collectionId);
     const secondManifest = await readManifest(dataDir, second.collectionId);
     const rootsPath = join(dataDir, "imports", "source-roots.json");
