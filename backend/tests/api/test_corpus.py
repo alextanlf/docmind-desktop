@@ -377,3 +377,62 @@ def test_removing_a_source_while_it_is_crawling_leaves_no_orphan_corpus(client, 
 def _wait_state(client, auth_headers, domain: str) -> str:
     body = client.get("/api/corpus/sources", headers=auth_headers).json()
     return next(item for item in body["sources"] if item["domain"] == domain)["crawlState"]
+
+
+def test_candidates_are_mined_from_documents_and_crawl_history(client, auth_headers) -> None:
+    """用户已有的数据也是信号，而且不需要问任何人。
+
+    挖出来的候选 `verified` 必须是 False：文档引用过某个站，只说明"这份文档提过它"，
+    不说明它是一手来源。
+    """
+    # crawl_entries 有指向批次的强约束，所以先造一个批次（外键不是能绕过的东西）。
+    import json as _json
+
+    from app.storage.models import BatchImportRecord, BatchState, CrawlEntryRecord, DocumentRecord
+
+    batch_id = client.app.state.batch_store.create_batch(
+        BatchImportRecord(
+            source_kind="web",
+            source_descriptor_json=_json.dumps({"entryUrl": "https://docs.test/guide"}),
+            repository_id=None,
+            state=BatchState.AWAITING_CONFIRMATION,
+            discovery_version=1,
+            message="",
+        )
+    ).id
+    repository = client.app.state.repository_store.create_local(name="挖矿")
+    client.app.state.document_store.create(
+        DocumentRecord(
+            repository_id=repository.id,
+            title="asyncio 笔记",
+            source_url="web:https://docs.python.org/3/library/asyncio.html",
+            source_type="import",
+        )
+    )
+    client.app.state.document_store.create(
+        DocumentRecord(
+            repository_id=repository.id,
+            title="本地文件",
+            source_url="staged://0c5f3a1e-0000-0000-0000-000000000000",
+            source_type="import",
+        )
+    )
+    client.app.state.crawl_entries.upsert_frontier(
+        CrawlEntryRecord(batch_id=batch_id, canonical_url="https://sqlite.org/docs.html", depth=0)
+    )
+
+    response = client.post(
+        "/api/corpus/candidates",
+        headers=auth_headers,
+        json={"nominate": False},
+    )
+
+    assert response.status_code == 200
+    by_domain = {candidate["domain"]: candidate for candidate in response.json()["candidates"]}
+    # 网页导入的 `web:https://…` 标识也要能挖出主机名（少抠一层就是个空结果）。
+    assert by_domain["docs.python.org"]["signals"] == ["documents"]
+    assert by_domain["docs.python.org"]["verified"] is False
+    assert "你的文档引用了它" in by_domain["docs.python.org"]["evidence"][0]
+    assert by_domain["sqlite.org"]["signals"] == ["crawl_history"]
+    # 本地暂存目录不是站点：本机实测 3 篇文档全是这一类，不能被当成域名。
+    assert "staged" not in " ".join(by_domain)

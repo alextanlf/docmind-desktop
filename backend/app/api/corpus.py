@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request
 from app.api.errors import DomainError
 from app.corpus.candidates import NominatedSource, derive_candidates, normalize_domain
 from app.corpus.crawl import CorpusCrawler
+from app.corpus.mining import collect
 from app.corpus.nomination import DomainNominator
 from app.corpus.service import CorpusCrawlService
 from app.schemas.corpus import (
@@ -24,7 +25,13 @@ from app.schemas.corpus import (
     WebSourceView,
 )
 from app.storage.models import CrawlState, WebSourceRecord, utc_now
-from app.storage.repositories import CorpusStats, WebCorpusStore, WebSourceStore
+from app.storage.repositories import (
+    CorpusStats,
+    CrawlEntryStore,
+    DocumentStore,
+    WebCorpusStore,
+    WebSourceStore,
+)
 
 router = APIRouter(prefix="/api/corpus", tags=["corpus"])
 
@@ -45,12 +52,17 @@ async def derive_source_candidates(
     if attempted and nominator is not None and body.text is not None:
         nominated = await nominator.nominate(body.text, limit=body.nominate_limit)
 
+    # 用户已有的数据也是信号，而且不需要问任何人：文档里出现的网址、之前抓过的网址。
+    # 调用方显式传进来的与库里挖到的**合并**（而不是二选一）：前者是未来的界面入口，
+    # 后者是默认行为。
+    document_urls = [*body.document_urls, *collect(_document_store(request).source_urls())]
+    crawl_urls = [*body.crawl_urls, *collect(_crawl_entries(request).canonical_urls())]
     candidates = derive_candidates(
         explicit=body.explicit_domains,
         text=body.text,
         nominated=nominated,
-        document_urls=body.document_urls,
-        crawl_urls=body.crawl_urls,
+        document_urls=document_urls,
+        crawl_urls=crawl_urls,
         upstream_urls=body.upstream_urls,
         limit=body.limit,
     )
@@ -81,6 +93,14 @@ def _store(request: Request) -> WebSourceStore:
 
 def _corpus(request: Request) -> WebCorpusStore:
     return cast(WebCorpusStore, request.app.state.web_corpus)
+
+
+def _document_store(request: Request) -> DocumentStore:
+    return cast(DocumentStore, request.app.state.document_store)
+
+
+def _crawl_entries(request: Request) -> CrawlEntryStore:
+    return cast(CrawlEntryStore, request.app.state.crawl_entries)
 
 
 def _crawler(request: Request) -> CorpusCrawler:

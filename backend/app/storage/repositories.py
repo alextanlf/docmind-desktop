@@ -273,6 +273,25 @@ class DocumentStore:
             )
             return list(session.scalars(statement))
 
+    def source_urls(self, *, limit: int = 500) -> list[str]:
+        """最近 `limit` 篇文档的来源相关字段。
+
+        三个字段都要：`source_url` 是本地的来源、`remote_url` 是远端地址、
+        `source_identity` 形如 `web:https://…`（网页导入）。少一个字段，那一类导入的
+        文档就挖不出任何站点 —— 而"文档里的网址"正是这条信号的全部内容。
+        """
+        with self.database.session() as session:
+            rows = session.execute(
+                select(
+                    DocumentRecord.source_url,
+                    DocumentRecord.remote_url,
+                    DocumentRecord.source_identity,
+                )
+                .order_by(DocumentRecord.created_at.desc(), DocumentRecord.id)
+                .limit(limit)
+            ).all()
+        return [value for row in rows for value in row if value]
+
     def indexed_count_for_repository(self, repository_id: str) -> int:
         with self.database.session() as session:
             statement = select(func.count(func.distinct(DocumentChunkRecord.document_id))).where(
@@ -1700,6 +1719,20 @@ class CrawlEntryStore:
 
     def mark_rejected(self, entry_id: str, **kwargs: Any) -> CrawlEntryRecord | None:
         return self._mark(entry_id, CrawlEntryState.REJECTED, **kwargs)
+
+    def canonical_urls(self, *, limit: int = 500) -> list[str]:
+        """最近抓取/尝试抓取过的地址。
+
+        取"尝试过"而不只是"成功过"：用户试过抓一个站，就说明他对那个站有兴趣 ——
+        而当时失败的原因（被墙、被限流）正是本地语料想去解决的。
+        """
+        with self.database.session() as session:
+            rows = session.scalars(
+                select(CrawlEntryRecord.canonical_url)
+                .order_by(CrawlEntryRecord.created_at.desc(), CrawlEntryRecord.id)
+                .limit(limit)
+            )
+        return list(rows)
 
     def rejections(self, batch_id: str, *, limit: int = 200) -> tuple[int, list[CrawlEntryRecord]]:
         """该批次被拒的条目，返回 ``(总数, 前 limit 条)``。
