@@ -100,4 +100,43 @@ EOF
   exit 1
 fi
 
+# --- 暂存文件的格式检查 -----------------------------------------------------
+#
+# 为什么只查**暂存的那些文件**：`format:check` 曾经整仓红着（47 个文件），于是
+# `prettier --write .` 看起来是合理选择 —— 我用它一次卷进了十几个无关文件。逐文件检查
+# 让"只格式化你改过的文件"成为默认做法，而不是靠自觉。
+#
+# 检查的是**工作区**内容（不是暂存快照）：`prettier --check <路径>` 读磁盘上的文件。
+# 因此"暂存了未格式化的版本、随后又在工作区里格式化"这种情形查不出来 —— 代价可接受，
+# 换来的是不必为每个文件起一次进程去比对 staged blob。
+if [ "${DOCMIND_SKIP_FORMAT_CHECK:-0}" = "1" ]; then
+  echo "format-check: 已按 DOCMIND_SKIP_FORMAT_CHECK=1 跳过" >&2
+else
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null || printf '.')"
+  prettier="$repo_root/node_modules/.bin/prettier"
+  staged_files=()
+  while IFS= read -r file; do
+    [ -n "$file" ] && staged_files+=("$file")
+  done < <(git diff --cached --name-only --diff-filter=ACMR)
+
+  if [ "${#staged_files[@]}" -eq 0 ]; then
+    :
+  elif [ ! -x "$prettier" ]; then
+    # 没装依赖不该变成"不能提交"：说清楚并跳过，而不是拿一个环境问题拦人。
+    echo "format-check: 没找到 $prettier，跳过（在仓库根跑一次 npm install 才会生效）" >&2
+  elif ! "$prettier" --check --ignore-unknown "${staged_files[@]}" >/dev/null 2>&1; then
+    # 失败时把 prettier 的原话打出来（它列出的是具体哪几个文件）。
+    "$prettier" --check --ignore-unknown "${staged_files[@]}" >&2 || true
+    cat >&2 <<'EOF'
+
+提交被拦下：上面这些**暂存的文件**不符合格式。只格式化你改过的文件：
+  npx prettier --write <那些文件>
+
+不要按目录或 `.` 跑 prettier —— 那会把无关文件一起卷进来（这个钩子就是为此存在的）。
+确需绕过：DOCMIND_SKIP_FORMAT_CHECK=1 git commit ...
+EOF
+    exit 1
+  fi
+fi
+
 exit 0
