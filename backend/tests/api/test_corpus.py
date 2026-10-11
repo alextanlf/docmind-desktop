@@ -291,3 +291,22 @@ def test_crawling_a_source_that_was_never_collected_is_a_404(client, auth_header
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "CORPUS_SOURCE_UNKNOWN"
+
+
+def test_cancelling_a_crawl_that_is_not_running_is_not_an_error(client, auth_headers) -> None:
+    """界面上的双击、或者任务刚好在这一刻结束 —— 两者都不需要用户做什么。"""
+    _add_source(client, auth_headers, "docs.test", "https://docs.test/guide")
+
+    response = client.post("/api/corpus/sources/docs.test/cancel", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["cancelled"] is False
+    assert response.json()["sources"][0]["crawlState"] == "idle"
+
+
+def test_cancelling_an_unknown_source_is_not_an_error_either(client, auth_headers) -> None:
+    """和移除一样保持幂等：取消一个不在清单里的域名，回答"没有取消到"就够了。"""
+    response = client.post("/api/corpus/sources/never-added.example/cancel", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["cancelled"] is False

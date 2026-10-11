@@ -49,6 +49,7 @@ import {
   BatchDiagnosticsPageSchema,
   CorpusCandidateRequestSchema,
   CorpusCandidatesResponseSchema,
+  CancelCrawlResponseSchema,
   CrawlSourceResponseSchema,
   SaveWebSourcesRequestSchema,
   WebSourcesResponseSchema,
@@ -475,6 +476,16 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         `/api/corpus/sources/${encodeURIComponent(domain)}/crawl`,
         jsonInit("POST"),
         CrawlSourceResponseSchema,
+      );
+    },
+    [IPC_CHANNELS.corpusCancelCrawl]: (_event, domain) => {
+      if (typeof domain !== "string" || !domain) {
+        throw new DocMindClientError("INVALID_REQUEST", "域名无效");
+      }
+      return proxy.requestJson(
+        `/api/corpus/sources/${encodeURIComponent(domain)}/cancel`,
+        jsonInit("POST"),
+        CancelCrawlResponseSchema,
       );
     },
     [IPC_CHANNELS.batchesCreate]: (_event, input) =>

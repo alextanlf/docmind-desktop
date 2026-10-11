@@ -85,6 +85,7 @@ export const IPC_CHANNELS = {
   corpusSaveSources: "corpus:saveSources",
   corpusRemoveSource: "corpus:removeSource",
   corpusCrawlSource: "corpus:crawlSource",
+  corpusCancelCrawl: "corpus:cancelCrawl",
   shellOpenExternal: "shell:openExternal",
   appRestart: "app:restart",
   streamCancel: "stream:cancel",

@@ -150,3 +150,32 @@ async def test_startup_recovery_turns_running_into_interrupted(tmp_path: Path) -
     assert recovered.crawl_progress_json == "{}"
     # 不是"失败"：什么都没出错，只是没跑完。
     assert recovered.last_error is None
+
+
+@pytest.mark.asyncio
+async def test_cancelling_stops_the_task_and_marks_it_interrupted(tmp_path: Path) -> None:
+    """取消不是失败：用户该看到"这次没跑完"，而不是一个红色的错误。"""
+    gate = asyncio.Event()
+    service, store = service_for(tmp_path, StubCrawler(summary=SUMMARY, gate=gate))
+    await service.start("docs.test", entry_url=None)
+    await asyncio.sleep(0)
+
+    assert service.running("docs.test") is True
+    assert service.cancel("docs.test") is True
+
+    for _ in range(10):
+        await asyncio.sleep(0)
+        if not service.running("docs.test"):
+            break
+
+    cancelled = row(store)
+    assert cancelled.crawl_state == CrawlState.INTERRUPTED.value
+    assert cancelled.last_error is None
+
+
+@pytest.mark.asyncio
+async def test_cancelling_something_that_is_not_running_is_not_an_error(tmp_path: Path) -> None:
+    """双击、或者任务刚好在这一刻结束 —— 两者都不需要用户做什么。"""
+    service, _ = service_for(tmp_path, StubCrawler(summary=SUMMARY))
+
+    assert service.cancel("docs.test") is False

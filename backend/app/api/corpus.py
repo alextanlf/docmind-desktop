@@ -11,6 +11,7 @@ from app.corpus.crawl import CorpusCrawler
 from app.corpus.nomination import DomainNominator
 from app.corpus.service import CorpusCrawlService
 from app.schemas.corpus import (
+    CancelCrawlResponse,
     CorpusCandidateRequest,
     CorpusCandidatesResponse,
     CorpusCandidateView,
@@ -195,6 +196,22 @@ async def remove_web_source(request: Request, domain: str) -> WebSourcesResponse
     if normalized is not None:
         store.remove(normalized)
     return _sources_response(request, store.list())
+
+
+@router.post("/sources/{domain}/cancel", response_model=CancelCrawlResponse)
+async def cancel_web_source_crawl(request: Request, domain: str) -> CancelCrawlResponse:
+    """停止一个正在跑的抓取。
+
+    `cancelled: false` 表示这个域名当时并没有在抓 —— 不是错误：界面上的双击、或者任务
+    刚好在这一刻结束，都会看到这个结果，而两者都不需要用户做什么。
+    """
+    store = _store(request)
+    normalized = normalize_domain(domain)
+    cancelled = normalized is not None and _crawl_service(request).cancel(normalized)
+    return CancelCrawlResponse(
+        sources=_sources_response(request, store.list()).sources,
+        cancelled=cancelled,
+    )
 
 
 @router.post("/sources/{domain}/crawl", response_model=CrawlSourceResponse)

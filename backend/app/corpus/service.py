@@ -42,6 +42,19 @@ class CorpusCrawlService:
         self.page_budget = page_budget
         self._tasks: dict[str, asyncio.Task[None]] = {}
 
+    def cancel(self, domain: str) -> bool:
+        """取消一个正在跑的抓取。没在跑就返回 False。
+
+        取消**不是失败**：状态记成"被中断"，用户看到的是"这次没跑完"，而不是一个红色
+        的错误。抓取本身没有副作用需要回滚 —— 语料是一次性写入的，取消只会让它保持
+        上一次的完整状态。
+        """
+        task = self._tasks.get(domain)
+        if task is None or task.done():
+            return False
+        task.cancel()
+        return True
+
     def running(self, domain: str) -> bool:
         task = self._tasks.get(domain)
         return task is not None and not task.done()

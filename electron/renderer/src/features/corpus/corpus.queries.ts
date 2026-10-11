@@ -50,6 +50,16 @@ export function useCrawlSourceMutation() {
   });
 }
 
+export function useCancelCrawlMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (domain: string) => window.docmind.corpus.cancelCrawl(domain),
+    onSuccess: (data) => {
+      if (data) client.setQueryData(corpusKeys.sources, { sources: data.sources });
+    },
+  });
+}
+
 export function useRemoveWebSourceMutation() {
   const client = useQueryClient();
   return useMutation({

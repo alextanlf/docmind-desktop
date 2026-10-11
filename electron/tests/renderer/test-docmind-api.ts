@@ -862,6 +862,7 @@ export function installDocMindApi(overrides?: {
       saveSources: vi.fn().mockResolvedValue({ sources: [] }),
       removeSource: vi.fn().mockResolvedValue({ sources: [] }),
       crawlSource: vi.fn().mockResolvedValue({ sources: [], started: true }),
+      cancelCrawl: vi.fn().mockResolvedValue({ sources: [], cancelled: true }),
       ...overrides?.corpus,
     },
     batches: {

@@ -3,6 +3,7 @@ import type { CorpusCandidate, WebSource } from "../../../../shared/contracts";
 import { REJECTION_COPY } from "../imports/rejection-copy";
 import { clientErrorMessage } from "../settings/settings.queries";
 import {
+  useCancelCrawlMutation,
   useCrawlSourceMutation,
   useDeriveCandidatesMutation,
   useRemoveWebSourceMutation,
@@ -27,6 +28,7 @@ export function CorpusSettings() {
   const saveSources = useSaveWebSourcesMutation();
   const removeSource = useRemoveWebSourceMutation();
   const crawlSource = useCrawlSourceMutation();
+  const cancelCrawl = useCancelCrawlMutation();
   const [topic, setTopic] = useState("");
   const [manual, setManual] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -66,6 +68,15 @@ export function CorpusSettings() {
     if (!value) return;
     await collect({ domain: value, verified: false, evidence: ["你手工添加"] });
     setManual("");
+  }
+
+  async function cancel(domain: string) {
+    setError(null);
+    try {
+      await cancelCrawl.mutateAsync(domain);
+    } catch (cancelError) {
+      setError(clientErrorMessage(cancelError));
+    }
   }
 
   async function crawl(domain: string) {
@@ -166,15 +177,29 @@ export function CorpusSettings() {
             {source.verified ? "已核对来源" : "未经核对"}
           </span>
           {source.entryUrl ? <span className="corpus-entry">{source.entryUrl}</span> : null}
-          <button
-            aria-label={`抓取 ${source.domain}`}
-            className="button button-secondary"
-            disabled={crawlSource.isPending || source.crawlState === "running"}
-            onClick={() => void crawl(source.domain)}
-            type="button"
-          >
-            {source.crawlState === "running" ? "抓取中…" : "抓取"}
-          </button>
+          {source.crawlState === "running" ? (
+            // 运行中给的是"停止"而不是一个禁用的"抓取"：一个 200 页的抓取在慢站点上
+            // 要好几分钟，用户必须能停，而不是只能等或者关掉应用。
+            <button
+              aria-label={`停止抓取 ${source.domain}`}
+              className="button button-danger-quiet"
+              disabled={cancelCrawl.isPending}
+              onClick={() => void cancel(source.domain)}
+              type="button"
+            >
+              停止
+            </button>
+          ) : (
+            <button
+              aria-label={`抓取 ${source.domain}`}
+              className="button button-secondary"
+              disabled={crawlSource.isPending}
+              onClick={() => void crawl(source.domain)}
+              type="button"
+            >
+              抓取
+            </button>
+          )}
           <button
             aria-label={`移除 ${source.domain}`}
             className="button button-danger-quiet"

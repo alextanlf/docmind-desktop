@@ -906,6 +906,11 @@ export const CrawlSourceResponseSchema = WebSourcesResponseSchema.extend({
   started: z.boolean(),
 });
 
+export const CancelCrawlResponseSchema = WebSourcesResponseSchema.extend({
+  /** 取消时这个域名是否真的在抓。不在抓时返回 false —— 不是错误。 */
+  cancelled: z.boolean(),
+});
+
 export type CorpusCandidate = z.infer<typeof CorpusCandidateSchema>;
 export type CorpusCandidateRequest = z.infer<typeof CorpusCandidateRequestSchema>;
 export type CorpusCandidatesResponse = z.infer<typeof CorpusCandidatesResponseSchema>;
@@ -916,6 +921,7 @@ export type WebSourcesResponse = z.infer<typeof WebSourcesResponseSchema>;
 export type CrawlProgress = z.infer<typeof CrawlProgressSchema>;
 export type CrawlOutcome = z.infer<typeof CrawlOutcomeSchema>;
 export type CrawlSourceResponse = z.infer<typeof CrawlSourceResponseSchema>;
+export type CancelCrawlResponse = z.infer<typeof CancelCrawlResponseSchema>;
 
 /** 本地网页索引收录哪些站点。与后端 `/api/corpus` 对齐。 */
 export interface CorpusApi {
@@ -932,6 +938,12 @@ export interface CorpusApi {
    * 20 页。进度与结果都落库，界面轮询来源清单即可。
    */
   crawlSource(domain: string): Promise<CrawlSourceResponse>;
+  /**
+   * 停止一个正在跑的抓取。`cancelled: false` 表示当时并没有在抓 —— 不是错误。
+   *
+   * 一个 200 页的抓取在慢站点上要好几分钟，用户必须能停。
+   */
+  cancelCrawl(domain: string): Promise<CancelCrawlResponse>;
 }
 export type BatchDiagnostic = z.infer<typeof BatchDiagnosticSchema>;
 export type BatchDiagnosticsPage = z.infer<typeof BatchDiagnosticsPageSchema>;

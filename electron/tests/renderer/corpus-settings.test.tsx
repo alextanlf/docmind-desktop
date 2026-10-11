@@ -156,10 +156,11 @@ describe("网页语料", () => {
 
     // 进度来自服务端，所以刷新页面或换个窗口看到的是同一件事。
     expect(await screen.findByText(/正在抓取：已抓 7 页（预算 200）/)).toBeVisible();
-    expect(screen.getByRole("button", { name: "抓取 docs.python.org" })).toBeDisabled();
+    // 运行中给的是"停止"而不是一个禁用的"抓取"：慢站点上几分钟的抓取必须能停。
+    expect(screen.queryByRole("button", { name: "抓取 docs.python.org" })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "移除 docs.python.org" }));
-    await waitFor(() => expect(api.corpus.removeSource).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "停止抓取 docs.python.org" }));
+    await waitFor(() => expect(api.corpus.cancelCrawl).toHaveBeenCalledWith("docs.python.org"));
   });
 
   it("上次抓取的结果长期展示，不只是抓完那一下的提示", async () => {

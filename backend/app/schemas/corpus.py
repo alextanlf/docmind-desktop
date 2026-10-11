@@ -135,6 +135,11 @@ class WebSourcesResponse(WireModel):
     sources: list[WebSourceView]
 
 
+class CancelCrawlResponse(WebSourcesResponse):
+    #: 取消时这个域名是否真的在抓。不在抓时返回 false —— 不是错误。
+    cancelled: bool
+
+
 class CrawlStartedView(WireModel):
     """起一个后台抓取的结果。
 
