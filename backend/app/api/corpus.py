@@ -9,18 +9,20 @@ from app.api.errors import DomainError
 from app.corpus.candidates import NominatedSource, derive_candidates, normalize_domain
 from app.corpus.crawl import CorpusCrawler
 from app.corpus.nomination import DomainNominator
+from app.corpus.service import CorpusCrawlService
 from app.schemas.corpus import (
     CorpusCandidateRequest,
     CorpusCandidatesResponse,
     CorpusCandidateView,
     CorpusNominationView,
+    CrawlOutcomeView,
+    CrawlProgressView,
     CrawlSourceResponse,
-    CrawlSummaryView,
     SaveWebSourcesRequest,
     WebSourcesResponse,
     WebSourceView,
 )
-from app.storage.models import WebSourceRecord, utc_now
+from app.storage.models import CrawlState, WebSourceRecord, utc_now
 from app.storage.repositories import CorpusStats, WebCorpusStore, WebSourceStore
 
 router = APIRouter(prefix="/api/corpus", tags=["corpus"])
@@ -84,6 +86,37 @@ def _crawler(request: Request) -> CorpusCrawler:
     return cast(CorpusCrawler, request.app.state.corpus_crawler)
 
 
+def _crawl_service(request: Request) -> CorpusCrawlService:
+    return cast(CorpusCrawlService, request.app.state.corpus_crawl_service)
+
+
+def _progress_view(row: WebSourceRecord) -> CrawlProgressView | None:
+    """进行中的进度。只有正在抓取时才有意义 —— 否则界面上会挂着一份陈旧的进度。"""
+    if row.crawl_state != CrawlState.RUNNING.value:
+        return None
+    payload = json.loads(row.crawl_progress_json or "{}")
+    return CrawlProgressView(
+        pages=int(payload.get("pages", 0)),
+        updated=int(payload.get("updated", 0)),
+        budget=int(payload.get("budget", 0)),
+    )
+
+
+def _outcome_view(row: WebSourceRecord) -> CrawlOutcomeView | None:
+    payload = json.loads(row.last_summary_json or "{}")
+    if not payload:
+        return None
+    return CrawlOutcomeView(
+        pages=int(payload.get("pages", 0)),
+        chunks=int(payload.get("chunks", 0)),
+        kept_pages=int(payload.get("keptPages", 0)),
+        updated_pages=int(payload.get("updatedPages", 0)),
+        removed_pages=int(payload.get("removedPages", 0)),
+        skipped_count=int(payload.get("skippedCount", 0)),
+        truncated=bool(payload.get("truncated", False)),
+    )
+
+
 def _sources_response(
     request: Request, rows: list[WebSourceRecord]
 ) -> WebSourcesResponse:
@@ -105,6 +138,9 @@ def _sources_response(
                 chunk_count=stats.get(row.domain, _EMPTY_STATS).chunks,
                 last_crawled_at=row.last_crawled_at,
                 last_error=row.last_error,
+                crawl_state=row.crawl_state,
+                progress=_progress_view(row),
+                last_summary=_outcome_view(row),
                 added_at=row.added_at,
             )
             for row in rows
@@ -163,14 +199,13 @@ async def remove_web_source(request: Request, domain: str) -> WebSourcesResponse
 
 @router.post("/sources/{domain}/crawl", response_model=CrawlSourceResponse)
 async def crawl_web_source(request: Request, domain: str) -> CrawlSourceResponse:
-    """抓取一个来源，并把结果记回它自己身上。
+    """起一个**后台**抓取任务。
 
-    预算写死在默认值里（页数 / 深度）：这是按钮触发的动作，必须能在有限时间内结束。
-    抓完整站是另一件事 —— 那需要一个后台任务与进度上报，而不是一个会转很久的请求。
+    不再同步执行：同步意味着页数预算必须"用户等得到"，于是只能给 20 页 —— 对文档站
+    来说常常只是开头。现在预算由抓取策略决定（默认 200 页），进度与结果都落库，界面
+    轮询来源清单即可。
 
-    **同步执行**是有意的：抓取结果（抓到了几页）就是用户按下按钮想立刻看到的东西，
-    做成异步任务反而要再补一套进度轮询。代价是请求会占用几秒到几十秒，而这一点在
-    界面上是可见的（按钮进入 pending 状态）。
+    重复点击不是错误：同一个域名已经在抓时返回 `started: false`，界面据此显示"正在抓取"。
     """
     store = _store(request)
     normalized = normalize_domain(domain)
@@ -182,21 +217,8 @@ async def crawl_web_source(request: Request, domain: str) -> CrawlSourceResponse
     if source is None:
         raise DomainError("CORPUS_SOURCE_UNKNOWN", "这个来源不在已收录清单里", 404, False)
 
-    summary = await _crawler(request).crawl(
-        domain=source.domain, entry_url=source.entry_url
-    )
-    # 全失败时把最主要的原因记下来（原因码，文案在渲染层），成功则清掉旧错误。
-    store.mark_crawled(source.domain, summary.dominant_failure())
+    started = await _crawl_service(request).start(source.domain, entry_url=source.entry_url)
     return CrawlSourceResponse(
         sources=_sources_response(request, store.list()).sources,
-        summary=CrawlSummaryView(
-            domain=summary.domain,
-            pages=summary.pages,
-            chunks=summary.chunks,
-            kept_pages=summary.kept_pages,
-            updated_pages=summary.updated_pages,
-            removed_pages=summary.removed_pages,
-            skipped_count=len(summary.skipped),
-            truncated=summary.truncated,
-        ),
+        started=started,
     )

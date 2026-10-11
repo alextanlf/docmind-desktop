@@ -16,6 +16,10 @@ export function useWebSourcesQuery() {
   return useQuery({
     queryKey: corpusKeys.sources,
     queryFn: () => window.docmind.corpus.sources(),
+    // 抓取在后台跑，进度只在服务端。有来源在抓时轮询 —— 这比再造一条进度推送通道
+    // 便宜得多，而抓取本来就只有"几分钟、每页一次"的粒度。没有在抓时完全不轮询。
+    refetchInterval: (query) =>
+      query.state.data?.sources.some((source) => source.crawlState === "running") ? 1000 : false,
   });
 }
 

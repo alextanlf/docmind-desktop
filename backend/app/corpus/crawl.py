@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 from collections import Counter, deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlsplit
 
@@ -134,6 +135,7 @@ class CorpusCrawler:
         entry_url: str | None,
         max_pages: int = DEFAULT_MAX_PAGES,
         max_depth: int = DEFAULT_MAX_DEPTH,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> CrawlSummary:
         entry = canonicalize_url(entry_url or f"https://{domain}/")
         prefix = path_prefix_for_entry(entry)
@@ -189,6 +191,12 @@ class CorpusCrawler:
             if self.limiter is not None:
                 self.limiter.succeeded(host)
             fetched += 1
+
+            # 进度是**每拿到一次响应**就上报：抓一个站要几十秒到几分钟，而"已经抓了
+            # 几页"是用户判断"要不要继续等"的唯一依据。放在这里而不是循环末尾，是因为
+            # 下面几条分支（304、内容未变、不支持的类型）都会 continue 掉。
+            if on_progress is not None:
+                on_progress(fetched, updated)
 
             # 304：站点说"没变"。正文都没下载，所以这一页上的链接这次不会被重新发现
             # （新增子页面要等下一次抓到它时才会被发现）；换来的是完全省下下载与切块。

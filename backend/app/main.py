@@ -55,6 +55,7 @@ from app.core.retrieval import HybridRetriever
 from app.core.secrets import KeyringSecretStore, MemorySecretStore, SecretStore
 from app.corpus.crawl import CorpusCrawler
 from app.corpus.nomination import LLMDomainNominator
+from app.corpus.service import CorpusCrawlService
 from app.document.builtin_formats import builtin_registry
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
@@ -462,6 +463,16 @@ def create_app(
             probe=reachability_probe,
             limiter=crawl_limiter,
         )
+        # 抓取跑在后台：同步的话页数预算只能给"用户等得到"那么多，而文档站动辄几百页。
+        crawl_service = CorpusCrawlService(
+            store=app.state.web_sources,
+            crawler=app.state.corpus_crawler,
+            page_budget=runtime_settings.crawl_page_budget,
+        )
+        app.state.corpus_crawl_service = crawl_service
+        # 上次应用退出时还在抓的来源，改判为"被中断"：否则它会永远显示"正在抓取"，
+        # 而那个任务早已不存在。
+        crawl_service.recover_on_startup()
         remote_discovery = RemoteDiscovery(registry, repository_store, runtime_settings.staging_dir)
         app.state.batch_service = BatchService(
             store=app.state.batch_store,

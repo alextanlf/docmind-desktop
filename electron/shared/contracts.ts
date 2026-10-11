@@ -852,6 +852,27 @@ export const SaveWebSourcesRequestSchema = z.object({
   sources: z.array(WebSourceInputSchema).min(1).max(50),
 });
 
+/** 进行中的进度。`budget` 一起给出，"已抓 7 页"才有参照。 */
+export const CrawlProgressSchema = z.object({
+  pages: z.number().int().nonnegative().default(0),
+  updated: z.number().int().nonnegative().default(0),
+  budget: z.number().int().nonnegative().default(0),
+});
+
+/** 上一次抓完的结果。 */
+export const CrawlOutcomeSchema = z.object({
+  /** 抓取之后的语料规模（不是本次下载了几页）。 */
+  pages: z.number().int().nonnegative().default(0),
+  chunks: z.number().int().nonnegative().default(0),
+  /** 内容未变、没有重新切块与重写索引的页数 —— 增量刷新的收益体现在这里。 */
+  keptPages: z.number().int().nonnegative().default(0),
+  updatedPages: z.number().int().nonnegative().default(0),
+  removedPages: z.number().int().nonnegative().default(0),
+  skippedCount: z.number().int().nonnegative().default(0),
+  /** 因为页数上限提前结束 —— 用户需要知道"这不是全部"。 */
+  truncated: z.boolean().default(false),
+});
+
 export const WebSourceSchema = z.object({
   domain: z.string(),
   entryUrl: z.string().nullable().optional(),
@@ -865,6 +886,14 @@ export const WebSourceSchema = z.object({
   lastCrawledAt: z.string().nullable().optional(),
   /** 上次失败的原因码 —— 与抓取诊断同一套取值，所以文案也只有一份。 */
   lastError: CrawlRejectionReasonSchema.nullable().optional(),
+  /**
+   * 抓取状态。"被中断"是独立取值：应用在抓取途中退出、或抓取内部出错时，用户该看到
+   * 的是"这次没跑完"，而不是"从来没抓过"或"抓失败了"。
+   */
+  crawlState: z.enum(["idle", "running", "interrupted"]).default("idle"),
+  progress: CrawlProgressSchema.nullable().optional(),
+  /** 上一次抓完的结果。落库、长期展示 —— 一次性的提示刷新就没了。 */
+  lastSummary: CrawlOutcomeSchema.nullable().optional(),
   addedAt: z.string(),
 });
 
@@ -872,22 +901,9 @@ export const WebSourcesResponseSchema = z.object({
   sources: z.array(WebSourceSchema),
 });
 
-export const CrawlSummarySchema = z.object({
-  domain: z.string(),
-  /** 抓取之后的语料规模（不是本次下载了几页）。 */
-  pages: z.number().int().nonnegative(),
-  chunks: z.number().int().nonnegative(),
-  /** 内容未变、没有重新切块与重写索引的页数 —— 增量刷新的收益体现在这里。 */
-  keptPages: z.number().int().nonnegative().default(0),
-  updatedPages: z.number().int().nonnegative().default(0),
-  removedPages: z.number().int().nonnegative().default(0),
-  skippedCount: z.number().int().nonnegative(),
-  /** 因为页数上限提前结束 —— 用户需要知道"这不是全部"。 */
-  truncated: z.boolean(),
-});
-
 export const CrawlSourceResponseSchema = WebSourcesResponseSchema.extend({
-  summary: CrawlSummarySchema,
+  /** 任务这一次是否真的起来了。已经在抓时为 false —— 重复点击不该是错误。 */
+  started: z.boolean(),
 });
 
 export type CorpusCandidate = z.infer<typeof CorpusCandidateSchema>;
@@ -897,7 +913,8 @@ export type WebSource = z.infer<typeof WebSourceSchema>;
 export type WebSourceInput = z.infer<typeof WebSourceInputSchema>;
 export type SaveWebSourcesRequest = z.infer<typeof SaveWebSourcesRequestSchema>;
 export type WebSourcesResponse = z.infer<typeof WebSourcesResponseSchema>;
-export type CrawlSummary = z.infer<typeof CrawlSummarySchema>;
+export type CrawlProgress = z.infer<typeof CrawlProgressSchema>;
+export type CrawlOutcome = z.infer<typeof CrawlOutcomeSchema>;
 export type CrawlSourceResponse = z.infer<typeof CrawlSourceResponseSchema>;
 
 /** 本地网页索引收录哪些站点。与后端 `/api/corpus` 对齐。 */
@@ -909,10 +926,10 @@ export interface CorpusApi {
   /** 幂等：删一个本来就不存在的域名也返回成功，响应始终是删除后的真实清单。 */
   removeSource(domain: string): Promise<WebSourcesResponse>;
   /**
-   * 抓取一个来源（同步、有预算）。返回更新后的清单与本次摘要。
+   * 起一个**后台**抓取任务。响应只说"起没起来"。
    *
-   * 同步是有意的：抓到了几页就是用户按下按钮想立刻知道的事，做成异步任务反而要再补
-   * 一套进度轮询。代价是这一次调用会占用几秒到几十秒。
+   * 后台是必然的：同步执行的上限不是站点有多少页，而是用户愿意等多久 —— 那只能给
+   * 20 页。进度与结果都落库，界面轮询来源清单即可。
    */
   crawlSource(domain: string): Promise<CrawlSourceResponse>;
 }

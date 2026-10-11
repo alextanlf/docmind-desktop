@@ -140,47 +140,71 @@ describe("网页语料", () => {
     expect(await screen.findByText("还没有收录任何来源。")).toBeVisible();
   });
 
-  it("抓取一个来源，显示本次结果与长期状态", async () => {
-    const crawled = {
+  it("抓取期间显示后台进度，并且不能再点一次", async () => {
+    const running = {
       ...COLLECTED,
+      crawlState: "running" as const,
+      progress: { pages: 7, updated: 5, budget: 200 },
+    };
+    const api = installDocMindApi({
+      corpus: {
+        sources: vi.fn().mockResolvedValue({ sources: [running] }),
+        crawlSource: vi.fn().mockResolvedValue({ sources: [running], started: true }),
+      },
+    });
+    renderPage();
+
+    // 进度来自服务端，所以刷新页面或换个窗口看到的是同一件事。
+    expect(await screen.findByText(/正在抓取：已抓 7 页（预算 200）/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "抓取 docs.python.org" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "移除 docs.python.org" }));
+    await waitFor(() => expect(api.corpus.removeSource).toHaveBeenCalled());
+  });
+
+  it("上次抓取的结果长期展示，不只是抓完那一下的提示", async () => {
+    const finished = {
+      ...COLLECTED,
+      crawlState: "idle" as const,
       pageCount: 12,
       chunkCount: 48,
       lastCrawledAt: "2026-10-11T09:30:00Z",
       lastError: null,
+      lastSummary: {
+        pages: 12,
+        chunks: 48,
+        keptPages: 9,
+        updatedPages: 3,
+        removedPages: 1,
+        skippedCount: 3,
+        truncated: true,
+      },
     };
-    const api = installDocMindApi({
+    installDocMindApi({
+      corpus: { sources: vi.fn().mockResolvedValue({ sources: [finished] }) },
+    });
+    renderPage();
+
+    const outcome = await screen.findByText(/上次抓取：更新 3 页、未变 9 页/);
+    expect(outcome.textContent).toContain("清理 1 页已消失的页面");
+    expect(outcome.textContent).toContain("当前共 12 页 / 48 段");
+    expect(outcome.textContent).toContain("已达到页数上限，这不是全部");
+    expect(await screen.findByText(/已收录 12 页 \/ 48 段/)).toBeVisible();
+  });
+
+  it("被抓取中途退出留下时，明说这次没跑完而不是说没抓过", async () => {
+    installDocMindApi({
       corpus: {
-        sources: vi.fn().mockResolvedValue({ sources: [COLLECTED] }),
-        crawlSource: vi.fn().mockResolvedValue({
-          sources: [crawled],
-          summary: {
-            domain: "docs.python.org",
-            pages: 12,
-            chunks: 48,
-            keptPages: 9,
-            updatedPages: 3,
-            removedPages: 1,
-            skippedCount: 3,
-            truncated: true,
-          },
+        sources: vi.fn().mockResolvedValue({
+          sources: [{ ...COLLECTED, crawlState: "interrupted" }],
         }),
       },
     });
     renderPage();
 
-    expect(await screen.findByText("还没有抓取")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "抓取 docs.python.org" }));
-
-    await waitFor(() => expect(api.corpus.crawlSource).toHaveBeenCalledWith("docs.python.org"));
-    // 本次结果与长期状态是两件事：前者是动作反馈，后者要留在列表上。
-    // 增量结果要讲清楚：更新了几页、几页没变、清理了几页 —— 否则"抓取"是个黑盒。
-    // 断言整段的 textContent：这句由多个表达式拼成，按单节点匹配会被切碎。
-    const outcome = await screen.findByText(/本次抓取：/);
-    expect(outcome.textContent).toContain("更新 3 页、未变 9 页");
-    expect(outcome.textContent).toContain("清理 1 页已消失的页面");
-    expect(outcome.textContent).toContain("当前共 12 页 / 48 段");
-    expect(outcome.textContent).toContain("已达到页数上限，这不是全部");
-    expect(await screen.findByText(/已收录 12 页 \/ 48 段/)).toBeVisible();
+    expect(
+      await screen.findByText(/上次抓取没有跑完（应用退出或内部出错），可以重新抓取/),
+    ).toBeVisible();
   });
 
   it("抓取一页都没进来时，用原因码对应的文案说清是什么问题", async () => {

@@ -33,6 +33,7 @@ from app.storage.models import (
     ChatRequestRecord,
     CrawlEntryRecord,
     CrawlEntryState,
+    CrawlState,
     DistillationRecord,
     DocumentChunkRecord,
     DocumentMutationRecord,
@@ -1972,6 +1973,67 @@ class WebSourceStore:
                 existing.verified = bool(existing.verified or source.verified)
             session.flush()
         return self.list()
+
+    def mark_crawl_started(self, domain: str, *, page_budget: int) -> bool:
+        """把来源标成"正在抓取"。已经在抓的返回 False（重复点击不该起第二个任务）。"""
+        with self.database.session() as session:
+            row = session.get(WebSourceRecord, domain)
+            if row is None or row.crawl_state == CrawlState.RUNNING.value:
+                return False
+            row.crawl_state = CrawlState.RUNNING.value
+            row.crawl_progress_json = json.dumps({"pages": 0, "updated": 0, "budget": page_budget})
+            row.updated_at = utc_now()
+            return True
+
+    def mark_crawl_progress(self, domain: str, *, pages: int, updated: int) -> None:
+        with self.database.session() as session:
+            row = session.get(WebSourceRecord, domain)
+            if row is None:
+                return
+            budget = json.loads(row.crawl_progress_json or "{}").get("budget", 0)
+            row.crawl_progress_json = json.dumps({"pages": pages, "updated": updated, "budget": budget})
+
+    def mark_crawl_finished(
+        self, domain: str, *, error: str | None, summary: dict, interrupted: bool = False
+    ) -> None:
+        """抓取结束。进度清空、摘要留下。
+
+        `interrupted=True` 用于**没有正常跑完**的两种情况：应用退出、或抓取内部出错。
+        它们与"抓完了一页都没抓到"是两回事，而后者有 `last_error` 可以表达；把内部
+        出错记成普通的 idle 会让一个程序缺陷看起来像"这个站没内容"。
+        """
+        with self.database.session() as session:
+            row = session.get(WebSourceRecord, domain)
+            if row is None:
+                return
+            row.crawl_state = (
+                CrawlState.INTERRUPTED.value if interrupted else CrawlState.IDLE.value
+            )
+            row.crawl_progress_json = "{}"
+            row.last_summary_json = json.dumps(summary, ensure_ascii=False)
+            row.last_crawled_at = utc_now()
+            row.last_error = error
+            row.updated_at = utc_now()
+
+    def recover_interrupted_crawls(self) -> int:
+        """应用启动时把"正在抓取"改判为"被中断"。
+
+        没有这一步，一次应用崩溃会留下一个永远显示"正在抓取"的来源 —— 而那个任务
+        早已不存在，用户只能干等或删掉重加。
+        """
+        with self.database.session() as session:
+            rows = list(
+                session.scalars(
+                    select(WebSourceRecord).where(
+                        WebSourceRecord.crawl_state == CrawlState.RUNNING.value
+                    )
+                )
+            )
+            for row in rows:
+                row.crawl_state = CrawlState.INTERRUPTED.value
+                row.crawl_progress_json = "{}"
+                row.updated_at = utc_now()
+            return len(rows)
 
     def mark_crawled(self, domain: str, error: str | None) -> None:
         """记下这次抓取的时间与结果。

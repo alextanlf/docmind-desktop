@@ -89,6 +89,26 @@ class SaveWebSourcesRequest(WireModel):
     sources: list[WebSourceInput] = Field(min_length=1, max_length=50)
 
 
+class CrawlProgressView(WireModel):
+    """进行中的进度。`budget` 一起给出，"已抓 7 页"才有参照。"""
+
+    pages: int = 0
+    updated: int = 0
+    budget: int = 0
+
+
+class CrawlOutcomeView(WireModel):
+    """上一次抓完的结果。持久展示，而不是一次性的提示 —— 用户下次回来还要看得到。"""
+
+    pages: int = 0
+    chunks: int = 0
+    kept_pages: int = 0
+    updated_pages: int = 0
+    removed_pages: int = 0
+    skipped_count: int = 0
+    truncated: bool = False
+
+
 class WebSourceView(WireModel):
     domain: str
     entry_url: str | None = None
@@ -104,11 +124,25 @@ class WebSourceView(WireModel):
     #: 上次抓取失败的原因码。刻意用与抓取诊断同一套取值，这样文案只有一份
     #: （在渲染层），后端不需要自己拼一句中文。
     last_error: CrawlRejectionReason | None = None
+    #: idle / running / interrupted。进行中的状态落库，所以刷新与重启都不会说谎。
+    crawl_state: str = "idle"
+    progress: CrawlProgressView | None = None
+    last_summary: CrawlOutcomeView | None = None
     added_at: datetime
 
 
 class WebSourcesResponse(WireModel):
     sources: list[WebSourceView]
+
+
+class CrawlStartedView(WireModel):
+    """起一个后台抓取的结果。
+
+    没有 summary：抓取现在是后台任务，这一次请求只回答"起没起来"。结果要看来源自己
+    的 `lastSummary`（它落库，刷新之后还在）。
+    """
+
+    started: bool
 
 
 class CrawlSummaryView(WireModel):
@@ -126,4 +160,5 @@ class CrawlSummaryView(WireModel):
 
 
 class CrawlSourceResponse(WebSourcesResponse):
-    summary: CrawlSummaryView
+    #: 任务是否这一次真的起来了。已经在抓时为 false —— 重复点击不该是错误。
+    started: bool

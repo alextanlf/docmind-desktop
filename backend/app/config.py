@@ -63,6 +63,12 @@ class AppSettings(BaseSettings):
     # 测试/CI 里必须能降到 0，否则一条 200 页的集成用例要跑三分多钟 —— 这个数字
     # 不是拍脑袋来的：加上默认值以后，正是它让那条用例超时。
     crawl_min_interval_seconds: float = Field(default=1.0, ge=0.0, le=60.0)
+    # 后台抓取一个来源时的页数预算。
+    #
+    # 200 与批量导入的网页发现同一上限，但含义不同：那边的 200 是"一次导入能承受多少"，
+    # 这里是"后台任务跑一次抓多少"。抓取放在后台之后，这个数字才敢给大 —— 同步接口的
+    # 上限其实是"用户愿意等多久"，那只有 20 页。
+    crawl_page_budget: int = Field(default=200, ge=1, le=1000)
 
     model_config = SettingsConfigDict(env_prefix="DOCMIND_", extra="ignore")
 

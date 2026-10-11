@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { CorpusCandidate, CrawlSummary, WebSource } from "../../../../shared/contracts";
+import type { CorpusCandidate, WebSource } from "../../../../shared/contracts";
 import { REJECTION_COPY } from "../imports/rejection-copy";
 import { clientErrorMessage } from "../settings/settings.queries";
 import {
@@ -30,9 +30,6 @@ export function CorpusSettings() {
   const [topic, setTopic] = useState("");
   const [manual, setManual] = useState("");
   const [error, setError] = useState<string | null>(null);
-  // 只保留"刚刚那一次"的结果：它是动作的反馈，不是需要长期展示的状态（长期状态在
-  // 每个来源自己的行里，来自后端）。
-  const [summary, setSummary] = useState<CrawlSummary | null>(null);
 
   const collected = sources.data?.sources ?? [];
   const known = new Set(collected.map((source) => source.domain));
@@ -73,17 +70,29 @@ export function CorpusSettings() {
 
   async function crawl(domain: string) {
     setError(null);
-    setSummary(null);
     try {
-      const result = await crawlSource.mutateAsync(domain);
-      setSummary(result.summary);
+      // 抓取跑在后台：这里只需要知道"起没起来"，进度与结果从来源清单里读。
+      await crawlSource.mutateAsync(domain);
     } catch (crawlError) {
       setError(clientErrorMessage(crawlError));
     }
   }
 
-  /** 一个来源的抓取状态。三种情况都要说清楚，尤其是"抓了但一页都没进来"。 */
+  /**
+   * 一个来源的抓取状态。四种情况都要说清楚，尤其是"抓了但一页都没进来"和"没跑完"。
+   *
+   * 状态全部来自服务端：进度、结果、失败原因都落库，所以刷新页面或换个窗口看到的是
+   * 同一件事 —— 而不是一个只活在这次渲染里的提示。
+   */
   function status(source: WebSource) {
+    if (source.crawlState === "running") {
+      const pages = source.progress?.pages ?? 0;
+      const budget = source.progress?.budget ?? 0;
+      return budget > 0 ? `正在抓取：已抓 ${pages} 页（预算 ${budget}）` : "正在抓取…";
+    }
+    if (source.crawlState === "interrupted") {
+      return "上次抓取没有跑完（应用退出或内部出错），可以重新抓取";
+    }
     if (source.lastError) {
       const copy = REJECTION_COPY[source.lastError];
       return `上次抓取没有收录任何页面：${copy.label} —— ${copy.hint}`;
@@ -93,6 +102,18 @@ export function CorpusSettings() {
       return `已收录 ${source.pageCount} 页 / ${source.chunkCount} 段，最近抓取 ${when}`;
     }
     return "还没有抓取";
+  }
+
+  /** 上一次抓完的结果。增量刷新的收益（未变几页）只有说出来才算数。 */
+  function outcome(source: WebSource) {
+    const summary = source.lastSummary;
+    if (!summary || source.crawlState === "running") return null;
+    const parts = [`更新 ${summary.updatedPages} 页`, `未变 ${summary.keptPages} 页`];
+    if (summary.removedPages > 0) parts.push(`清理 ${summary.removedPages} 页已消失的页面`);
+    parts.push(`跳过 ${summary.skippedCount} 个地址`);
+    return `上次抓取：${parts.join("、")}；当前共 ${summary.pages} 页 / ${summary.chunks} 段${
+      summary.truncated ? "（已达到页数上限，这不是全部）" : ""
+    }。`;
   }
 
   async function remove(domain: string) {
@@ -148,11 +169,11 @@ export function CorpusSettings() {
           <button
             aria-label={`抓取 ${source.domain}`}
             className="button button-secondary"
-            disabled={crawlSource.isPending}
+            disabled={crawlSource.isPending || source.crawlState === "running"}
             onClick={() => void crawl(source.domain)}
             type="button"
           >
-            {crawlSource.isPending ? "抓取中…" : "抓取"}
+            {source.crawlState === "running" ? "抓取中…" : "抓取"}
           </button>
           <button
             aria-label={`移除 ${source.domain}`}
@@ -164,17 +185,16 @@ export function CorpusSettings() {
             移除
           </button>
         </div>
-        <p className={source.lastError ? "corpus-status is-error" : "corpus-status"}>
+        <p
+          className={
+            source.lastError || source.crawlState === "interrupted"
+              ? "corpus-status is-error"
+              : "corpus-status"
+          }
+        >
           {status(source)}
         </p>
-        {summary?.domain === source.domain ? (
-          <p className="corpus-status" role="status">
-            本次抓取：更新 {summary.updatedPages} 页、未变 {summary.keptPages} 页
-            {summary.removedPages > 0 ? `、清理 ${summary.removedPages} 页已消失的页面` : ""}
-            ，跳过 {summary.skippedCount} 个地址；当前共 {summary.pages} 页 / {summary.chunks} 段
-            {summary.truncated ? "（已达到页数上限，这不是全部）" : ""}。
-          </p>
-        ) : null}
+        {outcome(source) ? <p className="corpus-status">{outcome(source)}</p> : null}
         <ul className="corpus-evidence">
           {source.evidence.map((item) => (
             <li key={item}>{item}</li>

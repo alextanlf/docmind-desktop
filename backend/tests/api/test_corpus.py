@@ -174,6 +174,23 @@ class _Resolver:
         return ["93.184.216.34"]
 
 
+def _wait_until_idle(client, auth_headers, domain: str) -> dict:
+    """轮询到抓取结束。
+
+    后台任务跑在 ASGI 应用自己的事件循环里（TestClient 的 portal 线程），所以这里用
+    同步 sleep 等它就够了 —— 抓完之前界面看到的也是同一份状态。
+    """
+    import time
+
+    for _ in range(300):
+        body = client.get("/api/corpus/sources", headers=auth_headers).json()
+        source = next(item for item in body["sources"] if item["domain"] == domain)
+        if source["crawlState"] != "running":
+            return source
+        time.sleep(0.01)
+    raise AssertionError("抓取没有在预期时间内结束")
+
+
 def _swap_crawler(client, table: dict) -> None:
     """把应用里的抓取器换成走 MockTransport 的那个。
 
@@ -198,8 +215,7 @@ def _swap_crawler(client, table: dict) -> None:
     def probe_handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectTimeout("timed out")
 
-    client.app.state.crawler_probe = probe_handler
-    client.app.state.corpus_crawler = CorpusCrawler(
+    crawler = CorpusCrawler(
         client=SafeHttpClient(resolver=_Resolver(), transport=httpx.MockTransport(handler)),
         parser=DocumentParser(),
         chunker=SemanticChunker(),
@@ -207,6 +223,10 @@ def _swap_crawler(client, table: dict) -> None:
         probe=ReachabilityProbe(resolver=_Resolver(), transport=httpx.MockTransport(probe_handler)),
         max_bytes=1024 * 1024,
     )
+    # 两处都要换：服务在启动时按住了那个实例（后台任务用它跑），只换 app.state
+    # 不会影响已经建好的服务。
+    client.app.state.corpus_crawler = crawler
+    client.app.state.corpus_crawl_service.crawler = crawler
 
 
 def _add_source(client, auth_headers, domain: str, entry: str) -> None:
@@ -229,19 +249,22 @@ def test_crawling_a_source_fills_the_corpus_and_reports_its_size(client, auth_he
         },
     )
 
-    response = client.post("/api/corpus/sources/docs.test/crawl", headers=auth_headers)
+    started = client.post("/api/corpus/sources/docs.test/crawl", headers=auth_headers)
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["summary"]["domain"] == "docs.test"
-    assert body["summary"]["pages"] == 1
-    assert body["summary"]["chunks"] >= 1
-    source = body["sources"][0]
-    assert source["domain"] == "docs.test"
+    assert started.status_code == 200
+    # 后台任务：这一次请求只回答"起没起来"，结果要看来源自己。
+    assert started.json()["started"] is True
+
+    source = _wait_until_idle(client, auth_headers, "docs.test")
     assert source["pageCount"] == 1
-    assert source["chunkCount"] == body["summary"]["chunks"]
+    assert source["chunkCount"] >= 1
     assert source["lastCrawledAt"] is not None
     assert source["lastError"] is None
+    assert source["crawlState"] == "idle"
+    assert source["progress"] is None
+    # 上次结果落库，刷新之后还在。
+    assert source["lastSummary"]["updatedPages"] == 1
+    assert source["lastSummary"]["keptPages"] == 0
 
 
 def test_a_crawl_that_gets_nothing_records_a_reason_code(client, auth_headers) -> None:
@@ -255,11 +278,11 @@ def test_a_crawl_that_gets_nothing_records_a_reason_code(client, auth_headers) -
         },
     )
 
-    response = client.post("/api/corpus/sources/docs.test/crawl", headers=auth_headers)
+    client.post("/api/corpus/sources/docs.test/crawl", headers=auth_headers)
 
-    source = response.json()["sources"][0]
-    assert response.json()["summary"]["pages"] == 0
+    source = _wait_until_idle(client, auth_headers, "docs.test")
     assert source["pageCount"] == 0
+    # 失败要留下**原因码**（文案在前端只有一份），而不是自己拼一句中文。
     assert source["lastError"] == "unreachable"
 
 

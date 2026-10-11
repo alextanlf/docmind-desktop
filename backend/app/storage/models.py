@@ -723,6 +723,18 @@ class EmbeddingRebuildRecord(Base):
     )
 
 
+class CrawlState(StrEnum):
+    """一个来源的抓取状态。
+
+    `INTERRUPTED` 是独立取值而不是 `IDLE + 没有错误`：应用在抓取途中退出时，用户需要
+    看到"这次没跑完"，而不是"从来没抓过"或"抓失败了"。
+    """
+
+    IDLE = "idle"
+    RUNNING = "running"
+    INTERRUPTED = "interrupted"
+
+
 class WebSourceRecord(Base):
     """用户决定纳入本地网页索引的来源。
 
@@ -747,6 +759,19 @@ class WebSourceRecord(Base):
     #: 否则一个抓取一直失败的来源看起来和刚收录时一模一样。
     last_crawled_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 抓取是后台任务，所以进行中的状态必须**落库**：刷新页面、切走再回来、甚至重启
+    #: 应用之后，用户看到的仍然应该是"正在抓取"或"上次被打断了"。
+    crawl_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=CrawlState.IDLE.value, server_default=text("'idle'")
+    )
+    #: 进行中的进度 `{"pages": 7, "updated": 5, "budget": 200}`。
+    crawl_progress_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="{}", server_default=text("'{}'")
+    )
+    #: 上一次抓完的摘要（更新/未变/清理/跳过/是否被预算截断），供界面长期展示。
+    last_summary_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="{}", server_default=text("'{}'")
+    )
     added_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
     )
