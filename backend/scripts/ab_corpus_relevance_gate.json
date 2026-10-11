@@ -1,0 +1,310 @@
+{
+  "summary": {
+    "top1": {
+      "in_scope": {
+        "min": 0.4735,
+        "median": 0.5922,
+        "max": 0.7156
+      },
+      "out_of_domain": {
+        "min": 0.3203,
+        "median": 0.3603,
+        "max": 0.3835
+      },
+      "in_domain_unanswerable": {
+        "min": 0.4305,
+        "median": 0.465,
+        "max": 0.5276
+      }
+    },
+    "margin_top2": {
+      "in_scope": {
+        "min": 0.013,
+        "median": 0.0687,
+        "max": 0.2867
+      },
+      "out_of_domain": {
+        "min": 0.0015,
+        "median": 0.0214,
+        "max": 0.0485
+      },
+      "in_domain_unanswerable": {
+        "min": 0.003,
+        "median": 0.032,
+        "max": 0.0701
+      }
+    },
+    "margin_median": {
+      "in_scope": {
+        "min": 0.1235,
+        "median": 0.1533,
+        "max": 0.3459
+      },
+      "out_of_domain": {
+        "min": 0.0513,
+        "median": 0.0825,
+        "max": 0.1177
+      },
+      "in_domain_unanswerable": {
+        "min": 0.0571,
+        "median": 0.1162,
+        "max": 0.1431
+      }
+    },
+    "z": {
+      "in_scope": {
+        "min": 2.1327,
+        "median": 2.7421,
+        "max": 3.6392
+      },
+      "out_of_domain": {
+        "min": 1.5234,
+        "median": 2.0372,
+        "max": 2.1022
+      },
+      "in_domain_unanswerable": {
+        "min": 1.5122,
+        "median": 2.2812,
+        "max": 2.8901
+      }
+    }
+  },
+  "separable": {
+    "top1": false,
+    "margin_top2": false,
+    "margin_median": false,
+    "z": false
+  },
+  "rows": [
+    {
+      "kind": "in_scope",
+      "query": "事件循环怎么调度并发任务，取消是怎么生效的？",
+      "top1": 0.6333,
+      "top2": 0.5151,
+      "median": 0.419,
+      "z": 3.1443,
+      "margin_top2": 0.1182,
+      "margin_median": 0.2143,
+      "hit": 1.0
+    },
+    {
+      "kind": "in_scope",
+      "query": "数据库怎么在并发读的时候不掉性能？",
+      "top1": 0.5709,
+      "top2": 0.5527,
+      "median": 0.4235,
+      "z": 2.2383,
+      "margin_top2": 0.0182,
+      "margin_median": 0.1474,
+      "hit": 1.0
+    },
+    {
+      "kind": "in_scope",
+      "query": "缓存过期时间是由什么决定的，怎么判断要不要重新请求？",
+      "top1": 0.5773,
+      "top2": 0.5416,
+      "median": 0.4534,
+      "z": 2.5297,
+      "margin_top2": 0.0356,
+      "margin_median": 0.1238,
+      "hit": 1.0
+    },
+    {
+      "kind": "in_scope",
+      "query": "为什么钩子不能写在条件分支里？",
+      "top1": 0.4735,
+      "top2": 0.4605,
+      "median": 0.35,
+      "z": 2.1327,
+      "margin_top2": 0.013,
+      "margin_median": 0.1235,
+      "hit": 1.0
+    },
+    {
+      "kind": "in_scope",
+      "query": "为什么改一行代码之后重新打包还是很慢？",
+      "top1": 0.5949,
+      "top2": 0.5019,
+      "median": 0.4415,
+      "z": 3.0074,
+      "margin_top2": 0.0929,
+      "margin_median": 0.1533,
+      "hit": 1.0
+    },
+    {
+      "kind": "in_scope",
+      "query": "容器卡住了怎么让它自动重启？",
+      "top1": 0.5556,
+      "top2": 0.5144,
+      "median": 0.4128,
+      "z": 2.1923,
+      "margin_top2": 0.0413,
+      "margin_median": 0.1429,
+      "hit": 1.0
+    },
+    {
+      "kind": "in_scope",
+      "query": "哪个操作会改写提交历史？",
+      "top1": 0.5557,
+      "top2": 0.487,
+      "median": 0.4108,
+      "z": 2.7861,
+      "margin_top2": 0.0687,
+      "margin_median": 0.1449,
+      "hit": 1.0
+    },
+    {
+      "kind": "in_scope",
+      "query": "证书校验失败通常是缺了什么？",
+      "top1": 0.7156,
+      "top2": 0.4289,
+      "median": 0.3697,
+      "z": 3.6392,
+      "margin_top2": 0.2867,
+      "margin_median": 0.3459,
+      "hit": 1.0
+    },
+    {
+      "kind": "in_scope",
+      "query": "词法检索里的排序是怎么算的？",
+      "top1": 0.6063,
+      "top2": 0.5055,
+      "median": 0.3951,
+      "z": 2.7421,
+      "margin_top2": 0.1008,
+      "margin_median": 0.2113,
+      "hit": 1.0
+    },
+    {
+      "kind": "in_scope",
+      "query": "主进程和界面之间怎么传数据？",
+      "top1": 0.5922,
+      "top2": 0.5333,
+      "median": 0.4255,
+      "z": 2.4931,
+      "margin_top2": 0.0589,
+      "margin_median": 0.1667,
+      "hit": 1.0
+    },
+    {
+      "kind": "out_of_domain",
+      "query": "酸菜怎么腌制才脆",
+      "top1": 0.3709,
+      "top2": 0.3592,
+      "median": 0.2861,
+      "z": 2.0955,
+      "margin_top2": 0.0117,
+      "margin_median": 0.0848
+    },
+    {
+      "kind": "out_of_domain",
+      "query": "文艺复兴时期的绘画有什么特点",
+      "top1": 0.3603,
+      "top2": 0.3118,
+      "median": 0.2425,
+      "z": 2.0372,
+      "margin_top2": 0.0485,
+      "margin_median": 0.1177
+    },
+    {
+      "kind": "out_of_domain",
+      "query": "感冒发烧应该吃什么药",
+      "top1": 0.3203,
+      "top2": 0.2989,
+      "median": 0.269,
+      "z": 1.634,
+      "margin_top2": 0.0214,
+      "margin_median": 0.0513
+    },
+    {
+      "kind": "out_of_domain",
+      "query": "怎么给猫剪指甲",
+      "top1": 0.3835,
+      "top2": 0.3652,
+      "median": 0.301,
+      "z": 1.7165,
+      "margin_top2": 0.0183,
+      "margin_median": 0.0825
+    },
+    {
+      "kind": "out_of_domain",
+      "query": "如何挑选一瓶合适的红酒",
+      "top1": 0.3583,
+      "top2": 0.3568,
+      "median": 0.3006,
+      "z": 1.5234,
+      "margin_top2": 0.0015,
+      "margin_median": 0.0577
+    },
+    {
+      "kind": "out_of_domain",
+      "query": "北京到上海的高铁要坐多久",
+      "top1": 0.3551,
+      "top2": 0.3239,
+      "median": 0.2816,
+      "z": 2.1022,
+      "margin_top2": 0.0312,
+      "margin_median": 0.0735
+    },
+    {
+      "kind": "in_domain_unanswerable",
+      "query": "PostgreSQL 的主从复制怎么配置",
+      "top1": 0.4473,
+      "top2": 0.4443,
+      "median": 0.3367,
+      "z": 1.8188,
+      "margin_top2": 0.003,
+      "margin_median": 0.1105
+    },
+    {
+      "kind": "in_domain_unanswerable",
+      "query": "Kubernetes 的 HPA 怎么按自定义指标扩缩容",
+      "top1": 0.465,
+      "top2": 0.433,
+      "median": 0.3488,
+      "z": 1.9397,
+      "margin_top2": 0.032,
+      "margin_median": 0.1162
+    },
+    {
+      "kind": "in_domain_unanswerable",
+      "query": "React Server Components 的流式渲染是怎么实现的",
+      "top1": 0.5276,
+      "top2": 0.4951,
+      "median": 0.3845,
+      "z": 2.2812,
+      "margin_top2": 0.0325,
+      "margin_median": 0.1431
+    },
+    {
+      "kind": "in_domain_unanswerable",
+      "query": "Zig 的 comptime 和宏有什么区别",
+      "top1": 0.4305,
+      "top2": 0.3996,
+      "median": 0.3468,
+      "z": 2.3342,
+      "margin_top2": 0.0308,
+      "margin_median": 0.0837
+    },
+    {
+      "kind": "in_domain_unanswerable",
+      "query": "Nginx 的 upstream keepalive 连接池怎么调优",
+      "top1": 0.4767,
+      "top2": 0.4605,
+      "median": 0.4196,
+      "z": 1.5122,
+      "margin_top2": 0.0162,
+      "margin_median": 0.0571
+    },
+    {
+      "kind": "in_domain_unanswerable",
+      "query": "Prometheus 的 recording rule 怎么写",
+      "top1": 0.4558,
+      "top2": 0.3857,
+      "median": 0.3299,
+      "z": 2.8901,
+      "margin_top2": 0.0701,
+      "margin_median": 0.1259
+    }
+  ]
+}
