@@ -31,7 +31,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import Protocol
+from typing import Protocol, cast, get_args
 
 import httpx
 
@@ -312,8 +312,15 @@ _REASON_BY_STATE: dict[Reachability, CrawlRejectionReason] = {
 }
 
 #: 与可达性无关、但同样会造成「这个 URL 没进来」的内部错误码。
+#:
+#: 两套拼写都在表里：`CRAWL_*` 是 `safe_http` 抛出的，裸名是爬虫写进
+#: `crawl_entries.error_code` 的。少一套，历史行就会退化成"抓取失败"。
 _REASON_BY_ERROR_CODE: dict[str, CrawlRejectionReason] = {
     "CRAWL_SCOPE_REJECTED": "scope_rejected",
+    "SCOPE_REJECTED": "scope_rejected",
+    "ROBOTS_DENIED": "robots_denied",
+    "UNSUPPORTED_MEDIA": "unsupported_media",
+    "CRAWL_RATE_LIMITED": "limit_reached",
     # 超限今天被报成 fetch_failed（"网页抓取失败"），而它是**我们**的限制，
     # 不是站点的问题 —— 用户该看到的是"太大，跳过"，而不是"抓取失败"。
     "DOCUMENT_TOO_LARGE": "limit_reached",
@@ -339,3 +346,19 @@ def rejection_reason(
         if mapped is not None:
             return mapped
     return "fetch_failed"
+
+
+#: 契约里声明的全部取值。读取历史数据时用它判断一个已落库的字符串是否仍然认识。
+DECLARED_REJECTION_REASONS: frozenset[str] = frozenset(get_args(CrawlRejectionReason))
+
+
+def stored_reason(value: str | None, error_code: str | None = None) -> CrawlRejectionReason:
+    """读取已落库的拒绝原因：认识就用，不认识就退回按错误码推导。
+
+    "不认识"是真实存在的情况：库比代码新（降级安装）或某个取值将来被删掉时，表里
+    会留下这一版读不懂的字符串。**让它 500 不是选项** —— 诊断信息读得粗糙，也比
+    整页打不开好；而按错误码推导给出的仍然是一个可据以行动的类别。
+    """
+    if value is not None and value in DECLARED_REJECTION_REASONS:
+        return cast(CrawlRejectionReason, value)
+    return rejection_reason(error_code)

@@ -1696,6 +1696,31 @@ class CrawlEntryStore:
     def mark_rejected(self, entry_id: str, **kwargs: Any) -> CrawlEntryRecord | None:
         return self._mark(entry_id, CrawlEntryState.REJECTED, **kwargs)
 
+    def rejections(self, batch_id: str, *, limit: int = 200) -> tuple[int, list[CrawlEntryRecord]]:
+        """该批次被拒的条目，返回 ``(总数, 前 limit 条)``。
+
+        总数单独查：列表会被 ``limit`` 截断，而"一共有多少页没进来"正是用户第一眼
+        要的那个数字 —— 用截断后的长度冒充它，会让一个 500 条拒绝的批次看起来只
+        有 200 条。
+        """
+        conditions = (
+            CrawlEntryRecord.batch_id == batch_id,
+            CrawlEntryRecord.state == CrawlEntryState.REJECTED,
+        )
+        with self.database.session() as session:
+            total = session.scalar(
+                select(func.count()).select_from(CrawlEntryRecord).where(*conditions)
+            )
+            rows = list(
+                session.scalars(
+                    select(CrawlEntryRecord)
+                    .where(*conditions)
+                    .order_by(CrawlEntryRecord.canonical_url)
+                    .limit(limit)
+                )
+            )
+        return int(total or 0), rows
+
     def _mark(
         self, entry_id: str, state: CrawlEntryState, **kwargs: Any
     ) -> CrawlEntryRecord | None:

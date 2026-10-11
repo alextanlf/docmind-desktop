@@ -763,6 +763,45 @@ export const BatchItemPageSchema = z.object({
   items: z.array(BatchItemSchema),
   nextCursor: z.string().nullable(),
 });
+
+/**
+ * 一个 URL 没被收录的原因。与后端 `CrawlRejectionReason`
+ * （backend/app/schemas/batches.py）逐字对齐，两边的测试各守一半：
+ * 后端断言"映射产生的每个值都在这份集合里"，前端断言"这份集合里每个值都有文案"。
+ *
+ * 🔴 分类必须区分处置方式不同的四件事：站点拒绝了你（换请求）、到不了（换来源）、
+ * 地域限制（只能换来源）、我们主动跳过（不值得等）。合成一个"抓取失败"，用户就
+ * 只能反复重试同一件注定失败的事。
+ */
+export const CrawlRejectionReasonSchema = z.enum([
+  "robots_denied",
+  "scope_rejected",
+  "unsupported_media",
+  "limit_reached",
+  "unreachable",
+  "throttled",
+  "http_rejected",
+  "geo_blocked",
+  "tls_error",
+  "proxy_error",
+  "fetch_failed",
+]);
+
+export const BatchDiagnosticSchema = z.object({
+  canonicalUrl: z.string(),
+  reason: CrawlRejectionReasonSchema,
+});
+
+export const BatchDiagnosticsPageSchema = z.object({
+  total: z.number().int().nonnegative(),
+  /** 列表被上限截断 —— 界面必须能说出"还有多少条没列出来"。 */
+  truncated: z.boolean(),
+  items: z.array(BatchDiagnosticSchema),
+});
+
+export type CrawlRejectionReason = z.infer<typeof CrawlRejectionReasonSchema>;
+export type BatchDiagnostic = z.infer<typeof BatchDiagnosticSchema>;
+export type BatchDiagnosticsPage = z.infer<typeof BatchDiagnosticsPageSchema>;
 /**
  * 批量导入入参。后端 `CreateBatchRequest`（app/schemas/batches.py）是
  * 以 `kind` 为判别式的四路 union，四个变体的字段与约束必须逐字对齐：
@@ -1000,6 +1039,8 @@ export interface BatchesApi {
   get(batchId: string): Promise<BatchImport>;
   list(): Promise<BatchImport[]>;
   listItems(batchId: string, cursor?: string | null): Promise<BatchItemPage>;
+  /** 哪些页面没被收录、各自为什么。单独一次请求：它比批次快照大得多，也很少看。 */
+  diagnostics(batchId: string): Promise<BatchDiagnosticsPage>;
   confirm(batchId: string, input: ConfirmBatchInput): Promise<BatchImport>;
   cancel(batchId: string): Promise<BatchImport>;
   continue(batchId: string): Promise<BatchImport>;

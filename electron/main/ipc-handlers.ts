@@ -46,6 +46,7 @@ import {
   PluginDirectorySchema,
   PluginStateSchema,
   BatchImportSchema,
+  BatchDiagnosticsPageSchema,
   BatchItemPageSchema,
   BrowserInstallResultSchema,
   CreateBatchInputSchema,
@@ -457,6 +458,12 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
           : "";
       return proxy.requestJson(`/api/import-batches/${id}/items${query}`, {}, BatchItemPageSchema);
     },
+    [IPC_CHANNELS.batchesDiagnostics]: (_event, batchId) =>
+      proxy.requestJson(
+        `/api/import-batches/${parse(UUID, batchId)}/diagnostics`,
+        {},
+        BatchDiagnosticsPageSchema,
+      ),
     [IPC_CHANNELS.batchesConfirm]: (_event, batchId, input) => {
       const id = parse(UUID, batchId);
       return proxy.requestJson(

@@ -423,10 +423,14 @@ def create_app(
         safe_http_client = SafeHttpClient(
             resolver=_SystemResolver(), transport=httpx.AsyncHTTPTransport()
         )
+        # 抓取条目单独挂到 app.state：诊断端点要按批次读"哪些 URL 没进来、为什么"，
+        # 而那是 crawl_entries 里的数据，不是批次汇总里的数字。
+        crawl_entries = CrawlEntryStore(database)
+        app.state.crawl_entries = crawl_entries
         web_discovery = WebDiscovery(
             safe_http_client,
             runtime_settings.staging_dir,
-            frontier=CrawlEntryStore(database),
+            frontier=crawl_entries,
             # 两个都给：没有它们，一次抓取失败只能说「抓取失败」；有了它们，
             # 「站点拒绝了你」「到不了」「被限流」才会分开，而且同一个站点不会
             # 被我们连着敲门。

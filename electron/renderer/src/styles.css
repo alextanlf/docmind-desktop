@@ -53,6 +53,43 @@ body {
   line-height: 1.5;
 }
 
+/* 候选页上「为什么有些页面没进来」。折叠着放是刻意的：它比候选表次要，
+   但一旦展开就要能一眼看出"哪一类、有多少、该怎么办"。 */
+.batch-diagnostics {
+  margin: 10px 0 14px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 13px;
+}
+.batch-diagnostics summary {
+  color: #4f5763;
+  font-weight: 600;
+  cursor: pointer;
+}
+.batch-diagnostics-list {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0 0;
+  padding-left: 18px;
+}
+.batch-diagnostics-list > li > p {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+.batch-diagnostics-list > li > p > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.batch-diagnostics-list ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .batch-candidate-table-wrap {
   max-height: 360px;
   overflow: auto;

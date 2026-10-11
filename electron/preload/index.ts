@@ -46,6 +46,7 @@ import {
   PluginDirectorySchema,
   PluginStateSchema,
   BatchImportSchema,
+  BatchDiagnosticsPageSchema,
   BatchItemPageSchema,
   BrowserInstallResultSchema,
   CreateBatchInputSchema,
@@ -450,6 +451,8 @@ const api: DocMindApi = {
     list: () => invoke(IPC_CHANNELS.batchesList, BatchImportSchema.array()),
     listItems: (batchId, cursor) =>
       invoke(IPC_CHANNELS.batchesListItems, BatchItemPageSchema, uuid(batchId), cursor ?? null),
+    diagnostics: (batchId) =>
+      invoke(IPC_CHANNELS.batchesDiagnostics, BatchDiagnosticsPageSchema, uuid(batchId)),
     confirm: (batchId, input) =>
       invoke(
         IPC_CHANNELS.batchesConfirm,

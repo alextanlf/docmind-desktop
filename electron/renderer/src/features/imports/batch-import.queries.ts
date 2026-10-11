@@ -10,7 +10,24 @@ export const batchKeys = {
   all: ["batches"] as const,
   batch: (id: string) => ["batches", id] as const,
   items: (id: string) => ["batches", id, "items"] as const,
+  diagnostics: (id: string) => ["batches", id, "diagnostics"] as const,
 };
+
+/**
+ * 哪些页面没被收录、各自为什么。
+ *
+ * 单独一次请求而不是塞进批次快照：一个 200 页的站点被拒几十上百条是常态，而候选页
+ * 每加载一次都要读批次 —— 挂在那个响应里，等于每次搬运一份用户大多数时候不看的
+ * 数据。`staleTime` 给得长：抓取结论在确认阶段不会再变（要变也是用户重新发起导入）。
+ */
+export function useBatchDiagnosticsQuery(batchId: string | null) {
+  return useQuery({
+    queryKey: batchId ? batchKeys.diagnostics(batchId) : ["batches", "diagnostics"],
+    queryFn: () => window.docmind.batches.diagnostics(batchId!),
+    enabled: !!batchId,
+    staleTime: 5 * 60 * 1000,
+  });
+}
 
 export function useBatchQuery(batchId: string | null) {
   return useQuery({

@@ -5,12 +5,15 @@ import json
 from typing import Annotated, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Header, Request, status
+from fastapi import APIRouter, Header, Query, Request, status
 from fastapi.responses import StreamingResponse
 
 from app.api.errors import DomainError
+from app.document.reachability import stored_reason
 from app.imports.batch_service import BatchService
 from app.schemas.batches import (
+    BatchDiagnosticsPage,
+    BatchDiagnosticView,
     BatchImportView,
     BatchItemPage,
     ConfirmBatchInput,
@@ -95,6 +98,39 @@ async def list_batch_items(
 ) -> BatchItemPage:
     return _service(request).list_items(
         str(batch_id), cursor=cursor, limit=limit, state=state, selected=selected
+    )
+
+
+@router.get("/{batch_id}/diagnostics", response_model=BatchDiagnosticsPage)
+async def list_batch_diagnostics(
+    batch_id: UUID,
+    request: Request,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+) -> BatchDiagnosticsPage:
+    """这个批次里有哪些 URL 没被收录，以及各自的原因。
+
+    单独一个端点，而不是塞进批次视图：一个 200 页的站点被拒几十上百条是常态，而
+    进度视图每秒都在读批次 —— 把诊断挂在那个响应里，等于每秒搬运一份用户大多数
+    时候不看的数据。
+
+    未知批次仍走 404（而不是返回空集）：空集的含义是"抓过的都进来了"，与"这个
+    批次不存在"是两件事。
+    """
+    _service(request).get(str(batch_id))
+    store = getattr(request.app.state, "crawl_entries", None)
+    if store is None:
+        return BatchDiagnosticsPage(total=0, truncated=False, items=[])
+    total, rows = store.rejections(str(batch_id), limit=limit)
+    return BatchDiagnosticsPage(
+        total=total,
+        truncated=total > len(rows),
+        items=[
+            BatchDiagnosticView(
+                canonical_url=row.canonical_url,
+                reason=stored_reason(row.rejection_reason, row.error_code),
+            )
+            for row in rows
+        ],
     )
 
 

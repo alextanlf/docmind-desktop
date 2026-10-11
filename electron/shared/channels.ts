@@ -74,6 +74,7 @@ export const IPC_CHANNELS = {
   batchesGet: "batches:get",
   batchesList: "batches:list",
   batchesListItems: "batches:listItems",
+  batchesDiagnostics: "batches:diagnostics",
   batchesConfirm: "batches:confirm",
   batchesCancel: "batches:cancel",
   batchesContinue: "batches:continue",

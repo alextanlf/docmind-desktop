@@ -857,6 +857,7 @@ export function installDocMindApi(overrides?: {
       get: vi.fn(),
       list: vi.fn().mockResolvedValue([]),
       listItems: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
+      diagnostics: vi.fn().mockResolvedValue({ total: 0, truncated: false, items: [] }),
       confirm: vi.fn(),
       cancel: vi.fn(),
       continue: vi.fn(),

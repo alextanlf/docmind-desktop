@@ -79,12 +79,12 @@ class WebDiscovery:
                 url, depth = queue.popleft()
             url = canonicalize_url(url)
             if url in seen or not in_scope(url, entry, prefix):
-                if row: self.frontier.mark_rejected(row.id, error_code="SCOPE_REJECTED")
+                if row: self.frontier.mark_rejected(row.id, error_code="SCOPE_REJECTED", rejection_reason="scope_rejected")
                 continue
             seen.add(url)
             if not await self.client.robots_allowed(url, "DocMind/2", scope_origin=entry, scope_prefix=prefix):
                 rejected.append({"canonical_url": url, "reason": "robots_denied", "message": "robots.txt 禁止抓取"});
-                if self.frontier: self.frontier.mark_rejected(row.id if 'row' in locals() and row else "", error_code="ROBOTS_DENIED")
+                if self.frontier: self.frontier.mark_rejected(row.id if 'row' in locals() and row else "", error_code="ROBOTS_DENIED", rejection_reason="robots_denied")
                 continue
             host = urlsplit(url).hostname or ""
             if not await self._ready_to_fetch(host, url, row, rejected):
@@ -99,7 +99,7 @@ class WebDiscovery:
             media = snap.media_type
             if media not in {"text/html", "text/markdown", "application/pdf"}:
                 rejected.append({"canonical_url": url, "reason": "unsupported_media", "message": "不支持的媒体类型"})
-                if self.frontier and row: self.frontier.mark_rejected(row.id, error_code="UNSUPPORTED_MEDIA")
+                if self.frontier and row: self.frontier.mark_rejected(row.id, error_code="UNSUPPORTED_MEDIA", rejection_reason="unsupported_media")
                 continue
             if media == "text/html":
                 soup = BeautifulSoup(snap.body, "html.parser")
@@ -148,7 +148,7 @@ class WebDiscovery:
             "message": "该站点要求等待过久，已跳过",
         })
         if self.frontier and row:
-            self.frontier.mark_rejected(row.id, error_code="CRAWL_RATE_LIMITED")
+            self.frontier.mark_rejected(row.id, error_code="CRAWL_RATE_LIMITED", rejection_reason="limit_reached")
         return False
 
     async def _record_fetch_failure(self, error, host, url, row, rejected) -> None:
@@ -163,10 +163,11 @@ class WebDiscovery:
             probe_result = await self.probe.probe(host)
             if probe_result.state is Reachability.THROTTLED and self.limiter is not None:
                 self.limiter.penalize(host, retry_after_seconds=probe_result.retry_after_seconds)
+        reason = rejection_reason(error.code, probe_result)
         rejected.append({
             "canonical_url": url,
-            "reason": rejection_reason(error.code, probe_result),
+            "reason": reason,
             "message": error.message,
         })
         if self.frontier and row:
-            self.frontier.mark_rejected(row.id, error_code=error.code)
+            self.frontier.mark_rejected(row.id, error_code=error.code, rejection_reason=reason)

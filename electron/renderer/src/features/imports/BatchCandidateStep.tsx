@@ -1,8 +1,16 @@
 import { useEffect, useMemo } from "react";
 import type { BatchItem } from "../../../../shared/contracts";
-import { useBatchItemsQuery, useBatchQuery } from "./batch-import.queries";
+import {
+  useBatchDiagnosticsQuery,
+  useBatchItemsQuery,
+  useBatchQuery,
+} from "./batch-import.queries";
 import { useImportStore } from "./import-store";
+import { groupRejections } from "./rejection-copy";
 const EMPTY_DECISIONS: Record<string, "include" | "skip" | "defer"> = {};
+
+/** 每个原因下面最多列几个具体 URL —— 用户要的是"哪一类、有多少"，不是一份完整清单。 */
+const URLS_PER_GROUP = 5;
 
 export function BatchCandidateStep({
   batchId,
@@ -17,6 +25,13 @@ export function BatchCandidateStep({
 }) {
   const batch = useBatchQuery(batchId);
   const items = useBatchItemsQuery(batchId);
+  // 「为什么只有 12 项」正是用户在这一步会问的问题，所以诊断信息就放在这里，
+  // 而不是等导入结束之后。
+  const diagnostics = useBatchDiagnosticsQuery(batchId);
+  const rejectionGroups = useMemo(
+    () => groupRejections(diagnostics.data?.items ?? []),
+    [diagnostics.data],
+  );
   const setDecision = useImportStore((s) => s.setBatchDecision);
   const setBatchItems = useImportStore((s) => s.setBatchItems);
   const decisions = useImportStore((s) => s.batchDecisions[batchId] ?? EMPTY_DECISIONS);
@@ -35,6 +50,34 @@ export function BatchCandidateStep({
         发现 {batch.data?.totalCount ?? allItems.length} 项，已选择{" "}
         {batch.data?.selectedCount ?? allItems.filter((i) => i.selected).length} 项
       </p>
+      {diagnostics.data && diagnostics.data.total > 0 ? (
+        <details className="batch-diagnostics">
+          <summary>另有 {diagnostics.data.total} 个页面没有收录（查看原因）</summary>
+          <ul className="batch-diagnostics-list">
+            {rejectionGroups.map((group) => (
+              <li key={group.reason}>
+                <p>
+                  <strong>
+                    {group.label}（{group.urls.length}）
+                  </strong>
+                  <span>{group.hint}</span>
+                </p>
+                <ul>
+                  {group.urls.slice(0, URLS_PER_GROUP).map((url) => (
+                    <li key={url}>{url}</li>
+                  ))}
+                  {group.urls.length > URLS_PER_GROUP ? (
+                    <li>…另有 {group.urls.length - URLS_PER_GROUP} 个</li>
+                  ) : null}
+                </ul>
+              </li>
+            ))}
+          </ul>
+          {diagnostics.data.truncated ? (
+            <p>列表只列出前 {diagnostics.data.items.length} 条地址。</p>
+          ) : null}
+        </details>
+      ) : null}
       <div className="batch-candidate-table-wrap">
         <table className="batch-candidate-table">
           <thead>

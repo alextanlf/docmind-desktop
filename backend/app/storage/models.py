@@ -118,6 +118,10 @@ class CrawlEntryRecord(Base):
     last_modified: Mapped[str | None] = mapped_column(Text, nullable=True)
     cache_ref_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # 给用户看的拒绝原因（"站点拒绝了你" / "到不了" / "被限流" / "地域限制"）——
+    # 与 `error_code` 分工不同：那是给程序看的内部错误码，这是给用户看、据以决策的
+    # 分类。为 NULL 表示写入时还没有这个字段，读取方会退回去从 error_code 推导。
+    rejection_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
     )

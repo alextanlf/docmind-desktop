@@ -20,6 +20,7 @@ from app.document.reachability import (
     classify_status,
     rejection_reason,
     retry_after_seconds,
+    stored_reason,
 )
 from app.schemas.batches import CrawlRejectionReason
 
@@ -300,3 +301,26 @@ def test_every_reason_is_part_of_the_declared_wire_vocabulary() -> None:
     # 反向也要看一眼：契约里声明了却没人产生的值就是死值。
     assert "robots_denied" in declared
     assert "unsupported_media" in declared
+
+
+# --- 读取已落库的原因 -----------------------------------------------------
+
+
+def test_stored_reason_is_used_when_this_version_still_understands_it() -> None:
+    assert stored_reason("geo_blocked", "CRAWL_FETCH_FAILED") == "geo_blocked"
+
+
+def test_unknown_stored_reason_falls_back_to_the_error_code_instead_of_failing() -> None:
+    """库比代码新（降级安装）或某个取值被删掉时，表里会留下读不懂的字符串。
+
+    让它 500 不是选项：诊断信息读得粗糙，也比整页打不开好。
+    """
+    assert stored_reason("seo_spam", "ROBOTS_DENIED") == "robots_denied"
+    assert stored_reason("seo_spam", None) == "fetch_failed"
+
+
+def test_rows_written_before_the_column_existed_are_derived_from_the_error_code() -> None:
+    """迁移之前落库的行没有原因，但 error_code 常常已经能说明问题。"""
+    assert stored_reason(None, "UNSUPPORTED_MEDIA") == "unsupported_media"
+    assert stored_reason(None, "CRAWL_RATE_LIMITED") == "limit_reached"
+    assert stored_reason(None, "CRAWL_FETCH_FAILED") == "fetch_failed"

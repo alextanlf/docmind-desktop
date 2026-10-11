@@ -186,6 +186,25 @@ class CrawlDiagnostic(WireModel):
     message: str
 
 
+class BatchDiagnosticView(WireModel):
+    """一个被拒的 URL 及其原因。
+
+    ``reason`` 非空：写入时没有记录原因的旧行会由 `error_code` 推导，推导不出来的
+    归入 ``fetch_failed`` —— 那与"抓取失败但说不出原因"本来就是同一件事，比留一个
+    空字段让界面自己编文案要诚实。
+    """
+
+    canonical_url: str
+    reason: CrawlRejectionReason
+
+
+class BatchDiagnosticsPage(WireModel):
+    total: int
+    #: 列表是否被上限截断 —— 界面必须能说出"还有多少条没列出来"。
+    truncated: bool
+    items: list[BatchDiagnosticView]
+
+
 class RemoteRepositoryBatchRequest(WireModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["remote_repository"]
