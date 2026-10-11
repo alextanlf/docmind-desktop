@@ -173,17 +173,45 @@ async def test_dangling_vectors_are_filtered_out(tmp_path: Path) -> None:
         await provider.search(SearchRequest(query="事件循环怎么调度并发任务", max_results=3))
 
 
-@pytest.mark.asyncio
-async def test_a_lexical_hit_is_never_overridden_by_a_semantic_one(tmp_path: Path) -> None:
-    """救援规则的另一半：词法有命中时向量不介入。
+class SplitEmbedder(FakeEmbedder):
+    """词法指向一页、语义指向另一页 —— "词法弱、语义强"的那种查询。"""
 
-    这对精确查询（标识符、函数名）很重要 —— 语义相近的页不该把字面精确命中的页顶掉。
+    async def embed_query(self, text):
+        return [0.0, 1.0, 0.0, 0.0]
+
+
+@pytest.mark.asyncio
+async def test_a_page_only_the_semantic_channel_found_still_shows_up(tmp_path: Path) -> None:
+    """真融合的证据：词法有命中时，语义通道找到的**另一页**不再被丢掉。
+
+    改之前这里是"词法优先、向量救援"：词法一旦有命中就完全按词法走，语义通道即使指向
+    更贴题的页面也进不来。现在两条通道融合 —— 这条用例锁的就是那个差异。
+
+    （注意：排名第一的仍是两路都指向的那一页。RRF 里"两个通道都投它"本来就该赢，
+    这不是缺陷而是融合的意义。）
     """
     store, index = build(tmp_path)
     chunks = seed(store)
     index.upsert(chunks, [CONCEPTS[chunk.text] for chunk in chunks])
-    provider = WebCorpusSearchProvider(store, vectors=index, embedder=FakeEmbedder())
+    provider = WebCorpusSearchProvider(store, vectors=index, embedder=SplitEmbedder())
+
+    response = await provider.search(SearchRequest(query="asyncio event loop", max_results=3))
+    urls = [str(result.canonical_url) for result in response.results]
+
+    assert "https://docs.test/a" in urls  # 词法命中的那页
+    assert "https://docs.test/b" in urls  # 只有语义通道找到的那页（改之前不会出现）
+
+
+@pytest.mark.asyncio
+async def test_without_the_semantic_channel_the_same_query_only_returns_the_lexical_page(
+    tmp_path: Path,
+) -> None:
+    """对照组：同一份语料、同一个问句，没有向量通道时只有词法那一页 ——
+    这样"融合多带回来什么"才是可回归验证的。"""
+    store, _ = build(tmp_path)
+    seed(store)
+    provider = WebCorpusSearchProvider(store)
 
     response = await provider.search(SearchRequest(query="asyncio event loop", max_results=3))
 
-    assert str(response.results[0].canonical_url) == "https://docs.test/a"
+    assert [str(result.canonical_url) for result in response.results] == ["https://docs.test/a"]

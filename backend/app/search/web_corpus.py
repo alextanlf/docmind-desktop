@@ -14,28 +14,37 @@
 N 小时会退化成 0 或负数（同一个词出现在一半文档里时恰好为 0），"命中"与"没命中"就
 分不开了。BM25Plus 的 IDF 是 ``log((N+1)/n)``，小语料上仍为正。
 
-**三、向量通道只做"救援"：词法有命中就用词法，词法空了才用向量。**
+**三、两条通道怎么合：词法有命中就**融合**，词法为空才由向量单独作答。**
 
 这一条是**实测逼出来的**。本地语料常常是英文文档，而问的人用中文：中文切单字、英文
 切词，纯中文问句对纯英文正文的 token 交集**必然为空** —— 不是"相关度低"，是结构上
 不可能命中。实测（`scripts/ab_corpus_language_gap.py`，10 例严格零重叠用例）：
 词法单通道 0/10，向量 10/10。
 
-但**不能**把两条通道无门槛地融合（我第一版就是那么写的，被测试当场抓出来）：向量没有
-门槛时会回答**每一个**问题，连无关的也返回几条，而链上"第一个有结果的来源胜出" ——
-于是本地语料会挡住上游，有可用上游的用户反而拿到更差的答案。
+但**不能**把"词法为空时用向量"这条救援规则换成"无条件融合"（我第一版就是那么写的，
+被测试当场抓出来）：向量没有门槛时会回答**每一个**问题，连无关的也返回几条，而链上
+"第一个有结果的来源胜出" —— 于是本地语料会挡住上游。而加门槛也不行，实测不支持：
 
-而加门槛也不行，实测不支持（同一份实验量出的余弦分布）：
+| 判别器 | 语料内有答案 | 同领域但语料里没答案 | 可分？ |
+|---|---|---|---|
+| top1 余弦 | 0.473–0.716 | 0.430–0.528 | ✗ |
+| top1 − top2 | 0.013–0.287 | 0.003–0.070 | ✗ |
+| top1 − 中位数 | 0.123–0.346 | 0.057–0.143 | ✗ |
+| top1 的 z 值 | 2.133–3.639 | 1.512–2.890 | ✗ |
 
-| | 余弦 |
-|---|---|
-| 相关（问句 vs 它的目标页） | 最低 0.469，p10 0.551 |
-| 不相关（问句 vs 其它页） | 中位 0.414，p90 0.480，**最高 0.554** |
+（`scripts/ab_corpus_relevance_gate.py`，22 条查询、三类负例。绝对值门槛能滤掉"领域外"
+的问题，但**滤不掉"同领域而语料里没有答案"** —— 而那恰恰是挡住上游的真实来源：
+用户问 PostgreSQL 主从复制，语料返回 SQLite 的页面，相似度 0.447，看着很相关，没有答案。）
 
-两个分布几乎完全重叠 —— 任何绝对门槛要么砍掉真正的命中，要么放进无关的页。这恰好
-印证了项目那条定论（相似度分数不能判断覆盖度），所以这里**不设门槛**，改用一条不需要
-门槛的规则：词法通道有命中时完全按原样走（行为不变，精确查询如标识符不会被语义噪声
-顶掉），词法为空时才让向量补位 —— 而那正是今天返回零、只能交给上游的情形。
+所以规则按"**能不能作答**"来分层，而不是按分数：
+
+- 词法有命中 → **融合**两条通道的排名（RRF）。这时语料本来就要作答，融合只是让排序更
+  准：一个词面弱命中、语义更强的页面可以排到前面（此前它会被直接丢掉）。
+- 词法为空 → 向量**单独**作答（救援）。这正是中文问句的情形：词法上零重合，只有向量
+  找得回来。
+
+换句话说：融合只改变"已经决定作答"时的**排序**，不改变"要不要作答"的**路由** ——
+所以它不会让更多问题被本地语料吃掉。
 
 残余风险（如实记下）：词法为空、而语料其实答不了的问题，现在会得到语料"最好的猜测"
 而不是转给上游。缓解手段是模型仍会判断这些片段够不够（证据充分性由生成模型判断）。
@@ -56,13 +65,25 @@ import logging
 from rank_bm25 import BM25Plus
 
 from app.core.embedding import EmbeddingProvider
-from app.core.retrieval import tokenize
+from app.core.retrieval import reciprocal_rank_fusion, tokenize
 from app.corpus.vectors import CorpusVectorIndex
 from app.schemas.web_search import NormalizedSearchResult, SearchRequest, SearchResponse
 from app.search.provider import SearchProviderError
 from app.storage.repositories import WebCorpusStore
 
 logger = logging.getLogger(__name__)
+
+
+def _combine(lexical: list[str], semantic: list[str]) -> list[str]:
+    """两条通道的候选合成一个排名。
+
+    - 词法有命中：RRF 融合（语义通道可以把一个词面弱命中但更贴题的页面顶上来）。
+    - 词法为空：只用语义通道 —— 这正是零词面重合的中文问句能被回答的原因。
+    - 两条都空：空列表，调用方会报"没有匹配内容"，让链把问题交给上游。
+    """
+    if lexical and semantic:
+        return [item.chunk_id for item in reciprocal_rank_fusion(semantic, lexical, k=60)]
+    return lexical or semantic
 
 #: 向量通道取多少个候选交给融合。
 #:
@@ -107,10 +128,9 @@ class WebCorpusSearchProvider:
         # BM25 是纯 CPU 的全库扫描，放进线程免得阻塞事件循环（其它来源都在等网络，
         # 而这里在算分数）。
         lexical = await asyncio.to_thread(self._lexical_ranking, request.query)
-        # 词法有命中就到此为止：行为与加向量之前完全一致。
-        if not lexical:
-            lexical = await self._semantic_ranking(request.query)
-        results = await asyncio.to_thread(self._collect, request, ranked_ids=lexical)
+        semantic = await self._semantic_ranking(request.query)
+        ranked_ids = _combine(lexical, semantic)
+        results = await asyncio.to_thread(self._collect, request, ranked_ids=ranked_ids)
         if not results:
             raise SearchProviderError("SEARCH_PROVIDER_ERROR", "本地网页索引没有匹配内容")
         return SearchResponse(results=results, provider=self.name)
