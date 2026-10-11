@@ -17,12 +17,12 @@ for (const viewport of [
       "true",
     );
 
-    await nav.getByRole("button", { name: "本地数据与诊断" }).click();
-    await expect(nav.getByRole("button", { name: "本地数据与诊断" })).toHaveAttribute(
+    await nav.getByRole("button", { name: "本地运行与路由" }).click();
+    await expect(nav.getByRole("button", { name: "本地运行与路由" })).toHaveAttribute(
       "aria-current",
       "true",
     );
-    await expect(page.getByRole("heading", { name: "本地数据与诊断" })).toBeInViewport();
+    await expect(page.getByRole("heading", { name: "本地运行与路由" })).toBeInViewport();
     await page.screenshot({ path: testInfo.outputPath(`${viewport.name}-settings.png`) });
   });
 }

@@ -401,11 +401,11 @@ describe("设置", () => {
       screen.getByRole("heading", { name: "插件", hidden: true }).closest("section"),
     ).not.toBeVisible();
 
-    const target = within(nav).getByRole("button", { name: "本地数据与诊断" });
+    const target = within(nav).getByRole("button", { name: "插件" });
     fireEvent.click(target);
 
     expect(target).toHaveAttribute("aria-current", "true");
-    const opened = screen.getByRole("heading", { name: "本地数据与诊断" }).closest("section")!;
+    const opened = screen.getByRole("heading", { name: "插件" }).closest("section")!;
     expect(opened).toBeVisible();
     expect(opened).toHaveFocus();
     // Switching pages leaves exactly one visible — this is the behaviour that
@@ -1043,7 +1043,9 @@ describe("设置", () => {
     const get = vi.fn().mockResolvedValue(readySettings);
     const api = installDocMindApi({ settings: { get } });
     renderSettings();
-    await openSection("本地数据与诊断");
+    // 数据位置与失败截图现在挂在「本地运行与路由」页下：它们本来就只讲本机上的
+    // 东西，不值得单开一个顶级分区。
+    await openSection("本地运行与路由");
 
     expect(await screen.findByText(readySettings.dataPath)).toBeVisible();
     expect(screen.getByText("失败截图 2 张")).toBeVisible();
@@ -1059,7 +1061,7 @@ describe("设置", () => {
   it("traps confirmation focus, closes on Escape, and restores the trigger", async () => {
     installDocMindApi();
     renderSettings();
-    await openSection("本地数据与诊断");
+    await openSection("本地运行与路由");
 
     const trigger = await screen.findByRole("button", { name: "清理失败截图" });
     trigger.focus();
@@ -1357,7 +1359,7 @@ describe("设置", () => {
       .mockResolvedValue(readySettings);
     installDocMindApi({ settings: { get: retryableGet } });
     renderSettings();
-    await openSection("本地数据与诊断");
+    await openSection("本地运行与路由");
     expect(await screen.findByText(readySettings.dataPath)).toBeVisible();
     expect(retryableGet).toHaveBeenCalledTimes(2);
 

@@ -6,7 +6,17 @@ import { IconButton } from "../../components/IconButton";
 import { Modal } from "../../components/Modal";
 import { clientErrorMessage, settingsKeys } from "./settings.queries";
 
-export function DiagnosticsSection({ settings }: { settings: SettingsView }) {
+/**
+ * 本地数据：数据目录在哪，以及失败截图的清理。
+ *
+ * 这一块原来是一个独立分区（「本地数据与诊断」）。它只有一个只读路径和一个删除
+ * 按钮，占一个顶级导航项太重；而它讲的事情本来属于「本地运行与路由」——数据存在
+ * 本机哪里、本机留了什么，就是本地运行的一部分。分区撤销，内容并进那一页。
+ *
+ * 失败截图是语雀自动化失败时留下的排障产物（png + json + html），界面上看不到、
+ * 也导出不了，所以这里只提供「有多少、清掉」两件事。
+ */
+export function LocalDataPanel({ settings }: { settings: SettingsView }) {
   const [confirming, setConfirming] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [error, setError] = useState<string | null>(null);

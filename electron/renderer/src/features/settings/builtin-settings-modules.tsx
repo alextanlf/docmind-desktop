@@ -11,9 +11,8 @@
  * tiebreaker; `order` decides the sequence.
  */
 import type { ReactNode } from "react";
-import { Cpu, HardDrive, KeyRound, Puzzle } from "lucide-react";
+import { Cpu, KeyRound, Puzzle } from "lucide-react";
 import type { SettingsView } from "../../../../shared/contracts";
-import { DiagnosticsSection } from "./DiagnosticsSection";
 import { ModelSettings } from "./ModelSettings";
 import { PluginSettings } from "./PluginSettings";
 import { RuntimeModelSettings } from "./RuntimeModelSettings";
@@ -56,7 +55,6 @@ function settingsSection(
 
 const ModelModule = settingsSection(ModelSettings);
 const RuntimeModule = settingsSection(RuntimeModelSettings);
-const DiagnosticsModule = settingsSection(DiagnosticsSection);
 
 /**
  * Marks this module as the built-in registration side-effect module.
@@ -81,7 +79,7 @@ registerModule({
 registerModule({
   id: "settings-runtime",
   label: "本地运行与路由",
-  description: "配置本地模型与云端回退策略",
+  description: "配置本地模型、云端回退策略与本地数据",
   icon: Cpu,
   order: 20,
   render: () => <RuntimeModule />,
@@ -93,13 +91,4 @@ registerModule({
   icon: Puzzle,
   order: 30,
   render: () => <PluginSettings />,
-});
-
-registerModule({
-  id: "settings-diagnostics",
-  label: "本地数据与诊断",
-  description: "查看数据位置并管理失败截图",
-  icon: HardDrive,
-  order: 50,
-  render: () => <DiagnosticsModule />,
 });

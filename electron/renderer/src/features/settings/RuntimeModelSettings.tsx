@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { RuntimeSettingsInput, SettingsView } from "../../../../shared/contracts";
 import { clientErrorMessage, useLocalModelsQuery, useSaveRuntimeMutation } from "./settings.queries";
+import { LocalDataPanel } from "./LocalDataPanel";
 import { LocalModelStatusCard } from "./LocalModelStatusCard";
 
 const fallback: RuntimeSettingsInput = {
@@ -164,6 +165,12 @@ export function RuntimeModelSettings({ settings }: { settings: SettingsView }) {
       {mutation.isError && <p role="alert">{clientErrorMessage(mutation.error)}</p>}
       {mutation.isSuccess && <p role="status">运行设置已保存</p>}
       <LocalModelStatusCard />
+      {/* 数据放在本机哪里，是「本地运行」的一部分。这一块原来是一个独立分区，
+          但一个只读路径加一个删除按钮撑不起一个顶级导航项。 */}
+      <fieldset>
+        <legend>本地数据</legend>
+        <LocalDataPanel settings={settings} />
+      </fieldset>
     </div>
   );
 }
