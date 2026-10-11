@@ -436,3 +436,39 @@ def test_candidates_are_mined_from_documents_and_crawl_history(client, auth_head
     assert by_domain["sqlite.org"]["signals"] == ["crawl_history"]
     # 本地暂存目录不是站点：本机实测 3 篇文档全是这一类，不能被当成域名。
     assert "staged" not in " ".join(by_domain)
+
+
+def test_topics_are_listed_so_the_first_click_needs_no_typing(client, auth_headers) -> None:
+    """首次体验：新用户进来清单是空的，而"写下一个问题"要求他先知道自己想问什么。
+
+    种子表里的话题是随应用分发、逐条带证据的，点一下就能得到确定的结果 —— 还要告诉他
+    能得到几个来源（点之前就知道值不值得点）。
+    """
+    response = client.get("/api/corpus/topics", headers=auth_headers)
+
+    assert response.status_code == 200
+    topics = response.json()["topics"]
+    keys = {topic["key"] for topic in topics}
+    assert {"python", "sqlite", "containers"} <= keys
+    assert all(topic["label"] for topic in topics)
+    assert all(topic["sourceCount"] >= 1 for topic in topics)
+
+    python = next(topic for topic in topics if topic["key"] == "python")
+    assert python["label"] == "Python"
+    assert python["sourceCount"] == 2
+
+
+def test_selecting_a_topic_by_key_gives_its_sources_without_any_text(client, auth_headers) -> None:
+    """点选走精确 key，不经过关键词匹配 —— 一键话题因此是确定的，也不需要调模型。"""
+    response = client.post(
+        "/api/corpus/candidates",
+        headers=auth_headers,
+        json={"topics": ["sqlite"], "nominate": False},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["nomination"] == {"attempted": False, "count": 0}
+    assert [candidate["domain"] for candidate in body["candidates"]] == ["sqlite.org"]
+    assert body["candidates"][0]["verified"] is True
+    assert "种子表" in body["candidates"][0]["evidence"][0]

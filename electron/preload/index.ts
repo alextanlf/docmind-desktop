@@ -49,6 +49,7 @@ import {
   BatchDiagnosticsPageSchema,
   CorpusCandidateRequestSchema,
   CorpusCandidatesResponseSchema,
+  CorpusTopicsResponseSchema,
   CancelCrawlResponseSchema,
   CrawlSourceResponseSchema,
   SaveWebSourcesRequestSchema,
@@ -451,6 +452,7 @@ const api: DocMindApi = {
     listFormats: () => invoke(IPC_CHANNELS.sourcesListFormats, SourceFormatSchema.array()),
   },
   corpus: {
+    topics: () => invoke(IPC_CHANNELS.corpusTopics, CorpusTopicsResponseSchema),
     candidates: (input) =>
       invoke(
         IPC_CHANNELS.corpusCandidates,

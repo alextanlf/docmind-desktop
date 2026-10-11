@@ -81,6 +81,7 @@ export const IPC_CHANNELS = {
   batchesRetry: "batches:retry",
   batchesSubscribe: "batches:subscribe",
   corpusCandidates: "corpus:candidates",
+  corpusTopics: "corpus:topics",
   corpusSources: "corpus:sources",
   corpusSaveSources: "corpus:saveSources",
   corpusRemoveSource: "corpus:removeSource",

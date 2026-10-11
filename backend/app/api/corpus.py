@@ -10,6 +10,7 @@ from app.corpus.candidates import NominatedSource, derive_candidates, normalize_
 from app.corpus.crawl import CorpusCrawler
 from app.corpus.mining import collect
 from app.corpus.nomination import DomainNominator
+from app.corpus.seeds import SEED_TOPICS
 from app.corpus.service import CorpusCrawlService
 from app.schemas.corpus import (
     CancelCrawlResponse,
@@ -17,6 +18,8 @@ from app.schemas.corpus import (
     CorpusCandidatesResponse,
     CorpusCandidateView,
     CorpusNominationView,
+    CorpusTopicsResponse,
+    CorpusTopicView,
     CrawlOutcomeView,
     CrawlProgressView,
     CrawlSourceResponse,
@@ -60,6 +63,7 @@ async def derive_source_candidates(
     candidates = derive_candidates(
         explicit=body.explicit_domains,
         text=body.text,
+        topics=body.topics,
         nominated=nominated,
         document_urls=document_urls,
         crawl_urls=crawl_urls,
@@ -165,6 +169,24 @@ def _sources_response(
                 added_at=row.added_at,
             )
             for row in rows
+        ]
+    )
+
+
+@router.get("/topics", response_model=CorpusTopicsResponse)
+async def list_corpus_topics() -> CorpusTopicsResponse:
+    """种子表里的话题清单。
+
+    存在的理由是**首次体验**：新用户打开这一页时清单是空的，而"写下一个问题"要求他先
+    知道自己想问什么。这些话题是随应用分发、逐条带证据的，点一下就能得到一批确定的
+    第一方来源 —— 第一次点击不需要打字，也不需要等模型。
+    """
+    return CorpusTopicsResponse(
+        topics=[
+            CorpusTopicView(
+                key=topic.key, label=topic.label, source_count=len(topic.sources)
+            )
+            for topic in SEED_TOPICS.values()
         ]
     )
 

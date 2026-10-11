@@ -10,7 +10,17 @@ import type { CorpusCandidateRequest, SaveWebSourcesRequest } from "../../../../
  */
 export const corpusKeys = {
   sources: ["corpus", "sources"] as const,
+  topics: ["corpus", "topics"] as const,
 };
+
+export function useCorpusTopicsQuery() {
+  return useQuery({
+    queryKey: corpusKeys.topics,
+    queryFn: () => window.docmind.corpus.topics(),
+    // 种子表随应用分发，一个进程里不会变。
+    staleTime: Infinity,
+  });
+}
 
 export function useWebSourcesQuery() {
   return useQuery({

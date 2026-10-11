@@ -49,9 +49,60 @@ function renderPage() {
   );
 }
 
+const TOPICS = {
+  topics: [
+    { key: "python", label: "Python", sourceCount: 2 },
+    { key: "sqlite", label: "SQLite", sourceCount: 1 },
+  ],
+};
+
 describe("网页语料", () => {
   beforeEach(() => {
     appQueryClient.clear();
+  });
+
+  it("首次进来给出一键话题与三步说明，点一下就有确定结果", async () => {
+    const api = installDocMindApi({
+      corpus: {
+        topics: vi.fn().mockResolvedValue(TOPICS),
+        sources: vi.fn().mockResolvedValue({ sources: [] }),
+        candidates: vi.fn().mockResolvedValue({
+          candidates: [SEED_CANDIDATE],
+          nomination: { attempted: false, count: 0 },
+        }),
+      },
+    });
+    renderPage();
+
+    // 空页面上只有一个文本框时，用户得先想出一个问题才可能得到任何东西。
+    expect(await screen.findByText(/三步就能让本地能回答你的问题/)).toBeVisible();
+    // 两个查询是并行的，话题要等它自己的那次请求回来。
+    expect(await screen.findByRole("button", { name: "话题 Python" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "话题 SQLite" }));
+
+    // 点选走精确 key、并且不调模型：第一次点击应该是立刻确定的。
+    await waitFor(() =>
+      expect(api.corpus.candidates).toHaveBeenCalledWith({
+        topics: ["sqlite"],
+        nominate: false,
+        limit: 20,
+      }),
+    );
+    expect(await screen.findByText("docs.python.org")).toBeVisible();
+  });
+
+  it("已经收录了来源就不再显示新手引导", async () => {
+    installDocMindApi({
+      corpus: {
+        topics: vi.fn().mockResolvedValue(TOPICS),
+        sources: vi.fn().mockResolvedValue({ sources: [COLLECTED] }),
+      },
+    });
+    renderPage();
+
+    await screen.findByText("已收录的来源（1）");
+    expect(screen.queryByText(/三步就能让本地能回答你的问题/)).toBeNull();
   });
 
   it("推导候选时把证据和可信度都摆出来，收录后写回清单", async () => {

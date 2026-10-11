@@ -7,6 +7,7 @@ import { REJECTION_COPY } from "../imports/rejection-copy";
 import { clientErrorMessage } from "../settings/settings.queries";
 import {
   useCancelCrawlMutation,
+  useCorpusTopicsQuery,
   useCrawlSourceMutation,
   useDeriveCandidatesMutation,
   useRemoveWebSourceMutation,
@@ -27,6 +28,7 @@ import { signalLabel } from "./signal-copy";
  */
 export function CorpusSettings() {
   const sources = useWebSourcesQuery();
+  const topics = useCorpusTopicsQuery();
   const derive = useDeriveCandidatesMutation();
   const saveSources = useSaveWebSourcesMutation();
   const removeSource = useRemoveWebSourceMutation();
@@ -74,6 +76,12 @@ export function CorpusSettings() {
     if (!value) return;
     await collect({ domain: value, verified: false, evidence: ["你手工添加"] });
     setManual("");
+  }
+
+  /** 点一个话题：走精确 key、且不调模型 —— 第一次点击应该立刻看到确定的结果。 */
+  function pickTopic(key: string) {
+    setTopic("");
+    derive.mutate({ topics: [key], nominate: false, limit: 20 });
   }
 
   async function cancel(domain: string) {
@@ -240,8 +248,38 @@ export function CorpusSettings() {
     <div className="corpus-settings">
       <section>
         <h3>推导候选来源</h3>
+        {collected.length === 0 ? (
+          // 首次体验：清单为空时先说清"这一步是干嘛的"，再给一键入口。
+          // 空页面上只有一个文本框时，用户得先想出一个问题才可能得到任何东西。
+          <div className="corpus-guide">
+            <p className="corpus-note">三步就能让本地能回答你的问题：</p>
+            <ol>
+              <li>挑一个话题（或自己写一个问题），得到一批候选站点；</li>
+              <li>从候选里收录要长期跟的站点 —— 每条都写着"凭什么"；</li>
+              <li>抓取之后，提问时会优先引用这些站点的正文，引用可回溯。</li>
+            </ol>
+          </div>
+        ) : null}
+        {topics.data && topics.data.topics.length > 0 ? (
+          <div className="corpus-topics">
+            <span className="corpus-note">从这些话题开始：</span>
+            {topics.data.topics.map((topic) => (
+              <button
+                aria-label={`话题 ${topic.label}`}
+                className="corpus-topic"
+                disabled={derive.isPending}
+                key={topic.key}
+                onClick={() => pickTopic(topic.key)}
+                type="button"
+              >
+                {topic.label}
+                <small>{topic.sourceCount}</small>
+              </button>
+            ))}
+          </div>
+        ) : null}
         <p className="corpus-note">
-          写下你关心的问题或主题。种子表按关键词匹配第一方来源，模型再补充它的建议。
+          也可以写下你关心的问题。种子表按关键词匹配第一方来源，模型再补充它的建议。
         </p>
         <label className="corpus-field">
           问题或主题

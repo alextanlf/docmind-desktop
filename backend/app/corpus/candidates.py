@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from enum import Enum
 from urllib.parse import urlsplit
 
-from app.corpus.seeds import match_topics, seed_domain
+from app.corpus.seeds import SEED_TOPICS, SeedTopic, match_topics, seed_domain
 
 
 class Signal(str, Enum):
@@ -175,10 +175,32 @@ def _mined_counter(urls: Iterable[str]) -> Counter[str]:
     return counts
 
 
+def _selected_topics(text: str | None, topics: Iterable[str]) -> list[SeedTopic]:
+    """这次要用的种子话题：显式点选的话题 + 文本命中的话题。
+
+    显式点选走**精确的 key**，不经过关键词匹配 —— 界面上一键选「Python」时，用户已经
+    表明了他要什么，再让他依赖关键词碰运气是没道理的（也快得多：不必调模型）。
+    """
+    chosen: list[SeedTopic] = []
+    seen: set[str] = set()
+    for key in topics:
+        topic = SEED_TOPICS.get(key)
+        if topic is not None and key not in seen:
+            seen.add(key)
+            chosen.append(topic)
+    if text:
+        for topic in match_topics(text):
+            if topic.key not in seen:
+                seen.add(topic.key)
+                chosen.append(topic)
+    return chosen
+
+
 def derive_candidates(
     *,
     explicit: Iterable[str] = (),
     text: str | None = None,
+    topics: Iterable[str] = (),
     nominated: Iterable[NominatedSource] = (),
     document_urls: Iterable[str] = (),
     crawl_urls: Iterable[str] = (),
@@ -200,20 +222,19 @@ def derive_candidates(
         if domain is not None:
             bucket(domain).add(Signal.EXPLICIT, "你指定了这个来源", verified=True)
 
-    if text:
-        for topic in match_topics(text):
-            for source in topic.sources:
-                domain = seed_domain(source.url)
-                if not domain:
-                    continue
-                bucket(domain).add(
-                    Signal.SEED,
-                    f"种子表（{topic.label}）：{source.evidence}",
-                    label=source.label,
-                    kind=source.kind,
-                    entry_url=source.url,
-                    verified=True,
-                )
+    for topic in _selected_topics(text, topics):
+        for source in topic.sources:
+            domain = seed_domain(source.url)
+            if not domain:
+                continue
+            bucket(domain).add(
+                Signal.SEED,
+                f"种子表（{topic.label}）：{source.evidence}",
+                label=source.label,
+                kind=source.kind,
+                entry_url=source.url,
+                verified=True,
+            )
 
     for nomination in nominated:
         domain = normalize_domain(nomination.domain)

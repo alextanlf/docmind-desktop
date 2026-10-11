@@ -49,6 +49,7 @@ import {
   BatchDiagnosticsPageSchema,
   CorpusCandidateRequestSchema,
   CorpusCandidatesResponseSchema,
+  CorpusTopicsResponseSchema,
   CancelCrawlResponseSchema,
   CrawlSourceResponseSchema,
   SaveWebSourcesRequestSchema,
@@ -444,6 +445,8 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         sender: event.sender ?? { send: () => {} },
       });
     },
+    [IPC_CHANNELS.corpusTopics]: () =>
+      proxy.requestJson("/api/corpus/topics", {}, CorpusTopicsResponseSchema),
     [IPC_CHANNELS.corpusCandidates]: (_event, input) =>
       proxy.requestJson(
         "/api/corpus/candidates",

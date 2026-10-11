@@ -40,6 +40,9 @@ class CorpusCandidateRequest(WireModel):
     text: str | None = Field(default=None, max_length=4000)
     #: 用户自己指定的域名或网址 —— 唯一不需要我们判断的信号。
     explicit_domains: list[str] = Field(default_factory=list, max_length=50)
+    #: 点选的话题 key（来自 `/api/corpus/topics`）。走精确选取，不经过关键词匹配 ——
+    #: 界面上的一键话题因此是确定的，也快（不必调模型）。
+    topics: list[str] = Field(default_factory=list, max_length=20)
     #: 已导入文档里出现的网址（离线信号，后期增益）。
     document_urls: list[str] = Field(default_factory=list, max_length=500)
     #: 抓取历史里出现过的网址（离线信号，说明用户有意向）。
@@ -54,6 +57,19 @@ class CorpusCandidateRequest(WireModel):
 class CorpusCandidatesResponse(WireModel):
     candidates: list[CorpusCandidateView]
     nomination: CorpusNominationView
+
+
+class CorpusTopicView(WireModel):
+    """种子表里的一个话题。界面上它就是"一键开始"的入口。"""
+
+    key: str
+    label: str
+    #: 这个话题下有几个已核对的第一方来源 —— 用户点之前就知道能得到多少。
+    source_count: int
+
+
+class CorpusTopicsResponse(WireModel):
+    topics: list[CorpusTopicView]
 
 
 class WebSourceInput(WireModel):

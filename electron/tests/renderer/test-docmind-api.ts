@@ -854,6 +854,7 @@ export function installDocMindApi(overrides?: {
       ...overrides?.sources,
     },
     corpus: {
+      topics: vi.fn().mockResolvedValue({ topics: [] }),
       candidates: vi.fn().mockResolvedValue({
         candidates: [],
         nomination: { attempted: false, count: 0 },

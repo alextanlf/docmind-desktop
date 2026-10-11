@@ -2899,6 +2899,51 @@ progress::-webkit-progress-bar {
   color: #3d444e;
   font-size: 14px;
 }
+.corpus-guide {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f7f8fa;
+}
+.corpus-guide ol {
+  margin: 6px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 12px;
+  /* Tailwind preflight 把 list-style 重置为 none；有序列表要显式写回，否则序号不显示。 */
+  list-style-position: outside;
+  list-style-type: decimal;
+}
+.corpus-topics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.corpus-topic {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+.corpus-topic:hover:not(:disabled) {
+  border-color: #b9c0cb;
+  background: #f2f4f7;
+}
+.corpus-topic:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+.corpus-topic small {
+  color: var(--muted);
+  font-size: 11px;
+}
 .corpus-field {
   display: grid;
   gap: 4px;

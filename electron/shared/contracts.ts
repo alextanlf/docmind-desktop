@@ -828,8 +828,21 @@ export const CorpusCandidatesResponseSchema = z.object({
   nomination: CorpusNominationSchema,
 });
 
+export const CorpusTopicSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  /** 这个话题下有几个已核对的第一方来源 —— 用户点之前就知道能得到多少。 */
+  sourceCount: z.number().int().nonnegative(),
+});
+
+export const CorpusTopicsResponseSchema = z.object({
+  topics: z.array(CorpusTopicSchema),
+});
+
 export const CorpusCandidateRequestSchema = z.object({
   text: z.string().max(4000).optional(),
+  /** 点选的话题 key（来自 `/api/corpus/topics`）：精确选取，不经过关键词匹配。 */
+  topics: z.array(z.string()).max(20).optional(),
   explicitDomains: z.array(z.string()).max(50).optional(),
   documentUrls: z.array(z.string()).max(500).optional(),
   crawlUrls: z.array(z.string()).max(500).optional(),
@@ -912,8 +925,10 @@ export const CancelCrawlResponseSchema = WebSourcesResponseSchema.extend({
 });
 
 export type CorpusCandidate = z.infer<typeof CorpusCandidateSchema>;
+export type CorpusTopic = z.infer<typeof CorpusTopicSchema>;
 export type CorpusCandidateRequest = z.infer<typeof CorpusCandidateRequestSchema>;
 export type CorpusCandidatesResponse = z.infer<typeof CorpusCandidatesResponseSchema>;
+export type CorpusTopicsResponse = z.infer<typeof CorpusTopicsResponseSchema>;
 export type WebSource = z.infer<typeof WebSourceSchema>;
 export type WebSourceInput = z.infer<typeof WebSourceInputSchema>;
 export type SaveWebSourcesRequest = z.infer<typeof SaveWebSourcesRequestSchema>;
@@ -927,6 +942,13 @@ export type CancelCrawlResponse = z.infer<typeof CancelCrawlResponseSchema>;
 export interface CorpusApi {
   /** 推导候选来源：每条都带证据。提名不可用时仍会返回种子表的结果。 */
   candidates(input: CorpusCandidateRequest): Promise<CorpusCandidatesResponse>;
+  /**
+   * 种子表里的话题清单 —— 首次体验的入口。
+   *
+   * 新用户打开这一页时清单是空的，而"写下一个问题"要求他先知道自己想问什么。这些话题
+   * 随应用分发、逐条带证据，点一下就能得到确定的第一方来源，既不用打字也不用等模型。
+   */
+  topics(): Promise<CorpusTopicsResponse>;
   sources(): Promise<WebSourcesResponse>;
   saveSources(input: SaveWebSourcesRequest): Promise<WebSourcesResponse>;
   /** 幂等：删一个本来就不存在的域名也返回成功，响应始终是删除后的真实清单。 */

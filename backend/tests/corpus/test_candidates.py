@@ -148,3 +148,48 @@ def test_junk_input_is_rejected(junk: str) -> None:
 )
 def test_domains_are_normalized(value: str, expected: str) -> None:
     assert normalize_domain(value) == expected
+
+
+# --- 点选话题：精确选取，不靠关键词碰运气 --------------------------------
+
+
+def test_an_explicit_topic_gives_exactly_its_sources() -> None:
+    """界面上一键选「Python」时用户已经表明了他要什么，不该再让他依赖关键词匹配。"""
+    candidates = derive_candidates(topics=["python"])
+
+    assert [candidate.domain for candidate in candidates] == ["docs.python.org", "pypi.org"]
+    assert all(candidate.verified for candidate in candidates)
+    assert all(candidate.entry_url for candidate in candidates)
+
+
+def test_an_unknown_topic_is_ignored_rather_than_guessed() -> None:
+    """话题 key 来自接口，不认识的只可能来自旧版本或被改过的请求 —— 不猜，给空。"""
+    assert derive_candidates(topics=["no_such_topic"]) == []
+
+
+def test_topic_selection_and_text_matching_compose_without_duplicates() -> None:
+    """点了一个话题、又写了一句命中同一话题的问题时，来源不能出现两遍。"""
+    candidates = derive_candidates(topics=["python"], text="Python 的 asyncio 怎么用")
+
+    assert [candidate.domain for candidate in candidates] == ["docs.python.org", "pypi.org"]
+    assert len(candidates[0].evidence) == 1
+
+
+def test_several_topics_are_all_included_and_the_order_is_stable() -> None:
+    """多选话题时全部来源都要在，而且**每次调用的顺序一致**。
+
+    顺序由可信度决定（同分按域名），不由点选顺序决定 —— 这是刻意的：用户看到的第一条
+    永远是最可信的那条，而不是"他最后点的那个话题"。这里锁的是稳定性，因为排列每次
+    不同会让人以为列表在乱动。
+    """
+    first = derive_candidates(topics=["sqlite", "python"])
+    second = derive_candidates(topics=["python", "sqlite"])
+
+    assert {candidate.domain for candidate in first} == {
+        "sqlite.org",
+        "docs.python.org",
+        "pypi.org",
+    }
+    assert [candidate.domain for candidate in first] == [
+        candidate.domain for candidate in second
+    ]
