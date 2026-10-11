@@ -8,7 +8,13 @@ from uuid import uuid4
 import pytest
 
 from app.api.errors import DomainError
-from app.chat.tools import ToolInvocation, ToolRegistry, WebSearchTool, parse_query
+from app.chat.tools import (
+    WEB_SEARCH_TOOL_NAME,
+    ToolInvocation,
+    ToolRegistry,
+    WebSearchTool,
+    parse_query,
+)
 from app.core.llm import LLMToolCall
 from app.schemas.web_search import SearchRunRequest
 
@@ -132,3 +138,65 @@ def test_parse_query_normalises_and_caps_length() -> None:
     assert parse_query('{"query":"  a   b  "}') == "a b"
     assert len(parse_query(json.dumps({"query": "x" * 900}))) == 500
     assert parse_query("") == ""
+
+
+# --- 模型显式要求"去网上找" ----------------------------------------------
+
+
+class RecordingSearchService:
+    def __init__(self) -> None:
+        self.modes: list[str] = []
+
+    async def run(self, request, *, authorization_mode: str = "auto"):
+        self.modes.append(authorization_mode)
+        return SimpleNamespace(id="run-1", results=[])
+
+
+@pytest.mark.asyncio
+async def test_the_model_can_ask_for_the_web_instead_of_the_local_corpus() -> None:
+    """本地语料答不了问题时，模型必须能升级到联网。
+
+    为什么由模型决定而不是由分数决定：判断"这批片段有没有回答这个问题"是覆盖度判断，
+    而项目已定论相似度分数做不到（实测四个判别器全部重叠）。模型读过片段内容，是唯一
+    有能力做这个判断的一层 —— 它说"没答上"是可信的。
+    """
+    service = RecordingSearchService()
+    tool = WebSearchTool(service)
+
+    await tool.execute(
+        LLMToolCall(id="c1", name=WEB_SEARCH_TOOL_NAME, arguments='{"query": "x", "preferWeb": true}'),
+        invocation(),
+    )
+
+    assert service.modes == ["explicit"]
+
+
+@pytest.mark.asyncio
+async def test_without_the_flag_the_local_corpus_still_goes_first() -> None:
+    """默认行为不能变：本地优先（省额度、不出网、引用可复现）。"""
+    service = RecordingSearchService()
+    tool = WebSearchTool(service)
+
+    await tool.execute(
+        LLMToolCall(id="c1", name=WEB_SEARCH_TOOL_NAME, arguments='{"query": "x"}'),
+        invocation(),
+    )
+
+    assert service.modes == ["auto"]
+
+
+@pytest.mark.asyncio
+async def test_a_broken_flag_does_not_push_the_model_online() -> None:
+    """参数写坏时宁可让它找本地语料，也不要因为一个坏参数把它赶去联网。"""
+    service = RecordingSearchService()
+    tool = WebSearchTool(service)
+
+    await tool.execute(
+        LLMToolCall(id="c1", name=WEB_SEARCH_TOOL_NAME, arguments='{"query": "x", "preferWeb": "yes"}'),
+        invocation(),
+    )
+    await tool.execute(
+        LLMToolCall(id="c2", name=WEB_SEARCH_TOOL_NAME, arguments="not json"), invocation()
+    )
+
+    assert service.modes == ["auto"]

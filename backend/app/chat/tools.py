@@ -39,6 +39,8 @@ WEB_SEARCH_SPEC = LLMToolSpec(
     description=(
         "联网搜索网页并返回可引用的结果。仅在提供的文档片段不足以回答问题时调用。"
         "参数 query 用关键词而非整句问句，语言与问题保持一致。"
+        "如果上一次返回的结果来自**本地网页语料**、而它并没有回答你的问题，"
+        "把 preferWeb 设为 true 再搜一次：那会直接去找网上的新信息。"
     ),
     parameters={
         "type": "object",
@@ -46,7 +48,13 @@ WEB_SEARCH_SPEC = LLMToolSpec(
             "query": {
                 "type": "string",
                 "description": "搜索关键词，尽量具体，例如「bge-m3 量化 精度损失」",
-            }
+            },
+            "preferWeb": {
+                "type": "boolean",
+                "description": (
+                    "true = 跳过本地语料，直接去网上搜。只在本地语料的结果答不了问题时用。"
+                ),
+            },
         },
         "required": ["query"],
     },
@@ -108,6 +116,17 @@ class WebSearchTool:
                 content="搜索失败：query 参数缺失或不是字符串。请重新给出搜索关键词。",
                 error_code="SEARCH_INVALID_ARGUMENT",
             )
+        # 模型显式要求"去网上找"时按 explicit 走：链会把本地语料挪到最后，只作兜底。
+        #
+        # 为什么由模型决定、而不是由分数决定：判断"这批片段有没有回答这个问题"是覆盖度
+        # 判断，而项目已经定论相似度分数做不到（实测四个判别器全部重叠，见
+        # `scripts/ab_corpus_relevance_gate.py`）。模型能读懂片段内容，是唯一有能力做这个
+        # 判断的一层；它已经看过本地语料的结果，所以它说"没答上"是可信的。
+        mode = (
+            "explicit"
+            if prefers_web(call.arguments) or invocation.authorization_mode == "explicit"
+            else "auto"
+        )
         try:
             run = await self.search_service.run(
                 SearchRunRequest(
@@ -120,9 +139,9 @@ class WebSearchTool:
                     query=query,
                     # max_results / query_rewrite 直接走 `SearchRunRequest` 自己的默认值：
                     # 设置页的联网分区删除后没有第二处真源，没必要再套一层常量。
-                    authorization_mode=invocation.authorization_mode,
+                    authorization_mode=mode,
                 ),
-                authorization_mode=invocation.authorization_mode,
+                authorization_mode=mode,
             )
         except DomainError as error:
             # 不在这里抛出：单轮搜索失败不该让整个回答失败。调用方按授权档位
@@ -189,6 +208,18 @@ class ToolRegistry:
             # 有些厂商把无参调用写成空字符串或省略 field，等价于 `{}`。
             call = call.model_copy(update={"arguments": "{}"})
         return await tool.execute(call, invocation)
+
+
+def prefers_web(raw_arguments: str) -> bool:
+    """模型是否要求跳过本地语料、直接去网上搜。
+
+    解析失败一律当 false：宁可让它找本地语料，也不要因为一个坏参数把它赶去联网。
+    """
+    try:
+        payload = json.loads(raw_arguments)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return isinstance(payload, dict) and payload.get("preferWeb") is True
 
 
 def parse_query(raw_arguments: str) -> str:
