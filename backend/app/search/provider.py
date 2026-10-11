@@ -16,6 +16,8 @@ class SearchProviderError(RuntimeError):
 
 
 class SearchProvider(Protocol):
+    #: 可选属性：声明这个来源不依赖网络（如本地网页语料）。`FallbackSearchProvider`
+    #: 用它决定显式联网时的顺序 —— 默认视为网络来源，见那里的说明。
     name: str
 
     def available(self) -> bool: ...

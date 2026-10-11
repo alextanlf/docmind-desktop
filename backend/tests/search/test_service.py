@@ -230,3 +230,28 @@ def test_complete_and_fail_both_reject_unknown_run(database) -> None:
             call()
         assert error.value.code == "SEARCH_RUN_NOT_FOUND"
         assert error.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_the_authorization_mode_reaches_the_provider(database) -> None:
+    """链要靠它决定"本地来源排在前面还是后面"，少了这一步就永远按默认顺序走 ——
+    用户点「联网搜索」会被本地语料吃掉，而整条链看起来一切正常。"""
+    modes: list[str] = []
+
+    class RecordingProvider:
+        name = "recording"
+
+        def available(self) -> bool:
+            return True
+
+        async def search(self, request: SearchRequest) -> SearchResponse:
+            modes.append(request.authorization_mode)
+            return _response("recording", ["https://a.example"])
+
+    store = WebSearchRunStore(database)
+    service = SearchService(RecordingProvider(), store)
+
+    await service.run(_request(query="q"), authorization_mode="explicit")
+    await service.run(_request(query="q"), authorization_mode="auto")
+
+    assert modes == ["explicit", "auto"]

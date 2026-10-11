@@ -15,7 +15,7 @@ import httpx
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
 from app.document.safe_http import SafeHttpClient
-from app.schemas.web_search import SearchRunRequest
+from app.schemas.web_search import SearchRequest, SearchRunRequest
 
 PAGE = (
     b"<html><head><title>Quasar guide</title></head><body><h1>Quasar guide</h1>"
@@ -106,9 +106,18 @@ async def test_the_corpus_is_available_to_the_chain_only_after_a_crawl(test_app)
     """
     chain = test_app.app.state.search_service.provider
     corpus = next(item for item in chain.providers if item.name == "web_corpus")
+    # 没有这个标记，"显式联网时本地降级"的规则永远不会生效 —— 规则对了而标记没打，
+    # 表现和没写规则一模一样。
+    assert corpus.local is True
     assert corpus.available() is False
 
     _install_mock_crawler(test_app)
     await _crawl_one_source(test_app, "docs.test", "https://docs.test/guide")
 
     assert corpus.available() is True
+
+    # 显式联网时链把本地来源挪到最后：用户点「联网搜索」该先拿到网上的东西。
+    explicit = chain.ordered(SearchRequest(query="x", authorization_mode="explicit"))
+    assert explicit[-1].name == "web_corpus"
+    # 默认档位下仍然本地优先。
+    assert chain.ordered(SearchRequest(query="x"))[0].name == "web_corpus"

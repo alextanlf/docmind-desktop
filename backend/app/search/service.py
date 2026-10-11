@@ -75,7 +75,9 @@ class SearchService:
         max_results = getattr(request, "max_results", 5)
         queries = await self._plan_queries(request)
         try:
-            responses = await self._search_queries(queries, max_results)
+            responses = await self._search_queries(
+                queries, max_results, authorization_mode=authorization_mode
+            )
             results = _merge_results(responses, max_results)
             provider_label = _provider_label(responses)
             self.run_store.complete(row.id, results, provider=provider_label)
@@ -120,11 +122,18 @@ class SearchService:
         return queries or [query]
 
     async def _search_queries(
-        self, queries: list[str], max_results: int
+        self, queries: list[str], max_results: int, *, authorization_mode: str = "auto"
     ) -> list[SearchResponse]:
+        # 授权档位要跟着每个查询走到 provider：链要用它决定"本地来源排在前面还是后面"
+        # （见 FallbackSearchProvider）。少了这一步，用户点「联网搜索」会被本地语料吃掉。
+        mode = "explicit" if authorization_mode == "explicit" else "auto"
         outcomes = await asyncio.gather(
             *(
-                self.provider.search(SearchRequest(query=query, max_results=max_results))
+                self.provider.search(
+                    SearchRequest(
+                        query=query, max_results=max_results, authorization_mode=mode
+                    )
+                )
                 for query in queries
             ),
             return_exceptions=True,

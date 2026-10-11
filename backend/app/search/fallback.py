@@ -27,20 +27,47 @@ def _label(name: str) -> str:
     return _LABELS.get(name, name)
 
 
+def _is_local(provider: object) -> bool:
+    """这个来源是否不依赖网络。
+
+    默认**不是**本地：新的搜索源多半是网络来源，默认成"本地"会让它意外插到显式联网
+    的前面 —— 那正是这条规则要避免的事。
+    """
+    return bool(getattr(provider, "local", False))
+
+
 class FallbackSearchProvider:
-    """Try each available search source in priority order."""
+    """Try each available search source in priority order.
+
+    顺序不是固定的：**显式联网时把本地来源挪到最后**。
+
+    理由是一个具体的用户动作。用户点「联网搜索」是他唯一能明确表达"我要去网上找"的
+    方式（`chat/service.py` 因此会先做一次预检索）。而本地语料排在链首 —— 它有内容就
+    直接胜出，于是这个动作会被本地语料悄悄吃掉：用户要的是网上的新信息，拿到的却是
+    自己收藏的那几页。实测过：向量通道没有门槛时会回答每一个问题，这条冲突是必然的。
+
+    但本地来源**不删除、只降级**：上游全不可用时（模型没有内置联网、Tavily 额度打满）
+    它仍然是最后一层，比"用户明确要求却彻底失败"要好。
+    """
 
     name = "chain"
 
     def __init__(self, providers: Sequence[SearchProvider]) -> None:
         self.providers = list(providers)
 
+    def ordered(self, request: SearchRequest) -> list[SearchProvider]:
+        if getattr(request, "authorization_mode", "auto") != "explicit":
+            return self.providers
+        remote = [provider for provider in self.providers if not _is_local(provider)]
+        local = [provider for provider in self.providers if _is_local(provider)]
+        return [*remote, *local]
+
     def available(self) -> bool:
         return any(provider_available(provider) for provider in self.providers)
 
     async def search(self, request: SearchRequest) -> SearchResponse:
         attempted: list[str] = []
-        for provider in self.providers:
+        for provider in self.ordered(request):
             if not provider_available(provider):
                 continue
             attempted.append(provider.name)
