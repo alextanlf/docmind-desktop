@@ -2122,15 +2122,38 @@ class WebCorpusStore:
         writes: Sequence[CorpusPageWrite],
         *,
         removed_urls: Sequence[str] = (),
-    ) -> None:
+    ) -> list[str]:
         """按这次抓取的结论更新语料，而不是整域重写。
 
         `removed_urls` 只该装**有证据表明已经消失**的页面（404 / 410）。没有证据的
         一律不动：一次超时、一次被限流、或抓取被预算截断，都不代表页面不存在 ——
         把不确定当成不存在，会让语料在一次网络抖动后凭空缩水。
+
+        返回**被删掉的块 id**：向量索引按块 id 存的，语料删了而向量不删，就会留下
+        悬空向量 —— 它们占着空间，而且会让"向量找回来的块"在取正文时凭空消失。
         """
         now = utc_now()
+        removed_chunk_ids: list[str] = []
         with self.database.session() as session:
+            for url in removed_urls:
+                removed_chunk_ids.extend(
+                    session.scalars(
+                        select(WebCorpusChunkRecord.id).where(
+                            WebCorpusChunkRecord.domain == domain, WebCorpusChunkRecord.url == url
+                        )
+                    )
+                )
+            for write in writes:
+                if write.chunks is None:
+                    continue
+                removed_chunk_ids.extend(
+                    session.scalars(
+                        select(WebCorpusChunkRecord.id).where(
+                            WebCorpusChunkRecord.domain == domain,
+                            WebCorpusChunkRecord.url == write.page.url,
+                        )
+                    )
+                )
             for url in removed_urls:
                 session.execute(
                     delete(WebCorpusChunkRecord).where(
@@ -2168,6 +2191,21 @@ class WebCorpusStore:
                 session.add(write.page)
                 session.flush()
                 session.add_all(list(write.chunks))
+        return removed_chunk_ids
+
+    def chunks_by_ids(self, ids: Sequence[str]) -> dict[str, WebCorpusChunkRecord]:
+        """按 id 取块。检索融合之后拿到的是 id（向量通道只给 id），取正文要回来查一次。
+
+        查不到的 id 直接缺席 —— 悬空向量（索引里有、语料里没有）因此自然被过滤掉，
+        而不是报错。
+        """
+        if not ids:
+            return {}
+        with self.database.session() as session:
+            rows = session.scalars(
+                select(WebCorpusChunkRecord).where(WebCorpusChunkRecord.id.in_(list(ids)))
+            )
+            return {row.id: row for row in rows}
 
     def chunks(self, domains: list[str] | None = None) -> list[WebCorpusChunkRecord]:
         with self.database.session() as session:
@@ -2213,8 +2251,16 @@ class WebCorpusStore:
             for domain in domains
         }
 
-    def clear_domain(self, domain: str) -> None:
+    def clear_domain(self, domain: str) -> list[str]:
+        """清掉一个域名的全部语料，返回被删的块 id（供向量索引同步清理）。"""
+        with self.database.session() as session:
+            removed = list(
+                session.scalars(
+                    select(WebCorpusChunkRecord.id).where(WebCorpusChunkRecord.domain == domain)
+                )
+            )
         self.replace_domain(domain, [], [])
+        return removed
 
 
 class ConversationStore:

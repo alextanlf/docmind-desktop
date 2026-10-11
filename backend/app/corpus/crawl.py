@@ -16,14 +16,17 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections import Counter, deque
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
 from app.api.errors import DomainError
+from app.core.embedding import EmbeddingProvider
+from app.corpus.vectors import CorpusVectorIndex
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
 from app.document.politeness import DomainRateLimiter
@@ -33,6 +36,8 @@ from app.schemas.batches import CrawlRejectionReason
 from app.schemas.imports import DownloadedDocument
 from app.storage.models import WebCorpusChunkRecord, WebCorpusPageRecord, new_id
 from app.storage.repositories import CorpusPageWrite, WebCorpusStore
+
+logger = logging.getLogger(__name__)
 
 #: 只收能够解析成正文的类型。与导入路径同一张白名单。
 _SUPPORTED_MEDIA = {"text/html", "text/markdown", "application/pdf"}
@@ -116,6 +121,8 @@ class CorpusCrawler:
         store: WebCorpusStore,
         probe: ReachabilityProbe | None = None,
         limiter: DomainRateLimiter | None = None,
+        embedder: EmbeddingProvider | None = None,
+        vectors: CorpusVectorIndex | None = None,
         max_bytes: int = 20 * 1024 * 1024,
         user_agent: str = "DocMind/2",
     ) -> None:
@@ -125,6 +132,10 @@ class CorpusCrawler:
         self.store = store
         self.probe = probe
         self.limiter = limiter
+        # 嵌入与向量都是**可选增强**：模型没就绪时抓取照常进行，只是这些块只能被
+        # 词面命中（中文问句就会漏）。抓取不该因为嵌入不可用而失败。
+        self.embedder = embedder
+        self.vectors = vectors
         self.max_bytes = max_bytes
         self.user_agent = user_agent
 
@@ -260,7 +271,11 @@ class CorpusCrawler:
                     if link not in visited:
                         queue.append((link, depth + 1))
 
-        self.store.apply_crawl(domain, writes, removed_urls=gone)
+        removed_chunk_ids = self.store.apply_crawl(domain, writes, removed_urls=gone)
+        if self.vectors is not None:
+            # 先删后写：被替换/消失的块其向量必须跟着走，否则会留下悬空向量。
+            self.vectors.delete(removed_chunk_ids)
+            await self._embed_new_chunks(writes)
         stats = self.store.stats().get(domain)
         return CrawlSummary(
             domain=domain,
@@ -272,6 +287,26 @@ class CorpusCrawler:
             skipped=tuple(skipped),
             truncated=truncated,
         )
+
+    async def _embed_new_chunks(self, writes: Sequence[CorpusPageWrite]) -> int:
+        """给这次**新增或变了**的块建向量。
+
+        只处理 `chunks is not None` 的那些页：内容未变的页不重新切块，当然也不重新
+        嵌入 —— 这正是增量刷新在向量这一侧的收益（嵌入是最贵的一步）。
+
+        嵌入失败只记日志：BM25 仍然能用，只有"零词面重合"的问句会因此漏掉。
+        """
+        if self.embedder is None or self.vectors is None:
+            return 0
+        chunks = [chunk for write in writes if write.chunks for chunk in write.chunks]
+        if not chunks:
+            return 0
+        try:
+            embeddings = await self.embedder.embed_documents([chunk.text for chunk in chunks])
+        except Exception as error:  # noqa: BLE001 - 增强通道，失败不该让抓取失败
+            logger.warning("corpus embedding failed for %s: %s", chunks[0].domain, error)
+            return 0
+        return self.vectors.upsert(chunks, embeddings)
 
     async def _wait_for_turn(self, host: str, url: str) -> bool:
         if self.limiter is None:

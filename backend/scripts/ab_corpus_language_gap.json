@@ -1,304 +1,151 @@
 {
   "summary": {
     "n": 10,
+    "structural_zero_overlap": true,
+    "before_km": "词法单通道（加向量之前的产品行为）",
     "bm25_hard": "0/10",
     "bm25_easy": "10/10",
-    "vector_hard": "10/10",
-    "vector_easy": "10/10",
-    "fused_hard": "10/10",
-    "structural_zero_overlap": true
+    "after": "词法 + 向量救援（当前实现）",
+    "rescue_hard": "10/10",
+    "rescue_easy": "10/10",
+    "similarity": {
+      "relevant_min": 0.4709,
+      "relevant_p10": 0.549,
+      "irrelevant_p50": 0.4131,
+      "irrelevant_p90": 0.4721,
+      "irrelevant_max": 0.5663
+    }
   },
   "rows": [
     {
       "gold": "g1",
       "hard_query": "事件循环怎么调度并发任务，取消是怎么生效的？",
       "easy_query": "asyncio event loop 调度与 task cancellation",
-      "bm25_hard": [],
-      "bm25_easy": [
-        "g1"
-      ],
-      "vector_hard": [
+      "before": [],
+      "after": [
         "g1",
         "g4",
         "g5"
       ],
-      "vector_easy": [
-        "g1",
-        "d4",
-        "g10"
-      ],
-      "fused_hard": [
-        "g1",
-        "g4",
-        "g5"
-      ],
-      "bm25_hard_hit": false,
-      "bm25_easy_hit": true,
-      "vector_hard_hit": true,
-      "vector_easy_hit": true,
-      "fused_hard_hit": true
+      "before_hit": false,
+      "after_hit": true
     },
     {
       "gold": "g2",
       "hard_query": "数据库怎么在并发读的时候不掉性能？",
       "easy_query": "SQLite write ahead logging 并发读性能",
-      "bm25_hard": [],
-      "bm25_easy": [
-        "g2"
-      ],
-      "vector_hard": [
+      "before": [],
+      "after": [
         "g2",
         "g5",
-        "d5"
-      ],
-      "vector_easy": [
-        "g2",
-        "g7",
         "g1"
       ],
-      "fused_hard": [
-        "g2",
-        "g5",
-        "d5"
-      ],
-      "bm25_hard_hit": false,
-      "bm25_easy_hit": true,
-      "vector_hard_hit": true,
-      "vector_easy_hit": true,
-      "fused_hard_hit": true
+      "before_hit": false,
+      "after_hit": true
     },
     {
       "gold": "g3",
       "hard_query": "缓存过期时间是由什么决定的，怎么判断要不要重新请求？",
       "easy_query": "HTTP cache control headers freshness revalidation",
-      "bm25_hard": [],
-      "bm25_easy": [
-        "g3"
-      ],
-      "vector_hard": [
+      "before": [],
+      "after": [
         "g3",
         "g5",
         "d4"
       ],
-      "vector_easy": [
-        "g3",
-        "g5",
-        "g6"
-      ],
-      "fused_hard": [
-        "g3",
-        "g5",
-        "d4"
-      ],
-      "bm25_hard_hit": false,
-      "bm25_easy_hit": true,
-      "vector_hard_hit": true,
-      "vector_easy_hit": true,
-      "fused_hard_hit": true
+      "before_hit": false,
+      "after_hit": true
     },
     {
       "gold": "g4",
       "hard_query": "为什么钩子不能写在条件分支里？",
       "easy_query": "React hooks 调用顺序 条件分支",
-      "bm25_hard": [],
-      "bm25_easy": [
-        "g4"
-      ],
-      "vector_hard": [
+      "before": [],
+      "after": [
         "g4",
         "d5",
         "g8"
       ],
-      "vector_easy": [
-        "g4",
-        "d2",
-        "d4"
-      ],
-      "fused_hard": [
-        "g4",
-        "d5",
-        "g8"
-      ],
-      "bm25_hard_hit": false,
-      "bm25_easy_hit": true,
-      "vector_hard_hit": true,
-      "vector_easy_hit": true,
-      "fused_hard_hit": true
+      "before_hit": false,
+      "after_hit": true
     },
     {
       "gold": "g5",
       "hard_query": "为什么改一行代码之后重新打包还是很慢？",
       "easy_query": "Docker image layer caching rebuild",
-      "bm25_hard": [],
-      "bm25_easy": [
-        "g5"
-      ],
-      "vector_hard": [
+      "before": [],
+      "after": [
         "g5",
         "g7",
         "d4"
       ],
-      "vector_easy": [
-        "g5",
-        "d1",
-        "g6"
-      ],
-      "fused_hard": [
-        "g5",
-        "g7",
-        "d4"
-      ],
-      "bm25_hard_hit": false,
-      "bm25_easy_hit": true,
-      "vector_hard_hit": true,
-      "vector_easy_hit": true,
-      "fused_hard_hit": true
+      "before_hit": false,
+      "after_hit": true
     },
     {
       "gold": "g6",
       "hard_query": "容器卡住了怎么让它自动重启？",
       "easy_query": "Kubernetes liveness probe 健康检查 重启",
-      "bm25_hard": [],
-      "bm25_easy": [
-        "g6"
-      ],
-      "vector_hard": [
+      "before": [],
+      "after": [
         "g6",
         "g5",
         "g4"
       ],
-      "vector_easy": [
-        "g6",
-        "g5",
-        "d2"
-      ],
-      "fused_hard": [
-        "g6",
-        "g5",
-        "g4"
-      ],
-      "bm25_hard_hit": false,
-      "bm25_easy_hit": true,
-      "vector_hard_hit": true,
-      "vector_easy_hit": true,
-      "fused_hard_hit": true
+      "before_hit": false,
+      "after_hit": true
     },
     {
       "gold": "g7",
       "hard_query": "哪个操作会改写提交历史？",
       "easy_query": "Git rebase 改写 提交历史 merge",
-      "bm25_hard": [],
-      "bm25_easy": [
-        "g7"
-      ],
-      "vector_hard": [
+      "before": [],
+      "after": [
         "g7",
         "d5",
         "g3"
       ],
-      "vector_easy": [
-        "g7",
-        "d2",
-        "d6"
-      ],
-      "fused_hard": [
-        "g7",
-        "d5",
-        "g3"
-      ],
-      "bm25_hard_hit": false,
-      "bm25_easy_hit": true,
-      "vector_hard_hit": true,
-      "vector_easy_hit": true,
-      "fused_hard_hit": true
+      "before_hit": false,
+      "after_hit": true
     },
     {
       "gold": "g8",
       "hard_query": "证书校验失败通常是缺了什么？",
       "easy_query": "TLS certificate chain 校验 中间证书",
-      "bm25_hard": [],
-      "bm25_easy": [
-        "g8"
-      ],
-      "vector_hard": [
+      "before": [],
+      "after": [
         "g8",
         "d5",
         "d1"
       ],
-      "vector_easy": [
-        "g8",
-        "d6",
-        "d1"
-      ],
-      "fused_hard": [
-        "g8",
-        "d5",
-        "d1"
-      ],
-      "bm25_hard_hit": false,
-      "bm25_easy_hit": true,
-      "vector_hard_hit": true,
-      "vector_easy_hit": true,
-      "fused_hard_hit": true
+      "before_hit": false,
+      "after_hit": true
     },
     {
       "gold": "g9",
       "hard_query": "词法检索里的排序是怎么算的？",
       "easy_query": "BM25 ranking term frequency document length",
-      "bm25_hard": [],
-      "bm25_easy": [
-        "g9",
-        "d4"
-      ],
-      "vector_hard": [
+      "before": [],
+      "after": [
         "g9",
         "d2",
         "g4"
       ],
-      "vector_easy": [
-        "g9",
-        "d4",
-        "d1"
-      ],
-      "fused_hard": [
-        "g9",
-        "d2",
-        "g4"
-      ],
-      "bm25_hard_hit": false,
-      "bm25_easy_hit": true,
-      "vector_hard_hit": true,
-      "vector_easy_hit": true,
-      "fused_hard_hit": true
+      "before_hit": false,
+      "after_hit": true
     },
     {
       "gold": "g10",
       "hard_query": "主进程和界面之间怎么传数据？",
       "easy_query": "Electron IPC main renderer 进程通信",
-      "bm25_hard": [],
-      "bm25_easy": [
-        "g10"
-      ],
-      "vector_hard": [
+      "before": [],
+      "after": [
         "g10",
         "d5",
         "d6"
       ],
-      "vector_easy": [
-        "g10",
-        "g4",
-        "d4"
-      ],
-      "fused_hard": [
-        "g10",
-        "d5",
-        "d6"
-      ],
-      "bm25_hard_hit": false,
-      "bm25_easy_hit": true,
-      "vector_hard_hit": true,
-      "vector_easy_hit": true,
-      "fused_hard_hit": true
+      "before_hit": false,
+      "after_hit": true
     }
   ]
 }

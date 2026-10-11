@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from app.corpus.crawl import CorpusCrawler
+from app.corpus.vectors import CorpusVectorIndex
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
 from app.document.politeness import DomainRateLimiter
@@ -488,3 +489,134 @@ async def test_a_site_rejection_is_classified_without_a_probe(tmp_path: Path) ->
 
     assert summary.skipped[0][1] == "http_rejected"
     assert probes == []
+
+
+# --- 抓取时的向量写入 -----------------------------------------------------
+
+
+class CountingEmbedder:
+    """记录被嵌入的文本。真实语义质量由 ab 脚本用真模型度量，这里只锁接线。"""
+
+    def __init__(self) -> None:
+        self.texts: list[str] = []
+
+    async def embed_documents(self, texts):
+        self.texts.extend(texts)
+        return [[float(len(text) % 7), 1.0, 0.0, 0.0] for text in texts]
+
+    async def embed_query(self, text):
+        return [1.0, 1.0, 0.0, 0.0]
+
+
+def vector_index(tmp_path: Path, name: str) -> CorpusVectorIndex:
+    from app.config import VectorStoreSettings
+    from app.storage.vectorstore import PersistentVectorStore
+
+    return CorpusVectorIndex(
+        PersistentVectorStore(VectorStoreSettings(directory=tmp_path / name, dimension=4))
+    )
+
+
+@pytest.mark.asyncio
+async def test_new_chunks_are_embedded_and_unchanged_pages_are_not(tmp_path: Path) -> None:
+    """增量刷新在向量这一侧的收益：内容没变的页不重新嵌入（嵌入是最贵的一步）。"""
+    store = fresh_store(tmp_path, "embed.sqlite3")
+    index = vector_index(tmp_path, "embed-vectors")
+    embedder = CountingEmbedder()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, headers={"content-type": "text/plain"}, content=b"User-agent: *\nAllow: /", request=request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            content=html("Guide", "content long enough to become a chunk"),
+            request=request,
+        )
+
+    await crawler_over(store, handler, embedder=embedder, vectors=index).crawl(
+        domain="docs.test", entry_url="https://docs.test/guide"
+    )
+    first_round = list(embedder.texts)
+    assert first_round, "第一次抓取必须嵌入新块"
+    assert len(index.search([1.0, 1.0, 0.0, 0.0], top_k=5)) > 0
+
+    await crawler_over(store, handler, embedder=embedder, vectors=index).crawl(
+        domain="docs.test", entry_url="https://docs.test/guide"
+    )
+
+    # 第二次内容完全一样：不该多嵌入任何文本。
+    assert embedder.texts == first_round
+
+
+@pytest.mark.asyncio
+async def test_removed_pages_lose_their_vectors(tmp_path: Path) -> None:
+    """语料删了而向量不删，会留下悬空向量 —— 它们占空间，还会让'向量找回来的块'
+    在取正文时凭空消失。"""
+    store = fresh_store(tmp_path, "remove.sqlite3")
+    index = vector_index(tmp_path, "remove-vectors")
+    embedder = CountingEmbedder()
+    bodies = {
+        "/guide": html("Guide", "root page content long enough", links=("/guide/a",)),
+        "/guide/a": html("Child", "child page content long enough"),
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, headers={"content-type": "text/plain"}, content=b"User-agent: *\nAllow: /", request=request)
+        return httpx.Response(200, headers={"content-type": "text/html"}, content=bodies[request.url.path], request=request)
+
+    await crawler_over(store, handler, embedder=embedder, vectors=index).crawl(
+        domain="docs.test", entry_url="https://docs.test/guide"
+    )
+    before = {hit.id for hit in index.search([1.0, 1.0, 0.0, 0.0], top_k=10)}
+    assert len(before) == 2
+
+    child_chunks = [chunk for chunk in store.chunks() if chunk.url.endswith("/guide/a")]
+    bodies.pop("/guide/a")
+
+    def gone(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, headers={"content-type": "text/plain"}, content=b"User-agent: *\nAllow: /", request=request)
+        if request.url.path == "/guide/a":
+            return httpx.Response(404, headers={"content-type": "text/plain"}, content=b"", request=request)
+        return httpx.Response(200, headers={"content-type": "text/html"}, content=bodies["/guide"], request=request)
+
+    await crawler_over(store, gone, embedder=embedder, vectors=index).crawl(
+        domain="docs.test", entry_url="https://docs.test/guide"
+    )
+
+    remaining = {hit.id for hit in index.search([1.0, 1.0, 0.0, 0.0], top_k=10)}
+    assert before - remaining == {chunk.id for chunk in child_chunks}
+
+
+@pytest.mark.asyncio
+async def test_embedding_failure_does_not_fail_the_crawl(tmp_path: Path) -> None:
+    """嵌入是最贵也最容易缺的一步（模型没就绪）。它坏了，抓取与词法检索都该照常。"""
+    store = fresh_store(tmp_path, "embedfail.sqlite3")
+    index = vector_index(tmp_path, "embedfail-vectors")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, headers={"content-type": "text/plain"}, content=b"User-agent: *\nAllow: /", request=request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            content=html("Guide", "content long enough to become a chunk"),
+            request=request,
+        )
+
+    summary = await crawler_over(
+        store, handler, embedder=BrokenEmbedder(), vectors=index
+    ).crawl(domain="docs.test", entry_url="https://docs.test/guide")
+
+    assert summary.pages == 1
+    assert index.search([1.0, 1.0, 0.0, 0.0], top_k=5) == []
+
+
+class BrokenEmbedder:
+    async def embed_documents(self, texts):
+        raise RuntimeError("model not ready")
+
+    async def embed_query(self, text):
+        raise RuntimeError("model not ready")

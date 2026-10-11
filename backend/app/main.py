@@ -56,6 +56,7 @@ from app.core.secrets import KeyringSecretStore, MemorySecretStore, SecretStore
 from app.corpus.crawl import CorpusCrawler
 from app.corpus.nomination import LLMDomainNominator
 from app.corpus.service import CorpusCrawlService
+from app.corpus.vectors import CorpusVectorIndex
 from app.document.builtin_formats import builtin_registry
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
@@ -455,6 +456,10 @@ def create_app(
             probe=reachability_probe,
             limiter=crawl_limiter,
         )
+        # 语料向量：抓取时嵌入、检索时查询嵌入。嵌入不可用时这一层退化成"没有向量"，
+        # 语料仍然按词法可检索 —— 增强通道不该让整级失效。
+        corpus_vectors = CorpusVectorIndex(vector_store)
+        app.state.corpus_vectors = corpus_vectors
         app.state.corpus_crawler = CorpusCrawler(
             client=safe_http_client,
             parser=document_parser,
@@ -462,6 +467,8 @@ def create_app(
             store=web_corpus,
             probe=reachability_probe,
             limiter=crawl_limiter,
+            embedder=runtime_embedding_provider,
+            vectors=corpus_vectors,
         )
         # 抓取跑在后台：同步的话页数预算只能给"用户等得到"那么多，而文档站动辄几百页。
         crawl_service = CorpusCrawlService(
@@ -556,7 +563,9 @@ def create_app(
                 [
                     # 本地网页语料**排在最前**：它是唯一不花额度、不出网、引用可复现的
                     # 来源。命中它就够了，不必再去问需要 key 或会打满免费档的上游。
-                    WebCorpusSearchProvider(web_corpus),
+                    WebCorpusSearchProvider(
+                        web_corpus, vectors=corpus_vectors, embedder=runtime_embedding_provider
+                    ),
                     # 之后是厂商自己的内置联网，Tavily 兜底（免密钥即可用）。
                     # SearXNG / Bing / DuckDuckGo 那三级抓屏已删除 —— 抓屏是"看着免费、
                     # 维护成本无上限"的典型（上游改版就断，且我们跑不到真实网络里测不到）。

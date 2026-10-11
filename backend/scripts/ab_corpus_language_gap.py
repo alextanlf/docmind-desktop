@@ -169,22 +169,65 @@ def page_of(url: str) -> str:
     return url.rsplit("/", 1)[-1]
 
 
-def main() -> int:
+class ModelEmbedder:
+    """把 ONNX 模型包成 `EmbeddingProvider`。
 
+    脚本里自己包一层而不是走 `create_embedding_provider(settings)`：这里要量的只是
+    检索链路，设置装配（模型目录、维度、状态机）是另一件事，把它拉进来只会让脚本
+    因为环境差异而跑不起来。
+    """
+
+    def __init__(self, model) -> None:
+        self.model = model
+
+    async def embed_documents(self, texts):
+        matrix = self.model.encode(list(texts), normalize_embeddings=True)
+        return [list(map(float, row)) for row in matrix]
+
+    async def embed_query(self, text):
+        return (await self.embed_documents([text]))[0]
+
+
+def build_provider(*, with_vectors: bool, embedder=None):
+    """真 store + 真索引 + 真 provider：量的就是产品里那条路径。"""
+    from app.config import VectorStoreSettings
+    from app.corpus.vectors import CorpusVectorIndex
+    from app.storage.vectorstore import PersistentVectorStore
 
     store = seed_store()
-    provider = WebCorpusSearchProvider(store)
+    if not with_vectors:
+        return WebCorpusSearchProvider(store), store, None
+    index = CorpusVectorIndex(
+        PersistentVectorStore(
+            VectorStoreSettings(directory=Path(tempfile.mkdtemp()) / "vectors", dimension=1024)
+        )
+    )
+    chunks = store.chunks()
+    embeddings = asyncio.run(embedder.embed_documents([chunk.text for chunk in chunks]))
+    index.upsert(chunks, embeddings)
+    return WebCorpusSearchProvider(store, vectors=index, embedder=embedder), store, index
+
+
+def hit_rate(provider, queries: list[str], golds: list[str]) -> tuple[int, list[list[str]]]:
+    ranks: list[list[str]] = []
+    hits = 0
+    for query, gold in zip(queries, golds, strict=True):
+        try:
+            response = asyncio.run(provider.search(SearchRequest(query=query, max_results=3)))
+            pages = [page_of(str(result.canonical_url)) for result in response.results]
+        except Exception:  # 零召回时 provider 会抛错 —— 那正是"没搜到"
+            pages = []
+        ranks.append(pages)
+        if gold in pages:
+            hits += 1
+    return hits, ranks
+
+
+def main() -> int:
+    from app.core.onnx_embedding import ONNXEmbeddingModel
 
     model = ONNXEmbeddingModel(MODEL_DIR, max_seq_length=8192)
-    matrix = model.encode(
-        [text for _, text in CORPUS] + [q for _, _, q, _ in CASES] + [e for _, _, _, e in CASES],
-        normalize_embeddings=True,
-    )
-    chunk_ids = [cid for cid, _ in CORPUS]
-    offset = len(CORPUS)
-    hard_vecs = {chunk_ids[i]: list(map(float, matrix[i])) for i in range(len(CORPUS))}
-    q_vecs = [list(map(float, matrix[offset + i])) for i in range(len(CASES))]
-    easy_vecs = [list(map(float, matrix[offset + len(CASES) + i])) for i in range(len(CASES))]
+    embedder = ModelEmbedder(model)
 
     print("=" * 96)
     print("词法重叠体检（纯中文问句 × 纯英文正文）：")
@@ -196,77 +239,85 @@ def main() -> int:
         print(f"  {query[:26]:<28} → {cid}  " + ("✓ 交集为空" if not overlap else f"✗ {overlap}"))
     print("=" * 96)
 
-    def bm25_ranking(query: str, top: int = 3) -> list[str]:
-        response = asyncio.run(provider.search(SearchRequest(query=query, max_results=top)))
-        return [page_of(str(result.canonical_url)) for result in response.results]
+    golds = [cid for cid, _, _, _ in CASES]
+    hard_queries = [query for _, _, query, _ in CASES]
+    easy_queries = [easy for _, _, _, easy in CASES]
 
-    def bm25_ranking_safe(query: str, top: int = 3) -> list[str]:
-        try:
-            return bm25_ranking(query, top)
-        except Exception:  # 没命中时 provider 会抛错 —— 那正是"零召回"
-            return []
+    lexical_only, _, _ = build_provider(with_vectors=False)
+    with_vectors, store, index = build_provider(with_vectors=True, embedder=embedder)
+    assert store is not None and index is not None
 
-    def vector_ranking(vector: list[float], top: int = 3) -> list[str]:
-        scored = sorted(
-            hard_vecs.items(),
-            key=lambda item: (-sum(x * y for x, y in zip(item[1], vector)), item[0]),
-        )
-        return [cid for cid, _ in scored[:top]]
+    before_hard, before_rows = hit_rate(lexical_only, hard_queries, golds)
+    before_easy, _ = hit_rate(lexical_only, easy_queries, golds)
+    after_hard, after_rows = hit_rate(with_vectors, hard_queries, golds)
+    after_easy, _ = hit_rate(with_vectors, easy_queries, golds)
 
+    # 余弦分布：门槛该定在哪，由它决定（结论：定不了 —— 两个分布几乎完全重叠）。
+    vectors = {
+        chunk.id: asyncio.run(embedder.embed_query(chunk.text)) for chunk in store.chunks()
+    }
+    relevant: list[float] = []
+    unrelated: list[float] = []
+    for i, (gold, _text, hard_query, _easy) in enumerate(CASES):
+        query_vector = asyncio.run(embedder.embed_query(hard_query))
+        for chunk in store.chunks():
+            similarity = sum(x * y for x, y in zip(vectors[chunk.id], query_vector))
+            (relevant if chunk.url.endswith(f"/{gold}") else unrelated).append(similarity)
+    relevant_sorted = sorted(relevant)
+    unrelated_sorted = sorted(unrelated)
+
+    def percentile(values: list[float], fraction: float) -> float:
+        if not values:
+            return 0.0
+        return round(values[min(len(values) - 1, int(len(values) * fraction))], 4)
+
+    similarity_stats = {
+        "relevant_min": round(relevant_sorted[0], 4) if relevant_sorted else None,
+        "relevant_p10": percentile(relevant_sorted, 0.1),
+        "irrelevant_p50": percentile(unrelated_sorted, 0.5),
+        "irrelevant_p90": percentile(unrelated_sorted, 0.9),
+        "irrelevant_max": round(unrelated_sorted[-1], 4) if unrelated_sorted else None,
+    }
+
+    n = len(CASES)
+    summary = {
+        "n": n,
+        "structural_zero_overlap": structural,
+        "before_km": "词法单通道（加向量之前的产品行为）",
+        "bm25_hard": f"{before_hard}/{n}",
+        "bm25_easy": f"{before_easy}/{n}",
+        "after": "词法 + 向量救援（当前实现）",
+        "rescue_hard": f"{after_hard}/{n}",
+        "rescue_easy": f"{after_easy}/{n}",
+        "similarity": similarity_stats,
+    }
+    print("命中率（top-3，目标页出现在结果里即算命中）：")
+    print(f"  加向量之前 · 纯中文问句        {summary['bm25_hard']}")
+    print(f"  加向量之前 · 带英文术语        {summary['bm25_easy']}")
+    print(f"  当前实现   · 纯中文问句        {summary['rescue_hard']}")
+    print(f"  当前实现   · 带英文术语        {summary['rescue_easy']}")
+    print(
+        "余弦分布（决定要不要设门槛）："
+        f"相关最低 {similarity_stats['relevant_min']}（p10 {similarity_stats['relevant_p10']}）"
+        f" | 不相关中位 {similarity_stats['irrelevant_p50']}"
+        f"（p90 {similarity_stats['irrelevant_p90']}，最高 {similarity_stats['irrelevant_max']}）"
+    )
+    print("=" * 96)
     rows = []
     for i, (gold, _text, hard_query, easy_query) in enumerate(CASES):
-        hard_bm25 = bm25_ranking_safe(hard_query)
-        easy_bm25 = bm25_ranking_safe(easy_query)
-        hard_vector = vector_ranking(q_vecs[i])
-        easy_vector = vector_ranking(easy_vecs[i])
-        fused = [
-            item.chunk_id
-            for item in reciprocal_rank_fusion(hard_vector, hard_bm25, k=60)
-        ][:3]
+        marks = f"{'✓' if gold in before_rows[i] else '·'}{'✓' if gold in after_rows[i] else '·'}"
+        print(f"  before/after={marks}  {hard_query[:30]:<32} gold={gold}")
         rows.append(
             {
                 "gold": gold,
                 "hard_query": hard_query,
                 "easy_query": easy_query,
-                "bm25_hard": hard_bm25,
-                "bm25_easy": easy_bm25,
-                "vector_hard": hard_vector,
-                "vector_easy": easy_vector,
-                "fused_hard": fused,
-                "bm25_hard_hit": gold in hard_bm25,
-                "bm25_easy_hit": gold in easy_bm25,
-                "vector_hard_hit": gold in hard_vector,
-                "vector_easy_hit": gold in easy_vector,
-                "fused_hard_hit": gold in fused,
+                "before": before_rows[i],
+                "after": after_rows[i],
+                "before_hit": gold in before_rows[i],
+                "after_hit": gold in after_rows[i],
             }
         )
-
-    def rate(key: str) -> str:
-        hits = sum(1 for row in rows if row[key])
-        return f"{hits}/{len(rows)}"
-
-    summary = {
-        "n": len(rows),
-        "bm25_hard": rate("bm25_hard_hit"),
-        "bm25_easy": rate("bm25_easy_hit"),
-        "vector_hard": rate("vector_hard_hit"),
-        "vector_easy": rate("vector_easy_hit"),
-        "fused_hard": rate("fused_hard_hit"),
-        "structural_zero_overlap": structural,
-    }
-    print("命中率（top-3，gold 页在结果里即算命中）：")
-    print(f"  BM25 · 纯中文问句（真实场景）      {summary['bm25_hard']}")
-    print(f"  BM25 · 带英文术语（改写完美时）    {summary['bm25_easy']}")
-    print(f"  向量 · 纯中文问句                  {summary['vector_hard']}")
-    print(f"  向量 · 带英文术语                  {summary['vector_easy']}")
-    print(f"  融合 · 纯中文问句                  {summary['fused_hard']}")
-    print("=" * 96)
-    for row in rows:
-        marks = "".join(
-            "✓" if row[key] else "·"
-            for key in ("bm25_hard_hit", "bm25_easy_hit", "vector_hard_hit", "fused_hard_hit")
-        )
-        print(f"  {marks}  {row['hard_query'][:30]:<32} gold={row['gold']}")
 
     payload = {"summary": summary, "rows": rows}
     out = BACKEND_ROOT / "scripts" / "ab_corpus_language_gap.json"
