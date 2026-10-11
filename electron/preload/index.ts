@@ -49,6 +49,7 @@ import {
   BatchDiagnosticsPageSchema,
   CorpusCandidateRequestSchema,
   CorpusCandidatesResponseSchema,
+  CrawlSourceResponseSchema,
   SaveWebSourcesRequestSchema,
   WebSourcesResponseSchema,
   BatchItemPageSchema,
@@ -464,6 +465,8 @@ const api: DocMindApi = {
       ),
     removeSource: (domain) =>
       invoke(IPC_CHANNELS.corpusRemoveSource, WebSourcesResponseSchema, domain),
+    crawlSource: (domain) =>
+      invoke(IPC_CHANNELS.corpusCrawlSource, CrawlSourceResponseSchema, domain),
   },
   batches: {
     create: (input) =>

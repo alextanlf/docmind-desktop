@@ -1,6 +1,8 @@
 """来源推导端点：空安装 + 上游全挂时，候选仍然出得来。"""
 from __future__ import annotations
 
+import httpx
+
 
 def test_seeds_carry_the_result_when_the_model_cannot_nominate(client, auth_headers) -> None:
     """假 services 模式下的聊天模型给不出域名（它只会引用文档片段），于是这里正好
@@ -159,3 +161,110 @@ def test_confirmed_sources_are_listed_newest_first(client, auth_headers) -> None
     # 是按用户看不见的构造顺序排列的。
     assert [source["domain"] for source in sources] == ["a.example", "b.example"]
     assert sources[0]["addedAt"] == sources[1]["addedAt"]
+
+
+PAGE = (
+    b"<html><head><title>Guide</title></head><body><h1>Guide</h1>"
+    b"<p>asyncio event loop and tasks, long enough to become a chunk.</p></body></html>"
+)
+
+
+class _Resolver:
+    async def resolve(self, host):
+        return ["93.184.216.34"]
+
+
+def _swap_crawler(client, table: dict) -> None:
+    """把应用里的抓取器换成走 MockTransport 的那个。
+
+    不换的话，一条测试会真的去网络上抓 —— 而这正是"抓取"这个功能最容易在测试里
+    悄悄依赖真实网络的地方。
+    """
+    from app.corpus.crawl import CorpusCrawler
+    from app.document.chunker import SemanticChunker
+    from app.document.parser import DocumentParser
+    from app.document.reachability import ReachabilityProbe
+    from app.document.safe_http import SafeHttpClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        outcome = table.get(request.url.path)
+        if isinstance(outcome, Exception):
+            raise outcome
+        if outcome is None:
+            return httpx.Response(404, headers={"content-type": "text/plain"}, content=b"", request=request)
+        status, media, body = outcome
+        return httpx.Response(status, headers={"content-type": media}, content=body, request=request)
+
+    def probe_handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("timed out")
+
+    client.app.state.crawler_probe = probe_handler
+    client.app.state.corpus_crawler = CorpusCrawler(
+        client=SafeHttpClient(resolver=_Resolver(), transport=httpx.MockTransport(handler)),
+        parser=DocumentParser(),
+        chunker=SemanticChunker(),
+        store=client.app.state.web_corpus,
+        probe=ReachabilityProbe(resolver=_Resolver(), transport=httpx.MockTransport(probe_handler)),
+        max_bytes=1024 * 1024,
+    )
+
+
+def _add_source(client, auth_headers, domain: str, entry: str) -> None:
+    response = client.post(
+        "/api/corpus/sources",
+        headers=auth_headers,
+        json={"sources": [{"domain": domain, "entryUrl": entry, "verified": True}]},
+    )
+    assert response.status_code == 200
+
+
+def test_crawling_a_source_fills_the_corpus_and_reports_its_size(client, auth_headers) -> None:
+    """没有状态字段的话，一个一直抓失败的来源看起来和刚收录时一模一样。"""
+    _add_source(client, auth_headers, "docs.test", "https://docs.test/guide")
+    _swap_crawler(
+        client,
+        {
+            "/robots.txt": (200, "text/plain", b"User-agent: *\nAllow: /"),
+            "/guide": (200, "text/html", PAGE),
+        },
+    )
+
+    response = client.post("/api/corpus/sources/docs.test/crawl", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["summary"]["domain"] == "docs.test"
+    assert body["summary"]["pages"] == 1
+    assert body["summary"]["chunks"] >= 1
+    source = body["sources"][0]
+    assert source["domain"] == "docs.test"
+    assert source["pageCount"] == 1
+    assert source["chunkCount"] == body["summary"]["chunks"]
+    assert source["lastCrawledAt"] is not None
+    assert source["lastError"] is None
+
+
+def test_a_crawl_that_gets_nothing_records_a_reason_code(client, auth_headers) -> None:
+    """失败要留下**原因码**（文案在前端只有一份），而不是自己拼一句中文。"""
+    _add_source(client, auth_headers, "docs.test", "https://docs.test/guide")
+    _swap_crawler(
+        client,
+        {
+            "/robots.txt": (200, "text/plain", b"User-agent: *\nAllow: /"),
+            "/guide": httpx.ConnectTimeout("timed out"),
+        },
+    )
+
+    response = client.post("/api/corpus/sources/docs.test/crawl", headers=auth_headers)
+
+    source = response.json()["sources"][0]
+    assert response.json()["summary"]["pages"] == 0
+    assert source["pageCount"] == 0
+    assert source["lastError"] == "unreachable"
+
+
+def test_crawling_a_source_that_was_never_collected_is_a_404(client, auth_headers) -> None:
+    response = client.post("/api/corpus/sources/uncollected.example/crawl", headers=auth_headers)
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "CORPUS_SOURCE_UNKNOWN"

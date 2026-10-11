@@ -859,11 +859,30 @@ export const WebSourceSchema = z.object({
   kind: z.string().nullable().optional(),
   verified: z.boolean(),
   evidence: z.array(z.string()),
+  /** 语料规模与最近一次抓取。没有它们，一个一直抓失败的来源看起来和刚收录时一样。 */
+  pageCount: z.number().int().nonnegative().default(0),
+  chunkCount: z.number().int().nonnegative().default(0),
+  lastCrawledAt: z.string().nullable().optional(),
+  /** 上次失败的原因码 —— 与抓取诊断同一套取值，所以文案也只有一份。 */
+  lastError: CrawlRejectionReasonSchema.nullable().optional(),
   addedAt: z.string(),
 });
 
 export const WebSourcesResponseSchema = z.object({
   sources: z.array(WebSourceSchema),
+});
+
+export const CrawlSummarySchema = z.object({
+  domain: z.string(),
+  pages: z.number().int().nonnegative(),
+  chunks: z.number().int().nonnegative(),
+  skippedCount: z.number().int().nonnegative(),
+  /** 因为页数上限提前结束 —— 用户需要知道"这不是全部"。 */
+  truncated: z.boolean(),
+});
+
+export const CrawlSourceResponseSchema = WebSourcesResponseSchema.extend({
+  summary: CrawlSummarySchema,
 });
 
 export type CorpusCandidate = z.infer<typeof CorpusCandidateSchema>;
@@ -873,6 +892,8 @@ export type WebSource = z.infer<typeof WebSourceSchema>;
 export type WebSourceInput = z.infer<typeof WebSourceInputSchema>;
 export type SaveWebSourcesRequest = z.infer<typeof SaveWebSourcesRequestSchema>;
 export type WebSourcesResponse = z.infer<typeof WebSourcesResponseSchema>;
+export type CrawlSummary = z.infer<typeof CrawlSummarySchema>;
+export type CrawlSourceResponse = z.infer<typeof CrawlSourceResponseSchema>;
 
 /** 本地网页索引收录哪些站点。与后端 `/api/corpus` 对齐。 */
 export interface CorpusApi {
@@ -882,6 +903,13 @@ export interface CorpusApi {
   saveSources(input: SaveWebSourcesRequest): Promise<WebSourcesResponse>;
   /** 幂等：删一个本来就不存在的域名也返回成功，响应始终是删除后的真实清单。 */
   removeSource(domain: string): Promise<WebSourcesResponse>;
+  /**
+   * 抓取一个来源（同步、有预算）。返回更新后的清单与本次摘要。
+   *
+   * 同步是有意的：抓到了几页就是用户按下按钮想立刻知道的事，做成异步任务反而要再补
+   * 一套进度轮询。代价是这一次调用会占用几秒到几十秒。
+   */
+  crawlSource(domain: string): Promise<CrawlSourceResponse>;
 }
 export type BatchDiagnostic = z.infer<typeof BatchDiagnosticSchema>;
 export type BatchDiagnosticsPage = z.infer<typeof BatchDiagnosticsPageSchema>;

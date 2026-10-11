@@ -53,6 +53,7 @@ from app.core.local_model_service import LocalModelService
 from app.core.model_router import ModelRouter
 from app.core.retrieval import HybridRetriever
 from app.core.secrets import KeyringSecretStore, MemorySecretStore, SecretStore
+from app.corpus.crawl import CorpusCrawler
 from app.corpus.nomination import LLMDomainNominator
 from app.document.builtin_formats import builtin_registry
 from app.document.chunker import SemanticChunker
@@ -97,6 +98,7 @@ from app.search.model_native import ModelSearchProvider
 from app.search.query_planner import LLMQueryPlanner
 from app.search.service import SearchService
 from app.search.tavily import TAVILY_SECRET_NAME, TavilyProvider
+from app.search.web_corpus import WebCorpusSearchProvider
 from app.storage.database import Database
 from app.storage.models import ProviderCredentialState
 from app.storage.repositories import (
@@ -114,6 +116,7 @@ from app.storage.repositories import (
     SettingStore,
     VectorCleanupStore,
     VersionStore,
+    WebCorpusStore,
     WebSearchRunStore,
     WebSourceStore,
 )
@@ -430,21 +433,34 @@ def create_app(
         # 而那是 crawl_entries 里的数据，不是批次汇总里的数字。
         crawl_entries = CrawlEntryStore(database)
         app.state.crawl_entries = crawl_entries
-        # 用户确认收录的网页来源：候选推导的落点，也是后续抓取与索引的唯一输入。
+        # 用户确认收录的网页来源：候选推导的落点，也是抓取与索引的唯一输入。
         app.state.web_sources = WebSourceStore(database)
+        web_corpus = WebCorpusStore(database)
+        app.state.web_corpus = web_corpus
+        # 探测与礼貌策略**跨功能共用**：同一个站点不该因为"这次是导入、那次是语料"
+        # 而被敲两次门，探测结论（可达性）也没有理由各存一份。
+        reachability_probe = ReachabilityProbe(
+            resolver=_SystemResolver(), transport=httpx.AsyncHTTPTransport()
+        )
+        crawl_limiter = DomainRateLimiter(
+            min_interval_seconds=runtime_settings.crawl_min_interval_seconds
+        )
         web_discovery = WebDiscovery(
             safe_http_client,
             runtime_settings.staging_dir,
             frontier=crawl_entries,
-            # 两个都给：没有它们，一次抓取失败只能说「抓取失败」；有了它们，
-            # 「站点拒绝了你」「到不了」「被限流」才会分开，而且同一个站点不会
-            # 被我们连着敲门。
-            probe=ReachabilityProbe(
-                resolver=_SystemResolver(), transport=httpx.AsyncHTTPTransport()
-            ),
-            limiter=DomainRateLimiter(
-                min_interval_seconds=runtime_settings.crawl_min_interval_seconds
-            ),
+            # 有了这两个，一次抓取失败才会区分「站点拒绝了你」「到不了」「被限流」，
+            # 而不是全部落进"抓取失败"。
+            probe=reachability_probe,
+            limiter=crawl_limiter,
+        )
+        app.state.corpus_crawler = CorpusCrawler(
+            client=safe_http_client,
+            parser=document_parser,
+            chunker=SemanticChunker(),
+            store=web_corpus,
+            probe=reachability_probe,
+            limiter=crawl_limiter,
         )
         remote_discovery = RemoteDiscovery(registry, repository_store, runtime_settings.staging_dir)
         app.state.batch_service = BatchService(
@@ -527,7 +543,10 @@ def create_app(
         app.state.search_service = SearchService(
             FallbackSearchProvider(
                 [
-                    # 只有两级：厂商自己的内置联网优先，Tavily 兜底（免密钥即可用）。
+                    # 本地网页语料**排在最前**：它是唯一不花额度、不出网、引用可复现的
+                    # 来源。命中它就够了，不必再去问需要 key 或会打满免费档的上游。
+                    WebCorpusSearchProvider(web_corpus),
+                    # 之后是厂商自己的内置联网，Tavily 兜底（免密钥即可用）。
                     # SearXNG / Bing / DuckDuckGo 那三级抓屏已删除 —— 抓屏是"看着免费、
                     # 维护成本无上限"的典型（上游改版就断，且我们跑不到真实网络里测不到）。
                     ModelSearchProvider(_model_credentials),

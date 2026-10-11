@@ -35,6 +35,17 @@ export function useSaveWebSourcesMutation() {
   });
 }
 
+export function useCrawlSourceMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (domain: string) => window.docmind.corpus.crawlSource(domain),
+    onSuccess: (data) => {
+      // 只把清单写回缓存；`summary` 是这一次的结果，由调用方展示，不该混进列表数据。
+      if (data) client.setQueryData(corpusKeys.sources, { sources: data.sources });
+    },
+  });
+}
+
 export function useRemoveWebSourceMutation() {
   const client = useQueryClient();
   return useMutation({

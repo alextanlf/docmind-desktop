@@ -49,6 +49,7 @@ import {
   BatchDiagnosticsPageSchema,
   CorpusCandidateRequestSchema,
   CorpusCandidatesResponseSchema,
+  CrawlSourceResponseSchema,
   SaveWebSourcesRequestSchema,
   WebSourcesResponseSchema,
   BatchItemPageSchema,
@@ -464,6 +465,16 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         `/api/corpus/sources/${encodeURIComponent(domain)}`,
         jsonInit("DELETE"),
         WebSourcesResponseSchema,
+      );
+    },
+    [IPC_CHANNELS.corpusCrawlSource]: (_event, domain) => {
+      if (typeof domain !== "string" || !domain) {
+        throw new DocMindClientError("INVALID_REQUEST", "域名无效");
+      }
+      return proxy.requestJson(
+        `/api/corpus/sources/${encodeURIComponent(domain)}/crawl`,
+        jsonInit("POST"),
+        CrawlSourceResponseSchema,
       );
     },
     [IPC_CHANNELS.batchesCreate]: (_event, input) =>

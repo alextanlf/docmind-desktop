@@ -2972,6 +2972,14 @@ progress::-webkit-progress-bar {
   color: var(--muted);
   font-size: 12px;
 }
+.corpus-status {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.corpus-status.is-error {
+  color: #8a3d3d;
+}
 .corpus-evidence {
   margin: 6px 0 0;
   padding-left: 18px;

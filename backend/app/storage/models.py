@@ -743,9 +743,57 @@ class WebSourceRecord(Base):
     #: 是否来自有人核对过的种子表。模型提名与挖掘出来的都是 False。
     verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("0"))
     evidence_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]", server_default=text("'[]'"))
+    #: 最近一次抓取的时间与结果。用户要能看出"这个来源到底抓没抓到东西"，
+    #: 否则一个抓取一直失败的来源看起来和刚收录时一模一样。
+    last_crawled_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     added_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
     )
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
     )
+
+
+class WebCorpusPageRecord(Base):
+    """本地网页索引里的一页。抓取结果的最小单位。"""
+
+    __tablename__ = "web_corpus_pages"
+    __table_args__ = (
+        UniqueConstraint("domain", "url", name="uq_web_corpus_pages_domain_url"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    #: 归属来源。抓取按域名整体替换，所以它也是"这一页属于谁"的唯一依据。
+    domain: Mapped[str] = mapped_column(String(253), index=True)
+    url: Mapped[str] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
+    media_type: Mapped[str] = mapped_column(String(64), default="text/html")
+    content_hash: Mapped[str] = mapped_column(String(64), default="")
+    byte_size: Mapped[int] = mapped_column(Integer, default=0)
+    fetched_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
+    )
+
+
+class WebCorpusChunkRecord(Base):
+    """可检索的语料块。
+
+    `url` / `title` / `domain` 是**刻意的冗余**：检索命中时要给出处，而每个命中都去
+    join 一次 pages 表在检索路径上是不必要的开销；抓取又是按域名整体替换的，所以
+    冗余字段不会独立漂移。
+    """
+
+    __tablename__ = "web_corpus_chunks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    page_id: Mapped[str] = mapped_column(
+        ForeignKey("web_corpus_pages.id", ondelete="CASCADE"), index=True
+    )
+    domain: Mapped[str] = mapped_column(String(253), index=True)
+    url: Mapped[str] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
+    ordinal: Mapped[int] = mapped_column(Integer, default=0)
+    section_path: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
+    text: Mapped[str] = mapped_column(Text)
+    token_count: Mapped[int] = mapped_column(Integer, default=0)

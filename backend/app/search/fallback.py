@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 _LABELS = {
     "model": "模型内置联网",
+    "web_corpus": "本地网页索引",
     "tavily": "Tavily",
     # 🔴 下面三个来源的实现已经删除（抓屏不可维护），但**标签保留**：`web_search_runs`
     # 是持久表，老安装里的历史 run 仍然带着这些 provider 名。这是文案映射，不是平台

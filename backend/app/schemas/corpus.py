@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import Field, model_validator
 
 from app.corpus.candidates import normalize_domain
+from app.schemas.batches import CrawlRejectionReason
 from app.schemas.common import WireModel
 
 
@@ -95,8 +96,29 @@ class WebSourceView(WireModel):
     kind: str | None = None
     verified: bool
     evidence: list[str]
+    #: 语料规模与最近一次抓取。**没有这三个字段，一个一直抓失败的来源看起来和刚
+    #: 收录时一模一样** —— 用户没有任何办法知道"到底抓到了没有"。
+    page_count: int = 0
+    chunk_count: int = 0
+    last_crawled_at: datetime | None = None
+    #: 上次抓取失败的原因码。刻意用与抓取诊断同一套取值，这样文案只有一份
+    #: （在渲染层），后端不需要自己拼一句中文。
+    last_error: CrawlRejectionReason | None = None
     added_at: datetime
 
 
 class WebSourcesResponse(WireModel):
     sources: list[WebSourceView]
+
+
+class CrawlSummaryView(WireModel):
+    domain: str
+    pages: int
+    chunks: int
+    skipped_count: int
+    #: 因为页数上限提前结束。用户需要知道"这不是全部"。
+    truncated: bool
+
+
+class CrawlSourceResponse(WebSourcesResponse):
+    summary: CrawlSummaryView

@@ -5,19 +5,23 @@ from typing import cast
 
 from fastapi import APIRouter, Request
 
+from app.api.errors import DomainError
 from app.corpus.candidates import NominatedSource, derive_candidates, normalize_domain
+from app.corpus.crawl import CorpusCrawler
 from app.corpus.nomination import DomainNominator
 from app.schemas.corpus import (
     CorpusCandidateRequest,
     CorpusCandidatesResponse,
     CorpusCandidateView,
     CorpusNominationView,
+    CrawlSourceResponse,
+    CrawlSummaryView,
     SaveWebSourcesRequest,
     WebSourcesResponse,
     WebSourceView,
 )
 from app.storage.models import WebSourceRecord, utc_now
-from app.storage.repositories import WebSourceStore
+from app.storage.repositories import CorpusStats, WebCorpusStore, WebSourceStore
 
 router = APIRouter(prefix="/api/corpus", tags=["corpus"])
 
@@ -65,30 +69,53 @@ async def derive_source_candidates(
     )
 
 
+_EMPTY_STATS = CorpusStats(pages=0, chunks=0, last_fetched_at=None)
+
+
 def _store(request: Request) -> WebSourceStore:
     return cast(WebSourceStore, request.app.state.web_sources)
 
 
-def _source_view(row: WebSourceRecord) -> WebSourceView:
-    return WebSourceView(
-        domain=row.domain,
-        entry_url=row.entry_url,
-        label=row.label,
-        kind=row.kind,
-        verified=row.verified,
-        evidence=list(json.loads(row.evidence_json or "[]")),
-        added_at=row.added_at,
+def _corpus(request: Request) -> WebCorpusStore:
+    return cast(WebCorpusStore, request.app.state.web_corpus)
+
+
+def _crawler(request: Request) -> CorpusCrawler:
+    return cast(CorpusCrawler, request.app.state.corpus_crawler)
+
+
+def _sources_response(
+    request: Request, rows: list[WebSourceRecord]
+) -> WebSourcesResponse:
+    """来源清单 + 每个来源的语料规模。
+
+    规模一次分组查询拿到，而不是每行查一次 —— 列表本来就会整体渲染。
+    """
+    stats = _corpus(request).stats()
+    return WebSourcesResponse(
+        sources=[
+            WebSourceView(
+                domain=row.domain,
+                entry_url=row.entry_url,
+                label=row.label,
+                kind=row.kind,
+                verified=row.verified,
+                evidence=list(json.loads(row.evidence_json or "[]")),
+                page_count=stats.get(row.domain, _EMPTY_STATS).pages,
+                chunk_count=stats.get(row.domain, _EMPTY_STATS).chunks,
+                last_crawled_at=row.last_crawled_at,
+                last_error=row.last_error,
+                added_at=row.added_at,
+            )
+            for row in rows
+        ]
     )
-
-
-def _sources_response(rows: list[WebSourceRecord]) -> WebSourcesResponse:
-    return WebSourcesResponse(sources=[_source_view(row) for row in rows])
 
 
 @router.get("/sources", response_model=WebSourcesResponse)
 async def list_web_sources(request: Request) -> WebSourcesResponse:
     """已确认收录的来源 —— 也就是本地网页索引将来的范围。"""
-    return _sources_response(_store(request).list())
+    return _sources_response(request, _store(request).list())
 
 
 @router.post("/sources", response_model=WebSourcesResponse)
@@ -116,7 +143,7 @@ async def save_web_sources(
         )
         for item in body.sources
     ]
-    return _sources_response(_store(request).upsert(records))
+    return _sources_response(request, _store(request).upsert(records))
 
 
 @router.delete("/sources/{domain}", response_model=WebSourcesResponse)
@@ -131,4 +158,42 @@ async def remove_web_source(request: Request, domain: str) -> WebSourcesResponse
     normalized = normalize_domain(domain)
     if normalized is not None:
         store.remove(normalized)
-    return _sources_response(store.list())
+    return _sources_response(request, store.list())
+
+
+@router.post("/sources/{domain}/crawl", response_model=CrawlSourceResponse)
+async def crawl_web_source(request: Request, domain: str) -> CrawlSourceResponse:
+    """抓取一个来源，并把结果记回它自己身上。
+
+    预算写死在默认值里（页数 / 深度）：这是按钮触发的动作，必须能在有限时间内结束。
+    抓完整站是另一件事 —— 那需要一个后台任务与进度上报，而不是一个会转很久的请求。
+
+    **同步执行**是有意的：抓取结果（抓到了几页）就是用户按下按钮想立刻看到的东西，
+    做成异步任务反而要再补一套进度轮询。代价是请求会占用几秒到几十秒，而这一点在
+    界面上是可见的（按钮进入 pending 状态）。
+    """
+    store = _store(request)
+    normalized = normalize_domain(domain)
+    source = (
+        next((row for row in store.list() if row.domain == normalized), None)
+        if normalized is not None
+        else None
+    )
+    if source is None:
+        raise DomainError("CORPUS_SOURCE_UNKNOWN", "这个来源不在已收录清单里", 404, False)
+
+    summary = await _crawler(request).crawl(
+        domain=source.domain, entry_url=source.entry_url
+    )
+    # 全失败时把最主要的原因记下来（原因码，文案在渲染层），成功则清掉旧错误。
+    store.mark_crawled(source.domain, summary.dominant_failure())
+    return CrawlSourceResponse(
+        sources=_sources_response(request, store.list()).sources,
+        summary=CrawlSummaryView(
+            domain=summary.domain,
+            pages=summary.pages,
+            chunks=summary.chunks,
+            skipped_count=len(summary.skipped),
+            truncated=summary.truncated,
+        ),
+    )

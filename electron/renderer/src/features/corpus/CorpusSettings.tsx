@@ -1,7 +1,9 @@
 import { useState } from "react";
-import type { CorpusCandidate, WebSource } from "../../../../shared/contracts";
+import type { CorpusCandidate, CrawlSummary, WebSource } from "../../../../shared/contracts";
+import { REJECTION_COPY } from "../imports/rejection-copy";
 import { clientErrorMessage } from "../settings/settings.queries";
 import {
+  useCrawlSourceMutation,
   useDeriveCandidatesMutation,
   useRemoveWebSourceMutation,
   useSaveWebSourcesMutation,
@@ -24,9 +26,13 @@ export function CorpusSettings() {
   const derive = useDeriveCandidatesMutation();
   const saveSources = useSaveWebSourcesMutation();
   const removeSource = useRemoveWebSourceMutation();
+  const crawlSource = useCrawlSourceMutation();
   const [topic, setTopic] = useState("");
   const [manual, setManual] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // 只保留"刚刚那一次"的结果：它是动作的反馈，不是需要长期展示的状态（长期状态在
+  // 每个来源自己的行里，来自后端）。
+  const [summary, setSummary] = useState<CrawlSummary | null>(null);
 
   const collected = sources.data?.sources ?? [];
   const known = new Set(collected.map((source) => source.domain));
@@ -63,6 +69,30 @@ export function CorpusSettings() {
     if (!value) return;
     await collect({ domain: value, verified: false, evidence: ["你手工添加"] });
     setManual("");
+  }
+
+  async function crawl(domain: string) {
+    setError(null);
+    setSummary(null);
+    try {
+      const result = await crawlSource.mutateAsync(domain);
+      setSummary(result.summary);
+    } catch (crawlError) {
+      setError(clientErrorMessage(crawlError));
+    }
+  }
+
+  /** 一个来源的抓取状态。三种情况都要说清楚，尤其是"抓了但一页都没进来"。 */
+  function status(source: WebSource) {
+    if (source.lastError) {
+      const copy = REJECTION_COPY[source.lastError];
+      return `上次抓取没有收录任何页面：${copy.label} —— ${copy.hint}`;
+    }
+    if (source.pageCount > 0) {
+      const when = source.lastCrawledAt ? new Date(source.lastCrawledAt).toLocaleString() : "—";
+      return `已收录 ${source.pageCount} 页 / ${source.chunkCount} 段，最近抓取 ${when}`;
+    }
+    return "还没有抓取";
   }
 
   async function remove(domain: string) {
@@ -116,6 +146,15 @@ export function CorpusSettings() {
           </span>
           {source.entryUrl ? <span className="corpus-entry">{source.entryUrl}</span> : null}
           <button
+            aria-label={`抓取 ${source.domain}`}
+            className="button button-secondary"
+            disabled={crawlSource.isPending}
+            onClick={() => void crawl(source.domain)}
+            type="button"
+          >
+            {crawlSource.isPending ? "抓取中…" : "抓取"}
+          </button>
+          <button
             aria-label={`移除 ${source.domain}`}
             className="button button-danger-quiet"
             disabled={removeSource.isPending}
@@ -125,6 +164,15 @@ export function CorpusSettings() {
             移除
           </button>
         </div>
+        <p className={source.lastError ? "corpus-status is-error" : "corpus-status"}>
+          {status(source)}
+        </p>
+        {summary?.domain === source.domain ? (
+          <p className="corpus-status" role="status">
+            本次抓到 {summary.pages} 页（{summary.chunks} 段），跳过 {summary.skippedCount} 个地址
+            {summary.truncated ? "；已达到页数上限，这不是全部" : ""}。
+          </p>
+        ) : null}
         <ul className="corpus-evidence">
           {source.evidence.map((item) => (
             <li key={item}>{item}</li>
@@ -212,8 +260,9 @@ export function CorpusSettings() {
         ) : (
           <ul className="corpus-list">{collected.map(collectedSource)}</ul>
         )}
-        {/* 状态如实说明：这一步只是把范围定下来。 */}
-        <p className="corpus-note">抓取与索引还没接入：现在只是把范围定下来。</p>
+        <p className="corpus-note">
+          抓取会遵守 robots 与站点声明的间隔，只收录入口路径之下的页面，并受页数上限约束。
+        </p>
       </section>
     </div>
   );

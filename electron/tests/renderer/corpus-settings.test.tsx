@@ -140,6 +140,58 @@ describe("网页语料", () => {
     expect(await screen.findByText("还没有收录任何来源。")).toBeVisible();
   });
 
+  it("抓取一个来源，显示本次结果与长期状态", async () => {
+    const crawled = {
+      ...COLLECTED,
+      pageCount: 12,
+      chunkCount: 48,
+      lastCrawledAt: "2026-10-11T09:30:00Z",
+      lastError: null,
+    };
+    const api = installDocMindApi({
+      corpus: {
+        sources: vi.fn().mockResolvedValue({ sources: [COLLECTED] }),
+        crawlSource: vi.fn().mockResolvedValue({
+          sources: [crawled],
+          summary: {
+            domain: "docs.python.org",
+            pages: 12,
+            chunks: 48,
+            skippedCount: 3,
+            truncated: true,
+          },
+        }),
+      },
+    });
+    renderPage();
+
+    expect(await screen.findByText("还没有抓取")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "抓取 docs.python.org" }));
+
+    await waitFor(() => expect(api.corpus.crawlSource).toHaveBeenCalledWith("docs.python.org"));
+    // 本次结果与长期状态是两件事：前者是动作反馈，后者要留在列表上。
+    expect(await screen.findByText(/本次抓到 12 页（48 段），跳过 3 个地址/)).toBeVisible();
+    expect(screen.getByText(/已达到页数上限，这不是全部/)).toBeVisible();
+    expect(await screen.findByText(/已收录 12 页 \/ 48 段/)).toBeVisible();
+  });
+
+  it("抓取一页都没进来时，用原因码对应的文案说清是什么问题", async () => {
+    installDocMindApi({
+      corpus: {
+        sources: vi.fn().mockResolvedValue({
+          sources: [{ ...COLLECTED, pageCount: 0, chunkCount: 0, lastError: "unreachable" }],
+        }),
+      },
+    });
+    renderPage();
+
+    // 文案与批量导入的诊断共用同一张表 —— 原因码相同，说法就不该有两套。
+    expect(
+      await screen.findByText(/上次抓取没有收录任何页面：连不上（DNS 解析失败或连接超时）/),
+    ).toBeVisible();
+    expect(screen.getByText(/换镜像或换一个来源/)).toBeVisible();
+  });
+
   it("手工添加把原样的输入交给后端规整，不在前端重复一套规则", async () => {
     const api = installDocMindApi({
       corpus: { saveSources: vi.fn().mockResolvedValue({ sources: [COLLECTED] }) },

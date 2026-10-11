@@ -5,6 +5,7 @@ import inspect
 import json
 from collections.abc import Callable, Iterable
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Any
@@ -52,6 +53,8 @@ from app.storage.models import (
     SessionSummaryRecord,
     SettingRecord,
     VectorCleanupRecord,
+    WebCorpusChunkRecord,
+    WebCorpusPageRecord,
     WebSearchResultRecord,
     WebSearchRunRecord,
     WebSourceRecord,
@@ -1970,6 +1973,20 @@ class WebSourceStore:
             session.flush()
         return self.list()
 
+    def mark_crawled(self, domain: str, error: str | None) -> None:
+        """记下这次抓取的时间与结果。
+
+        成功时把 `last_error` 清掉：一个来源曾经失败、后来抓好了，界面上还挂着旧错误
+        会让人以为它一直没修好。
+        """
+        with self.database.session() as session:
+            row = session.get(WebSourceRecord, domain)
+            if row is None:
+                return
+            row.last_crawled_at = utc_now()
+            row.last_error = error
+            row.updated_at = utc_now()
+
     def remove(self, domain: str) -> bool:
         with self.database.session() as session:
             row = session.get(WebSourceRecord, domain)
@@ -1977,6 +1994,91 @@ class WebSourceStore:
                 return False
             session.delete(row)
             return True
+
+
+@dataclass(frozen=True)
+class CorpusStats:
+    """一个域名的语料规模与最近一次抓取时间。界面用它回答"到底抓到了没有"。"""
+
+    pages: int
+    chunks: int
+    last_fetched_at: datetime | None
+
+
+class WebCorpusStore:
+    """本地网页语料的读写。
+
+    抓取按**域名整体替换**：先删该域名的旧页与旧块，再写入这一次的结果。比起逐页
+    去重，这样"页面被删掉了""改版后内容变了"都会自动反映出来，代价是每次抓取都要
+    重写该域名的全部块 —— 在一个来源几十上百页的规模上，这个代价是划算的，而且它把
+    "索引里混着上一版残留"这类问题整个消掉。增量刷新（ETag / 内容 hash 比对）留到
+    下一步。
+    """
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def replace_domain(
+        self,
+        domain: str,
+        pages: list[WebCorpusPageRecord],
+        chunks: list[WebCorpusChunkRecord],
+    ) -> None:
+        with self.database.session() as session:
+            session.execute(
+                delete(WebCorpusChunkRecord).where(WebCorpusChunkRecord.domain == domain)
+            )
+            session.execute(delete(WebCorpusPageRecord).where(WebCorpusPageRecord.domain == domain))
+            session.add_all(pages)
+            session.flush()
+            session.add_all(chunks)
+
+    def chunks(self, domains: list[str] | None = None) -> list[WebCorpusChunkRecord]:
+        with self.database.session() as session:
+            statement = select(WebCorpusChunkRecord)
+            if domains:
+                statement = statement.where(WebCorpusChunkRecord.domain.in_(domains))
+            return list(session.scalars(statement))
+
+    def stats(self) -> dict[str, CorpusStats]:
+        """全部域名的 (页数, 块数, 最近抓取时间)。
+
+        一次分组查询而不是每行查一次：来源列表本来就会整体渲染，按行查会变成 N 次查询。
+        """
+        with self.database.session() as session:
+            pages = dict(
+                session.execute(
+                    select(WebCorpusPageRecord.domain, func.count()).group_by(
+                        WebCorpusPageRecord.domain
+                    )
+                ).all()
+            )
+            chunks = dict(
+                session.execute(
+                    select(WebCorpusChunkRecord.domain, func.count()).group_by(
+                        WebCorpusChunkRecord.domain
+                    )
+                ).all()
+            )
+            latest = dict(
+                session.execute(
+                    select(
+                        WebCorpusPageRecord.domain, func.max(WebCorpusPageRecord.fetched_at)
+                    ).group_by(WebCorpusPageRecord.domain)
+                ).all()
+            )
+        domains = set(pages) | set(chunks) | set(latest)
+        return {
+            domain: CorpusStats(
+                pages=int(pages.get(domain, 0)),
+                chunks=int(chunks.get(domain, 0)),
+                last_fetched_at=latest.get(domain),
+            )
+            for domain in domains
+        }
+
+    def clear_domain(self, domain: str) -> None:
+        self.replace_domain(domain, [], [])
 
 
 class ConversationStore:
