@@ -310,3 +310,70 @@ def test_cancelling_an_unknown_source_is_not_an_error_either(client, auth_header
 
     assert response.status_code == 200
     assert response.json()["cancelled"] is False
+
+
+def test_removing_a_source_also_clears_its_corpus(client, auth_headers) -> None:
+    """只删来源行是不够的：语料留在库里，就既"不属于任何人"又"仍然参与检索" ——
+    用户以为删掉了，实际它还在回答他的问题。"""
+    _add_source(client, auth_headers, "docs.test", "https://docs.test/guide")
+    _swap_crawler(
+        client,
+        {
+            "/robots.txt": (200, "text/plain", b"User-agent: *\nAllow: /"),
+            "/guide": (200, "text/html", PAGE),
+        },
+    )
+    client.post("/api/corpus/sources/docs.test/crawl", headers=auth_headers)
+    _wait_until_idle(client, auth_headers, "docs.test")
+    assert client.app.state.web_corpus.stats().get("docs.test") is not None
+
+    client.delete("/api/corpus/sources/docs.test", headers=auth_headers)
+
+    assert client.app.state.web_corpus.stats().get("docs.test") is None
+    assert client.app.state.web_corpus.chunks() == []
+    assert client.get("/api/corpus/sources", headers=auth_headers).json()["sources"] == []
+
+
+def test_removing_a_source_while_it_is_crawling_leaves_no_orphan_corpus(client, auth_headers) -> None:
+    """顺序要紧：先停掉抓取再清语料。否则刚清完，后台任务又把语料写回来 ——
+    留下一份没有归属、却仍然参与检索的孤儿语料。"""
+    import time
+
+    _add_source(client, auth_headers, "docs.test", "https://docs.test/guide")
+
+    gate = __import__("threading").Event()
+
+    class BlockingCrawler:
+        async def crawl(self, *, domain, entry_url, max_pages, max_depth=2, on_progress=None):
+            import asyncio
+
+            await asyncio.get_running_loop().run_in_executor(None, gate.wait)
+            from app.corpus.crawl import CrawlSummary
+
+            return CrawlSummary(
+                domain=domain,
+                pages=1,
+                chunks=1,
+                kept_pages=0,
+                updated_pages=1,
+                removed_pages=0,
+                skipped=(),
+                truncated=False,
+            )
+
+    client.app.state.corpus_crawl_service.crawler = BlockingCrawler()
+    client.post("/api/corpus/sources/docs.test/crawl", headers=auth_headers)
+    time.sleep(0.05)
+    assert _wait_state(client, auth_headers, "docs.test") == "running"
+
+    client.delete("/api/corpus/sources/docs.test", headers=auth_headers)
+    gate.set()  # 放开那个阻塞的抓取，让它有机会"写回"语料
+
+    time.sleep(0.05)
+    assert client.app.state.web_corpus.stats() == {}
+    assert client.app.state.web_corpus.chunks() == []
+
+
+def _wait_state(client, auth_headers, domain: str) -> str:
+    body = client.get("/api/corpus/sources", headers=auth_headers).json()
+    return next(item for item in body["sources"] if item["domain"] == domain)["crawlState"]

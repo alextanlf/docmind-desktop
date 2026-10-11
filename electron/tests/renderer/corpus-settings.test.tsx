@@ -124,10 +124,12 @@ describe("网页语料", () => {
     expect(screen.getByText("docs.python.org")).toBeVisible();
   });
 
-  it("列出的来源可以移除，移除后回到空状态", async () => {
+  it("移除前先说清代价，确认后才真的删（并且会连语料一起删）", async () => {
     const api = installDocMindApi({
       corpus: {
-        sources: vi.fn().mockResolvedValue({ sources: [COLLECTED] }),
+        sources: vi.fn().mockResolvedValue({
+          sources: [{ ...COLLECTED, pageCount: 12, chunkCount: 48 }],
+        }),
         removeSource: vi.fn().mockResolvedValue({ sources: [] }),
       },
     });
@@ -136,8 +138,32 @@ describe("网页语料", () => {
     expect(await screen.findByText("已收录的来源（1）")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "移除 docs.python.org" }));
 
+    // 移除不只是从清单上划掉一行：它还会删掉已抓下来的语料，代价必须先讲清楚。
+    const dialog = await screen.findByRole("dialog", { name: "确认移除来源" });
+    expect(dialog.textContent).toContain("删除已抓取的 12 页 / 48 段语料");
+    expect(dialog.textContent).toContain("删除不可恢复");
+    // 还没确认，什么都不该发生。
+    expect(api.corpus.removeSource).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "确认移除" }));
+
     await waitFor(() => expect(api.corpus.removeSource).toHaveBeenCalledWith("docs.python.org"));
     expect(await screen.findByText("还没有收录任何来源。")).toBeVisible();
+  });
+
+  it("确认窗口可以按 Esc 关掉，来源不会被删", async () => {
+    const api = installDocMindApi({
+      corpus: { sources: vi.fn().mockResolvedValue({ sources: [COLLECTED] }) },
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "移除 docs.python.org" }));
+    const dialog = await screen.findByRole("dialog", { name: "确认移除来源" });
+
+    fireEvent.keyDown(dialog, { key: "Escape" });
+
+    expect(screen.queryByRole("dialog", { name: "确认移除来源" })).toBeNull();
+    expect(api.corpus.removeSource).not.toHaveBeenCalled();
   });
 
   it("抓取期间显示后台进度，并且不能再点一次", async () => {

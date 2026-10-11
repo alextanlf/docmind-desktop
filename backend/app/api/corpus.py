@@ -185,15 +185,21 @@ async def save_web_sources(
 
 @router.delete("/sources/{domain}", response_model=WebSourcesResponse)
 async def remove_web_source(request: Request, domain: str) -> WebSourcesResponse:
-    """移除来源。**删一个本来就不存在的域名也返回成功。**
+    """移除来源，并**连它的语料一起清掉**。
 
-    界面上的双击、以及两个窗口同时操作，都会产生一次"删一个已经不在的东西"；为此
-    弹一个错误只会让用户以为操作失败了。响应始终是删除后的真实清单，所以调用方
-    不需要区分这两种情况。
+    只删来源行是不够的：语料还留在库里，于是它既不再归属于任何来源（用户以为已经
+    删掉了），又仍然参与检索（用户以为它不在了）。两件事都要做，而且顺序要紧 ——
+    先停掉可能正在跑的抓取，否则刚清完它又写回来。
+
+    删一个本来就不存在的域名也返回成功：界面上的双击、以及两个窗口同时操作，都会产生
+    一次"删一个已经不在的东西"；为此弹一个错误只会让用户以为操作失败了。
     """
     store = _store(request)
+    corpus = _corpus(request)
     normalized = normalize_domain(domain)
     if normalized is not None:
+        await _crawl_service(request).stop(normalized)
+        corpus.clear_domain(normalized)
         store.remove(normalized)
     return _sources_response(request, store.list())
 
@@ -207,7 +213,7 @@ async def cancel_web_source_crawl(request: Request, domain: str) -> CancelCrawlR
     """
     store = _store(request)
     normalized = normalize_domain(domain)
-    cancelled = normalized is not None and _crawl_service(request).cancel(normalized)
+    cancelled = normalized is not None and await _crawl_service(request).stop(normalized)
     return CancelCrawlResponse(
         sources=_sources_response(request, store.list()).sources,
         cancelled=cancelled,

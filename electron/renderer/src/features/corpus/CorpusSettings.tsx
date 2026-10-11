@@ -1,5 +1,8 @@
-import { useState } from "react";
+import { Trash2, X } from "lucide-react";
+import { useRef, useState } from "react";
 import type { CorpusCandidate, WebSource } from "../../../../shared/contracts";
+import { IconButton } from "../../components/IconButton";
+import { Modal } from "../../components/Modal";
 import { REJECTION_COPY } from "../imports/rejection-copy";
 import { clientErrorMessage } from "../settings/settings.queries";
 import {
@@ -32,6 +35,9 @@ export function CorpusSettings() {
   const [topic, setTopic] = useState("");
   const [manual, setManual] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // 待确认移除的来源。移除会连带删掉语料，所以必须先把"删多少"讲清楚再动手。
+  const [removing, setRemoving] = useState<WebSource | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   const collected = sources.data?.sources ?? [];
   const known = new Set(collected.map((source) => source.domain));
@@ -131,6 +137,7 @@ export function CorpusSettings() {
     setError(null);
     try {
       await removeSource.mutateAsync(domain);
+      setRemoving(null);
     } catch (removeError) {
       setError(clientErrorMessage(removeError));
     }
@@ -204,7 +211,7 @@ export function CorpusSettings() {
             aria-label={`移除 ${source.domain}`}
             className="button button-danger-quiet"
             disabled={removeSource.isPending}
-            onClick={() => void remove(source.domain)}
+            onClick={() => setRemoving(source)}
             type="button"
           >
             移除
@@ -311,6 +318,53 @@ export function CorpusSettings() {
           抓取会遵守 robots 与站点声明的间隔，只收录入口路径之下的页面，并受页数上限约束。
         </p>
       </section>
+
+      {removing ? (
+        <Modal
+          backdropClassName="dialog-backdrop-nested"
+          className="confirm-dialog"
+          initialFocusRef={closeButtonRef}
+          labelledBy="corpus-remove-title"
+          onEscape={() => setRemoving(null)}
+        >
+          <div className="dialog-title-row">
+            <h3 id="corpus-remove-title">确认移除来源</h3>
+            <IconButton
+              icon={<X aria-hidden="true" size={18} />}
+              label="关闭确认窗口"
+              onClick={() => setRemoving(null)}
+              ref={closeButtonRef}
+              size="small"
+            />
+          </div>
+          {/* 把代价说清楚：移除不只是从清单上划掉一行，它还会删掉已经抓下来的语料。 */}
+          <p>
+            将从清单移除 <code>{removing.domain}</code>
+            {removing.pageCount > 0
+              ? `，并删除已抓取的 ${removing.pageCount} 页 / ${removing.chunkCount} 段语料`
+              : "（它还没有抓取到任何语料）"}
+            。删除不可恢复，之后要重新抓取。
+          </p>
+          <div className="dialog-actions">
+            <button
+              className="button button-secondary"
+              onClick={() => setRemoving(null)}
+              type="button"
+            >
+              取消
+            </button>
+            <button
+              className="button button-danger"
+              disabled={removeSource.isPending}
+              onClick={() => void remove(removing.domain)}
+              type="button"
+            >
+              <Trash2 aria-hidden="true" size={16} />
+              确认移除
+            </button>
+          </div>
+        </Modal>
+      ) : null}
     </div>
   );
 }

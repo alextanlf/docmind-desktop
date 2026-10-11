@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import suppress
 from typing import Any
 
 from app.api.errors import DomainError
@@ -53,6 +54,20 @@ class CorpusCrawlService:
         if task is None or task.done():
             return False
         task.cancel()
+        return True
+
+    async def stop(self, domain: str) -> bool:
+        """取消并**等它真的停下**。移除来源时要先调它。
+
+        只 cancel 不等是不够的：任务可能正处在"抓完了、准备写语料"那一步，于是移除
+        来源、清空语料之后，它又把语料写回来 —— 留下一份没有归属的孤儿语料。
+        """
+        task = self._tasks.get(domain)
+        if task is None or task.done():
+            return False
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
         return True
 
     def running(self, domain: str) -> bool:
