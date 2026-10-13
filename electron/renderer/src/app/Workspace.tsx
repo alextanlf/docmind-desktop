@@ -12,7 +12,7 @@ import {
 import { clsx } from "clsx";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import type { SessionSummary } from "../../../shared/contracts";
+import type { BatchImport, SessionSummary } from "../../../shared/contracts";
 import { IconButton } from "../components/IconButton";
 import { PanelResizer } from "../components/PanelResizer";
 import { ChatPanel } from "../features/chat/ChatPanel";
@@ -28,6 +28,12 @@ import { ImportProgress } from "../features/imports/ImportProgress";
 import { BatchProgress } from "../features/imports/BatchProgress";
 import { useImportJobQuery } from "../features/imports/imports.queries";
 import { useImportStore } from "../features/imports/import-store";
+import {
+  batchAutoDismissDelay,
+  importAutoDismissDelay,
+  useImportAutoDismiss,
+  type DismissDelays,
+} from "../features/imports/import-dismissal";
 import { DocumentEditor } from "../features/repositories/DocumentEditor";
 import { RepositoryTree } from "../features/repositories/RepositoryTree";
 import { ReferencePanel } from "../features/references/ReferencePanel";
@@ -64,7 +70,11 @@ function useForcedIconRail(onBeforeForce: () => void) {
   return forced;
 }
 
-export function Workspace() {
+/**
+ * `dismissDelays` 只为测试存在：真实的等待是秒级的，用它把「成功之后自己收起」压到毫秒，
+ * 用例就能用真实定时器验证收起，而不必推进假时钟去猜 React Query 什么时候把数据落地。
+ */
+export function Workspace({ dismissDelays = {} }: { dismissDelays?: DismissDelays } = {}) {
   const activeView = useUiStore((state) => state.activeView);
   const setActiveView = useUiStore((state) => state.setActiveView);
   const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed);
@@ -89,11 +99,25 @@ export function Workspace() {
   const [selectedSession, setSelectedSession] = useState<SessionSummary | null>(null);
   const [selectedRepositoryIds, setSelectedRepositoryIds] = useState<string[]>([]);
   const [sessionConfirmation, setSessionConfirmation] = useState<"end" | "delete" | null>(null);
+  const [batchState, setBatchState] = useState<BatchImport["state"] | null>(null);
   const sessionActionsRef = useRef<HTMLDivElement>(null);
   const jobId = useImportStore((state) => state.jobId);
   const batchId = useImportStore((state) => state.batchId);
+  const setJobId = useImportStore((state) => state.setJobId);
   const setBatchId = useImportStore((state) => state.setBatchId);
   const importJob = useImportJobQuery(jobId);
+  // 进度栏渲染在托盘里，但收起由这里决定：托盘随视图切换卸载、组件内的定时器也就没了，
+  // 而"导入成功之后不要常驻"是会话级的意图，不该被切一次视图重置。
+  const dismissImport = useCallback(() => setJobId(null), [setJobId]);
+  const dismissBatch = useCallback(() => setBatchId(null), [setBatchId]);
+  useImportAutoDismiss(
+    jobId ? importAutoDismissDelay(importJob.data?.state, dismissDelays) : null,
+    dismissImport,
+  );
+  useImportAutoDismiss(
+    batchId ? batchAutoDismissDelay(batchState, dismissDelays) : null,
+    dismissBatch,
+  );
   const selectedDocument = useDocumentQuery(selectedDocumentId);
   const repositories = useRepositoriesQuery();
   const selectedRepository = repositories.data?.find(
@@ -386,10 +410,20 @@ export function Workspace() {
             {importJob.data ? (
               <ImportProgress
                 job={importJob.data}
-                onOpenDocument={(documentId) => setSelectedDocumentId(documentId)}
+                onDismiss={dismissImport}
+                onOpenDocument={(documentId) => {
+                  setSelectedDocumentId(documentId);
+                  dismissImport();
+                }}
               />
             ) : null}
-            {batchId ? <BatchProgress batchId={batchId} /> : null}
+            {batchId ? (
+              <BatchProgress
+                batchId={batchId}
+                onDismiss={dismissBatch}
+                onStateChange={setBatchState}
+              />
+            ) : null}
           </section>
         ) : null}
       </section>

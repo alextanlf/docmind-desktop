@@ -1,4 +1,4 @@
-import { Play, RotateCcw, Square } from "lucide-react";
+import { Play, RotateCcw, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { BatchProgressPayloadSchema } from "../../../../shared/contracts";
@@ -57,7 +57,20 @@ function patchBatch(current: BatchImport, event: EventEnvelope): BatchImport {
       counts && typeof counts.selected === "number" ? counts.selected : current.selectedCount,
   };
 }
-export function BatchProgress({ batchId }: { batchId: string }) {
+export function BatchProgress({
+  batchId,
+  onDismiss,
+  onStateChange,
+}: {
+  batchId: string;
+  /** 收起进度栏。批次跑完是自动收（含部分失败），失败/取消留给这个按钮。 */
+  onDismiss?: () => void;
+  /**
+   * 把状态报给上层：自动收起的定时器挂在工作台上，因为进度栏会随视图切换卸载，
+   * 挂在组件里的定时器会跟着一起消失。
+   */
+  onStateChange?: (state: BatchImport["state"]) => void;
+}) {
   const [batch, setBatch] = useState<BatchImport | null>(null);
   const [error, setError] = useState("");
   const [replayAttempt, setReplayAttempt] = useState(0);
@@ -76,6 +89,12 @@ export function BatchProgress({ batchId }: { batchId: string }) {
   const continueMutation = useContinueBatchMutation();
   const retryMutation = useRetryBatchMutation();
   const sub = useRef<{ cancel: () => void } | null>(null);
+  // 用 ref 存回调：上层每次渲染都会给一个新函数，放进依赖会把下面的订阅反复重建。
+  const stateChange = useRef(onStateChange);
+  stateChange.current = onStateChange;
+  useEffect(() => {
+    if (batch) stateChange.current?.(batch.state);
+  }, [batch]);
   useEffect(() => {
     let active = true;
     void (async () => {
@@ -196,6 +215,17 @@ export function BatchProgress({ batchId }: { batchId: string }) {
           >
             <RotateCcw aria-hidden="true" size={15} />
             重试
+          </button>
+        ) : null}
+        {onDismiss ? (
+          <button
+            aria-label="收起批量导入进度"
+            className="import-progress-dismiss"
+            onClick={onDismiss}
+            title="收起批量导入进度"
+            type="button"
+          >
+            <X aria-hidden="true" size={15} />
           </button>
         ) : null}
       </div>

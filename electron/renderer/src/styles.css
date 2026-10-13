@@ -1119,6 +1119,26 @@ button:disabled {
   flex-wrap: wrap;
   gap: 8px;
 }
+/* 收起按钮永远贴在动作行末尾：前面有没有按钮都不影响它的位置，
+   行里只剩它一个时也不会缩在左边。 */
+.import-progress-dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 27px;
+  height: 27px;
+  margin-left: auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--muted);
+  background: var(--surface);
+  cursor: pointer;
+}
+.import-progress-dismiss:hover {
+  color: var(--ink);
+  background: var(--surface-subtle);
+}
 .status-cancelled {
   display: inline-flex;
   align-items: center;

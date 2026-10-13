@@ -60,9 +60,11 @@ it.each(["single", "batch", "both"])(
     const batchId = "00000000-0000-0000-0000-000000000101";
     const api = installDocMindApi({
       imports: {
+        // 用「跑着」的状态而不是「完成」：完成后进度栏会自己收起（见
+        // workspace-import-dismissal.test.tsx），这一条测的是它出现时占哪一行。
         get: vi
           .fn()
-          .mockResolvedValue({ ...job, state: "completed", progress: 100, message: "导入完成" }),
+          .mockResolvedValue({ ...job, state: "indexing", progress: 60, message: "正在索引" }),
       },
       batches: {
         get: vi.fn().mockResolvedValue({

@@ -1,4 +1,4 @@
-import { CheckCircle2, RotateCcw, Square, XCircle } from "lucide-react";
+import { CheckCircle2, RotateCcw, Square, X, XCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { EventEnvelope, ImportJob } from "../../../../shared/contracts";
 import { appQueryClient } from "../../app/query-client";
@@ -8,7 +8,12 @@ import { TaskProgress } from "../../components/TaskProgress";
 
 const lastSequences = new Map<string, number>();
 const terminalStates = new Set<ImportJob["state"]>(["completed", "failed", "cancelled"]);
-type ImportProgressProps = { job: ImportJob; onOpenDocument?: (documentId: string) => void };
+type ImportProgressProps = {
+  job: ImportJob;
+  onOpenDocument?: (documentId: string) => void;
+  /** 收起进度栏。成功是自动收，失败/取消留给这个按钮。 */
+  onDismiss?: () => void;
+};
 function patchJob(current: ImportJob, event: EventEnvelope): ImportJob {
   const payload = event.payload;
   return {
@@ -35,7 +40,7 @@ function patchJob(current: ImportJob, event: EventEnvelope): ImportJob {
           : current.errorMessage,
   };
 }
-export function ImportProgress({ job, onOpenDocument }: ImportProgressProps) {
+export function ImportProgress({ job, onOpenDocument, onDismiss }: ImportProgressProps) {
   const [activeJob, setActiveJob] = useState(job);
   const [error, setError] = useState("");
   const subscriptionRef = useRef<{ cancel: () => void } | null>(null);
@@ -150,6 +155,17 @@ export function ImportProgress({ job, onOpenDocument }: ImportProgressProps) {
             <XCircle aria-hidden="true" size={15} />
             已取消
           </span>
+        ) : null}
+        {onDismiss ? (
+          <button
+            aria-label="收起导入进度"
+            className="import-progress-dismiss"
+            onClick={onDismiss}
+            title="收起导入进度"
+            type="button"
+          >
+            <X aria-hidden="true" size={15} />
+          </button>
         ) : null}
       </div>
     </section>
