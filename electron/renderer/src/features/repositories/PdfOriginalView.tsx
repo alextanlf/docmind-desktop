@@ -102,15 +102,27 @@ export function PdfOriginalView({ documentId, byteSize, locate }: PdfOriginalVie
     };
   }, [documentId, byteSize]);
 
+  /**
+   * 量"能画多宽"。
+   *
+   * 依赖里有 `pdf`，因为滚动容器是**加载完成后才渲染**的：只挂一次（`[]`）的话，挂载
+   * 那一刻 `scrollerRef.current` 还是 null，这里直接 return，观察者再也不会被装上 ——
+   * `available` 永远是 0，"适合宽度"于是永远算不出来，页面停在 100%（实测：真浏览器里
+   * 观察者回调数为 0，按钮点了没反应）。
+   *
+   * 量父元素而不是滚动容器自己：滚动容器的 `clientWidth` 会被内容撑大（页面放大到超过
+   * 视口时它跟着变宽），于是"适合宽度"会按被撑大的宽度去算，页面反而越缩越窄。父元素的
+   * 宽度由工作区决定，与页面无关。
+   */
   useEffect(() => {
-    const node = scrollerRef.current;
+    const node = scrollerRef.current?.parentElement;
     if (!node) return;
     const measure = () => setAvailable(node.clientWidth);
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(node);
     return () => observer.disconnect();
-  }, []);
+  }, [pdf]);
 
   const page = pageSize ?? FALLBACK_PAGE;
   const scale = useMemo(() => {
