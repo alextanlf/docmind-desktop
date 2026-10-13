@@ -14,9 +14,10 @@ const messages: Record<string, string> = {
   LOCAL_MODEL_TIMEOUT: "本地模型服务响应超时",
   ROUTING_CLOUD_UNAVAILABLE: "本地和云端都不可用",
   // 链接型原件的两种"取不到原件"。分开写是因为**用户能做的事不一样**：
-  // 前者要重新定位，后者这篇文档根本没有绑定原件（本地新建的），做什么都没用。
+  // 前者要重新定位，后者这篇文档根本没有原件（本地新建的），做什么都没用。
+  // 拷贝型（副本就是我们自己那份字节）不在这两类里：它有原件，重新转换读它。
   DOCUMENT_ORIGINAL_MISSING: "找不到原件了，它可能被移动、改名或删除",
-  DOCUMENT_ORIGINAL_NOT_LINKED: "这篇文档没有绑定磁盘上的原件，无法重新转换",
+  DOCUMENT_ORIGINAL_NOT_LINKED: "这篇文档没有原件，无法重新转换",
   // 打开原件失败：系统没有关联的程序（例如 .docx 没装 Office），或文件权限不足。
   DOCUMENT_OPEN_FAILED: "无法用系统程序打开原件，请确认已安装能打开它的应用",
   DOCUMENT_OPEN_UNAVAILABLE: "当前环境无法打开原件",

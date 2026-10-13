@@ -74,6 +74,7 @@ from app.feishu.provider import FeishuProvider
 from app.feishu.tokens import FeishuTokenManager
 from app.imports.batch_service import BatchService
 from app.imports.events import InMemoryEventBroker
+from app.imports.original_copies import reconcile_original_copies
 from app.imports.service import ImportService
 from app.imports.staging_cleanup import StagingReconciler
 from app.memory.distillation import DistillationService
@@ -545,6 +546,11 @@ def create_app(
             batch_store=app.state.batch_store,
         )
         app.state.staging_reconciler.reconcile()
+        # 拷贝型原件的名字与基线：老机器上那批 `raw.bin` 交给系统程序会被丢给归档实用工具
+        # （系统只看后缀），这里按内容认出来改成 `raw.<后缀>`，并把"现在这一版"记成基线，
+        # 好让用户在 Word 里改过之后被 `original_state` 发现。与暂存清扫同一个形态：
+        # 判定依据只在磁盘与数据库里，所以放在启动时对账，而不是挂在某个流程的出口上。
+        reconcile_original_copies(document_store=document_store, formats=formats)
 
         def _read_secret(name: str) -> str | None:
             try:

@@ -327,6 +327,7 @@ def load_stored_original(
     formats: FormatRegistry,
     binary_max_bytes: int,
     text_max_bytes: int,
+    title: str | None = None,
 ) -> DownloadedDocument:
     """读一份**已经绑定在文档记录里**的原件（重新转换用）。
 
@@ -335,6 +336,10 @@ def load_stored_original(
     换句话说：能力在"绑定"那一刻就授予了，到期时间就是这条绑定本身。
 
     **不要拿它去读请求里的路径。** 那样做等于把刚刚那道门拆掉。
+
+    ``title`` 是"解析器没能从文件里读出标题时"的兜底，``None`` 表示用文件名 —— 链接型
+    就该用文件名（那是用户自己起的）。但拷贝型的名字（``raw.docx``）是我们起的，
+    拿它当标题等于把文档改名叫 raw.docx。
     """
     format = formats.for_pickable_extension(path.suffix)
     if format is None:
@@ -348,7 +353,7 @@ def load_stored_original(
         if problem is not None:
             raise _unsupported(problem)
     return DownloadedDocument(
-        title=path.name,
+        title=title or path.name,
         source_url=f"linked://{path.name}",
         media_type=format.media_type,
         raw_bytes=raw_bytes,

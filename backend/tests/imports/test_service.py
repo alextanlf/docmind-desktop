@@ -223,6 +223,15 @@ class CancellingParser(DocumentParser):
         return parsed
 
 
+def _stored_originals(directory: Path) -> list[Path]:
+    """这份文档目录里的副本（`raw.<后缀>`）。空列表 = 一份都没留。
+
+    按**形状**断言而不是钉死某个文件名：要守的性质是"没有给我们自己留副本"，
+    而不是"没有那个具体的名字" —— 名字会随格式变（`raw.bin` → `raw.pdf`）。
+    """
+    return sorted(directory.glob("raw.*"))
+
+
 def make_service(
     database,
     tmp_path: Path,
@@ -752,11 +761,11 @@ async def test_run_completes_full_import_with_exact_progress(database, tmp_path)
     document = service.document_store.get(completed.document_id)  # type: ignore[union-attr]
     assert document.remote_id == "remote-document-1"  # type: ignore[union-attr]
     # markdown 没有原件阅读器，所以原件**不落盘**：写进去也没有任何读取点（唯一读
-    # raw.bin 的是 PDF 原件视图）。断言文件不存在，而不只是字段为空 —— 「字段说没有、
+    # 副本的是 PDF 原件视图）。断言文件不存在，而不只是字段为空 —— 「字段说没有、
     # 磁盘上却躺着一份」正是这次要消掉的形态。
     assert document.raw_path is None  # type: ignore[union-attr]
     document_directory = service.settings.documents_dir / str(document.id)  # type: ignore[union-attr]
-    assert not (document_directory / "raw.bin").exists()
+    assert _stored_originals(document_directory) == []
     assert Path(document.markdown_path).read_text() == "# Imported\n\nUseful text"  # type: ignore[arg-type,union-attr]
 
 
@@ -791,7 +800,8 @@ async def test_pdf_import_keeps_the_original_byte_for_byte(database, tmp_path) -
     completed = service.job_store.get(job.id)
     assert completed.state == ImportStatus.COMPLETED  # type: ignore[union-attr]
     document = service.document_store.get(completed.document_id)  # type: ignore[union-attr]
-    expected_path = service.settings.documents_dir / str(document.id) / "raw.bin"  # type: ignore[union-attr]
+    # 副本带**格式自己的**后缀：系统程序按后缀选应用，`raw.bin` 会被丢给归档实用工具。
+    expected_path = service.settings.documents_dir / str(document.id) / "raw.pdf"  # type: ignore[union-attr]
     assert document.raw_path == str(expected_path)  # type: ignore[union-attr]
     assert expected_path.read_bytes() == pdf_bytes
 
@@ -1996,7 +2006,7 @@ async def test_an_unexpected_parser_failure_stays_generic(database, tmp_path: Pa
 async def test_linked_import_keeps_no_copy_and_remembers_the_path(database, tmp_path) -> None:
     """链接型导入：原件留在用户那里，应用只记路径。
 
-    两条会红的线：`documents/<id>/raw.bin` 被写出来（说明又拷了一份 —— PDF 的
+    两条会红的线：`documents/<id>/` 里冒出副本 `raw.<后缀>`（说明又拷了一份 —— PDF 的
     `original_viewable` 是 True，所以这条很容易复发），以及 `source_path` 没落库
     （原件视图与将来的重新转换就都没有依据）。
     """
@@ -2036,7 +2046,7 @@ async def test_linked_import_keeps_no_copy_and_remembers_the_path(database, tmp_
     )
     # 转换结果留着，原件一份都不留。
     assert (directory / "document.md").is_file()
-    assert not (directory / "raw.bin").exists()
+    assert _stored_originals(directory) == []
     # 而且用户的文件原封不动。
     assert original.read_bytes() == pdf_bytes
 
@@ -2063,7 +2073,7 @@ async def test_a_linked_directory_item_is_imported_without_a_copy(
 
     这条是把链路走完：主进程写的链接型清单 → 批次子任务 → 解析落盘。只测
     `CollectionCacheStore` 只能证明"加载器交出了 source_path"，而用户看到的结果是
-    `documents/<id>/` 里有没有那份 `raw.bin` —— 中间任何一层把归属丢掉（这正是
+    `documents/<id>/` 里有没有那份副本 —— 中间任何一层把归属丢掉（这正是
     收尾时抓到的那个静默缺陷），这条用例都会红。
     """
     service, _, _, _ = make_service(database, tmp_path)
@@ -2145,5 +2155,5 @@ async def test_a_linked_directory_item_is_imported_without_a_copy(
     directory = service.settings.documents_dir / str(document.id)  # type: ignore[union-attr]
     assert document.source_path == str(root / "report.pdf")  # type: ignore[union-attr]
     assert document.raw_path is None  # type: ignore[union-attr]
-    assert not (directory / "raw.bin").exists()
+    assert _stored_originals(directory) == []
     assert (directory / "document.md").is_file()

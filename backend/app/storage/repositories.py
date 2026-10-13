@@ -914,6 +914,34 @@ class DocumentStore:
             session.flush()
             return document
 
+    def update_stored_copy(
+        self,
+        document_id: str,
+        *,
+        raw_path: str | None = None,
+        original_revision: str | None = None,
+    ) -> DocumentRecord:
+        """改"我们自己存的那份原件"：改名后的路径，和/或它的版本基线。
+
+        两个参数都是"这次要写什么"，``None`` 表示不动 —— 与 `update_linked_original`
+        同一个约定。两个场景：对账把 `raw.bin` 改成 `raw.pdf`（写 raw_path + 补基线）、
+        拷贝型重新转换之后记下新基线（只写 original_revision）。
+
+        它**绝不碰** `source_path`：拷贝型一旦被写上它，这篇文档就变成"链接型指向我们自己
+        的目录"，`original_state`、重新定位、重新转换会一起开始说谎。
+        """
+        with self.database.session() as session:
+            document = session.get(DocumentRecord, document_id)
+            if document is None:
+                raise DomainError("IMPORT_STATE_CONFLICT", "导入文档不存在", 409)
+            if raw_path is not None:
+                document.raw_path = raw_path
+            if original_revision is not None:
+                document.original_revision = original_revision
+            document.updated_at = utc_now()
+            session.flush()
+            return document
+
     def update_remote(
         self, document_id: str, *, remote_id: str, remote_url: str | None
     ) -> DocumentRecord:

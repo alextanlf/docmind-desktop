@@ -22,6 +22,7 @@ from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
 from app.document.path_tokens import FILE_DOMAIN, path_token
 from app.document.sources import load_stored_original
+from app.imports.original_copies import original_revision_of
 from app.remote.provider import RemoteProvider
 from app.remote.registry import ProviderRegistry
 from app.schemas.documents import (
@@ -154,20 +155,6 @@ def original_path(document: DocumentRecord) -> Path | None:
     return None
 
 
-def original_revision_of(path: Path) -> str | None:
-    """一个路径的 `mtime_ns:size`；拿不到就返回 ``None``。
-
-    变更检测用 mtime 而不是内容哈希：为一次状态查询去重算 100 MB 的哈希是不合理的。
-    它的失真方向是安全的 —— 被 `touch` 只是多提醒一次"要重新转换吗"，
-    而真正的正确性由重新转换那一步重新读原件保证。
-    """
-    try:
-        info = path.stat()
-    except OSError:
-        return None
-    return f"{info.st_mtime_ns}:{info.st_size}"
-
-
 def original_state(document: DocumentRecord) -> str:
     """原件现在是什么状态（见 `DocumentDetail.original_state` 的取值说明）。
 
@@ -181,8 +168,12 @@ def original_state(document: DocumentRecord) -> str:
     if revision is None:
         return "missing"
     if document.source_path is None:
-        # 拷贝型：字节是我们自己管的，不会"被改"，只可能丢（或被外部删掉）。
-        return "available"
+        # 拷贝型："字节是我们自己管的"不等于"没人动过它" —— 用户可能刚在 Word 里改过这份
+        # 副本（"用系统程序打开原件"走的正是它）。所以基线一旦记下就按同一个规则比；
+        # 没基线（历史数据，对账还没跑到）才只按"文件在不在"算，免得谎报 changed。
+        if document.original_revision is None:
+            return "available"
+        return "available" if document.original_revision == revision else "changed"
     # revision 未记录（导入时就没 stat 到）也算无法确认 —— 不能假装它就是当初那一版。
     if document.original_revision != revision:
         return "changed"
@@ -192,9 +183,9 @@ def original_state(document: DocumentRecord) -> str:
 def _original_info(document: DocumentRecord) -> tuple[str | None, int | None]:
     """探测原件是否可预览。
 
-    只读前几个字节做类型嗅探：原本落盘的 `raw.bin` 不带扩展名与 media type
-    （见 `imports/service.py`），所以类型只能从内容判断；链接型原件同样按内容判断，
-    免得用户把一个 `.pdf` 改名成别的后缀就换了一种处理。
+    只读前几个字节做类型嗅探：落盘的副本虽然带着真后缀（`raw.pdf`，见
+    `imports/original_copies.py`），类型却仍要从内容判断 —— 链接型原件在用户手里，
+    改个名字就换了一种处理是错的。所以这里一律按内容认。
 
     任何 OSError 都当作「没有原件」——原件缺失不该让整篇文档读不出来。链接型尤其如此：
     用户随时可能把文件移走，那是正常状态，不是错误。
@@ -1722,17 +1713,22 @@ async def reconvert_original(request: Request, document_id: str) -> DocumentDeta
     复用**编辑保存**那条流水线（`update_document`）：版本快照、向量替换、失败回滚、
     远端写回它都已经处理过。重新转换与"用户手改正文"在后果上是同一件事，
     另写一条流水线只会多出一份会漂移的补偿逻辑。
+
+    拷贝型也走这条路：副本带上了真后缀（`raw.docx`，见 `imports/original_copies.py`），
+    用户可以用 Word 改它、改完回来重新转换 —— 前提是这条流水线认那份副本是"原件"。
+    从前它只认 `source_path`，于是"用系统程序打开原件"对拷贝型只许诺了一半：
+    打得开、回不来。
     """
     await _recover_for_request(request)
     document = _document_store(request).get(document_id)
     if document is None:
         raise _not_found()
-    if not document.source_path:
-        # 拷贝型没有"原件被改"这回事：那份字节是我们自己管的，只可能是丢失。
+    original = original_path(document)
+    if original is None:
+        # 这篇**根本没有**原件（没有链接、也没有副本）：无中生有不出来，只能让用户先定位。
         raise DomainError(
-            "DOCUMENT_ORIGINAL_NOT_LINKED", "这篇文档没有绑定磁盘上的原件，无法重新转换", 409, False
+            "DOCUMENT_ORIGINAL_NOT_LINKED", "这篇文档没有原件，无法重新转换", 409, False
         )
-    original = Path(document.source_path)
     if original_state(document) == "missing":
         # 用状态函数判断，而不是等下面的读取抛错：读不到原件与"这不是一个受支持的来源"
         # 是两件事 —— 前者用户能修（重新定位），后者不能，两者的原因码不该混。
@@ -1744,6 +1740,9 @@ async def reconvert_original(request: Request, document_id: str) -> DocumentDeta
             formats=request.app.state.format_registry,
             binary_max_bytes=settings.pdf_max_bytes,
             text_max_bytes=settings.html_markdown_max_bytes,
+            # 拷贝型的文件名是我们自己起的（`raw.docx`）：没有核心标题的 docx 会拿它当
+            # 标题，于是重新转换会把文档改名叫"raw.docx"。用现在的标题兜底。
+            title=None if document.source_path else document.title,
         )
         parsed = await asyncio.to_thread(request.app.state.document_parser.parse, loaded)
     except DomainError:
@@ -1760,9 +1759,14 @@ async def reconvert_original(request: Request, document_id: str) -> DocumentDeta
     revision = original_revision_of(original)
     if revision is not None:
         # 记下这一次转换的是哪一版：状态随回 available，否则会一直提示"原件已更新"。
-        _document_store(request).update_linked_original(
-            document_id, source_path=str(original), original_revision=revision
-        )
+        store = _document_store(request)
+        if document.source_path:
+            store.update_linked_original(
+                document_id, source_path=str(original), original_revision=revision
+            )
+        else:
+            # 拷贝型只更新基线：写 source_path 会让这篇文档变成"链接型指向我们自己的目录"。
+            store.update_stored_copy(document_id, original_revision=revision)
     refreshed = _document_store(request).get(document_id)
     if refreshed is None:  # pragma: no cover - 记录刚刚才更新过
         raise _not_found()

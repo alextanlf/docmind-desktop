@@ -14,6 +14,7 @@ from app.api.documents import update_document
 from app.api.errors import DomainError
 from app.core.embedding import FakeEmbeddingProvider
 from app.document.path_tokens import FILE_DOMAIN, path_token, path_token_matches
+from app.imports.original_copies import original_revision_of
 from app.remote.fake import FakeRemoteProvider
 from app.schemas.documents import DocumentInput
 from app.schemas.graph import GraphEdge, GraphNode
@@ -667,15 +668,16 @@ def test_remote_rollback_failure_is_retried_during_app_recreation(client, auth_h
 def _seed_document_with_original(  # type: ignore[no-untyped-def]
     client, payload: bytes, *, document_id: str = "doc-original"
 ):
-    """建一篇带原件的本地文档。
+    """建一篇带**副本**的本地文档（拷贝型）。
 
-    直连 store 而不是走导入流程：这里要精确控制 `raw.bin` 的字节内容，
-    导入链路会把它换成真实下载物。
+    直连 store 而不是走导入流程：这里要精确控制那份副本的字节内容，
+    导入链路会把它换成真实下载物。副本名字带真后缀（`raw.pdf`）—— 系统程序按后缀
+    选应用，而重新转换按后缀反解格式，两边要的是同一个名字。
     """
     repository = client.app.state.repository_store.create_local(name="Original KB")
     directory = client.app.state.settings.documents_dir / document_id
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    raw_path = directory / "raw.bin"
+    raw_path = directory / "raw.pdf"
     markdown_path = directory / "document.md"
     raw_path.write_bytes(payload)
     markdown_path.write_text("# 标题\n\n正文", encoding="utf-8")
@@ -1013,8 +1015,8 @@ def test_linked_original_is_served_from_the_users_own_file(
     # 原件视图靠 Range 分页，链接型不能例外。
     assert response.headers["accept-ranges"] == "bytes"
 
-    # 关键：应用里没有留下副本。
-    assert not (client.app.state.settings.documents_dir / document.id / "raw.bin").exists()
+    # 关键：应用里没有留下副本（`raw.<后缀>` 这个形状一份都不该有）。
+    assert list((client.app.state.settings.documents_dir / document.id).glob("raw.*")) == []
 
 
 def test_linked_original_that_moved_away_is_not_an_error(
@@ -1314,7 +1316,10 @@ def test_reconvert_reads_the_original_again_and_clears_the_changed_flag(
 def test_reconvert_refuses_a_document_without_a_bound_original(
     indexed_client, auth_headers
 ) -> None:
-    """拷贝型文档没有"原件被改"这回事：那份字节是我们自己管的。"""
+    """这篇**根本没有**原件：既没链接、也没有副本，无中生有不出来，只能让用户先定位。
+
+    （拷贝型不在其中：副本就是原件，重新转换读它 —— 见下面两条用例。）
+    """
     document = _seed_document_without_original(indexed_client, document_id="doc-copy-only")
 
     response = indexed_client.post(
@@ -1323,6 +1328,67 @@ def test_reconvert_refuses_a_document_without_a_bound_original(
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "DOCUMENT_ORIGINAL_NOT_LINKED"
+
+
+def _original_state(client, document_id: str, auth_headers: dict[str, str]) -> str:  # type: ignore[no-untyped-def]
+    response = client.get(f"/api/documents/{document_id}", headers=auth_headers)
+    assert response.status_code == 200
+    return response.json()["originalState"]
+
+
+def test_a_copy_is_only_changed_once_it_has_a_baseline(client, auth_headers) -> None:
+    """拷贝型也要能喊"改过了"，但**只有在记过基线之后**。
+
+    没有基线（历史数据，启动对账还没跑到）时必须按"文件在"算 available —— 否则老机器上
+    每一个副本都会立刻显示"原件已变过"，那条提示就变成了噪音，用户很快就学会无视它。
+    """
+    document = _seed_document_with_original(client, b"%PDF-1.7\none")
+    copy_path = Path(document.raw_path or "")
+
+    assert _original_state(client, document.id, auth_headers) == "available"
+
+    client.app.state.document_store.update_stored_copy(
+        document.id, original_revision=original_revision_of(copy_path)
+    )
+    copy_path.write_bytes(b"%PDF-1.7\nuser changed this copy")
+
+    assert _original_state(client, document.id, auth_headers) == "changed"
+    stored = client.app.state.document_store.get(document.id)
+    # 它仍然是拷贝型：基线不改变"原件在哪"这件事，只是让我们看得出它变了。
+    assert stored is not None and stored.source_path is None
+
+
+def test_reconvert_brings_a_copy_the_user_edited_back_into_the_app(
+    indexed_client, auth_headers
+) -> None:
+    """拷贝型闭环：在 Word 里改过那份副本 → 重新转换把新内容读回来。
+
+    从前这条路是断的（拷贝型一律 409 NOT_LINKED），于是"用系统程序打开原件"的 tooltip
+    只兑现了一半：打得开、回不来。顺带守着标题 —— 副本的文件名是我们起的（`raw.pdf`），
+    它不该变成用户的文档标题。
+    """
+    document = _seed_document_with_original(
+        indexed_client, _pdf_with_text("version one"), document_id="doc-copy-reconvert"
+    )
+    copy_path = Path(document.raw_path or "")
+    indexed_client.app.state.document_store.update_stored_copy(
+        document.id, original_revision=original_revision_of(copy_path)
+    )
+    copy_path.write_bytes(_pdf_with_text("version two completely different"))
+
+    response = indexed_client.post(
+        f"/api/documents/{document.id}/reconvert", headers=auth_headers, json={}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "version two" in body["content"]
+    assert body["originalState"] == "available"
+    assert body["title"] == "带原件的文档"
+    stored = indexed_client.app.state.document_store.get(document.id)
+    assert stored is not None
+    assert stored.source_path is None
+    assert stored.raw_path == str(copy_path)
 
 
 def test_reconvert_reports_a_missing_original_as_such(

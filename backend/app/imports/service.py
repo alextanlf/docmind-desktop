@@ -25,6 +25,11 @@ from app.document.parser import DocumentParser
 from app.document.safe_http import SafeHttpClient
 from app.document.sources import CollectionCacheRequest, discard_staged_file
 from app.imports.events import EventType, ImportEventBroker
+from app.imports.original_copies import (
+    discard_stored_origins,
+    original_revision_of,
+    stored_original_name,
+)
 from app.remote.notifications import (
     NOTIFY_ERROR,
     NOTIFY_SUCCESS,
@@ -946,28 +951,30 @@ class ImportService:
         document_id = job.document_id or (existing.id if existing is not None else str(uuid4()))
         directory = self.settings.documents_dir / document_id
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        raw_path = directory / "raw.bin"
         markdown_path = directory / "document.md"
         source_path, original_revision = _linked_original(downloaded)
         if source_path is not None:
             # 链接型：原件在用户那里，我们一份都不留 —— 只记它在哪、以及导入那一刻长什么样。
-            # 顺手删掉同目录下可能的历史 raw.bin（同一篇文档从前是拷贝型导入的）。
-            with suppress(FileNotFoundError):
-                raw_path.unlink()
+            # 顺手删掉同目录下可能的历史副本（同一篇文档从前是拷贝型导入的）。
+            discard_stored_origins(directory)
             stored_raw_path: str | None = None
         else:
-            # 原件只为「有人能把它显示出来」而留。没有原件阅读器的格式（docx/.pages/
-            # markdown/网页）落盘之后没有任何读取点 —— 唯一读 raw.bin 的是 PDF 原件视图
+            # 副本只为「有人能把它显示出来」而留。没有原件阅读器的格式（docx/.pages/
+            # markdown/网页）落盘之后没有任何读取点 —— 唯一读它的是 PDF 原件视图
             # （api/documents.py 的 /raw）。转换已经完成，再存一份输入字节等于纯占空间。
             format = self.parser.formats.for_media_type(downloaded.media_type)
             if format is not None and format.original_viewable:
+                # 名字必须带后缀：交给系统程序（"用系统程序打开原件"）时，macOS 只看后缀，
+                # `raw.bin` 会被丢给归档实用工具（见 imports/original_copies.py）。
+                raw_path = directory / stored_original_name(format)
                 raw_path.write_bytes(downloaded.raw_bytes)
                 stored_raw_path = str(raw_path)
+                # 拷贝型也要基线：用户在 Word 里改过副本之后，界面靠它算出 changed。
+                original_revision = original_revision_of(raw_path)
             else:
                 # 上一次导入（或历史版本）可能留过一份：这次的格式不需要它，就删掉，
                 # 否则记录说「没有原件」而磁盘上躺着一份，磁盘占用与数据库对不上。
-                with suppress(FileNotFoundError):
-                    raw_path.unlink()
+                discard_stored_origins(directory)
                 stored_raw_path = None
         markdown_path.write_text(parsed.markdown, encoding="utf-8")
         _write_figures(directory, parsed)
