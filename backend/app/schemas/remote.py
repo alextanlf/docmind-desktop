@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pydantic import Field
+
 from app.schemas.common import WireModel
 
 
@@ -29,6 +31,14 @@ class RemoteDocument(WireModel):
     repository_id: str
     title: str
     url: str | None = None
+    #: 这篇文档在远端知识库里的目录路径（从根到它所在目录的逐级名字）。
+    #: 空列表 = 就在根目录下。**是物化过的名字，不是节点 id**：用户要按它做
+    #: "把这个目录下的都挪走"，而名字前缀正是那个动作的判据；远端改目录名时
+    #: 路径整体跟着变，由同步发现并更新。
+    #:
+    #: 只有声明了 ``document_paths`` 能力的 provider 才可能给出非空值 ——
+    #: 拿不到层级的实现一律返回空列表，界面据此不显示树，而不是猜一个目录出来。
+    path: list[str] = Field(default_factory=list)
 
 
 class RemoteDocumentContent(RemoteDocument):

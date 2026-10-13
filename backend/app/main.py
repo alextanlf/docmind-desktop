@@ -115,6 +115,8 @@ from app.storage.repositories import (
     GraphStore,
     ImportJobStore,
     MemoryStore,
+    RemovedRemoteDocumentStore,
+    RemovedRemoteRepositoryStore,
     RepositoryStore,
     RepositorySyncStateStore,
     SettingStore,
@@ -626,6 +628,7 @@ def create_app(
             query_planner=LLMQueryPlanner(runtime_llm_provider),
         )
         app.state.repository_store = repository_store
+        app.state.removed_repository_store = RemovedRemoteRepositoryStore(database)
         app.state.document_store = document_store
         app.state.import_job_store = ImportJobStore(database)
         app.state.vector_cleanup_store = VectorCleanupStore(database)
@@ -704,6 +707,8 @@ def create_app(
             event_broker=app.state.distillation_event_broker,
         )
         sync_state_store = RepositorySyncStateStore(database)
+        removed_document_store = RemovedRemoteDocumentStore(database)
+        app.state.removed_document_store = removed_document_store
         version_store = VersionStore(database)
         graph_store = GraphStore(database)
         rebuild_store = EmbeddingRebuildStore(database)
@@ -731,6 +736,7 @@ def create_app(
             snapshot_reader=read_repo_snapshot,
             refresher=refresher,
             document_store=document_store,
+            removed_document_store=removed_document_store,
         )
         sync_scheduler = SyncScheduler(
             sync_service,

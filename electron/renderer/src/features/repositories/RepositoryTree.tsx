@@ -1,11 +1,23 @@
-import { ChevronDown, ChevronRight, FilePlus2, FolderPlus, RefreshCw } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FilePlus2,
+  FolderPlus,
+  RefreshCw,
+  RotateCcw,
+  Trash2,
+} from "lucide-react";
 import { useState } from "react";
+import type { Repository } from "../../../../shared/contracts";
 import { clientErrorMessage, useRemoteProvidersQuery } from "../settings/settings.queries";
 import { ConflictList } from "./ConflictList";
+import { DeleteRepositoryDialog } from "./DeleteRepositoryDialog";
+import { RepositoryDocuments } from "./RepositoryDocuments";
 import {
-  useDocumentsQuery,
+  useRemovedRepositoriesQuery,
   useRepositoriesQuery,
   useRepositorySyncQuery,
+  useRestoreRepositoryMutation,
   useSyncRepositoryMutation,
   useUpdateRepositoryMutation,
 } from "./repository.queries";
@@ -13,41 +25,6 @@ import {
 type RepositoryTreeProps = {
   onOpenDocument?: (documentId: string, repositoryId: string) => void;
 };
-
-function RepositoryDocuments({
-  repositoryId,
-  onOpenDocument,
-}: {
-  repositoryId: string;
-  onOpenDocument?: (documentId: string, repositoryId: string) => void;
-}) {
-  const documents = useDocumentsQuery(repositoryId);
-
-  if (documents.isPending) return <p className="tree-message">正在读取文档…</p>;
-  if (documents.isError) {
-    return (
-      <div className="tree-error" role="alert">
-        <span>{clientErrorMessage(documents.error)}</span>
-        <button className="tree-retry" onClick={() => void documents.refetch()} type="button">
-          重新加载
-        </button>
-      </div>
-    );
-  }
-  if (documents.data.length === 0) return <p className="tree-message">暂无文档</p>;
-  return (
-    <ul className="document-tree-list">
-      {documents.data.map((document) => (
-        <li key={document.id}>
-          <button onClick={() => onOpenDocument?.(document.id, repositoryId)} type="button">
-            {document.title}
-          </button>
-          {document.remoteDeleted ? <span className="remote-deleted-badge">远端已删除</span> : null}
-        </li>
-      ))}
-    </ul>
-  );
-}
 
 function RepositoryParentBinding({
   repositoryId,
@@ -108,6 +85,63 @@ function RepositorySyncButton({ repositoryId }: { repositoryId: string }) {
   );
 }
 
+/**
+ * 已从 DocMind 移除的远端知识库。
+ *
+ * 没有这一段，用户点完「移除知识库」就再也找不回来了 —— 远端内容其实一直在，
+ * 而界面上没有任何线索能让他把条目弄回来。所以恢复入口必须就长在移除它的地方。
+ */
+function RemovedRepositories({
+  providerLabel,
+}: {
+  providerLabel: (provider: string | null | undefined) => string;
+}) {
+  const removed = useRemovedRepositoriesQuery();
+  const restore = useRestoreRepositoryMutation();
+  const [error, setError] = useState("");
+  const [pendingId, setPendingId] = useState<string | null>(null);
+
+  if (removed.isPending || removed.isError || removed.data.length === 0) return null;
+  return (
+    <div className="removed-repository-section">
+      <div className="sidebar-section-title">
+        <span>已移除的知识库</span>
+      </div>
+      <ul className="removed-repository-list">
+        {removed.data.map((item) => (
+          <li key={item.id}>
+            <span title={item.name}>{item.name}</span>
+            <small>{providerLabel(item.provider)}</small>
+            <button
+              aria-label={`恢复 ${item.name}`}
+              className="tree-retry"
+              disabled={restore.isPending}
+              onClick={() => {
+                setError("");
+                setPendingId(item.id);
+                restore.mutate(item.id, {
+                  onError: (cause) => setError(clientErrorMessage(cause)),
+                  onSettled: () => setPendingId(null),
+                });
+              }}
+              type="button"
+            >
+              <RotateCcw aria-hidden="true" size={13} />
+              {pendingId === item.id ? "恢复中…" : "恢复"}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {error ? (
+        <p className="tree-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <p className="tree-message">恢复后点「立即同步」把文档拉回来。</p>
+    </div>
+  );
+}
+
 export function RepositoryTree({ onOpenDocument }: RepositoryTreeProps) {
   const repositories = useRepositoriesQuery();
   const providers = useRemoteProvidersQuery();
@@ -115,6 +149,9 @@ export function RepositoryTree({ onOpenDocument }: RepositoryTreeProps) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [createError, setCreateError] = useState("");
+  // 正在确认移除的那一个。存整个 Repository 而不是 id：确认框要显示名字与
+  // provider，而从 id 反查会在列表被刷新（例如同步回来）时落空。
+  const [removing, setRemoving] = useState<Repository | null>(null);
 
   // Provider display names come from the registry summary; unknown providers
   // fall back to their raw name, local repositories show 本地.
@@ -223,11 +260,21 @@ export function RepositoryTree({ onOpenDocument }: RepositoryTreeProps) {
                 </small>
               </button>
               {repository.provider ? <RepositorySyncButton repositoryId={repository.id} /> : null}
+              <button
+                aria-label={`移除 ${repository.name}`}
+                className="tree-icon-button"
+                onClick={() => setRemoving(repository)}
+                title="移除知识库"
+                type="button"
+              >
+                <Trash2 aria-hidden="true" size={14} />
+              </button>
               {expanded ? (
                 <>
                   <RepositoryDocuments
                     onOpenDocument={onOpenDocument}
                     repositoryId={repository.id}
+                    repositoryName={repository.name}
                   />
                   {repository.provider ? <ConflictList repositoryId={repository.id} /> : null}
                   {providerCapabilities(repository.provider)?.parentNodeWrite ? (
@@ -243,6 +290,15 @@ export function RepositoryTree({ onOpenDocument }: RepositoryTreeProps) {
           );
         })}
       </ul>
+      <RemovedRepositories providerLabel={providerLabel} />
+      {removing ? (
+        <DeleteRepositoryDialog
+          key={removing.id}
+          onClose={() => setRemoving(null)}
+          providerLabel={providerLabel(removing.provider)}
+          repository={removing}
+        />
+      ) : null}
     </div>
   );
 }

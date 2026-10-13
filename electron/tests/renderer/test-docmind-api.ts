@@ -11,6 +11,7 @@ import type {
   PluginState,
   RemoteCredentialChannel,
   RemoteProviderSummary,
+  RemovedRepository,
   Repository,
   SessionSummary,
   SettingsView,
@@ -117,6 +118,7 @@ export const yuqueProviderSummaries: RemoteProviderSummary[] = [
       browserInstall: true,
       markerLookup: true,
       parentNodeWrite: false,
+      documentPaths: false,
       browserUnavailableCode: "YUQUE_BROWSER_UNAVAILABLE",
     },
   },
@@ -130,6 +132,7 @@ export const feishuProviderSummary: RemoteProviderSummary = {
     browserInstall: false,
     markerLookup: true,
     parentNodeWrite: true,
+    documentPaths: true,
     browserUnavailableCode: null,
   },
 };
@@ -549,12 +552,36 @@ export const repository: Repository = {
   updatedAt: "2026-08-31T00:00:00Z",
 };
 
+/** 一个本地知识库：没有 provider，列表同步不会把它拉回来，移除也无法撤销。 */
+export const localRepository: Repository = {
+  ...repository,
+  id: "00000000-0000-0000-0000-000000000031",
+  provider: null,
+  remoteId: null,
+  name: "本地笔记",
+  description: null,
+  remoteUrl: null,
+  documentCount: 0,
+  indexedDocumentCount: 0,
+  syncStatus: "local",
+};
+
+/** 一条「已移除」记录：远端知识库被移出 DocMind 之后留下的痕迹。 */
+export const removedRepository: RemovedRepository = {
+  id: "00000000-0000-0000-0000-000000000041",
+  provider: "yuque",
+  remoteId: "swiftui",
+  name: "SwiftUI",
+  removedAt: "2026-08-31T10:00:00Z",
+};
+
 export const document: DocumentDetail = {
   id: "00000000-0000-0000-0000-000000000022",
   repositoryId: repository.id,
   remoteId: "state-management",
   title: "State 管理",
   remoteUrl: "https://www.yuque.com/test/swiftui/state",
+  path: ["第一章", "第一节"],
   chunkCount: 3,
   status: "已同步",
   remoteDeleted: false,
@@ -764,6 +791,9 @@ export function installDocMindApi(overrides?: {
       list: vi.fn().mockResolvedValue([repository]),
       create: vi.fn().mockResolvedValue(repository),
       update: vi.fn().mockResolvedValue(repository),
+      remove: vi.fn().mockResolvedValue(undefined),
+      listRemoved: vi.fn().mockResolvedValue([]),
+      restore: vi.fn().mockResolvedValue(repository),
       ...overrides?.repositories,
     },
     sync: {
@@ -800,7 +830,16 @@ export function installDocMindApi(overrides?: {
       readOriginalChunk: vi.fn().mockResolvedValue({ data: "", total: 0 }),
       create: vi.fn().mockResolvedValue(document),
       update: vi.fn().mockResolvedValue(document),
-      delete: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+      deleteRemote: vi.fn().mockResolvedValue(undefined),
+      removeMany: vi.fn().mockResolvedValue({ removed: 0 }),
+      listRemoved: vi.fn().mockResolvedValue([]),
+      restoreRemoved: vi.fn().mockResolvedValue({
+        removalId: "00000000-0000-0000-0000-000000000042",
+        repositoryId: repository.id,
+        remoteId: document.remoteId ?? "remote",
+        title: document.title,
+      }),
       relinkOriginal: vi.fn().mockResolvedValue(document),
       reconvert: vi.fn().mockResolvedValue(document),
       openOriginal: vi.fn().mockResolvedValue(undefined),

@@ -25,6 +25,9 @@ class ProviderCapabilities:
     write-compensation mechanism for idempotent mutations.
     ``parent_node_write``: new documents may target a provider-native parent
     container (Feishu: ``parent_node_token``).
+    ``document_paths``: ``list_documents`` reports each document's directory path
+    (Feishu wiki tree, Yuque TOC). Without it the client must not render a tree —
+    an invented hierarchy is worse than a flat list.
     ``browser_unavailable_code``: the error code this provider raises when its
     login browser is missing. Declared rather than hard-coded in the UI so a
     client can offer the install action without naming a vendor — a generic
@@ -34,6 +37,7 @@ class ProviderCapabilities:
     browser_install: bool = False
     marker_lookup: bool = False
     parent_node_write: bool = False
+    document_paths: bool = False
     browser_unavailable_code: str | None = None
 
 

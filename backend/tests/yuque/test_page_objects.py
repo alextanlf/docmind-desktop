@@ -158,6 +158,20 @@ class FixturePage:
         self.document_url_after_save: str | None = None
         self.document_title_after_save: str | None = None
         self.dom_html = "<html><body>fixture</body></html>"
+        # `evaluate` 只有 Playwright 侧页面才有；语雀网页登录读内嵌目录数据走的
+        # 正是这条路（见 _read_document_via_api 的同类做法）。默认没有这个属性，
+        # 所以默认行为等价于"老 WebDriver 门面"。
+        self.evaluate_results: dict[str, Any] = {}
+        self.evaluated: list[str] = []
+
+    async def evaluate(self, script: str) -> Any:
+        self.evaluated.append(script)
+        for marker, value in self.evaluate_results.items():
+            if marker in script:
+                if isinstance(value, Exception):
+                    raise value
+                return value
+        return None
 
     def locator(self, selector: str) -> FixtureLocator:
         return FixtureLocator(self, selector, selector in self.available)
@@ -1407,3 +1421,64 @@ class TestBrowserSelectionPrefersSystemInstall:
         # ...and the second one, which reported a version, was returned.
         assert found.kind == "chromium"
         assert found.major_version == 153
+
+
+class CatalogFixturePage(FixturePage):
+    """带 evaluate 的页面替身：语雀把目录内嵌在 appData 里。"""
+
+    def __init__(self, catalog: Any) -> None:
+        super().__init__({"a[href*='repo/']"})
+        payload = catalog if isinstance(catalog, str) else json.dumps(catalog)
+        self.evaluate_results = {"appData": payload}
+
+
+async def test_web_login_derives_paths_from_the_pages_embedded_catalog() -> None:
+    """网页登录侧：目录来自页面内嵌数据，不是猜 DOM 嵌套。"""
+    from app.yuque.repository_page import RepositoryPage
+
+    page = CatalogFixturePage(
+        [
+            {"path": ["第一章"], "url": "https://www.yuque.com/tan/repo/aaa"},
+            {"path": [], "url": "https://www.yuque.com/tan/repo/bbb"},
+        ]
+    )
+
+    paths = await RepositoryPage(page).list_catalog_paths()
+
+    assert paths == {"aaa": ["第一章"], "bbb": []}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,  # 页面里没有 appData
+        "",  # evaluate 返回空
+        "not json",  # 不是 JSON
+        {"nested": "object"},  # 不是数组
+        [{"path": "not-a-list", "url": "x/aaa"}],  # 条目形状不对
+    ],
+)
+async def test_web_login_never_invents_a_directory_from_unexpected_data(
+    payload: Any,
+) -> None:
+    """任何意外形状都必须退化成"没有目录"。
+
+    猜一层看起来像树的层级，按目录移除时会漏文档 —— 而漏掉在清理场景里等于没清。
+    """
+    from app.yuque.repository_page import RepositoryPage
+
+    paths = await RepositoryPage(CatalogFixturePage(payload)).list_catalog_paths()
+
+    assert paths == {} or paths == {"aaa": []}
+
+
+async def test_web_login_without_evaluate_falls_back_to_flat_documents() -> None:
+    """WebDriver 门面没有 evaluate：目录信息直接没有，文档仍要能列出来。"""
+    from app.yuque.repository_page import RepositoryPage
+
+    class FacadeWithoutEvaluate:
+        """只有 locator 之类方法的门面：WebDriver 侧就是这种形状。"""
+
+    paths = await RepositoryPage(FacadeWithoutEvaluate()).list_catalog_paths()
+
+    assert paths == {}

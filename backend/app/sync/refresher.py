@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from collections.abc import Sequence
 from hashlib import sha256
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
@@ -36,7 +38,12 @@ class DocumentRefresher:
         self.graph_store = graph_store
 
     async def upsert_from_remote(
-        self, repository_id: str, document_id: str, title: str, content: str
+        self,
+        repository_id: str,
+        document_id: str,
+        title: str,
+        content: str,
+        path: Sequence[str] = (),
     ) -> str:
         document = self.document_store.find_by_remote_id(repository_id, document_id)
         if document is None:
@@ -47,6 +54,7 @@ class DocumentRefresher:
                     title=title,
                     source_type="remote",
                     status="uploaded",
+                    remote_path_json=json.dumps(list(path)),
                 )
             )
         else:
@@ -105,6 +113,7 @@ class DocumentRefresher:
             content_hash=sha256(content.encode("utf-8")).hexdigest(),
             source_url=document.source_url or document_id,
             markdown_path=str(markdown_path) if markdown_path is not None else None,
+            remote_path=list(path),
         )
         if self.graph_store is not None:
             nodes, edges = extract_graph(document.id, title, content)

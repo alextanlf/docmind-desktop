@@ -166,7 +166,7 @@ def test_document_create_removes_the_recovery_marker_from_remote_content(
 
 
 def test_delete_document_requires_confirmation(client, auth_headers) -> None:
-    """Catches destructive local and remote deletion without explicit confirmation."""
+    """两个删除入口都必须显式确认，缺 confirm 时什么都不许动。"""
     repository_id, _ = _seed_repository(client)
     created = client.post(
         f"/api/repositories/{repository_id}/documents",
@@ -176,10 +176,42 @@ def test_delete_document_requires_confirmation(client, auth_headers) -> None:
     document_id = created.json()["id"]
 
     response = client.request("DELETE", f"/api/documents/{document_id}", headers=auth_headers, json={})
+    remote_response = client.request(
+        "DELETE", f"/api/documents/{document_id}/remote", headers=auth_headers, json={}
+    )
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "CONFIRMATION_REQUIRED"
+    assert remote_response.status_code == 400
+    assert remote_response.json()["error"]["code"] == "CONFIRMATION_REQUIRED"
     assert client.app.state.import_service.document_store.get(document_id) is not None
+
+
+def test_default_delete_never_touches_the_remote(client, auth_headers) -> None:
+    """默认的删除只清本地。远端原文是用户的资料，删除不该顺手带走它。
+
+    这条守的是一个真实事故面：从前 DELETE /api/documents/{id} 对远端文档会调
+    provider.delete_document，而确认框只写「将从「X」删除「Y」」——用户以为自己
+    在本地清理，实际删掉了语雀/飞书上的原文。
+    """
+    repository_id, gateway = _seed_repository(client)
+    created = client.post(
+        f"/api/repositories/{repository_id}/documents",
+        headers=auth_headers,
+        json={"title": "State", "content": "# State\n\n状态管理"},
+    )
+    document_id = created.json()["id"]
+    remote_id = client.app.state.import_service.document_store.get(document_id).remote_id
+    assert remote_id
+
+    response = client.request(
+        "DELETE", f"/api/documents/{document_id}", headers=auth_headers, json={"confirm": True}
+    )
+
+    assert response.status_code == 204
+    assert client.app.state.import_service.document_store.get(document_id) is None
+    assert "delete_document" not in gateway.write_calls
+    assert remote_id in {item.remote_id for item in asyncio.run(gateway.list_documents("repo-remote"))}
 
 
 def test_confirmed_delete_keeps_local_state_when_remote_delete_fails(client, auth_headers) -> None:
@@ -197,7 +229,10 @@ def test_confirmed_delete_keeps_local_state_when_remote_delete_fails(client, aut
 
     gateway.delete_document = fail_delete  # type: ignore[method-assign]
     response = client.request(
-        "DELETE", f"/api/documents/{document_id}", headers=auth_headers, json={"confirm": True}
+        "DELETE",
+        f"/api/documents/{document_id}/remote",
+        headers=auth_headers,
+        json={"confirm": True},
     )
 
     assert response.status_code == 503
@@ -240,7 +275,10 @@ def test_auth_expired_errors_pass_through_without_provider_coupling(
 
     gateway.delete_document = require_login  # type: ignore[method-assign]
     response = client.request(
-        "DELETE", f"/api/documents/{document_id}", headers=auth_headers, json={"confirm": True}
+        "DELETE",
+        f"/api/documents/{document_id}/remote",
+        headers=auth_headers,
+        json={"confirm": True},
     )
 
     body = response.json()["error"]
@@ -266,7 +304,10 @@ def test_generic_remote_error_is_normalised_without_auth_expired(client, auth_he
 
     gateway.delete_document = fail_delete  # type: ignore[method-assign]
     response = client.request(
-        "DELETE", f"/api/documents/{document_id}", headers=auth_headers, json={"confirm": True}
+        "DELETE",
+        f"/api/documents/{document_id}/remote",
+        headers=auth_headers,
+        json={"confirm": True},
     )
 
     assert response.json()["error"]["code"] == "REMOTE_OPERATION_FAILED"
@@ -347,7 +388,7 @@ def test_index_stale_vector_delete_failure_does_not_leave_obsolete_vectors(clien
 
 
 def test_delete_vector_failure_still_removes_local_and_retry_cleans_pending(client, auth_headers) -> None:
-    """Catches remote-success deletes getting stuck on a transient vector-store failure."""
+    """Catches deletes getting stuck on a transient vector-store failure."""
     repository_id, gateway = _seed_repository(client)
     vector_store = _vector_store(client)
     created = client.post(
@@ -356,6 +397,8 @@ def test_delete_vector_failure_still_removes_local_and_retry_cleans_pending(clie
         json={"title": "State", "content": "# State\n\n状态管理"},
     )
     document_id = created.json()["id"]
+    remote_id = client.app.state.document_store.get(document_id).remote_id
+    assert remote_id
     vector_store.fail_delete_once = True
 
     first = client.request(
@@ -380,7 +423,11 @@ def test_delete_vector_failure_still_removes_local_and_retry_cleans_pending(clie
     assert second.status_code == 204
     assert vector_store.ids == set()
     assert client.app.state.document_store.get(document_id) is None
-    assert document_id not in {item.remote_id for item in asyncio.run(gateway.list_documents("repo-remote"))}
+    # 这一行原先断言 `document_id not in {item.remote_id ...}` —— 拿本地 uuid 去比
+    # 远端 id，两者永远不可能相等，所以它从来没红过。默认删除现在只清本地，该断言
+    # 的对象是"是否留下了移出记录"，于是换成真的会红的那一条。
+    assert client.app.state.removed_document_store.identities(repository_id) == {remote_id}
+    assert remote_id in {item.remote_id for item in asyncio.run(gateway.list_documents("repo-remote"))}
 
 
 def test_document_create_response_contains_submitted_markdown(client, auth_headers) -> None:
@@ -1358,3 +1405,271 @@ def test_original_location_separates_missing_from_never_linked(
         f"/api/documents/{plain.id}/original-location", headers=auth_headers
     ).json()
     assert none == {"path": None, "pathToken": None, "state": "none"}
+
+
+def _create_remote_document(client, auth_headers, repository_id: str, title: str) -> tuple[str, str]:
+    """在远端知识库里建一篇文档，返回 (本地 id, 远端 id)。"""
+    created = client.post(
+        f"/api/repositories/{repository_id}/documents",
+        headers=auth_headers,
+        json={"title": title, "content": f"# {title}\n\n{title} 的正文"},
+    )
+    assert created.status_code == 201, created.text
+    document_id = created.json()["id"]
+    document = client.app.state.document_store.get(document_id)
+    assert document is not None and document.remote_id
+    return document_id, document.remote_id
+
+
+def test_batch_remove_takes_the_selected_documents_and_records_each_removal(
+    client, auth_headers
+) -> None:
+    """批量移除：选中的走，没选中的留，而且每一篇都留下移出记录。
+
+    留下记录这件事是批量路径最容易漏的：单篇移除会写，批量若只删本地行，
+    那些文档会在下次远端更新时集体回来 —— 而且是静默的。
+    """
+    repository_id, _ = _seed_repository(client)
+    keep_id, _ = _create_remote_document(client, auth_headers, repository_id, "留下")
+    first_id, first_remote = _create_remote_document(client, auth_headers, repository_id, "第一篇")
+    second_id, second_remote = _create_remote_document(
+        client, auth_headers, repository_id, "第二篇"
+    )
+
+    response = client.post(
+        f"/api/repositories/{repository_id}/documents/remove",
+        headers=auth_headers,
+        json={"documentIds": [first_id, second_id]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["removed"] == 2
+    store = client.app.state.document_store
+    assert store.get(first_id) is None
+    assert store.get(second_id) is None
+    assert store.get(keep_id) is not None
+    assert client.app.state.removed_document_store.identities(repository_id) == {
+        first_remote,
+        second_remote,
+    }
+    assert store.list_chunks(first_id) == []
+
+
+def test_batch_remove_ignores_ids_belonging_to_another_repository(
+    client, auth_headers
+) -> None:
+    """跨库的 id 必须被忽略，而不是被"顺手删掉"或让整批失败。
+
+    批量操作里最常见的脏输入就是过期/错库的 id；整批因此失败会让用户反复重试，
+    而默默删掉另一个知识库的文档是数据损失。
+    """
+    repository_id, _ = _seed_repository(client)
+    other_repository = client.app.state.repository_store.create_local(name="另一个库")
+    mine_id, mine_remote = _create_remote_document(client, auth_headers, repository_id, "我的")
+    foreign_id, _ = _create_remote_document(client, auth_headers, repository_id, "别处的")
+    client.app.state.document_store.delete_local(foreign_id)
+    with client.app.state.database.session() as session:
+        session.add(
+            DocumentRecord(
+                id=foreign_id,
+                repository_id=other_repository.id,
+                title="别处的",
+                source_type="local",
+                status="pending",
+            )
+        )
+
+    response = client.post(
+        f"/api/repositories/{repository_id}/documents/remove",
+        headers=auth_headers,
+        json={"documentIds": [mine_id, foreign_id, "00000000-0000-4000-8000-000000000000"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["removed"] == 1
+    assert client.app.state.document_store.get(mine_id) is None
+    assert client.app.state.document_store.get(foreign_id) is not None
+    assert client.app.state.removed_document_store.identities(repository_id) == {mine_remote}
+
+
+def test_restore_drops_the_stale_sync_snapshot_so_the_document_can_come_back(
+    client, auth_headers
+) -> None:
+    """恢复必须清掉那份陈旧快照，否则远端没变过的文档永远回不来。
+
+    同步靠 `repository_sync_state` 判重：快照还在、远端内容又恰好没变过，那次同步
+    会把它当 `unchanged` 跳过。恢复只删移除记录而不动快照，看起来"恢复成功"，
+    文档却再也不会出现。
+    """
+    repository_id, _ = _seed_repository(client)
+    document_id, remote_id = _create_remote_document(client, auth_headers, repository_id, "待恢复")
+    sync_state = client.app.state.sync_state_store
+    sync_state.upsert(repository_id, remote_id, "待恢复", "hash-1", "https://remote.local/x")
+    assert client.request(
+        "DELETE", f"/api/documents/{document_id}", headers=auth_headers, json={"confirm": True}
+    ).status_code == 204
+
+    removed = client.get(
+        f"/api/repositories/{repository_id}/removed-documents", headers=auth_headers
+    ).json()
+    assert len(removed) == 1
+    assert removed[0]["title"] == "待恢复"
+    assert removed[0]["remoteId"] == remote_id
+    assert remote_id in sync_state.get_snapshot(repository_id)
+
+    restored = client.post(
+        f"/api/repositories/{repository_id}/removed-documents/{removed[0]['id']}/restore",
+        headers=auth_headers,
+    )
+
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["remoteId"] == remote_id
+    assert (
+        client.get(
+            f"/api/repositories/{repository_id}/removed-documents", headers=auth_headers
+        ).json()
+        == []
+    )
+    # 真正让文档能回来的那一步：
+    assert remote_id not in sync_state.get_snapshot(repository_id)
+
+
+def test_local_document_removal_leaves_no_removal_record(client, auth_headers) -> None:
+    """本地文档不会被同步拉回来，所以不该留记录。
+
+    记了的话「已移除的文档」会攒下一堆恢复不了的条目 —— 恢复只对远端身份有意义。
+    """
+    repository = client.app.state.repository_store.create_local(name="本地库")
+    client.app.state.embedding_provider = FakeEmbeddingProvider(
+        client.app.state.settings.embedding_settings
+    )
+    created = client.post(
+        f"/api/repositories/{repository.id}/documents",
+        headers=auth_headers,
+        json={"title": "本地笔记", "content": "# 本地笔记\n\n正文"},
+    )
+    assert created.status_code == 201, created.text
+    document_id = created.json()["id"]
+    assert client.app.state.document_store.get(document_id).repository_id == repository.id
+
+    response = client.request(
+        "DELETE", f"/api/documents/{document_id}", headers=auth_headers, json={"confirm": True}
+    )
+
+    assert response.status_code == 204
+    assert client.app.state.document_store.get(document_id) is None
+    assert (
+        client.get(
+            f"/api/repositories/{repository.id}/removed-documents", headers=auth_headers
+        ).json()
+        == []
+    )
+
+
+def test_explicit_remote_delete_removes_both_sides_and_blocks_reimport(
+    client, auth_headers
+) -> None:
+    """`/remote` 那条路才允许动远端原文，并且一并登记移出（防止远端软删留下复活的可能）。"""
+    repository_id, gateway = _seed_repository(client)
+    document_id, remote_id = _create_remote_document(client, auth_headers, repository_id, "删远端")
+
+    response = client.request(
+        "DELETE",
+        f"/api/documents/{document_id}/remote",
+        headers=auth_headers,
+        json={"confirm": True},
+    )
+
+    assert response.status_code == 204
+    assert "delete_document" in gateway.write_calls
+    assert remote_id not in {
+        item.remote_id for item in asyncio.run(gateway.list_documents("repo-remote"))
+    }
+    assert client.app.state.document_store.get(document_id) is None
+    assert client.app.state.removed_document_store.identities(repository_id) == {remote_id}
+
+
+def test_removed_documents_list_is_scoped_to_its_repository(client, auth_headers) -> None:
+    """列表按知识库取，别把别的库的移出记录混进来。"""
+    repository_id, _ = _seed_repository(client)
+    other_repository = client.app.state.repository_store.create_local(name="另一个库")
+    document_id, _ = _create_remote_document(client, auth_headers, repository_id, "甲")
+    client.request(
+        "DELETE", f"/api/documents/{document_id}", headers=auth_headers, json={"confirm": True}
+    )
+
+    mine = client.get(
+        f"/api/repositories/{repository_id}/removed-documents", headers=auth_headers
+    )
+    other = client.get(
+        f"/api/repositories/{other_repository.id}/removed-documents", headers=auth_headers
+    )
+
+    assert len(mine.json()) == 1
+    assert other.json() == []
+
+
+def test_restore_rejects_a_removal_id_from_another_repository(client, auth_headers) -> None:
+    """跨库恢复必须 404：否则一个库的恢复按钮能操作另一个库的记录。"""
+    repository_id, _ = _seed_repository(client)
+    other_repository = client.app.state.repository_store.create_local(name="另一个库")
+    document_id, _ = _create_remote_document(client, auth_headers, repository_id, "甲")
+    client.request(
+        "DELETE", f"/api/documents/{document_id}", headers=auth_headers, json={"confirm": True}
+    )
+    removal_id = client.get(
+        f"/api/repositories/{repository_id}/removed-documents", headers=auth_headers
+    ).json()[0]["id"]
+
+    response = client.post(
+        f"/api/repositories/{other_repository.id}/removed-documents/{removal_id}/restore",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 404
+    # 记录必须还在原处，不能被这次越权请求消耗掉。
+    assert (
+        len(
+            client.get(
+                f"/api/repositories/{repository_id}/removed-documents", headers=auth_headers
+            ).json()
+        )
+        == 1
+    )
+
+
+def test_documents_list_reports_the_remote_directory_path_on_the_wire(
+    client, auth_headers
+) -> None:
+    """目录路径必须真的出现在文档列表响应里。
+
+    这条守的是"名字对不上不会报错"那类静默失败：渲染层的 schema 把 `path` 当成
+    可选（缺失就是空数组），所以后端漏送这一项时界面只会安静地平铺显示，没有任何
+    地方会红。断言的是**响应里的字段**，不是数据库里的列。
+    """
+    # _seed_repository 除了建远端库，还会装上假嵌入模型 —— 少了它，下面建文档这步
+    # 会去 HuggingFace 下 bge-m3，在没有网的环境里表现为"卡住"而不是失败。
+    repository_id, _gateway = _seed_repository(client)
+    document_id, remote_id = _create_remote_document(client, auth_headers, repository_id, "甲")
+    document = client.app.state.document_store.get(document_id)
+    with client.app.state.database.session() as session:
+        record = session.get(DocumentRecord, document_id)
+        record.remote_path_json = json.dumps(["第一章", "第一节"])
+    assert document is not None
+
+    summaries = client.get(
+        f"/api/repositories/{repository_id}/documents", headers=auth_headers
+    ).json()
+
+    assert [item["path"] for item in summaries] == [["第一章", "第一节"]]
+    detail = client.get(f"/api/documents/{document_id}", headers=auth_headers).json()
+    assert detail["path"] == ["第一章", "第一节"]
+    # 本地文档没有远端目录，恒为空列表（不是缺失）。
+    local_repository = client.app.state.repository_store.create_local(name="本地库")
+    local = client.post(
+        f"/api/repositories/{local_repository.id}/documents",
+        headers=auth_headers,
+        json={"title": "本地笔记", "content": "# 本地笔记\n\n正文"},
+    ).json()
+    assert local["path"] == []
+    assert remote_id

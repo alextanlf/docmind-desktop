@@ -449,6 +449,176 @@ button:disabled {
 .tree-create-form .tree-error {
   grid-column: 1 / -1;
 }
+/* 「已移除的知识库」：一个弱化的次级分区。名字可能很长，恢复按钮必须始终可见，
+   所以只让名字那一格收缩。 */
+.removed-repository-section {
+  margin-top: 6px;
+}
+.removed-repository-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.removed-repository-list li {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.removed-repository-list li > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.removed-repository-list li > small {
+  flex: none;
+  font-size: 11px;
+}
+.removed-repository-list .tree-retry {
+  flex: none;
+  margin-left: auto;
+  font-size: 11px;
+}
+/* 文档列表的多选与批量移除。复选框固定宽度，标题独占剩余空间并省略 —— 否则长标题
+   会把复选框挤出可视区。 */
+.document-list-section {
+  display: grid;
+  gap: 2px;
+}
+.document-selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  margin-left: 16px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.document-selection-bar .tree-retry {
+  margin-left: auto;
+  font-size: 11px;
+}
+.document-select-all,
+.document-select {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+.document-select {
+  padding-left: 16px;
+}
+.document-tree-list li {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 2px;
+}
+.document-select input,
+.document-select-all input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+}
+/* 目录行：勾它等于勾中整个子树。折叠按钮固定宽度，名字独占剩余空间。
+   「部分选中」靠复选框的 indeterminate 表达，所以这里不做自定义样式覆盖。 */
+.document-directory-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.document-directory-toggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+}
+.document-directory-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #414956;
+  font-size: 12px;
+}
+.document-directory-row small {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+.document-directory-row .document-select {
+  padding-left: 0;
+}
+/* 「已移除的文档」：与「已移除的知识库」同一套弱化样式。 */
+.removed-document-section {
+  margin-top: 6px;
+}
+.removed-document-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.removed-document-list li {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 0 4px 0 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.removed-document-list li > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.removed-document-list .tree-retry {
+  flex: none;
+  margin-left: auto;
+  font-size: 11px;
+}
+.removed-document-section .tree-message {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+/* 批量移除确认框里列出将被移除的文档：可能几十条，必须能滚，且不能把按钮顶出屏幕。 */
+.confirm-dialog-list {
+  max-height: 180px;
+  margin: 6px 0;
+  padding-left: 18px;
+  overflow-y: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+.dialog-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+  font-size: 13px;
+}
+.dialog-checkbox input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
 .repository-parent-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

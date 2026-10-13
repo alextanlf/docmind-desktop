@@ -268,6 +268,12 @@ export const RemoteProviderCapabilitiesSchema = z.object({
   markerLookup: z.boolean(),
   parentNodeWrite: z.boolean(),
   /**
+   * 这个来源是否报得出每篇文档的目录路径。声明它只是为了让"provider 能做什
+   * 么"在两侧一致；界面判断要不要画树用的是数据本身（有没有非空 path），
+   * 那比声明更贴近眼前的这个知识库。
+   */
+  documentPaths: z.boolean(),
+  /**
    * Error code this provider raises when its login browser is missing.
    * Declared by the provider so the install action never hardcodes a vendor.
    */
@@ -452,6 +458,19 @@ export const CreateRepositoryInputSchema = z.object({
 export const UpdateRepositoryInputSchema = z.object({
   remoteParentId: z.string().max(255).nullable(),
 });
+/**
+ * 一个被用户从 DocMind 移除的远端知识库。
+ *
+ * 带 `name` 与 `provider`：用户要凭这两样判断"这个该不该恢复"。只有两个 id 的话，
+ * 「已移除」列表就只是一串看不懂的标识符，用户没法决定。
+ */
+export const RemovedRepositorySchema = z.object({
+  id,
+  provider: z.string().max(32),
+  remoteId: z.string().max(255),
+  name: text(120),
+  removedAt: timestamp,
+});
 
 export const DocumentInputSchema = z.object({
   title: text(240),
@@ -463,11 +482,43 @@ export const DocumentSummarySchema = z.object({
   remoteId: z.string().nullable().optional(),
   title: text(240),
   remoteUrl: z.string().max(4_000).nullable().optional(),
+  /**
+   * 远端目录路径（逐级名字）。空数组 = 根目录，本地文档恒为空数组。
+   *
+   * 只有声明了 `documentPaths` 能力的 provider 才有实际内容 —— 界面据此决定
+   * 显示树还是平铺，而不是自己猜一层层级出来。
+   */
+  path: z.array(z.string().max(512)).default([]),
   chunkCount: z.number().int().nonnegative(),
   status: z.string(),
   remoteDeleted: z.boolean(),
   createdAt: timestamp,
   updatedAt: timestamp,
+});
+
+export const DocumentRemovalResultSchema = z.object({
+  removed: z.number().int().nonnegative(),
+});
+
+/**
+ * 一篇被移出 DocMind 的远端文档。
+ *
+ * 带 `title`：用户要凭它判断该不该恢复；只给一个远端 id 的话，这个列表就只是
+ * 一串看不懂的标识符。
+ */
+export const RemovedDocumentSchema = z.object({
+  id,
+  repositoryId: id,
+  remoteId: z.string().max(255),
+  title: text(240),
+  removedAt: timestamp,
+});
+
+export const RemovedDocumentRestoreSchema = z.object({
+  removalId: id,
+  repositoryId: id,
+  remoteId: z.string().max(255),
+  title: text(240),
 });
 
 export const SyncOutcomeSchema = z.object({
@@ -1276,6 +1327,7 @@ export type PluginDirectory = z.infer<typeof PluginDirectorySchema>;
 export type Repository = z.infer<typeof RepositorySchema>;
 export type CreateRepositoryInput = z.infer<typeof CreateRepositoryInputSchema>;
 export type UpdateRepositoryInput = z.infer<typeof UpdateRepositoryInputSchema>;
+export type RemovedRepository = z.infer<typeof RemovedRepositorySchema>;
 export type SyncOutcome = z.infer<typeof SyncOutcomeSchema>;
 export type SyncStatus = z.infer<typeof SyncStatusSchema>;
 export type ConflictView = z.infer<typeof ConflictViewSchema>;
@@ -1286,6 +1338,9 @@ export type GraphEdge = z.infer<typeof GraphEdgeSchema>;
 export type DocumentInput = z.infer<typeof DocumentInputSchema>;
 export type DocumentSummary = z.infer<typeof DocumentSummarySchema>;
 export type DocumentDetail = z.infer<typeof DocumentDetailSchema>;
+export type DocumentRemovalResult = z.infer<typeof DocumentRemovalResultSchema>;
+export type RemovedDocument = z.infer<typeof RemovedDocumentSchema>;
+export type RemovedDocumentRestore = z.infer<typeof RemovedDocumentRestoreSchema>;
 export type DocumentOriginalChunk = z.infer<typeof DocumentOriginalChunkSchema>;
 export type DocumentFigure = z.infer<typeof DocumentFigureSchema>;
 export type SourceRef = z.infer<typeof SourceRefSchema>;
@@ -1436,6 +1491,17 @@ export interface DocMindApi {
     list(): Promise<Repository[]>;
     create(input: CreateRepositoryInput): Promise<Repository>;
     update(repositoryId: string, input: UpdateRepositoryInput): Promise<Repository>;
+    /**
+     * 从 DocMind 移除一个知识库。
+     *
+     * 远端（语雀 / 飞书）上的仓库与文档一律不动 —— 这里的语义是"从 DocMind
+     * 移除"，不是"把你在别处的资料删掉"。远端绑定的库会留下一条移除记录，
+     * 否则下一次刷新列表它就自己回来了。
+     */
+    remove(repositoryId: string, confirm: true): Promise<void>;
+    listRemoved(): Promise<RemovedRepository[]>;
+    /** 恢复一个被移除的远端知识库；文档要用「立即同步」再拉一次。 */
+    restore(removalId: string): Promise<Repository>;
   };
   sync: {
     get(repositoryId: string): Promise<SyncStatus>;
@@ -1473,7 +1539,26 @@ export interface DocMindApi {
     readAsset(documentId: string, assetName: string): Promise<string>;
     create(repositoryId: string, input: DocumentInput): Promise<DocumentDetail>;
     update(documentId: string, input: DocumentInput): Promise<DocumentDetail>;
-    delete(documentId: string, confirm: true): Promise<void>;
+    /**
+     * 把文档移出 DocMind —— **只删本地，远端原文不动**。
+     *
+     * 这是默认动作。想连语雀/飞书上的原文一起删，用 `deleteRemote`：那件事
+     * 不可撤销，不该是「删除」的默认含义。
+     */
+    remove(documentId: string, confirm: true): Promise<void>;
+    /** 删除文档**并且**删除远端原文。不可撤销。 */
+    deleteRemote(documentId: string, confirm: true): Promise<void>;
+    /** 批量移出（只删本地），返回真正移出的篇数。 */
+    removeMany(repositoryId: string, documentIds: string[]): Promise<DocumentRemovalResult>;
+    /** 已移出 DocMind 的远端文档，用于恢复。 */
+    listRemoved(repositoryId: string): Promise<RemovedDocument[]>;
+    /**
+     * 恢复一篇被移出的远端文档。
+     *
+     * 只负责"允许它回来"（删掉移出记录并清掉陈旧同步快照），文档内容由紧接的
+     * 一次同步重新下载并重建索引。
+     */
+    restoreRemoved(repositoryId: string, removalId: string): Promise<RemovedDocumentRestore>;
     /**
      * 把文档重新绑到磁盘上的另一个路径（文件被挪走/换了外接盘之后）。
      *
@@ -1581,8 +1666,12 @@ export const schemas = {
   SaveRemoteCredentialInputSchema,
   RepositorySchema,
   UpdateRepositoryInputSchema,
+  RemovedRepositorySchema,
   DocumentSummarySchema,
   DocumentDetailSchema,
+  DocumentRemovalResultSchema,
+  RemovedDocumentSchema,
+  RemovedDocumentRestoreSchema,
   DocumentOriginalChunkSchema,
   SourcePreviewSchema,
   ImportJobSchema,

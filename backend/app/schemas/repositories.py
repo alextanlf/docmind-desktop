@@ -28,6 +28,12 @@ class RepositoryUpdate(WireModel):
     remote_parent_id: str | None = Field(default=None, max_length=255)
 
 
+class RepositoryDelete(WireModel):
+    # Same convention as document deletion: a destructive call must say so
+    # explicitly, and a missing flag is a 400 rather than a silent default.
+    confirm: bool = False
+
+
 class RepositoryView(WireModel):
     id: str
     provider: str | None
@@ -41,3 +47,17 @@ class RepositoryView(WireModel):
     sync_status: str
     created_at: datetime
     updated_at: datetime
+
+
+class RemovedRepositoryView(WireModel):
+    """一个被用户从 DocMind 移除的远端知识库。
+
+    带上 ``name`` 与 ``provider``：用户要凭这两样判断"这个该不该恢复"。只给 id
+    的话，这个列表就只是一串看不懂的标识符。
+    """
+
+    id: str
+    provider: str
+    remote_id: str
+    name: str
+    removed_at: datetime

@@ -21,6 +21,7 @@ async def read_remote_snapshot(
                     title=document.title,
                     content_sha256=digest,
                     url=document.url or document.remote_id,
+                    path=tuple(document.path),
                 ),
                 content.content,
             )

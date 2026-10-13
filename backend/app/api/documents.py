@@ -28,9 +28,13 @@ from app.schemas.documents import (
     DocumentDelete,
     DocumentDetail,
     DocumentInput,
+    DocumentRemovalResult,
+    DocumentRemoveRequest,
     DocumentSummary,
     LinkedOriginalInput,
     OriginalLocation,
+    RemovedDocumentRestoreResult,
+    RemovedDocumentView,
 )
 from app.schemas.imports import DownloadedDocument, ParsedFigure
 from app.schemas.remote import (
@@ -44,6 +48,7 @@ from app.storage.models import DocumentChunkRecord, DocumentRecord, RepositoryRe
 from app.storage.repositories import (
     DocumentMutationStore,
     DocumentStore,
+    RemovedRemoteDocumentStore,
     RepositoryStore,
     VectorCleanupStore,
 )
@@ -107,6 +112,10 @@ def _cleanup_store(request: Request) -> VectorCleanupStore:
     return cast(VectorCleanupStore, request.app.state.vector_cleanup_store)
 
 
+def _removed_document_store(request: Request) -> RemovedRemoteDocumentStore:
+    return cast(RemovedRemoteDocumentStore, request.app.state.removed_document_store)
+
+
 def _not_found() -> DomainError:
     return DomainError("NOT_FOUND", "资源不存在", 404)
 
@@ -118,6 +127,7 @@ def _summary(document: DocumentRecord, remote: RemoteDocument | None = None) -> 
         remote_id=document.remote_id,
         title=remote.title if remote is not None else document.title,
         remote_url=remote.url if remote is not None else document.remote_url,
+        path=list(json.loads(document.remote_path_json or "[]")),
         chunk_count=document.chunk_count,
         status=document.status,
         remote_deleted=document.remote_deleted,
@@ -1280,47 +1290,99 @@ async def update_document(
     return _detail(indexed)
 
 
+async def _retry_pending_vector_cleanup(
+    request: Request, document_id: str, *, confirm: bool
+) -> bool:
+    """这篇文档已经不在了，但它的向量还挂在清理队列里。重试清理。
+
+    返回 False 表示"队列里也没有它" —— 调用方据此回 404。
+    """
+    pending = next(
+        (item for item in _cleanup_store(request).list() if item.document_id == document_id),
+        None,
+    )
+    if pending is None:
+        return False
+    if not confirm:
+        raise DomainError("CONFIRMATION_REQUIRED", "请确认删除文档", 400)
+    try:
+        pending_ids = _unowned_vector_ids(request, list(json.loads(pending.vector_ids_json)))
+        if pending_ids:
+            await asyncio.to_thread(
+                _vector_store(request).delete,
+                pending.repository_id,
+                pending_ids,
+            )
+        _cleanup_store(request).delete(pending.id)
+    except Exception as error:
+        raise DomainError("INDEX_FAILED", "清理文档索引失败", 503, True) from error
+    return True
+
+
+async def _remove_locally(request: Request, document: DocumentRecord) -> None:
+    """把一篇文档移出 DocMind，**绝不碰远端**。
+
+    远端文档要多写一条移除记录：同步的判重依据是"上次见到的远端状态"，所以一篇
+    还在远端更新的文档会在被移除后自己回来（实测：远端未变时不回来，一变就回来）。
+    """
+    vector_ids = _document_store(request).vector_ids(document.id)
+    if document.remote_id:
+        _removed_document_store(request).add_many(
+            document.repository_id, [(document.remote_id, document.title)]
+        )
+    _document_store(request).delete_local(document.id)
+    _remove_local_files(request, document.id)
+    deletable_ids = _unowned_vector_ids(request, vector_ids)
+    if deletable_ids:
+        try:
+            await _vector_call(
+                _vector_store(request).delete, document.repository_id, deletable_ids
+            )
+        except Exception:  # noqa: BLE001 - 本地清理仍可重试
+            _cleanup_store(request).create(document.repository_id, document.id, deletable_ids)
+
+
 @router.delete("/api/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_document(request: Request, document_id: str, body: DocumentDelete) -> None:
+async def remove_document(request: Request, document_id: str, body: DocumentDelete) -> None:
+    """把一篇文档移出 DocMind（默认动作，只删本地）。
+
+    远端知识库里的原文一律保留。想连远端一起删有单独的入口
+    （``DELETE /api/documents/{id}/remote``），因为那件事不可撤销，不该是"删除"
+    的默认含义 —— 之前正是如此，而确认框里一个字都没提，用户以为自己只是在
+    本地清理。
+    """
     await _recover_for_request(request)
     document = _document_store(request).get(document_id)
     if document is None:
-        pending = next(
-            (item for item in _cleanup_store(request).list() if item.document_id == document_id),
-            None,
-        )
-        if pending is not None:
-            if not body.confirm:
-                raise DomainError("CONFIRMATION_REQUIRED", "请确认删除文档", 400)
-            try:
-                pending_ids = _unowned_vector_ids(
-                    request, list(json.loads(pending.vector_ids_json))
-                )
-                if pending_ids:
-                    await asyncio.to_thread(
-                        _vector_store(request).delete,
-                        pending.repository_id,
-                        pending_ids,
-                    )
-                _cleanup_store(request).delete(pending.id)
-            except Exception as error:
-                raise DomainError("INDEX_FAILED", "清理文档索引失败", 503, True) from error
+        if await _retry_pending_vector_cleanup(request, document_id, confirm=body.confirm):
             return
         raise _not_found()
     if not body.confirm:
-        raise DomainError("CONFIRMATION_REQUIRED", "请确认删除文档", 400)
+        raise DomainError("CONFIRMATION_REQUIRED", "请确认移除文档", 400)
+    await _remove_locally(request, document)
+
+
+@router.delete(
+    "/api/documents/{document_id}/remote", status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_document_remote(
+    request: Request, document_id: str, body: DocumentDelete
+) -> None:
+    """删除文档**并且**删除远端原文。不可撤销，需要单独确认。
+
+    与默认动作分开是刻意的：这条会真的删掉用户在语雀/飞书上的东西。
+    """
+    await _recover_for_request(request)
+    document = _document_store(request).get(document_id)
+    if document is None:
+        if await _retry_pending_vector_cleanup(request, document_id, confirm=body.confirm):
+            return
+        raise _not_found()
+    if not body.confirm:
+        raise DomainError("CONFIRMATION_REQUIRED", "请确认删除远端原文", 400)
     if not document.remote_id:
-        vector_ids = _document_store(request).vector_ids(document.id)
-        _document_store(request).delete_local(document.id)
-        _remove_local_files(request, document.id)
-        deletable_ids = _unowned_vector_ids(request, vector_ids)
-        if deletable_ids:
-            try:
-                await _vector_call(
-                    _vector_store(request).delete, document.repository_id, deletable_ids
-                )
-            except Exception:  # noqa: BLE001 - local cleanup remains retryable
-                _cleanup_store(request).create(document.repository_id, document.id, deletable_ids)
+        # 本地文档没有远端原文可删，走默认那条路，别假装删了远端。
+        await _remove_locally(request, document)
         return
     repository = _repository_store(request).get(document.repository_id)
     if repository is None or not repository.remote_id:
@@ -1331,16 +1393,111 @@ async def delete_document(request: Request, document_id: str, body: DocumentDele
         )
     except Exception as error:  # noqa: BLE001 - gateway boundary maps all failures
         raise _remote_failure(error) from None
-    vector_ids = _document_store(request).vector_ids(document.id)
-    _document_store(request).delete_local(document.id)
-    deletable_ids = _unowned_vector_ids(request, vector_ids)
-    try:
-        if deletable_ids:
-            await asyncio.to_thread(
-                _vector_store(request).delete, document.repository_id, deletable_ids
+    await _remove_locally(request, document)
+
+
+@router.post(
+    "/api/repositories/{repository_id}/documents/remove",
+    response_model=DocumentRemovalResult,
+)
+async def remove_documents(
+    request: Request, repository_id: str, body: DocumentRemoveRequest
+) -> DocumentRemovalResult:
+    """批量把文档移出 DocMind（同样只删本地）。
+
+    一篇一个请求在几十篇时既慢又会在中途失败，留下"移除了一半"这种最难解释的
+    结果；这里在一个事务里登记移除记录，逐篇清本地。列表里不存在的 id 直接跳过，
+    不报错 —— 批量操作里"已经被别人删掉了"不该让整批失败。
+    """
+    await _recover_for_request(request)
+    repository = _repository_store(request).get(repository_id)
+    if repository is None:
+        raise _not_found()
+    store = _document_store(request)
+    documents = [
+        document
+        for document_id in dict.fromkeys(body.document_ids)
+        if (document := store.get(document_id)) is not None
+        and document.repository_id == repository_id
+    ]
+    # 先把所有远端身份一次登记完，再逐篇清本地：登记是廉价的，而少了任何一条，
+    # 那篇文档都会在下次远端更新时自己回来。
+    remote_pairs = [
+        (document.remote_id, document.title)
+        for document in documents
+        if document.remote_id
+    ]
+    if remote_pairs:
+        _removed_document_store(request).add_many(repository_id, remote_pairs)
+    for document in documents:
+        vector_ids = store.vector_ids(document.id)
+        store.delete_local(document.id)
+        _remove_local_files(request, document.id)
+        deletable_ids = _unowned_vector_ids(request, vector_ids)
+        if not deletable_ids:
+            continue
+        try:
+            await _vector_call(
+                _vector_store(request).delete, repository_id, deletable_ids
             )
-    except Exception:  # noqa: BLE001 - local cleanup must continue after remote success
-        _cleanup_store(request).create(document.repository_id, document.id, deletable_ids)
+        except Exception:  # noqa: BLE001 - 本地清理仍可重试
+            _cleanup_store(request).create(repository_id, document.id, deletable_ids)
+    return DocumentRemovalResult(removed=len(documents))
+
+
+@router.get(
+    "/api/repositories/{repository_id}/removed-documents",
+    response_model=list[RemovedDocumentView],
+)
+async def list_removed_documents(
+    request: Request, repository_id: str
+) -> list[RemovedDocumentView]:
+    if _repository_store(request).get(repository_id) is None:
+        raise _not_found()
+    return [
+        RemovedDocumentView(
+            id=record.id,
+            repository_id=record.repository_id,
+            remote_id=record.remote_id,
+            title=record.title,
+            removed_at=record.removed_at,
+        )
+        for record in _removed_document_store(request).list_for_repository(repository_id)
+    ]
+
+
+@router.post(
+    "/api/repositories/{repository_id}/removed-documents/{removal_id}/restore",
+    response_model=RemovedDocumentRestoreResult,
+)
+async def restore_removed_document(
+    request: Request, repository_id: str, removal_id: str
+) -> RemovedDocumentRestoreResult:
+    """恢复一篇被移除的远端文档：删掉移除记录，并允许它再次被同步。
+
+    必须同时清掉 ``repository_sync_state`` 里那条陈旧快照。同步靠它判重，
+    快照还在、远端内容又恰好没变过的话，之后那次同步会把它当 ``unchanged``
+    跳过 —— 文档就永远回不来了（这一点实测过）。
+
+    文档内容要由同步重新下载并重建索引（重活），所以这里只负责"允许它回来"，
+    真正的拉回由调用方紧接着触发一次同步。
+    """
+    if _repository_store(request).get(repository_id) is None:
+        raise _not_found()
+    store = _removed_document_store(request)
+    record = store.get(removal_id)
+    if record is None or record.repository_id != repository_id:
+        raise _not_found()
+    discarded = store.discard(removal_id)
+    if discarded is None:  # pragma: no cover - 上一行刚读到它
+        raise _not_found()
+    request.app.state.sync_state_store.discard(repository_id, discarded.remote_id)
+    return RemovedDocumentRestoreResult(
+        removal_id=removal_id,
+        repository_id=repository_id,
+        remote_id=discarded.remote_id,
+        title=discarded.title,
+    )
 
 
 @router.post("/api/documents/{document_id}/conflict", status_code=status.HTTP_204_NO_CONTENT)

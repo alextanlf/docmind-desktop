@@ -215,16 +215,16 @@ describe("Workspace", () => {
     expect(screen.getByRole("button", { name: "导入文档" })).toHaveFocus();
   });
 
-  it("names the actual repository in the document delete confirmation", async () => {
+  it("names the actual repository in the document removal confirmation", async () => {
     installDocMindApi();
     renderWorkspace();
 
     fireEvent.click(await screen.findByRole("button", { name: `展开 ${repository.name}` }));
     fireEvent.click(await screen.findByRole("button", { name: document.title }));
-    fireEvent.click(await screen.findByRole("button", { name: "删除文档" }));
+    fireEvent.click(await screen.findByRole("button", { name: "移除文档" }));
 
     expect(
-      await screen.findByText(new RegExp(`将从「${repository.name}」删除「${document.title}」`)),
+      await screen.findByText(new RegExp(`将从「${repository.name}」移除「${document.title}」`)),
     ).toBeVisible();
   });
 

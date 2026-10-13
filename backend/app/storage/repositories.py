@@ -47,6 +47,8 @@ from app.storage.models import (
     MemoryChunkRecord,
     MemoryVectorCleanupRecord,
     MessageRecord,
+    RemovedRemoteDocumentRecord,
+    RemovedRemoteRepositoryRecord,
     RepositoryRecord,
     RepositorySyncMetaRecord,
     RepositorySyncStateRecord,
@@ -68,6 +70,43 @@ def utc_now() -> datetime:
 
 def _stale_confirmation(message: str = "批次来源或目标已变化，请重新确认") -> DomainError:
     return DomainError("BATCH_STALE_CONFIRMATION", message, 409, False)
+
+
+def _prune_scope(raw: str | None, repository_id: str) -> str | None:
+    """从 JSON 数组里摘掉一个仓库 id；没命中就返回 ``None``（表示不必写回）。
+
+    这些范围不是"显示用"的副本，而是索引侧真正会读的输入：``memory/indexer.py``
+    拿 ``session_summaries.repository_ids_json`` 去建 memory_chunks，而那一列的
+    ``repository_id`` 是指向 repositories 的外键。留下悬空 id 的后果不是界面显示
+    得不对，是下次索引直接撞外键约束 —— 一个永远重试不成功的记忆摘要。
+    """
+    try:
+        loaded = json.loads(raw or "[]")
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(loaded, list):
+        return None
+    kept = [item for item in loaded if item != repository_id]
+    if len(kept) == len(loaded):
+        return None
+    return json.dumps(kept)
+
+
+@dataclass(frozen=True)
+class RepositoryDeletion:
+    """一次知识库删除之后，留在别处的东西。
+
+    SQLite 侧是一次事务，但向量不在这张库里：文档分块住在按仓库命名的集合，记忆
+    分块住在两个共享集合。删集合是会失败的外部操作，必须还能重试，所以这里把
+    「还欠哪些向量」原样带出去，由调用方当场删或落进已有的清理队列 —— 与文档级
+    删除走同一条路径，而不是在这里偷偷起一个没人重放的清理流程。
+    """
+
+    document_ids: list[str]
+    #: document_id → 那个文档的向量 id（含之前删除失败、还挂在清理队列里的那些）。
+    #: 集合整删成功就一行都用不上；整删失败时靠它回退。
+    document_vectors: dict[str, list[str]]
+    memory_vector_ids: dict[str, list[str]]
 
 
 _batch_confirmation_session: ContextVar[Session | None] = ContextVar(
@@ -162,6 +201,265 @@ class RepositoryStore:
                     remote_url,
                     utc_now(),
                 )
+            session.flush()
+            return record
+
+    def delete_cascade(self, repository_id: str) -> RepositoryDeletion | None:
+        """删掉一个知识库，以及所有以它为锚的本地状态；不存在时返回 ``None``。
+
+        外键兜得住的交给 SQLite：``documents`` / ``document_chunks`` /
+        ``memory_chunks`` 级联删除，``import_jobs`` / ``batch_imports`` /
+        ``distillations.target_repository_id`` 置空。下面三类外键兜不住，必须
+        显式处理 —— 它们只存了一个 id 字符串，schema 里根本没有 REFERENCES：
+
+        * **裸 repository_id 列**：``vector_cleanups`` / ``document_mutations`` /
+          ``repository_sync_state`` / ``repository_sync_meta``。
+        * **按 document_id 挂的衍生数据**：``document_versions`` /
+          ``graph_nodes`` / ``graph_edges`` / ``embedding_rebuild``。不删它们，
+          图谱会继续列着已删文档的节点，而那正是用户以为"删干净了"的地方。
+        * **JSON 里的仓库范围**：会话范围、记忆摘要与蒸馏的范围（见
+          ``_prune_scope``：那里留着悬空 id 会让下次索引撞外键）。
+
+        向量一概不在这里删 —— 见 ``RepositoryDeletion``。
+        """
+        with self.database.session() as session:
+            record = session.get(RepositoryRecord, repository_id)
+            if record is None:
+                return None
+
+            # 只取 id 列而不是实体：一旦 DocumentRecord 进了 identity map，
+            # SQLAlchemy 就不会再对 ``passive_deletes`` 视而不见，而会去把子行的
+            # 外键置空 —— 那正好和外键的 ON DELETE CASCADE 打架。
+            document_ids = list(
+                session.scalars(
+                    select(DocumentRecord.id).where(DocumentRecord.repository_id == repository_id)
+                )
+            )
+            memory_vector_ids: dict[str, list[str]] = {}
+            # 函数内导入是必须的，不是随手：`app.memory.collections` 会先执行
+            # `app/memory/__init__.py`，它反过来 import 了 app.memory.summary，
+            # 而 summary 又 import 本模块 —— 模块级导入会在这里炸成循环。
+            from app.memory.collections import DISTILLATION_COLLECTION, SUMMARY_COLLECTION
+
+            for vector_id, summary_id in session.execute(
+                select(MemoryChunkRecord.vector_id, MemoryChunkRecord.summary_id).where(
+                    MemoryChunkRecord.repository_id == repository_id
+                )
+            ):
+                collection = (
+                    SUMMARY_COLLECTION if summary_id is not None else DISTILLATION_COLLECTION
+                )
+                memory_vector_ids.setdefault(collection, []).append(vector_id)
+
+            document_vectors: dict[str, list[str]] = {}
+            for document_id, vector_id in session.execute(
+                select(DocumentChunkRecord.document_id, DocumentChunkRecord.vector_id).where(
+                    DocumentChunkRecord.repository_id == repository_id,
+                    DocumentChunkRecord.vector_id.is_not(None),
+                )
+            ):
+                document_vectors.setdefault(document_id, []).append(vector_id)
+            # 上一次文档删除没删掉的向量还挂在清理队列里，而队列行马上就要被下面
+            # 那轮 delete 带走。先把 ids 接过来，否则集合整删一旦失败就没人再记得
+            # 它们 —— 那才是真正的泄漏：行没了、向量还在，且再也没人查得到。
+            for document_id, raw in session.execute(
+                select(VectorCleanupRecord.document_id, VectorCleanupRecord.vector_ids_json).where(
+                    VectorCleanupRecord.repository_id == repository_id
+                )
+            ):
+                document_vectors.setdefault(document_id, []).extend(json.loads(raw or "[]"))
+
+            for model in (
+                VectorCleanupRecord,
+                DocumentMutationRecord,
+                RepositorySyncStateRecord,
+                RepositorySyncMetaRecord,
+            ):
+                session.execute(delete(model).where(model.repository_id == repository_id))
+
+            if document_ids:
+                for model in (DocumentVersionRecord, EmbeddingRebuildRecord):
+                    session.execute(delete(model).where(model.document_id.in_(document_ids)))
+                # 图的边按节点 id 挂，两个方向都要摘；漏掉 target 方向会留下
+                # 指向已删文档节点的悬空边。
+                for column in (GraphEdgeRecord.source_id, GraphEdgeRecord.target_id):
+                    session.execute(delete(GraphEdgeRecord).where(column.in_(document_ids)))
+                session.execute(
+                    delete(GraphNodeRecord).where(GraphNodeRecord.document_id.in_(document_ids))
+                )
+
+            for model, column in (
+                (SessionRecord, SessionRecord.repository_scope_json),
+                (SessionSummaryRecord, SessionSummaryRecord.repository_ids_json),
+                (DistillationRecord, DistillationRecord.repository_ids_json),
+            ):
+                self._prune_scope_column(session, model, column, repository_id)
+
+            session.delete(record)
+            # "已移除"必须和删除在同一个事务里写。分两次写会出现两种半状态：
+            # 删掉了但没记住（下次刷新它自己回来），或记住了但没删掉（界面里没了、
+            # 数据还在）。远端绑定的库才需要 —— 只有它会被列表同步重新拉进来。
+            if record.provider and record.remote_id:
+                session.execute(
+                    sqlite_insert(RemovedRemoteRepositoryRecord)
+                    .values(
+                        id=str(uuid4()),
+                        provider=record.provider,
+                        remote_id=record.remote_id,
+                        name=record.name,
+                    )
+                    .on_conflict_do_update(
+                        index_elements=[
+                            RemovedRemoteRepositoryRecord.provider,
+                            RemovedRemoteRepositoryRecord.remote_id,
+                        ],
+                        set_={"name": record.name},
+                    )
+                )
+            session.flush()
+            return RepositoryDeletion(
+                document_ids=document_ids,
+                document_vectors=document_vectors,
+                memory_vector_ids=memory_vector_ids,
+            )
+
+    @staticmethod
+    def _prune_scope_column(session: Session, model: Any, column: Any, repository_id: str) -> None:
+        """把 ``column`` 里的仓库 id 摘掉。
+
+        按 (id, 列) 逐行读，而不是把整行实体取回来：``session_summaries`` 与
+        ``distillations`` 都有 ``content`` 正文列，为了改一行范围把全文读进内存
+        不值当。
+        """
+        for row_id, raw in session.execute(select(model.id, column)):
+            pruned = _prune_scope(raw, repository_id)
+            if pruned is not None:
+                session.execute(
+                    update(model).where(model.id == row_id).values({column.key: pruned})
+                )
+
+
+class RemovedRemoteRepositoryStore:
+    """「用户主动移除的远端知识库」这张表的读写。
+
+    条目只在两处产生/消失：删除远端绑定的知识库时写下（在 ``RepositoryStore.
+    delete_cascade`` 的同一个事务里），用户点「恢复」时删掉。列表同步读它来跳过
+    已被移除的远端仓库。
+    """
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def list(self) -> list[RemovedRemoteRepositoryRecord]:
+        with self.database.session() as session:
+            return list(
+                session.scalars(
+                    select(RemovedRemoteRepositoryRecord).order_by(
+                        RemovedRemoteRepositoryRecord.removed_at.desc()
+                    )
+                )
+            )
+
+    def get(self, removal_id: str) -> RemovedRemoteRepositoryRecord | None:
+        with self.database.session() as session:
+            return session.get(RemovedRemoteRepositoryRecord, removal_id)
+
+    def identities(self) -> set[tuple[str, str]]:
+        """被移除的 ``(provider, remote_id)`` 集合，给列表同步做过滤。"""
+        with self.database.session() as session:
+            return {
+                (provider, remote_id)
+                for provider, remote_id in session.execute(
+                    select(
+                        RemovedRemoteRepositoryRecord.provider,
+                        RemovedRemoteRepositoryRecord.remote_id,
+                    )
+                )
+            }
+
+    def discard(self, removal_id: str) -> bool:
+        """恢复：删掉这条移除记录。返回是否真的删掉了一行。"""
+        with self.database.session() as session:
+            record = session.get(RemovedRemoteRepositoryRecord, removal_id)
+            if record is None:
+                return False
+            session.delete(record)
+            return True
+
+
+class RemovedRemoteDocumentStore:
+    """「从 DocMind 移除的远端文档」这张表的读写。
+
+    写入点只有一个：本地移除一篇带 ``remote_id`` 的文档时。读取点也只有一个：
+    同步循环在导入前查这份集合。恢复时删行 —— 但恢复还必须顺手清掉
+    ``RepositorySyncStateStore`` 里那份陈旧快照，见那边的 ``discard``。
+    """
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def add_many(self, repository_id: str, documents: Sequence[tuple[str, str]]) -> None:
+        """登记一批 ``(remote_id, title)``，同一个远端文档重复移除只留一条。
+
+        批量移除走一个事务：几十篇文档逐条开事务既慢又会在中途失败时留下半截
+        状态 —— 而"移除了一半"对用户来说是最难解释的结果。
+        """
+        if not documents:
+            return
+        with self.database.session() as session:
+            for remote_id, title in documents:
+                session.execute(
+                    sqlite_insert(RemovedRemoteDocumentRecord)
+                    .values(
+                        id=str(uuid4()),
+                        repository_id=repository_id,
+                        remote_id=remote_id,
+                        title=title,
+                    )
+                    .on_conflict_do_update(
+                        index_elements=[
+                            RemovedRemoteDocumentRecord.repository_id,
+                            RemovedRemoteDocumentRecord.remote_id,
+                        ],
+                        set_={"title": title},
+                    )
+                )
+            session.flush()
+
+    def identities(self, repository_id: str) -> set[str]:
+        """被移除的远端文档 id 集合，给同步循环做过滤。"""
+        with self.database.session() as session:
+            return set(
+                session.scalars(
+                    select(RemovedRemoteDocumentRecord.remote_id).where(
+                        RemovedRemoteDocumentRecord.repository_id == repository_id
+                    )
+                )
+            )
+
+    def list_for_repository(
+        self, repository_id: str
+    ) -> list[RemovedRemoteDocumentRecord]:
+        with self.database.session() as session:
+            return list(
+                session.scalars(
+                    select(RemovedRemoteDocumentRecord)
+                    .where(RemovedRemoteDocumentRecord.repository_id == repository_id)
+                    .order_by(RemovedRemoteDocumentRecord.removed_at.desc())
+                )
+            )
+
+    def get(self, removal_id: str) -> RemovedRemoteDocumentRecord | None:
+        with self.database.session() as session:
+            return session.get(RemovedRemoteDocumentRecord, removal_id)
+
+    def discard(self, removal_id: str) -> RemovedRemoteDocumentRecord | None:
+        """恢复：删掉这条移除记录，返回它（调用方要用 repository_id/remote_id）。"""
+        with self.database.session() as session:
+            record = session.get(RemovedRemoteDocumentRecord, removal_id)
+            if record is None:
+                return None
+            session.delete(record)
             session.flush()
             return record
 
@@ -383,6 +681,7 @@ class DocumentStore:
         content_hash: str,
         source_url: str,
         markdown_path: str | None = None,
+        remote_path: Sequence[str] | None = None,
     ) -> None:
         with self.database.session() as session:
             document = session.get(DocumentRecord, document_id)
@@ -393,6 +692,10 @@ class DocumentStore:
             document.source_url = source_url
             if markdown_path is not None:
                 document.markdown_path = markdown_path
+            # None 表示"这次没带路径信息"，不要用它把已知路径清成根目录 ——
+            # 只有真正读到路径（可能是空列表 = 确实在根目录）才写。
+            if remote_path is not None:
+                document.remote_path_json = json.dumps(list(remote_path))
             document.remote_deleted = False
             document.updated_at = utc_now()
             session.flush()
@@ -713,6 +1016,25 @@ class ImportJobStore:
             return list(
                 session.scalars(select(ImportJobRecord).order_by(ImportJobRecord.created_at))
             )
+
+    def has_active_for_repository(self, repository_id: str) -> bool:
+        """这个知识库上是否还有导入正在跑。
+
+        删除知识库前必须先问这一句：导入流水线正在往这个仓库写 documents 与
+        chunks，而两列都有指向 repositories 的外键。删掉之后它下一次写入撞的是
+        外键约束，用户看到的是"导入失败"加一个数据库错误，而不是"你正在导入"。
+        检查与删除之间仍有理论上的竞争窗口；单进程桌面应用里这个窗口不值得再加锁。
+        """
+        with self.database.session() as session:
+            active = session.scalar(
+                select(func.count())
+                .select_from(ImportJobRecord)
+                .where(
+                    ImportJobRecord.repository_id == repository_id,
+                    ImportJobRecord.state.in_(self._ACTIVE_STATES),
+                )
+            )
+        return bool(active)
 
     def transition(
         self,
@@ -2880,6 +3202,21 @@ class DocumentMutationStore:
         with self.database.session() as session:
             return session.get(DocumentMutationRecord, mutation_id)
 
+    def has_pending_for_repository(self, repository_id: str) -> bool:
+        """这个知识库上是否还有文档变更在飞。
+
+        调用方必须先跑一次启动恢复（``recover_document_mutations``）：那条路径会
+        补偿掉崩溃遗留的意图并删行，剩下的才真的是"此刻正在进行"。否则一条陈旧的
+        记录会让知识库永远删不掉，直到下次重启 —— 那不是保护，是卡死。
+        """
+        with self.database.session() as session:
+            pending = session.scalar(
+                select(func.count())
+                .select_from(DocumentMutationRecord)
+                .where(DocumentMutationRecord.repository_id == repository_id)
+            )
+        return bool(pending)
+
     def update(
         self,
         mutation_id: str,
@@ -2977,6 +3314,7 @@ class RepositorySyncStateStore:
         title: str,
         content_sha256: str,
         url: str,
+        path: Sequence[str] = (),
     ) -> None:
         with self.database.session() as session:
             record = session.get(RepositorySyncStateRecord, (repository_id, document_id))
@@ -2988,6 +3326,7 @@ class RepositorySyncStateStore:
                         title=title,
                         content_sha256=content_sha256,
                         url=url,
+                        path_json=json.dumps(list(path)),
                         last_seen_at=utc_now(),
                     )
                 )
@@ -2995,6 +3334,7 @@ class RepositorySyncStateStore:
                 record.title = title
                 record.content_sha256 = content_sha256
                 record.url = url
+                record.path_json = json.dumps(list(path))
                 record.last_seen_at = utc_now()
             session.flush()
 
@@ -3011,9 +3351,25 @@ class RepositorySyncStateStore:
                     record.title,
                     record.content_sha256,
                     record.url,
+                    tuple(json.loads(record.path_json or "[]")),
                 )
                 for record in records
             }
+
+    def discard(self, repository_id: str, document_id: str) -> None:
+        """忘掉一篇文档的"上次见到的远端状态"。
+
+        恢复一篇被移除的远端文档时必须调用它：同步用这份快照判重，快照还在且远端
+        内容恰好没变过的话，恢复后那次同步会把它当 ``unchanged`` 跳过 —— 也就是说
+        文档永远回不来。实测过：远端未变时不会重新导入，远端变了才会。
+
+        与 ``mark_remote_deleted`` 的分工：那条路是"远端把它删了，本地留着标记"，
+        这条是"我主动移除了，别再用旧快照挡住重新导入"。
+        """
+        with self.database.session() as session:
+            record = session.get(RepositorySyncStateRecord, (repository_id, document_id))
+            if record is not None:
+                session.delete(record)
 
     def set_last_synced_at(self, repository_id: str, iso: str) -> None:
         value = datetime.fromisoformat(iso)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import pytest
 
 from app.remote.registry import ProviderRegistry
@@ -25,6 +27,9 @@ class FakeDoc:
         self.local_dirty = local_dirty
         self.markdown_path = markdown_path
         self.sync_state = "synced"
+        # keep_remote 重新导入时会沿用本地已知的目录路径（read_document 不带路径，
+        # 用它反而会把已知目录抹成根目录），所以这个替身也要有这一列。
+        self.remote_path_json = "[]"
 
 
 class FakeDocumentStore:
@@ -79,8 +84,14 @@ class FakeRefresher:
         self.upserts: list[str] = []
 
     async def upsert_from_remote(
-        self, repository_id: str, document_id: str, title: str, content: str
+        self,
+        repository_id: str,
+        document_id: str,
+        title: str,
+        content: str,
+        path: Sequence[str] = (),
     ) -> str:
+        del path
         self.upserts.append(document_id)
         return "local"
 

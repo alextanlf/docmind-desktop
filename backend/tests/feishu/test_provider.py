@@ -71,7 +71,7 @@ async def test_lists_wiki_spaces_as_repositories(provider: FeishuProvider) -> No
 
 
 @respx.mock
-async def test_walks_wiki_tree_and_flattens_docx_nodes(provider: FeishuProvider) -> None:
+async def test_walks_wiki_tree_and_carries_each_nodes_directory_path(provider: FeishuProvider) -> None:
     route = respx.get(f"{BASE}/wiki/v2/spaces/sp1/nodes").mock(
         side_effect=[
             httpx.Response(
@@ -123,6 +123,10 @@ async def test_walks_wiki_tree_and_flattens_docx_nodes(provider: FeishuProvider)
     assert documents[0].url == "https://feishu.cn/wiki/wikDir"
     # The sheet node is skipped, and the child listing used the parent token.
     assert route.calls[1].request.url.params["parent_node_token"] == "wikDir"
+    # 层级本来就在这次遍历的栈上，之前只是被丢掉了。飞书里"页面即目录"：有子页面的
+    # 文档同时也是那些子页面的那一层，所以它的标题要进子页的路径。
+    assert documents[0].path == []
+    assert documents[1].path == ["目录页"]
 
 
 @respx.mock

@@ -9,7 +9,7 @@ import { document, installDocMindApi, repository, source } from "./test-docmind-
 describe("文档编辑", () => {
   beforeEach(() => appQueryClient.clear());
 
-  it("keeps document deletion disabled until the exact visible title is entered", () => {
+  it("keeps document removal disabled until the exact visible title is entered", () => {
     installDocMindApi();
     render(
       <DeleteDocumentDialog
@@ -19,12 +19,56 @@ describe("文档编辑", () => {
       />,
     );
 
-    const remove = screen.getByRole("button", { name: "删除文档" });
+    const remove = screen.getByRole("button", { name: "移除文档" });
     expect(remove).toBeDisabled();
     fireEvent.change(screen.getByLabelText("输入文档标题以确认"), {
       target: { value: document.title },
     });
     expect(remove).toBeEnabled();
+  });
+
+  it("never touches the remote unless the user opts in, once", async () => {
+    // 远端文档的默认动作必须是"只移出本地"。从前这个对话框对远端文档直接删远端
+    // 原文，而文案只写"此操作无法撤销" —— 用户以为在本地清理。
+    const api = installDocMindApi();
+    render(
+      <DeleteDocumentDialog
+        document={document}
+        repositoryName={repository.name}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(screen.getByText(/远端知识库里的原文会保留/)).toBeVisible();
+    fireEvent.change(screen.getByLabelText("输入文档标题以确认"), {
+      target: { value: document.title },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "移除文档" }));
+
+    await waitFor(() => expect(api.documents.remove).toHaveBeenCalledWith(document.id, true));
+    expect(api.documents.deleteRemote).not.toHaveBeenCalled();
+  });
+
+  it("only deletes the remote original after an explicit opt-in", async () => {
+    const api = installDocMindApi();
+    render(
+      <DeleteDocumentDialog
+        document={document}
+        repositoryName={repository.name}
+        onClose={() => undefined}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("同时删除远端原文（不可撤销）"));
+    // 勾上之后必须出现不可撤销的警示，否则用户是"盲勾"。
+    expect(screen.getByText(/远端原文将被永久删除/)).toBeVisible();
+    fireEvent.change(screen.getByLabelText("输入文档标题以确认"), {
+      target: { value: document.title },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "连远端一起删除" }));
+
+    await waitFor(() => expect(api.documents.deleteRemote).toHaveBeenCalledWith(document.id, true));
+    expect(api.documents.remove).not.toHaveBeenCalled();
   });
 
   it("renders the document as formatted content instead of raw Markdown", () => {

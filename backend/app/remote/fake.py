@@ -35,7 +35,9 @@ class FakeRemoteProvider:
         self.identity = ProviderIdentity(
             name=name,
             label=label,
-            capabilities=ProviderCapabilities(browser_install=True, marker_lookup=True),
+            capabilities=ProviderCapabilities(
+                browser_install=True, marker_lookup=True, document_paths=True
+            ),
         )
         self._lock = asyncio.Lock()
         self._repositories: dict[str, RemoteRepository] = {}
@@ -205,6 +207,40 @@ class FakeRemoteProvider:
         )
         self._repositories[remote_id] = repository
         return repository
+
+    def seed_document(
+        self,
+        repository_id: str,
+        title: str,
+        *,
+        remote_id: str,
+        content: str = "",
+        path: list[str] | None = None,
+    ) -> RemoteDocumentContent:
+        """造一篇远端文档，可以带目录路径。
+
+        路径是 e2e 唯一能覆盖"按目录移除"的手段：真实 provider 的层级要么来自
+        远端 API、要么来自页面内嵌数据，测试里都够不着，所以假体必须能表达它。
+        """
+        document = RemoteDocumentContent(
+            remote_id=remote_id,
+            repository_id=repository_id,
+            title=title,
+            content=content or f"# {title}\n\n{title} 的正文",
+            url=f"https://remote.local/{repository_id}/{remote_id}",
+            path=list(path or []),
+        )
+        self._documents[remote_id] = document
+        self._persist_state()
+        return document
+
+    def forget_repository(self, remote_id: str) -> None:
+        """让远端不再有这个概念，用来表达"用户在远端把它删了"。
+
+        与 `delete_repository` 区分：真删远端是写入操作（会记进 `write_calls`），
+        而这里说的是"远端本来就没有了"，不是 DocMind 干的。
+        """
+        self._repositories.pop(remote_id, None)
 
     @asynccontextmanager
     async def _serialized(self) -> AsyncIterator[None]:

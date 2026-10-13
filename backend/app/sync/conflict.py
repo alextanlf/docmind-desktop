@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -92,7 +93,11 @@ class SyncConflictService:
         elif resolution == ConflictResolution.keep_remote:
             remote = await provider.read_document(document.remote_id)
             await self.refresher.upsert_from_remote(
-                document.repository_id, document.remote_id, remote.title, remote.content
+                document.repository_id,
+                document.remote_id,
+                remote.title,
+                remote.content,
+                tuple(json.loads(document.remote_path_json or "[]")),
             )
         elif resolution == ConflictResolution.keep_both:
             remote = await provider.read_document(document.remote_id)

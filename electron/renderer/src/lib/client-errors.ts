@@ -3,6 +3,10 @@ type ClientError = { code?: string; retryable?: boolean };
 const messages: Record<string, string> = {
   BACKEND_PROTOCOL_ERROR: "应用与本地服务的数据格式不一致",
   APP_RESTART_UNAVAILABLE: "无法自动重启，请手动退出后重新打开应用",
+  // 知识库删除的两个前置条件。分开写是因为用户要做的事不一样：前者是"等一下"，
+  // 后者是"你漏了一个确认动作"（正常路径下不该出现，出现就是界面 bug）。
+  REPOSITORY_BUSY: "该知识库有导入或文档变更正在进行，请等它结束后再试",
+  CONFIRMATION_REQUIRED: "这次操作需要先确认，请重新确认后再试",
   LOCAL_MODEL_UNAVAILABLE: "本地模型服务未运行或暂时无法连接",
   LOCAL_MODEL_NOT_FOUND: "该模型未在本地服务中加载，请检查模型名称",
   LOCAL_MODEL_PROTOCOL_ERROR: "本地模型服务返回了无法识别的数据",

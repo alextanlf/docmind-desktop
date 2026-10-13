@@ -51,6 +51,7 @@ class FeishuProvider:
         keywords=("feishu", "飞书", "lark", "云文档"),
         homepage="https://open.feishu.cn/document/",
         capabilities=ProviderCapabilities(
+            document_paths=True,
             browser_install=False,
             marker_lookup=True,
             parent_node_write=True,
@@ -136,8 +137,8 @@ class FeishuProvider:
     async def list_documents(self, repository_id: str) -> list[RemoteDocument]:
         token = await self._tokens.require_token()
         return [
-            _node_to_document(node, repository_id)
-            for node in await self._walk_nodes(token, repository_id)
+            _node_to_document(node, repository_id, path)
+            for node, path in await self._walk_nodes(token, repository_id)
             if str(node.get("obj_type") or "") == "docx"
         ]
 
@@ -240,20 +241,28 @@ class FeishuProvider:
     async def close(self) -> None:
         return None
 
-    async def _walk_nodes(self, token: str, repository_id: str) -> list[dict[str, object]]:
-        """Walk wiki metadata without reading document bodies."""
-        nodes: list[dict[str, object]] = []
-        stack: list[tuple[str | None, int]] = [(None, 0)]
+    async def _walk_nodes(
+        self, token: str, repository_id: str
+    ) -> list[tuple[dict[str, object], list[str]]]:
+        """Walk wiki metadata without reading document bodies.
+
+        每个节点连同它的**目录路径**一起返回（祖先标题，由根到父）。飞书里"页面即
+        目录"：一个有子页面的文档同时也是那些子页面的那一层，所以它的标题要进
+        子节点的路径。父子关系本来就在这个栈里，之前只是被丢掉了。
+        """
+        nodes: list[tuple[dict[str, object], list[str]]] = []
+        stack: list[tuple[str | None, int, list[str]]] = [(None, 0, [])]
         while stack:
-            parent_token, depth = stack.pop()
+            parent_token, depth, parent_path = stack.pop()
             if depth > _MAX_TREE_DEPTH:
                 continue
             children = await client.list_space_nodes(token, repository_id, parent_token)
             for node in reversed(children):
-                nodes.append(node)
+                nodes.append((node, parent_path))
                 node_token = node.get("node_token")
                 if node.get("has_child") and node_token:
-                    stack.append((str(node_token), depth + 1))
+                    child_path = [*parent_path, str(node.get("title") or node_token)]
+                    stack.append((str(node_token), depth + 1, child_path))
         return nodes
 
     async def _find_document_by_search(
@@ -326,11 +335,14 @@ async def _replace_document_body(token: str, document_id: str, markdown: str) ->
     await client.insert_descendant_blocks(token, document_id, first_level_ids, descendants)
 
 
-def _node_to_document(node: dict[str, object], repository_id: str) -> RemoteDocument:
+def _node_to_document(
+    node: dict[str, object], repository_id: str, path: list[str] | None = None
+) -> RemoteDocument:
     node_token = str(node.get("node_token") or "")
     return RemoteDocument(
         remote_id=node_token,
         repository_id=repository_id,
         title=str(node.get("title") or node_token),
         url=f"https://feishu.cn/wiki/{node_token}",
+        path=list(path or []),
     )

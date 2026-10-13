@@ -44,6 +44,9 @@ async def test_lists_repositories_and_documents_with_stable_ids() -> None:
             },
         )
     )
+    respx.get("https://www.yuque.com/api/v2/repos/tan/product/toc").mock(
+        return_value=httpx.Response(200, json={"data": _TOC})
+    )
 
     repositories = await gateway().list_repositories()
     documents = await gateway().list_documents("tan/product")
@@ -54,6 +57,64 @@ async def test_lists_repositories_and_documents_with_stable_ids() -> None:
     assert repositories[0].url == "https://www.yuque.com/tan/product"
     assert documents[0].remote_id == "tan/product/requirements"
     assert documents[0].url == "https://www.yuque.com/tan/product/requirements"
+    # 目录是独立于文档列表的一份结构：路径只能从 TOC 推出来。
+    assert documents[0].path == ["第一章", "第一节"]
+    assert documents[1].path == []
+
+
+#: 语雀 TOC 的形状：TITLE 是纯目录项，DOC 才是文档，靠 parent_uuid 串成树。
+_TOC = [
+    {"uuid": "t1", "type": "TITLE", "title": "第一章", "parent_uuid": "", "depth": 0},
+    {"uuid": "t2", "type": "TITLE", "title": "第一节", "parent_uuid": "t1", "depth": 1},
+    {
+        "uuid": "d1",
+        "type": "DOC",
+        "title": "需求",
+        "slug": "requirements",
+        "parent_uuid": "t2",
+        "depth": 2,
+    },
+    {"uuid": "d2", "type": "DOC", "title": "设计", "slug": "design", "parent_uuid": "", "depth": 0},
+]
+
+
+@respx.mock
+async def test_missing_toc_degrades_to_flat_paths_instead_of_failing() -> None:
+    """目录读不到时**不许连累文档列表**。
+
+    目录接口对凭据/套餐的可见性与文档列表不一致（只读成员、团队版限制都可能让它
+    403）。路径只是锦上添花；把它做成硬依赖，代价是"连文档都列不出来了"。
+    """
+    respx.get("https://www.yuque.com/api/v2/repos/tan/product/docs").mock(
+        return_value=httpx.Response(
+            200, json={"data": [{"id": 11, "title": "需求", "slug": "requirements"}]}
+        )
+    )
+    respx.get("https://www.yuque.com/api/v2/repos/tan/product/toc").mock(
+        return_value=httpx.Response(403, json={"message": "forbidden"})
+    )
+
+    documents = await gateway().list_documents("tan/product")
+
+    assert [document.remote_id for document in documents] == ["tan/product/requirements"]
+    assert documents[0].path == []
+
+
+@respx.mock
+async def test_unexpected_toc_shape_yields_no_paths_rather_than_a_guess() -> None:
+    """形状不认识时宁可平铺。编一层看起来像树的层级，按目录移除时会漏文档。"""
+    respx.get("https://www.yuque.com/api/v2/repos/tan/product/docs").mock(
+        return_value=httpx.Response(
+            200, json={"data": [{"id": 11, "title": "需求", "slug": "requirements"}]}
+        )
+    )
+    respx.get("https://www.yuque.com/api/v2/repos/tan/product/toc").mock(
+        return_value=httpx.Response(200, json={"data": {"unexpected": "shape"}})
+    )
+
+    documents = await gateway().list_documents("tan/product")
+
+    assert documents[0].path == []
 
 
 @respx.mock

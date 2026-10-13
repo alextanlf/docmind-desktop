@@ -264,10 +264,10 @@ export function DocumentEditor({
             </button>
           ) : null}
           <button
-            aria-label="删除文档"
+            aria-label="移除文档"
             className="tree-icon-button"
             onClick={() => setDeleting(true)}
-            title="删除文档"
+            title="移除文档（远端原文不会被删除）"
             type="button"
           >
             <Trash2 aria-hidden="true" size={16} />

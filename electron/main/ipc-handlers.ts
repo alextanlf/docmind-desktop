@@ -17,7 +17,10 @@ import {
   DocumentVersionSchema,
   DocumentInputSchema,
   DocumentAssetNameSchema,
+  DocumentRemovalResultSchema,
   DocumentSummarySchema,
+  RemovedDocumentRestoreSchema,
+  RemovedDocumentSchema,
   ErrorEnvelopeSchema,
   GraphEdgeSchema,
   GraphNodeSchema,
@@ -28,6 +31,7 @@ import {
   ModelListViewSchema,
   ModelSettingsInputSchema,
   ModelStatusSchema,
+  RemovedRepositorySchema,
   RepositorySchema,
   SyncOutcomeSchema,
   SyncStatusSchema,
@@ -391,6 +395,21 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         jsonInit("PATCH", parse(UpdateRepositoryInputSchema, input)),
         RepositorySchema,
       ),
+    [IPC_CHANNELS.repositoriesRemove]: (_event, repositoryId, confirm) => {
+      if (confirm !== true) throw new DocMindClientError("INVALID_REQUEST", "必须确认删除");
+      return proxy.requestVoid(
+        `/api/repositories/${parse(UUID, repositoryId)}`,
+        jsonInit("DELETE", { confirm: true }),
+      );
+    },
+    [IPC_CHANNELS.repositoriesListRemoved]: () =>
+      proxy.requestJson("/api/repositories/removed", {}, z.array(RemovedRepositorySchema)),
+    [IPC_CHANNELS.repositoriesRestore]: (_event, removalId) =>
+      proxy.requestJson(
+        `/api/repositories/removed/${parse(UUID, removalId)}/restore`,
+        jsonInit("POST"),
+        RepositorySchema,
+      ),
     [IPC_CHANNELS.syncGet]: (_event, repositoryId) =>
       proxy.requestJson(
         `/api/repositories/${parse(UUID, repositoryId)}/sync`,
@@ -532,9 +551,35 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
     },
     [IPC_CHANNELS.documentsDelete]: (_event, documentId, confirm) => {
       const id = parse(UUID, documentId);
-      if (confirm !== true) throw new DocMindClientError("INVALID_REQUEST", "必须确认删除");
+      if (confirm !== true) throw new DocMindClientError("INVALID_REQUEST", "必须确认移除");
       return proxy.requestVoid(`/api/documents/${id}`, jsonInit("DELETE", { confirm: true }));
     },
+    [IPC_CHANNELS.documentsDeleteRemote]: (_event, documentId, confirm) => {
+      const id = parse(UUID, documentId);
+      if (confirm !== true) throw new DocMindClientError("INVALID_REQUEST", "必须确认删除远端原文");
+      return proxy.requestVoid(
+        `/api/documents/${id}/remote`,
+        jsonInit("DELETE", { confirm: true }),
+      );
+    },
+    [IPC_CHANNELS.documentsRemoveMany]: (_event, repositoryId, documentIds) =>
+      proxy.requestJson(
+        `/api/repositories/${parse(UUID, repositoryId)}/documents/remove`,
+        jsonInit("POST", { documentIds: z.array(UUID).min(1).max(500).parse(documentIds) }),
+        DocumentRemovalResultSchema,
+      ),
+    [IPC_CHANNELS.documentsListRemoved]: (_event, repositoryId) =>
+      proxy.requestJson(
+        `/api/repositories/${parse(UUID, repositoryId)}/removed-documents`,
+        {},
+        z.array(RemovedDocumentSchema),
+      ),
+    [IPC_CHANNELS.documentsRestoreRemoved]: (_event, repositoryId, removalId) =>
+      proxy.requestJson(
+        `/api/repositories/${parse(UUID, repositoryId)}/removed-documents/${parse(UUID, removalId)}/restore`,
+        jsonInit("POST"),
+        RemovedDocumentRestoreSchema,
+      ),
     [IPC_CHANNELS.importsInspect]: async (_event, input) =>
       SourcePreviewSchema.parse(
         await proxy.requestJson(

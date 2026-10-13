@@ -25,6 +25,9 @@ class RemoteDocumentState:
     title: str
     content_sha256: str
     url: str
+    #: 目录路径。进快照是必须的：否则远端把文档挪了目录，同步认为"什么都没变"，
+    #: 界面上的树就永远停在上一次的位置。默认空元组让既有构造点保持可用。
+    path: tuple[str, ...] = ()
 
 
 class ConflictResolutionInput(WireModel):

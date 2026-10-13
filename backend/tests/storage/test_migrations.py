@@ -189,8 +189,8 @@ def test_upgrade_creates_exact_phase_one_columns(database: Database) -> None:
         "sync_status", "document_count", "created_at", "updated_at",
     }
     assert {column["name"] for column in inspector.get_columns("documents")} == {
-        "id", "repository_id", "remote_id", "title", "source_url", "raw_path", "source_path",
-        "original_revision", "markdown_path",
+        "id", "repository_id", "remote_id", "title", "remote_path_json", "source_url", "raw_path",
+        "source_path", "original_revision", "markdown_path",
         "source_type", "content_hash", "chunk_count", "status", "remote_url", "source_identity",
         "source_revision", "remote_deleted", "sync_state", "local_dirty", "created_at", "updated_at",
     }

@@ -186,6 +186,70 @@ class RepositoryRecord(Base):
     chunks: Mapped[list[DocumentChunkRecord]] = relationship(passive_deletes=True)
 
 
+class RemovedRemoteRepositoryRecord(Base):
+    """用户主动从 DocMind 移除的远端知识库。
+
+    为什么需要这张表：``GET /api/repositories`` 的设计是"把 provider 返回的远端
+    仓库都拉进来"。仓库行删掉之后，下一次刷新列表会把它重新 upsert 回来 —— 用户
+    眼里就是"删了又出现"。所以"移除"必须留下痕迹，否则这个动作不成立。
+
+    记的是 ``(provider, remote_id)`` 而不是本地仓库 id：本地 id 会随删除消失，
+    而远端身份才是"同一个知识库"的判据。``name`` 一起存下来，是为了在"已移除"
+    列表里能显示用户认得的名字 —— 只剩两个 id 的话，用户没法判断该不该恢复。
+
+    **远端一个字节都没动**，这张表记的只是本地的意愿；恢复即删除此行。
+    """
+
+    __tablename__ = "removed_remote_repositories"
+    __table_args__ = (
+        UniqueConstraint("provider", "remote_id", name="uq_removed_remote_repositories"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    provider: Mapped[str] = mapped_column(String(32))
+    remote_id: Mapped[str] = mapped_column(String(255))
+    name: Mapped[str] = mapped_column(String(512))
+    removed_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
+    )
+
+
+class RemovedRemoteDocumentRecord(Base):
+    """用户从 DocMind 移除的远端文档 —— **远端原文一个字节都没动**。
+
+    为什么需要这张表（和 ``RemovedRemoteRepositoryRecord`` 同源，低一层）：
+    同步判重看的是 ``repository_sync_state`` 里那份"上次见到的远端状态"，不是本地
+    还有没有这篇文档。所以本地删掉一篇远端文档后，只要它**在远端被改过**，下一次
+    同步就会把它重新导入 —— 对一个还在更新的知识库来说，等于"移除"会被陆续撤销。
+    实测行为：远端未变时不会回来，远端一变就回来。
+
+    因此"移除"必须留痕。恢复即删掉此行，**并且**要同时清掉那份陈旧的同步快照，
+    否则远端内容若恰好没变过，恢复后永远不会被重新导入（这也实测过）。
+
+    ``repository_id`` 有外键并级联：删掉整个知识库时这些记录跟着走，不需要在
+    ``RepositoryStore.delete_cascade`` 里再记一笔。
+    """
+
+    __tablename__ = "removed_remote_documents"
+    __table_args__ = (
+        UniqueConstraint(
+            "repository_id", "remote_id", name="uq_removed_remote_documents"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    repository_id: Mapped[str] = mapped_column(
+        ForeignKey("repositories.id", ondelete="CASCADE"), index=True
+    )
+    remote_id: Mapped[str] = mapped_column(String(255))
+    #: 存标题是为了「已移除的文档」列表能显示用户认得的名字 —— 只剩一个远端 id
+    #: 的话，用户没法判断该不该恢复。
+    title: Mapped[str] = mapped_column(String(1024))
+    removed_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
+    )
+
+
 class DocumentRecord(Base):
     __tablename__ = "documents"
 
@@ -195,6 +259,12 @@ class DocumentRecord(Base):
     )
     remote_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     title: Mapped[str] = mapped_column(String(1024))
+    #: 这篇远端文档所在的目录路径（逐级名字的 JSON 数组，空数组 = 根目录）。
+    #: 存物化过的名字而不是节点 id：界面按目录移除时判据就是"名字前缀"，
+    #: 而 provider 之间唯一一致的表达方式也是名字。
+    remote_path_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="[]", server_default=text("'[]'")
+    )
     source_url: Mapped[str | None] = mapped_column(Text, index=True, nullable=True)
     #: 我们自己存的原件副本（历史字段：链接型文档不再写它）。
     raw_path: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -651,6 +721,11 @@ class RepositorySyncStateRecord(Base):
     title: Mapped[str] = mapped_column(String(1024), nullable=False)
     content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    #: 上次见到的目录路径。进快照是必须的：远端把文档挪了目录时，如果快照里没有
+    #: 这一项，同步会认为"什么都没变"，界面上的树就永远停在旧位置。
+    path_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="[]", server_default=text("'[]'")
+    )
     last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
 
 

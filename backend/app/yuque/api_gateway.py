@@ -106,7 +106,48 @@ class YuqueApiGateway:
         self.read_calls.append("list_documents")
         token = self._token_required()
         rows = await _list_all(token, f"/repos/{_quote_path(repository_id)}/docs")
-        return [_document_from_api(repository_id, row) for row in rows]
+        documents = [_document_from_api(repository_id, row) for row in rows]
+        paths = await self._document_paths(token, repository_id)
+        if not paths:
+            return documents
+        return [
+            document.model_copy(
+                update={"path": paths.get(_document_slug(document.remote_id), [])}
+            )
+            for document in documents
+        ]
+
+    async def _document_paths(
+        self, token: str, repository_id: str
+    ) -> dict[str, list[str]]:
+        """远端文档 id → 目录路径。**读不到就返回空**，不让它连累文档列表。
+
+        语雀的目录是独立一份结构（``/repos/:ns/:slug/toc``），文档列表本身回答不了
+        "这篇在哪个目录"。目录接口对凭据/套餐的可见性与文档列表并不一致（只读成员、
+        团队版限制都可能让它 403），而路径只是锦上添花：拿不到就平铺显示。把一个
+        可选能力做成硬依赖，代价是"连文档都列不出来了"。
+        """
+        try:
+            toc_rows = await self.fetch_toc(repository_id)
+        except DomainError:
+            return {}
+        return _paths_from_toc(toc_rows)
+
+    async def fetch_toc(self, repository_id: str) -> list[dict[str, Any]]:
+        """读知识库目录。形状容错：语雀各版本返回过裸列表，也包过一层。"""
+        token = self._token_required()
+        self.read_calls.append("fetch_toc")
+        data = await _request_data(
+            token, "GET", f"/repos/{_quote_path(repository_id)}/toc"
+        )
+        if isinstance(data, list):
+            return [row for row in data if isinstance(row, dict)]
+        if isinstance(data, dict):
+            for key in ("toc", "rows", "items"):
+                value = data.get(key)
+                if isinstance(value, list):
+                    return [row for row in value if isinstance(row, dict)]
+        return []
 
     async def create_document(self, request: CreateRemoteDocumentRequest) -> RemoteDocument:
         self.write_calls.append("create_document")
@@ -241,6 +282,7 @@ class YuqueProvider:
         capabilities=ProviderCapabilities(
             browser_install=True,
             marker_lookup=True,
+            document_paths=True,
             browser_unavailable_code=YUQUE_BROWSER_UNAVAILABLE_CODE,
         ),
     )
@@ -408,6 +450,67 @@ def _document_from_api(
         title=str(row.get("title") or slug),
         url=_document_url(row, repository_id, slug),
     )
+
+
+def _document_slug(remote_id: str) -> str:
+    """从 ``{repository_id}/{slug}`` 取出 slug（slug 是单段的，见 _parse_document_id）。"""
+    return remote_id.strip("/").rsplit("/", 1)[-1]
+
+
+def _toc_ancestor_titles(
+    by_uuid: dict[str, dict[str, Any]], row: dict[str, Any]
+) -> list[str]:
+    """沿 ``parent_uuid`` 往上收集祖先标题，由根到父。
+
+    每一层都算目录名，包括"本身也是文档、同时有子节点"的那种 —— 语雀里一个文档
+    可以既是内容又是下级文档的容器，用户看到的层级就是这样。
+    """
+    titles: list[str] = []
+    seen: set[str] = set()
+    parent = str(row.get("parent_uuid") or "")
+    while parent and parent not in seen:
+        seen.add(parent)  # 数据异常成环时不要死循环
+        node = by_uuid.get(parent)
+        if node is None:
+            break
+        title = str(node.get("title") or "").strip()
+        if title:
+            titles.append(title)
+        parent = str(node.get("parent_uuid") or "")
+    titles.reverse()
+    return titles
+
+
+def _toc_document_key(row: dict[str, Any]) -> str | None:
+    """这条目录节点对应的文档 slug。取不到就返回 None（宁可平铺，不要乱猜）。"""
+    slug = str(row.get("slug") or "").strip("/")
+    if slug:
+        return slug.rsplit("/", 1)[-1]
+    for field in ("url", "doc_id"):
+        value = str(row.get(field) or "").strip()
+        if value:
+            return value.split("?")[0].strip("/").rsplit("/", 1)[-1]
+    return None
+
+
+def _paths_from_toc(rows: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """目录节点列表 → {文档 slug: 祖先标题}。
+
+    只认 ``type == DOC`` 的节点（TITLE 是纯目录项、LINK 是外链，两者都不是文档）。
+    节点缺 ``slug``/``url`` 时也接受 ``doc_id``，因为不同版本语雀填的字段不一样。
+    """
+    by_uuid = {
+        str(row.get("uuid")): row for row in rows if str(row.get("uuid") or "")
+    }
+    paths: dict[str, list[str]] = {}
+    for row in rows:
+        if str(row.get("type") or "").upper() not in {"DOC", ""}:
+            continue
+        key = _toc_document_key(row)
+        if key is None:
+            continue
+        paths[key] = _toc_ancestor_titles(by_uuid, row)
+    return paths
 
 
 def _document_url(row: dict[str, Any], repository_id: str, slug: str) -> str:

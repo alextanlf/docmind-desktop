@@ -38,12 +38,49 @@ class DocumentDelete(WireModel):
     confirm: bool = False
 
 
+class DocumentRemoveRequest(WireModel):
+    """批量把文档移出 DocMind。只删本地，远端原文不动。"""
+
+    document_ids: list[str] = Field(default_factory=list, max_length=500)
+
+
+class DocumentRemovalResult(WireModel):
+    #: 真正被移出的篇数。列表里不存在的 id 会被跳过而不是报错，所以这个数字可能
+    #: 小于请求里的数量 —— 调用方要如实告诉用户到底移了几篇。
+    removed: int
+
+
+class RemovedDocumentView(WireModel):
+    """一篇被移出 DocMind 的远端文档。
+
+    带 ``title``：用户要凭它判断该不该恢复；只给一个远端 id 的话，这个列表就只是
+    一串看不懂的标识符。
+    """
+
+    id: str
+    repository_id: str
+    remote_id: str
+    title: str
+    removed_at: datetime
+
+
+class RemovedDocumentRestoreResult(WireModel):
+    removal_id: str
+    repository_id: str
+    remote_id: str
+    title: str
+
+
 class DocumentSummary(WireModel):
     id: str
     repository_id: str
     remote_id: str | None
     title: str
     remote_url: str | None
+    #: 远端目录路径（逐级名字）。空列表 = 根目录，本地文档恒为空列表。
+    #: 只对声明了 ``document_paths`` 的 provider 有实际内容 —— 界面据此决定
+    #: 显示树还是平铺，而不是自己猜一层层级出来。
+    path: list[str] = Field(default_factory=list)
     chunk_count: int
     status: str
     remote_deleted: bool

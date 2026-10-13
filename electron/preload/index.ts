@@ -15,7 +15,10 @@ import {
   RelinkOriginalInputSchema,
   DocumentVersionSchema,
   DocumentInputSchema,
+  DocumentRemovalResultSchema,
   DocumentSummarySchema,
+  RemovedDocumentRestoreSchema,
+  RemovedDocumentSchema,
   EventEnvelopeSchema,
   GraphEdgeSchema,
   GraphNodeSchema,
@@ -28,6 +31,7 @@ import {
   ModelProfileIdSchema,
   ModelSettingsInputSchema,
   ModelStatusSchema,
+  RemovedRepositorySchema,
   RepositorySchema,
   SyncOutcomeSchema,
   SyncStatusSchema,
@@ -279,6 +283,14 @@ const api: DocMindApi = {
         uuid(repositoryId),
         UpdateRepositoryInputSchema.parse(input),
       ),
+    remove: (repositoryId, confirm) => {
+      if (confirm !== true) return Promise.reject(new Error("INVALID_REQUEST"));
+      return invoke(IPC_CHANNELS.repositoriesRemove, z.undefined(), uuid(repositoryId), true);
+    },
+    listRemoved: () =>
+      invoke(IPC_CHANNELS.repositoriesListRemoved, RemovedRepositorySchema.array()),
+    restore: (removalId) =>
+      invoke(IPC_CHANNELS.repositoriesRestore, RepositorySchema, uuid(removalId)),
   },
   sync: {
     get: (repositoryId) => invoke(IPC_CHANNELS.syncGet, SyncStatusSchema, uuid(repositoryId)),
@@ -339,10 +351,30 @@ const api: DocMindApi = {
         uuid(documentId),
         DocumentInputSchema.parse(input),
       ),
-    delete: (documentId, confirm) => {
+    remove: (documentId, confirm) => {
       if (confirm !== true) return Promise.reject(new Error("INVALID_REQUEST"));
       return invoke(IPC_CHANNELS.documentsDelete, z.undefined(), uuid(documentId), true);
     },
+    deleteRemote: (documentId, confirm) => {
+      if (confirm !== true) return Promise.reject(new Error("INVALID_REQUEST"));
+      return invoke(IPC_CHANNELS.documentsDeleteRemote, z.undefined(), uuid(documentId), true);
+    },
+    removeMany: (repositoryId, documentIds) =>
+      invoke(
+        IPC_CHANNELS.documentsRemoveMany,
+        DocumentRemovalResultSchema,
+        uuid(repositoryId),
+        z.array(z.string().uuid()).min(1).max(500).parse(documentIds),
+      ),
+    listRemoved: (repositoryId) =>
+      invoke(IPC_CHANNELS.documentsListRemoved, RemovedDocumentSchema.array(), uuid(repositoryId)),
+    restoreRemoved: (repositoryId, removalId) =>
+      invoke(
+        IPC_CHANNELS.documentsRestoreRemoved,
+        RemovedDocumentRestoreSchema,
+        uuid(repositoryId),
+        uuid(removalId),
+      ),
     relinkOriginal: (documentId, path) =>
       invoke(
         IPC_CHANNELS.documentsRelinkOriginal,
