@@ -120,6 +120,21 @@ describe("responsive workspace styles", () => {
       stylesAt(1440, "workspace-grid", "reference-is-closed", "panel-resizer-reference")["display"],
     ).toBe("none");
   });
+
+  /**
+   * 记忆页的三行是「页头 / 筛选 / 分栏」，最后一行吃剩下的高度。`.workspace-content`
+   * 只是块级容器，不会替子元素撑高：少了 `height: 100%`，第三行的 `minmax(0, 1fr)`
+   * 就没有可分配空间，分栏退化成 86px 的内容高 —— 纵向分隔线只剩一小截，两个空状态
+   * 都浮在页顶（实测 1440x900 下 `.memory-layout` 只有 86px）。
+   */
+  it("stretches the memory split view to the workspace height", () => {
+    expect(stylesAt(1440, "memory-view")["height"]).toBe("100%");
+    expect(stylesAt(1440, "memory-view")["grid-template-rows"]).toBe("auto auto minmax(0, 1fr)");
+    // 空状态靠内边距对齐两栏的首行：列表栏自己一点内边距都没有，`<p>` 默认的
+    // 1em 外边距又比主区的 22px 少 10px，两个提示会一高一低、且左边那条贴着分栏线。
+    expect(stylesAt(1440, "memory-layout", "memory-empty")["margin"]).toBe("0");
+    expect(stylesAt(1440, "memory-layout", "memory-empty")["padding"]).toBe("22px 24px");
+  });
 });
 
 /**

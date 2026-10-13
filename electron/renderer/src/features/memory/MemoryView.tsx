@@ -1,5 +1,6 @@
 import { Brain, RefreshCw } from "lucide-react";
 import { useState } from "react";
+import { RepositoryScope } from "../repositories/RepositoryScope";
 import { useRepositoriesQuery } from "../repositories/repository.queries";
 import { DistillationEditor } from "./DistillationEditor";
 import { MemoryList } from "./MemoryList";
@@ -32,6 +33,9 @@ export function MemoryView() {
         <button
           aria-label="刷新记忆"
           className="icon-button"
+          // 列表查询在没选知识库时是关着的（`enabled: false`），此时 refetch 是空操作：
+          // 按钮得自己说出来，而不是点下去什么都不发生。
+          disabled={!repositoryIds.length}
           onClick={() => void query.refetch()}
           type="button"
         >
@@ -39,27 +43,23 @@ export function MemoryView() {
         </button>
       </header>
       <div className="memory-controls">
-        <label>
-          知识库
-          <select
-            aria-label="记忆知识库"
-            multiple
-            onChange={(event) =>
-              setRepositoryIds(
-                Array.from(event.currentTarget.selectedOptions, (option) => option.value),
-              )
-            }
-            value={repositoryIds}
-          >
-            {repositories.data?.map((repository) => (
-              <option key={repository.id} value={repository.id}>
-                {repository.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          类型
+        <div className="memory-control">
+          <span>知识库</span>
+          {/* 原来这里是个 `multiple` 的 `<select>`：Chromium 把它画成原生列表框，
+              全局的 `select { height: 36px }` 又只留得下一行 —— 看上去就是个写着
+              知识库名的输入框，既没有下拉箭头，也看不出能多选。会话工具栏早就有
+              同一个概念（选择知识库）的复选浮层，这里直接用同一个。 */}
+          <RepositoryScope
+            ariaLabel="记忆知识库"
+            emptyText="暂无知识库"
+            indexedOnly={false}
+            onChange={setRepositoryIds}
+            repositories={repositories.data ?? []}
+            selectedRepositoryIds={repositoryIds}
+          />
+        </div>
+        <div className="memory-control">
+          <span>类型</span>
           <select
             aria-label="记忆类型"
             onChange={(event) => setKind((event.target.value || undefined) as typeof kind)}
@@ -69,7 +69,7 @@ export function MemoryView() {
             <option value="session_summary">会话摘要</option>
             <option value="distillation">知识蒸馏</option>
           </select>
-        </label>
+        </div>
       </div>
       <div className="memory-layout">
         <aside aria-label="记忆列表">

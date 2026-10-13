@@ -2969,8 +2969,12 @@ progress::-webkit-progress-bar {
   animation: spin 800ms linear infinite;
 }
 
+/* `.workspace-content` 只是个块级容器，不会替子元素把高度撑满。这里不写 height，
+   第三行的 `minmax(0, 1fr)` 就没有可分配的空间 —— 分栏退化成内容高（实测 86px），
+   两栏的纵向分隔线只剩一小截，两个空状态都浮在页顶。 */
 .memory-view {
   display: grid;
+  height: 100%;
   min-height: 0;
   grid-template-rows: auto auto minmax(0, 1fr);
   background: var(--workspace);
@@ -3002,7 +3006,7 @@ progress::-webkit-progress-bar {
   padding: 12px 24px;
   border-bottom: 1px solid var(--line);
 }
-.memory-controls label,
+.memory-controls .memory-control,
 .distillation-editor > label,
 .memory-editor-toolbar label {
   display: grid;
@@ -3013,6 +3017,15 @@ progress::-webkit-progress-bar {
 }
 .memory-controls select {
   min-width: 180px;
+}
+/* 同一行里的「类型」是 36px 的下拉框，选择知识库的浮层默认只有 32px，矮一截。 */
+.memory-control > .repository-scope {
+  min-width: 180px;
+}
+.memory-control > .repository-scope summary {
+  min-height: 36px;
+  padding: 0 10px;
+  font-size: 13px;
 }
 .memory-layout {
   display: grid;
@@ -3061,6 +3074,15 @@ progress::-webkit-progress-bar {
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+/* 空状态是 `<p>`，默认的 1em 外边距会叠在所在栏的内边距上：主区自己有
+   22px 24px，列表栏一点内边距都没有。结果是右边那条提示比左边低 22px、
+   左边那条贴着分栏线。这里把外边距收掉，列表栏补一份和主区一样的内边距。 */
+.memory-empty {
+  margin: 0;
+}
+.memory-layout > aside > .memory-empty {
+  padding: 22px 24px;
 }
 .distillation-editor {
   display: grid;

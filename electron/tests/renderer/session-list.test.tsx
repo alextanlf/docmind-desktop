@@ -3,7 +3,7 @@ import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppProviders } from "../../renderer/src/app/AppProviders";
 import { appQueryClient } from "../../renderer/src/app/query-client";
-import { RepositoryScope } from "../../renderer/src/features/chat/RepositoryScope";
+import { RepositoryScope } from "../../renderer/src/features/repositories/RepositoryScope";
 import { SessionList } from "../../renderer/src/features/chat/SessionList";
 import { installDocMindApi, repository, session } from "./test-docmind-api";
 

@@ -17,7 +17,6 @@ import { IconButton } from "../components/IconButton";
 import { ContextMenuTrigger } from "../components/ContextMenu";
 import { PanelResizer } from "../components/PanelResizer";
 import { ChatPanel } from "../features/chat/ChatPanel";
-import { RepositoryScope } from "../features/chat/RepositoryScope";
 import { SessionList } from "../features/chat/SessionList";
 import {
   useDeleteSessionMutation,
@@ -36,6 +35,7 @@ import {
   type DismissDelays,
 } from "../features/imports/import-dismissal";
 import { DocumentEditor } from "../features/repositories/DocumentEditor";
+import { RepositoryScope } from "../features/repositories/RepositoryScope";
 import { RepositoryTree } from "../features/repositories/RepositoryTree";
 import { ReferencePanel } from "../features/references/ReferencePanel";
 import { citationIdentity, type ScopedCitation } from "../features/references/citation-types";
