@@ -9,7 +9,8 @@ import {
   Trash2,
 } from "lucide-react";
 import { useState } from "react";
-import type { Repository } from "../../../../shared/contracts";
+import type { RemoteProviderCapabilities, Repository } from "../../../../shared/contracts";
+import { ContextMenuTrigger, type ContextMenuItem } from "../../components/ContextMenu";
 import { clientErrorMessage, useRemoteProvidersQuery } from "../settings/settings.queries";
 import { ConflictList } from "./ConflictList";
 import { DeleteRepositoryDialog } from "./DeleteRepositoryDialog";
@@ -71,21 +72,20 @@ function RepositoryParentBinding({
   );
 }
 
-function RepositorySyncButton({ repositoryId }: { repositoryId: string }) {
+/**
+ * 立即同步。
+ *
+ * 不再是行内按钮：行里平铺三个图标正是这次要收掉的东西，而且它只在悬停时才有意义。
+ * 三个入口（右键、「⋯」、Shift+F10）共用的那一份菜单里都有它。
+ */
+function useSyncRepository(repositoryId: string) {
   const sync = useRepositorySyncQuery(repositoryId);
   const mutation = useSyncRepositoryMutation(repositoryId);
-  return (
-    <button
-      aria-label="立即同步"
-      className="tree-icon-button"
-      disabled={mutation.isPending}
-      onClick={() => mutation.mutate()}
-      title={sync.data?.lastSyncedAt ? `上次同步：${sync.data.lastSyncedAt}` : "立即同步"}
-      type="button"
-    >
-      <RefreshCw aria-hidden="true" size={14} />
-    </button>
-  );
+  return {
+    pending: mutation.isPending,
+    title: sync.data?.lastSyncedAt ? `上次同步：${sync.data.lastSyncedAt}` : "立即同步",
+    syncNow: () => mutation.mutate(),
+  };
 }
 
 /**
@@ -142,6 +142,114 @@ function RemovedRepositories({
       ) : null}
       <p className="tree-message">恢复后点「立即同步」把文档拉回来。</p>
     </div>
+  );
+}
+
+/**
+ * 侧边栏里的一行知识库。
+ *
+ * 行里现在只有名字、来源与篇数 —— 立即同步、重命名、移除都在这一行的菜单里（右键、
+ * 「⋯」、Shift+F10 三种入口共用）。原先三个图标平铺在每行右侧，目录一多就只剩图标
+ * 可看，这正是要收掉的东西。
+ *
+ * 自己持有"展开"与同步 mutation：`useSyncRepository` 是 hook，不能在一张列表的
+ * `map` 回调里调用。
+ */
+function RepositoryRow({
+  repository,
+  expanded,
+  capabilities,
+  sourceLabel,
+  onToggle,
+  onOpenDocument,
+  onRename,
+  onRemove,
+}: {
+  repository: Repository;
+  expanded: boolean;
+  capabilities: RemoteProviderCapabilities | undefined;
+  /** 来源的显示名（本地 / 语雀 / 飞书…），由列表算好传进来。 */
+  sourceLabel: string;
+  onToggle: () => void;
+  onOpenDocument?: (documentId: string, repositoryId: string) => void;
+  onRename: () => void;
+  onRemove: () => void;
+}) {
+  const sync = useSyncRepository(repository.id);
+  const items: ContextMenuItem[] = [
+    ...(repository.provider
+      ? [
+          {
+            label: "立即同步",
+            text: sync.pending ? "同步中…" : "立即同步",
+            icon: <RefreshCw aria-hidden="true" size={14} />,
+            onSelect: sync.syncNow,
+            disabled: sync.pending,
+          },
+        ]
+      : []),
+    {
+      label: `重命名 ${repository.name}`,
+      text: "重命名",
+      icon: <Pencil aria-hidden="true" size={14} />,
+      onSelect: onRename,
+    },
+    {
+      label: `移除 ${repository.name}`,
+      text: "移除知识库…",
+      icon: <Trash2 aria-hidden="true" size={14} />,
+      onSelect: onRemove,
+      danger: true,
+    },
+  ];
+
+  return (
+    <>
+      <div className="tree-row">
+        <button
+          aria-expanded={expanded}
+          aria-label={`${expanded ? "收起" : "展开"} ${repository.name}`}
+          className="repository-tree-button"
+          onClick={onToggle}
+          type="button"
+        >
+          {expanded ? (
+            <ChevronDown aria-hidden="true" size={15} />
+          ) : (
+            <ChevronRight aria-hidden="true" size={15} />
+          )}
+          <span>{repository.name}</span>
+          <small>
+            {sourceLabel} · {repository.documentCount}
+          </small>
+        </button>
+        <ContextMenuTrigger
+          items={items}
+          label="知识库操作"
+          triggerLabel={`${repository.name} 的操作`}
+        >
+          <span />
+        </ContextMenuTrigger>
+      </div>
+      {expanded ? (
+        <>
+          <RepositoryDocuments
+            onOpenDocument={onOpenDocument}
+            remoteRenameSupported={capabilities?.documentRename ?? false}
+            repositoryId={repository.id}
+            repositoryName={repository.name}
+          />
+          {repository.provider ? <ConflictList repositoryId={repository.id} /> : null}
+          {capabilities?.parentNodeWrite ? (
+            <RepositoryParentBinding
+              key={`${repository.id}:${repository.remoteParentId ?? ""}`}
+              initialValue={repository.remoteParentId ?? null}
+              repositoryId={repository.id}
+            />
+          ) : null}
+        </>
+      ) : null}
+    </>
   );
 }
 
@@ -248,62 +356,16 @@ export function RepositoryTree({ onOpenDocument }: RepositoryTreeProps) {
           const expanded = expandedId === repository.id;
           return (
             <li key={repository.id}>
-              <button
-                aria-expanded={expanded}
-                aria-label={`${expanded ? "收起" : "展开"} ${repository.name}`}
-                className="repository-tree-button"
-                onClick={() => setExpandedId(expanded ? null : repository.id)}
-                type="button"
-              >
-                {expanded ? (
-                  <ChevronDown aria-hidden="true" size={15} />
-                ) : (
-                  <ChevronRight aria-hidden="true" size={15} />
-                )}
-                <span>{repository.name}</span>
-                <small>
-                  {providerLabel(repository.provider)} · {repository.documentCount}
-                </small>
-              </button>
-              {repository.provider ? <RepositorySyncButton repositoryId={repository.id} /> : null}
-              <button
-                aria-label={`重命名 ${repository.name}`}
-                className="tree-icon-button"
-                onClick={() => setRenaming(repository)}
-                title="重命名知识库"
-                type="button"
-              >
-                <Pencil aria-hidden="true" size={14} />
-              </button>
-              <button
-                aria-label={`移除 ${repository.name}`}
-                className="tree-icon-button"
-                onClick={() => setRemoving(repository)}
-                title="移除知识库"
-                type="button"
-              >
-                <Trash2 aria-hidden="true" size={14} />
-              </button>
-              {expanded ? (
-                <>
-                  <RepositoryDocuments
-                    onOpenDocument={onOpenDocument}
-                    remoteRenameSupported={
-                      providerCapabilities(repository.provider)?.documentRename ?? false
-                    }
-                    repositoryId={repository.id}
-                    repositoryName={repository.name}
-                  />
-                  {repository.provider ? <ConflictList repositoryId={repository.id} /> : null}
-                  {providerCapabilities(repository.provider)?.parentNodeWrite ? (
-                    <RepositoryParentBinding
-                      key={`${repository.id}:${repository.remoteParentId ?? ""}`}
-                      initialValue={repository.remoteParentId ?? null}
-                      repositoryId={repository.id}
-                    />
-                  ) : null}
-                </>
-              ) : null}
+              <RepositoryRow
+                capabilities={providerCapabilities(repository.provider)}
+                expanded={expanded}
+                onOpenDocument={onOpenDocument}
+                onRemove={() => setRemoving(repository)}
+                onRename={() => setRenaming(repository)}
+                onToggle={() => setExpandedId(expanded ? null : repository.id)}
+                repository={repository}
+                sourceLabel={providerLabel(repository.provider)}
+              />
             </li>
           );
         })}

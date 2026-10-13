@@ -3,6 +3,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { appQueryClient } from "../../renderer/src/app/query-client";
 import { RepositoryTree } from "../../renderer/src/features/repositories/RepositoryTree";
+import { openRowMenu } from "./row-menu";
 import { document, feishuProviderSummary, installDocMindApi, repository } from "./test-docmind-api";
 
 describe("repository sync", () => {
@@ -27,7 +28,7 @@ describe("repository sync", () => {
     fireEvent.click(await screen.findByRole("button", { name: `展开 ${repository.name}` }));
     expect(await screen.findByText("远端已删除")).toBeVisible();
 
-    fireEvent.click(screen.getByRole("button", { name: "立即同步" }));
+    await openRowMenu(repository.name, "立即同步");
     await waitFor(() => expect(api.sync.trigger).toHaveBeenCalledWith(repository.id));
   });
 
@@ -84,6 +85,12 @@ describe("repository sync", () => {
     );
 
     expect(await screen.findByText("本地 · 1")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "立即同步" })).not.toBeInTheDocument();
+    // 菜单本身在（重命名/移除对本地库同样有效），但里面不该有「立即同步」——
+    // 本地库没有上游可同步，给一个按不出结果的菜单项比没有更糟。
+    fireEvent.click(await screen.findByRole("button", { name: `${localRepository.name} 的操作` }));
+    expect(
+      await screen.findByRole("menuitem", { name: `重命名 ${localRepository.name}` }),
+    ).toBeVisible();
+    expect(screen.queryByRole("menuitem", { name: "立即同步" })).not.toBeInTheDocument();
   });
 });

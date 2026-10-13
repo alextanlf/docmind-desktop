@@ -22,12 +22,13 @@ for (const viewport of [
     await expectPhysicalReferenceLayout(page, viewport.reference);
     await page.getByRole("button", { name: "关闭引用资料" }).click();
     const reopenReference = page.getByRole("button", { name: "打开引用资料" });
-    const deleteSession = page.getByRole("button", { name: "删除会话" });
+    // 会话的删除收进了「⋯」菜单，所以这里量的是那一行最右的那个操作入口。
+    const sessionActions = page.locator(".session-actions button").last();
     await expect(reopenReference).toBeVisible();
     await expect
       .poll(async () => {
         const reopenBounds = await reopenReference.boundingBox();
-        const removeBounds = await deleteSession.boundingBox();
+        const removeBounds = await sessionActions.boundingBox();
         if (!reopenBounds || !removeBounds) return true;
         return (
           reopenBounds.x < removeBounds.x + removeBounds.width &&

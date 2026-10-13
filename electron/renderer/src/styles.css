@@ -368,9 +368,11 @@ button:disabled {
   padding: 0;
   list-style: none;
 }
+/* 名字吃掉剩余宽度：操作入口是固定宽度，不能让名字被它挤变形。 */
 .repository-tree-button,
-.document-tree-list button {
+.document-title {
   display: flex;
+  flex: 1;
   width: 100%;
   min-width: 0;
   min-height: 30px;
@@ -386,11 +388,11 @@ button:disabled {
   text-align: left;
 }
 .repository-tree-button:hover,
-.document-tree-list button:hover {
+.document-title:hover {
   background: #eef1f5;
 }
 .repository-tree-button span,
-.document-tree-list button {
+.document-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -403,7 +405,7 @@ button:disabled {
 .document-tree-list {
   margin-left: 16px;
 }
-.document-tree-list button {
+.document-title {
   padding-left: 8px;
   font-size: 12px;
 }
@@ -513,11 +515,37 @@ button:disabled {
 .document-select {
   padding-left: 16px;
 }
-.document-tree-list li {
+/* 一行 = 名字（占满剩余宽度）+ 操作入口。
+   操作入口是「⋯」：平时藏起来，悬停这一行、键盘焦点落进来、或菜单开着的时候才出现 ——
+   三个图标曾经平铺在每行右侧，目录一多整列都是图标，看不到名字。 */
+.tree-row {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: 2px;
+}
+.context-menu-anchor {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+.context-menu-trigger {
+  width: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.tree-row:hover .context-menu-trigger,
+.tree-row:focus-within .context-menu-trigger,
+.context-menu-trigger[aria-expanded="true"] {
+  opacity: 1;
+}
+/* 键盘用户 Tab 到「⋯」时它必须可见：`:focus-within` 已经覆盖，这里只是兜底让
+   焦点环不会被透明度吃掉。 */
+.context-menu-trigger:focus-visible {
+  opacity: 1;
 }
 .document-select input,
 .document-select-all input {
@@ -1447,6 +1475,59 @@ button:disabled {
 }
 .repository-scope summary svg:last-child {
   margin-left: auto;
+}
+/* 侧边栏行的操作菜单。挂到 body 上（fixed），因为它弹出的位置在
+   `overflow: auto` 的侧边栏里，留在行内会被裁掉。 */
+.context-menu {
+  position: fixed;
+  z-index: 40;
+  display: grid;
+  min-width: 168px;
+  gap: 1px;
+  padding: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 10px 24px rgb(16 24 40 / 12%);
+}
+.context-menu-item {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+.context-menu-item:hover:not(:disabled),
+.context-menu-item:focus-visible {
+  background: #eef1f5;
+}
+.context-menu-item.is-danger {
+  color: var(--red);
+}
+.context-menu-item.is-danger:hover:not(:disabled),
+.context-menu-item.is-danger:focus-visible {
+  background: var(--red-soft, #fdecec);
+}
+.context-menu-icon {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+.context-menu-item.is-danger .context-menu-icon {
+  color: inherit;
+}
+.context-menu-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .repository-scope-menu {
   position: absolute;

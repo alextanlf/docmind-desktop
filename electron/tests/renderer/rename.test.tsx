@@ -5,6 +5,7 @@ import { AppProviders } from "../../renderer/src/app/AppProviders";
 import { appQueryClient } from "../../renderer/src/app/query-client";
 import { RepositoryDocuments } from "../../renderer/src/features/repositories/RepositoryDocuments";
 import { RepositoryTree } from "../../renderer/src/features/repositories/RepositoryTree";
+import { openRowMenu } from "./row-menu";
 import {
   allProviderSummaries,
   document,
@@ -56,7 +57,7 @@ describe("重命名知识库", () => {
     const api = installDocMindApi();
     renderTree();
 
-    fireEvent.click(await screen.findByRole("button", { name: `重命名 ${repository.name}` }));
+    await openRowMenu(repository.name, `重命名 ${repository.name}`);
     // 初值是当前名字，用户不必重新打一遍。
     const input = screen.getByLabelText("知识库名称");
     expect(input).toHaveValue(repository.name);
@@ -84,7 +85,7 @@ describe("重命名知识库", () => {
     });
     renderTree();
 
-    fireEvent.click(await screen.findByRole("button", { name: `重命名 ${repository.name}` }));
+    await openRowMenu(repository.name, `重命名 ${repository.name}`);
     fireEvent.change(screen.getByLabelText("知识库名称"), {
       target: { value: "本地新名" },
     });
@@ -104,7 +105,7 @@ describe("重命名知识库", () => {
     });
     renderTree();
 
-    fireEvent.click(await screen.findByRole("button", { name: `重命名 ${localRepository.name}` }));
+    await openRowMenu(localRepository.name, `重命名 ${localRepository.name}`);
 
     // 本地库永远改不到远端，所以这句话必须在**改之前**就说，而不是改完再说。
     expect(screen.getByText(/名字只在 DocMind 里生效/)).toBeVisible();
@@ -114,7 +115,7 @@ describe("重命名知识库", () => {
     const api = installDocMindApi();
     renderTree();
 
-    fireEvent.click(await screen.findByRole("button", { name: `重命名 ${repository.name}` }));
+    await openRowMenu(repository.name, `重命名 ${repository.name}`);
     const save = screen.getByRole("button", { name: "保存名称" });
     // 没改过任何东西：不该发出一次什么也不改的请求。
     expect(save).toBeDisabled();
@@ -135,7 +136,7 @@ describe("重命名知识库", () => {
     });
     renderTree();
 
-    fireEvent.click(await screen.findByRole("button", { name: `重命名 ${repository.name}` }));
+    await openRowMenu(repository.name, `重命名 ${repository.name}`);
     fireEvent.change(screen.getByLabelText("知识库名称"), { target: { value: "新名字" } });
     fireEvent.click(screen.getByRole("button", { name: "保存名称" }));
 
@@ -161,7 +162,7 @@ describe("重命名文档", () => {
     });
     renderDocuments();
 
-    fireEvent.click(await screen.findByRole("button", { name: `重命名 ${document.title}` }));
+    await openRowMenu(document.title, `重命名 ${document.title}`);
     expect(screen.getByLabelText("文档标题")).toHaveValue(document.title);
     fireEvent.change(screen.getByLabelText("文档标题"), { target: { value: "State 管理（新）" } });
     fireEvent.click(screen.getByRole("button", { name: "保存标题" }));
@@ -186,7 +187,7 @@ describe("重命名文档", () => {
     });
     renderDocuments(false);
 
-    fireEvent.click(await screen.findByRole("button", { name: `重命名 ${document.title}` }));
+    await openRowMenu(document.title, `重命名 ${document.title}`);
     // 不支持只改标题的来源，改之前就要说明白：写成"编辑保存"会把正文整篇重发。
     expect(screen.getByText(/远端的标题没有跟着改|名字只在 DocMind 里生效/)).toBeVisible();
 

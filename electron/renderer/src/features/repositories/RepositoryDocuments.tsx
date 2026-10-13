@@ -1,6 +1,7 @@
 import { Archive, Pencil } from "lucide-react";
 import { Fragment, useState, type ReactNode } from "react";
 import type { DocumentSummary } from "../../../../shared/contracts";
+import { ContextMenuTrigger } from "../../components/ContextMenu";
 import { clientErrorMessage } from "../settings/settings.queries";
 import {
   buildDocumentTree,
@@ -33,7 +34,7 @@ function DocumentRow({
   repositoryId: string;
 }) {
   return (
-    <li>
+    <li className="tree-row">
       <label className="document-select">
         <input
           aria-label={`选择 ${document.title}`}
@@ -42,19 +43,28 @@ function DocumentRow({
           type="checkbox"
         />
       </label>
-      <button onClick={() => onOpen?.(document.id, repositoryId)} type="button">
-        {document.title}
-      </button>
       <button
-        aria-label={`重命名 ${document.title}`}
-        className="tree-icon-button"
-        onClick={onRename}
-        title="重命名文档"
+        className="document-title"
+        onClick={() => onOpen?.(document.id, repositoryId)}
         type="button"
       >
-        <Pencil aria-hidden="true" size={13} />
+        {document.title}
       </button>
       {document.remoteDeleted ? <span className="remote-deleted-badge">远端已删除</span> : null}
+      <ContextMenuTrigger
+        items={[
+          {
+            label: `重命名 ${document.title}`,
+            text: "重命名",
+            icon: <Pencil aria-hidden="true" size={13} />,
+            onSelect: onRename,
+          },
+        ]}
+        label="文档操作"
+        triggerLabel={`${document.title} 的操作`}
+      >
+        <span />
+      </ContextMenuTrigger>
     </li>
   );
 }
@@ -84,7 +94,7 @@ function DirectoryRow({
   const state = selectionState(node, selected);
   const documents = documentsUnder(node);
   return (
-    <li className="document-directory-row">
+    <li className="document-directory-row tree-row">
       <button
         aria-expanded={!collapsed}
         aria-label={`${collapsed ? "展开" : "收起"}目录 ${node.path.join(" / ")}`}

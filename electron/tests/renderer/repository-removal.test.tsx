@@ -4,6 +4,7 @@ import type { RemovedRepository } from "../../shared/contracts";
 import { AppProviders } from "../../renderer/src/app/AppProviders";
 import { appQueryClient } from "../../renderer/src/app/query-client";
 import { RepositoryTree } from "../../renderer/src/features/repositories/RepositoryTree";
+import { openRowMenu } from "./row-menu";
 import {
   installDocMindApi,
   localRepository,
@@ -26,7 +27,7 @@ describe("移除知识库", () => {
     const api = installDocMindApi();
     renderTree();
 
-    fireEvent.click(await screen.findByRole("button", { name: `移除 ${repository.name}` }));
+    await openRowMenu(repository.name, `移除 ${repository.name}`);
     const confirmButton = screen.getByRole("button", { name: "移除知识库" });
     expect(confirmButton).toBeDisabled();
 
@@ -48,7 +49,7 @@ describe("移除知识库", () => {
     installDocMindApi({ repositories: { list: async () => [localRepository] } });
     renderTree();
 
-    fireEvent.click(await screen.findByRole("button", { name: `移除 ${localRepository.name}` }));
+    await openRowMenu(localRepository.name, `移除 ${localRepository.name}`);
 
     // 本地库没有远端可承诺，承诺了就是假话；而"无法撤销"必须说，因为它真的没有出口。
     expect(screen.getByText(/此操作无法撤销/)).toBeVisible();
@@ -59,7 +60,7 @@ describe("移除知识库", () => {
     installDocMindApi();
     renderTree();
 
-    fireEvent.click(await screen.findByRole("button", { name: `移除 ${repository.name}` }));
+    await openRowMenu(repository.name, `移除 ${repository.name}`);
 
     expect(screen.getByText(/语雀上的知识库与文档不会被删除/)).toBeVisible();
     // 说了远端不动，就必须同时给出找回的路，否则用户不敢点。
@@ -91,7 +92,7 @@ describe("移除知识库", () => {
     installDocMindApi();
     renderTree();
 
-    await screen.findByRole("button", { name: `移除 ${repository.name}` });
+    await screen.findByRole("button", { name: `${repository.name} 的操作` });
     expect(screen.queryByText("已移除的知识库")).toBeNull();
   });
 
@@ -111,7 +112,7 @@ describe("移除知识库", () => {
     });
     renderTree();
 
-    fireEvent.click(await screen.findByRole("button", { name: `移除 ${repository.name}` }));
+    await openRowMenu(repository.name, `移除 ${repository.name}`);
     fireEvent.change(screen.getByLabelText("输入知识库名称以确认"), {
       target: { value: repository.name },
     });

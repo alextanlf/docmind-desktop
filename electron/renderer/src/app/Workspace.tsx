@@ -14,6 +14,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { CSSProperties } from "react";
 import type { BatchImport, SessionSummary } from "../../../shared/contracts";
 import { IconButton } from "../components/IconButton";
+import { ContextMenuTrigger } from "../components/ContextMenu";
 import { PanelResizer } from "../components/PanelResizer";
 import { ChatPanel } from "../features/chat/ChatPanel";
 import { RepositoryScope } from "../features/chat/RepositoryScope";
@@ -362,15 +363,22 @@ export function Workspace({ dismissDelays = {} }: { dismissDelays?: DismissDelay
                       结束会话
                     </button>
                   )}
-                  <button
-                    className="icon-button"
-                    aria-label="删除会话"
-                    disabled={selectedSessionStreaming || deleteSession.isPending}
-                    onClick={() => setSessionConfirmation("delete")}
-                    type="button"
+                  <ContextMenuTrigger
+                    items={[
+                      {
+                        label: "删除会话",
+                        text: "删除会话…",
+                        icon: <Trash2 aria-hidden="true" size={15} />,
+                        disabled: selectedSessionStreaming || deleteSession.isPending,
+                        onSelect: () => setSessionConfirmation("delete"),
+                        danger: true,
+                      },
+                    ]}
+                    label="会话操作"
+                    triggerLabel={`${selectedSession.title} 的操作`}
                   >
-                    <Trash2 aria-hidden="true" size={16} />
-                  </button>
+                    <span />
+                  </ContextMenuTrigger>
                 </div>
               </header>
               <ChatPanel
