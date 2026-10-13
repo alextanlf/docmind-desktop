@@ -36,7 +36,11 @@ class FakeRemoteProvider:
             name=name,
             label=label,
             capabilities=ProviderCapabilities(
-                browser_install=True, marker_lookup=True, document_paths=True
+                browser_install=True,
+                marker_lookup=True,
+                document_paths=True,
+                repository_rename=True,
+                document_rename=True,
             ),
         )
         self._lock = asyncio.Lock()
@@ -106,6 +110,15 @@ class FakeRemoteProvider:
             self._persist_state()
             return repository
 
+    async def rename_repository(self, repository_id: str, name: str) -> RemoteRepository:
+        self.write_calls.append("rename_repository")
+        async with self._serialized():
+            self._require_login(allow_first_use=True)
+            repository = self._repository(repository_id).model_copy(update={"name": name})
+            self._repositories[repository_id] = repository
+            self._persist_state()
+            return repository
+
     async def list_documents(self, repository_id: str) -> list[RemoteDocument]:
         self.read_calls.append("list_documents")
         async with self._serialized():
@@ -164,6 +177,17 @@ class FakeRemoteProvider:
             return document.model_copy(
                 update={"content": strip_mutation_marker(document.content)}
             )
+
+    async def rename_document(self, document_id: str, title: str) -> RemoteDocument:
+        self.write_calls.append("rename_document")
+        async with self._serialized():
+            self._require_login(allow_first_use=True)
+            # 只换标题：正文必须原样留着 —— 假体也要能证明"改名不会动正文"，
+            # 否则用假体跑的用例抓不到"实现偷偷重写了正文"。
+            document = self._document(document_id).model_copy(update={"title": title})
+            self._documents[document_id] = document
+            self._persist_state()
+            return _document_summary(document)
 
     async def update_document(self, request: UpdateRemoteDocumentRequest) -> RemoteDocument:
         self.write_calls.append("update_document")

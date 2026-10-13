@@ -3,6 +3,7 @@ import {
   ChevronRight,
   FilePlus2,
   FolderPlus,
+  Pencil,
   RefreshCw,
   RotateCcw,
   Trash2,
@@ -12,9 +13,11 @@ import type { Repository } from "../../../../shared/contracts";
 import { clientErrorMessage, useRemoteProvidersQuery } from "../settings/settings.queries";
 import { ConflictList } from "./ConflictList";
 import { DeleteRepositoryDialog } from "./DeleteRepositoryDialog";
+import { RenameDialog } from "./RenameDialog";
 import { RepositoryDocuments } from "./RepositoryDocuments";
 import {
   useRemovedRepositoriesQuery,
+  useRenameRepositoryMutation,
   useRepositoriesQuery,
   useRepositorySyncQuery,
   useRestoreRepositoryMutation,
@@ -152,6 +155,9 @@ export function RepositoryTree({ onOpenDocument }: RepositoryTreeProps) {
   // 正在确认移除的那一个。存整个 Repository 而不是 id：确认框要显示名字与
   // provider，而从 id 反查会在列表被刷新（例如同步回来）时落空。
   const [removing, setRemoving] = useState<Repository | null>(null);
+  // 正在改名的那一个。同样存整个对象：改名对话框的初值是当时那个名字。
+  const [renaming, setRenaming] = useState<Repository | null>(null);
+  const rename = useRenameRepositoryMutation();
 
   // Provider display names come from the registry summary; unknown providers
   // fall back to their raw name, local repositories show 本地.
@@ -261,6 +267,15 @@ export function RepositoryTree({ onOpenDocument }: RepositoryTreeProps) {
               </button>
               {repository.provider ? <RepositorySyncButton repositoryId={repository.id} /> : null}
               <button
+                aria-label={`重命名 ${repository.name}`}
+                className="tree-icon-button"
+                onClick={() => setRenaming(repository)}
+                title="重命名知识库"
+                type="button"
+              >
+                <Pencil aria-hidden="true" size={14} />
+              </button>
+              <button
                 aria-label={`移除 ${repository.name}`}
                 className="tree-icon-button"
                 onClick={() => setRemoving(repository)}
@@ -273,6 +288,9 @@ export function RepositoryTree({ onOpenDocument }: RepositoryTreeProps) {
                 <>
                   <RepositoryDocuments
                     onOpenDocument={onOpenDocument}
+                    remoteRenameSupported={
+                      providerCapabilities(repository.provider)?.documentRename ?? false
+                    }
                     repositoryId={repository.id}
                     repositoryName={repository.name}
                   />
@@ -291,6 +309,23 @@ export function RepositoryTree({ onOpenDocument }: RepositoryTreeProps) {
         })}
       </ul>
       <RemovedRepositories providerLabel={providerLabel} />
+      {renaming ? (
+        <RenameDialog
+          initialValue={renaming.name}
+          key={`rename:${renaming.id}`}
+          kind="repository"
+          onClose={() => setRenaming(null)}
+          onSubmit={async (name) => {
+            const result = await rename.mutateAsync({ repositoryId: renaming.id, name });
+            // 远端没跟着改时**不关窗口**：让用户当场看到"远端名字没变"这件事，
+            // 而不是关掉之后再刷新列表，发现名字自己变回去了。
+            return result.scope === "remote"
+              ? null
+              : `已在 DocMind 中改名为「${result.repository.name}」，但远端知识库的名字没有跟着改，之后同步可能把它改回去。`;
+          }}
+          remoteRenameSupported={providerCapabilities(renaming.provider)?.repositoryRename ?? false}
+        />
+      ) : null}
       {removing ? (
         <DeleteRepositoryDialog
           key={removing.id}

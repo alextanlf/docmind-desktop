@@ -68,6 +68,15 @@ class ProviderCapabilitiesView(WireModel):
     browser_install: bool = False
     marker_lookup: bool = False
     parent_node_write: bool = False
+    # 这个来源报不报得出每篇文档的目录路径。**一直漏在这里过一次**：dataclass 加了
+    # 字段、映射忘了补，于是前端永远拿到 False，而两侧各自的单测都是绿的 ——
+    # `test_every_declared_capability_reaches_the_client` 现在守着这件事。
+    document_paths: bool = False
+    # 能不能把改名写回远端。界面据此决定「改名只在本应用生效」这句提示说不说 ——
+    # 不说的话，用户改完远端绑定的知识库，下一次列表刷新名字又变回去，而他会以为
+    # 自己点错了。
+    repository_rename: bool = False
+    document_rename: bool = False
     # The error code this provider raises when its login browser is missing,
     # so the client can offer the install action without naming a vendor.
     browser_unavailable_code: str | None = None

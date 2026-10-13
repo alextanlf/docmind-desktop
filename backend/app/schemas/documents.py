@@ -7,6 +7,7 @@ from pydantic import Field, field_validator
 
 from app.schemas.common import WireModel
 from app.schemas.imports import ParsedFigure
+from app.schemas.repositories import RenameScope
 
 DOCUMENT_CONTENT_MAX_CHARACTERS = 2_000_000
 DOCUMENT_CONTENT_MAX_BYTES = 4 * 1024 * 1024
@@ -36,6 +37,25 @@ class DocumentInput(WireModel):
 
 class DocumentDelete(WireModel):
     confirm: bool = False
+
+
+class DocumentRename(WireModel):
+    """改一篇文档的标题，**不动正文**。
+
+    与 ``DocumentInput``（编辑保存）分开是刻意的：那条流水线会重新分块、重新嵌入、
+    写新版本、并把整篇正文回写远端。改名只需要改一个字符串，走那条路等于为了改标题
+    重做一遍索引与远端写入。
+    """
+
+    title: str = Field(min_length=1, max_length=240)
+
+    @field_validator("title")
+    @classmethod
+    def title_is_not_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be blank")
+        return normalized
 
 
 class DocumentArchiveRequest(WireModel):
@@ -133,6 +153,16 @@ class DocumentDetail(DocumentSummary):
     #: 展示所需的部分 —— 客户端据此把图渲染在它所属的那一段正文旁边。
     #: 默认空列表而不是 None：没有图是常态，客户端不必先判空再遍历。
     figures: list[ParsedFigure] = Field(default_factory=list)
+
+
+class DocumentRenameResult(RenameScope):
+    """改名结果 + 这个词条现在的样子。
+
+    带 ``scope`` 而不是只回文档：远端绑定但 provider 改不了名字时，界面必须能说
+    "只在 DocMind 里改了"，否则用户以为远端也跟着改了。
+    """
+
+    document: DocumentDetail
 
 
 class OriginalLocation(WireModel):

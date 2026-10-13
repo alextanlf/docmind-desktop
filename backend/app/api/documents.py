@@ -34,6 +34,8 @@ from app.schemas.documents import (
     DocumentInput,
     DocumentRemovalResult,
     DocumentRemoveRequest,
+    DocumentRename,
+    DocumentRenameResult,
     DocumentSummary,
     LinkedOriginalInput,
     OriginalLocation,
@@ -46,6 +48,7 @@ from app.schemas.remote import (
     RemoteDocument,
     UpdateRemoteDocumentRequest,
 )
+from app.schemas.repositories import RenameScope
 from app.schemas.sync import ConflictResolutionInput
 from app.schemas.versioning import DocumentVersion
 from app.storage.models import DocumentChunkRecord, DocumentRecord, RepositoryRecord
@@ -1377,6 +1380,55 @@ async def _archive_document(request: Request, document: DocumentRecord) -> None:
             document.repository_id, [(document.remote_id, document.title)]
         )
     _document_store(request).archive(document.id)
+
+
+@router.post("/api/documents/{document_id}/rename", response_model=DocumentRenameResult)
+async def rename_document(
+    request: Request, document_id: str, body: DocumentRename
+) -> DocumentRenameResult:
+    """给文档改名：**只改标题，不动正文**。
+
+    与 ``PUT /api/documents/{id}`` 分开是刻意的。那条是"编辑保存"：整篇重新分块、
+    重新嵌入、写一条版本快照、并把正文回写远端。改一个标题走那条路，等于重新嵌入
+    整篇文档、并且把用户没碰过的正文整篇重写一遍（飞书那边是删块重建）。
+
+    远端文档只在 provider 声明了 ``document_rename``（"能只改标题"）时才回写。
+    做不到就只改本地并如实回 ``scope="local_only"``，界面据此提示"同步可能把标题
+    改回去"。远端回写**失败**则是一个错误 —— 名字确实没改成，不能假装成功。
+
+    远端改完用**远端回给的名字**：远端可能规范化过（去空白、截断），本地存一份
+    和远端不一致的名字，下一次同步会把它改回来 —— 用户看到"改名自己弹回去了"。
+    """
+    await _recover_for_request(request)
+    document = _document_store(request).get(document_id)
+    if document is None:
+        raise _not_found()
+    title = body.title
+    scope = "local_only"
+    final_title = title
+    if document.remote_id:
+        # 远端已经删掉这篇文档时，这里会如实报错（远端找不到它）。刻意不因为
+        # ``remote_deleted`` 就跳过远端：那会让本地留下一个永远和远端不一致的名字，
+        # 而且用户无从知道它其实已经不在远端了。
+        provider = _provider_for_id(request, document.repository_id)
+        if provider.identity.capabilities.document_rename:
+            try:
+                remote = await provider.rename_document(document.remote_id, title)
+            except DomainError as error:
+                # 声明与当前生效的会话可能对不上（见 repositories.rename_repository 里
+                # 同一处判断）：provider 说这条路走不通，就退回"只改本地"。
+                if error.code != "REMOTE_CAPABILITY_UNSUPPORTED":
+                    raise _remote_failure(error) from None
+            except Exception as error:  # noqa: BLE001 - 网关边界统一翻译
+                raise _remote_failure(error) from None
+            else:
+                final_title = remote.title or title
+                scope = "remote"
+    renamed = _document_store(request).rename(document_id, final_title)
+    return DocumentRenameResult(
+        scope=cast(RenameScope, scope),
+        document=_detail(renamed, _document_figures(request, document_id)),
+    )
 
 
 @router.post("/api/documents/{document_id}/archive", status_code=status.HTTP_204_NO_CONTENT)

@@ -28,6 +28,13 @@ class ProviderCapabilities:
     ``document_paths``: ``list_documents`` reports each document's directory path
     (Feishu wiki tree, Yuque TOC). Without it the client must not render a tree —
     an invented hierarchy is worse than a flat list.
+    ``repository_rename``: the provider can change a remote repository's name
+    (``rename_repository``). Without it a rename stays local and the next list
+    refresh brings the remote name back.
+    ``document_rename``: the provider can change a remote document's title
+    **without rewriting its body** (``rename_document``). Deliberately separate
+    from ``update_document``: that one replaces the whole body, and running it
+    for a rename would re-upload content the user did not touch.
     ``browser_unavailable_code``: the error code this provider raises when its
     login browser is missing. Declared rather than hard-coded in the UI so a
     client can offer the install action without naming a vendor — a generic
@@ -38,6 +45,8 @@ class ProviderCapabilities:
     marker_lookup: bool = False
     parent_node_write: bool = False
     document_paths: bool = False
+    repository_rename: bool = False
+    document_rename: bool = False
     browser_unavailable_code: str | None = None
 
 
@@ -102,6 +111,8 @@ class RemoteProvider(Protocol):
         self, request: CreateRemoteRepositoryRequest
     ) -> RemoteRepository: ...
 
+    async def rename_repository(self, repository_id: str, name: str) -> RemoteRepository: ...
+
     async def list_documents(self, repository_id: str) -> list[RemoteDocument]: ...
 
     async def create_document(self, request: CreateRemoteDocumentRequest) -> RemoteDocument: ...
@@ -113,6 +124,8 @@ class RemoteProvider(Protocol):
     async def document_exists(self, repository_id: str, document_id: str) -> bool: ...
 
     async def read_document(self, document_id: str) -> RemoteDocumentContent: ...
+
+    async def rename_document(self, document_id: str, title: str) -> RemoteDocument: ...
 
     async def update_document(self, request: UpdateRemoteDocumentRequest) -> RemoteDocument: ...
 

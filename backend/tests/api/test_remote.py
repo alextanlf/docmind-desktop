@@ -1,9 +1,11 @@
 """Generic remote-provider registry behaviour exposed over the HTTP API."""
 from __future__ import annotations
 
+from dataclasses import fields
+
 from fastapi.testclient import TestClient
 
-from app.remote.provider import ProviderIdentity
+from app.remote.provider import ProviderCapabilities, ProviderIdentity
 from tests.conftest import install_remote_provider
 
 
@@ -29,6 +31,9 @@ def test_provider_list_reports_configured_capabilities(client, auth_headers) -> 
                 "browserInstall": True,
                 "markerLookup": True,
                 "parentNodeWrite": False,
+                "documentPaths": True,
+                "repositoryRename": True,
+                "documentRename": True,
                 "browserUnavailableCode": None,
             },
         }
@@ -86,5 +91,49 @@ def test_capabilities_are_reflected_in_the_provider_summary(client, auth_headers
         "browserInstall": False,
         "markerLookup": False,
         "parentNodeWrite": False,
+        "documentPaths": False,
+        "repositoryRename": False,
+        "documentRename": False,
         "browserUnavailableCode": None,
     }
+
+
+def test_every_declared_capability_reaches_the_client(client, auth_headers) -> None:
+    """``ProviderCapabilities`` 里每一个字段都必须出现在摘要里，一个都不能少。
+
+    这条测试是为一次真实事故写的：``document_paths`` 加进 dataclass 之后忘了往
+    ``ProviderCapabilitiesView`` 里映射，于是「这个来源报不报目录路径」这件事在
+    传输层被静默丢掉 —— 前端拿到的永远是 False，而两边各自的单测都还是绿的。
+
+    所以这里不列举字段，而是把 dataclass 的字段名逐个翻成 camelCase 去对：
+    以后再加能力，忘了映射就会红在这一行。
+    """
+
+    class _EveryCapabilityProvider:
+        identity = ProviderIdentity(
+            name="everything",
+            label="全能力",
+            capabilities=ProviderCapabilities(
+                browser_install=True,
+                marker_lookup=True,
+                parent_node_write=True,
+                document_paths=True,
+                repository_rename=True,
+                document_rename=True,
+                browser_unavailable_code="SOME_CODE",
+            ),
+        )
+
+        async def close(self) -> None:
+            return None
+
+    install_remote_provider(client.app, _EveryCapabilityProvider())
+
+    reported = client.get("/api/remote/providers", headers=auth_headers).json()[0]["capabilities"]
+
+    def camel(name: str) -> str:
+        head, *tail = name.split("_")
+        return head + "".join(part.title() for part in tail)
+
+    missing = {camel(field.name) for field in fields(ProviderCapabilities)} - set(reported)
+    assert missing == set()

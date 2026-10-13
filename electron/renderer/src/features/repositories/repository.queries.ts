@@ -63,6 +63,45 @@ export function useUpdateRepositoryMutation() {
 }
 
 /**
+ * 给知识库改名。
+ *
+ * 返回 `scope`，而不是只回一个仓库：`local_only` 表示远端名字没跟着变（provider
+ * 改不了，或当前连接方式不支持），界面必须提示 —— 否则下一次列表刷新远端旧名字
+ * 被拉回来时，用户会以为自己看错了。
+ */
+export function useRenameRepositoryMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ repositoryId, name }: { repositoryId: string; name: string }) =>
+      window.docmind.repositories.rename(repositoryId, name),
+    onSuccess: (result) => {
+      queryClient.setQueryData<{ id: string }[]>(repositoryKeys.root, (current) =>
+        current?.map((item) => (item.id === result.repository.id ? result.repository : item)),
+      );
+      void queryClient.invalidateQueries({ queryKey: repositoryKeys.root });
+    },
+  });
+}
+
+/**
+ * 给文档改名（**只改标题**，不动正文）。
+ *
+ * 失效文档详情与它所在的列表，并把新详情直接写进缓存：改名后不该再看到旧标题挂着。
+ * 不失效 `root` —— 知识库上的篇数没变，改名不会让它多一篇。
+ */
+export function useRenameDocumentMutation(repositoryId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ documentId, title }: { documentId: string; title: string }) =>
+      window.docmind.documents.rename(documentId, title),
+    onSuccess: (result) => {
+      queryClient.setQueryData(repositoryKeys.document(result.document.id), result.document);
+      void queryClient.invalidateQueries({ queryKey: repositoryKeys.documents(repositoryId) });
+    },
+  });
+}
+
+/**
  * 已从 DocMind 移除的远端知识库。
  *
  * 单独一条 query 而不是塞进 `repositories`：这些条目**不是**知识库 ——

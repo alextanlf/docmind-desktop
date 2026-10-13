@@ -34,7 +34,11 @@ const localDoc = summary("00000000-0000-4000-8000-000000000103", "本地丙", nu
 function renderDocuments() {
   return render(
     <AppProviders>
-      <RepositoryDocuments repositoryId={repository.id} repositoryName={repository.name} />
+      <RepositoryDocuments
+        remoteRenameSupported
+        repositoryId={repository.id}
+        repositoryName={repository.name}
+      />
     </AppProviders>,
   );
 }

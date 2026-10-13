@@ -1,4 +1,4 @@
-import { Archive } from "lucide-react";
+import { Archive, Pencil } from "lucide-react";
 import { Fragment, useState, type ReactNode } from "react";
 import type { DocumentSummary } from "../../../../shared/contracts";
 import { clientErrorMessage } from "../settings/settings.queries";
@@ -10,19 +10,26 @@ import {
   type DocumentTreeNode,
 } from "./documentTree";
 import { ArchiveDocumentsDialog } from "./ArchiveDocumentsDialog";
-import { useArchiveDocumentsMutation, useDocumentsQuery } from "./repository.queries";
+import { RenameDialog } from "./RenameDialog";
+import {
+  useArchiveDocumentsMutation,
+  useDocumentsQuery,
+  useRenameDocumentMutation,
+} from "./repository.queries";
 
 function DocumentRow({
   document,
   selected,
   onToggle,
   onOpen,
+  onRename,
   repositoryId,
 }: {
   document: DocumentSummary;
   selected: boolean;
   onToggle: () => void;
   onOpen?: (documentId: string, repositoryId: string) => void;
+  onRename: () => void;
   repositoryId: string;
 }) {
   return (
@@ -37,6 +44,15 @@ function DocumentRow({
       </label>
       <button onClick={() => onOpen?.(document.id, repositoryId)} type="button">
         {document.title}
+      </button>
+      <button
+        aria-label={`重命名 ${document.title}`}
+        className="tree-icon-button"
+        onClick={onRename}
+        title="重命名文档"
+        type="button"
+      >
+        <Pencil aria-hidden="true" size={13} />
       </button>
       {document.remoteDeleted ? <span className="remote-deleted-badge">远端已删除</span> : null}
     </li>
@@ -103,6 +119,13 @@ function DirectoryRow({
 type RepositoryDocumentsProps = {
   repositoryId: string;
   repositoryName: string;
+  /**
+   * 这个知识库绑定的远端来源能不能只改标题（见 `ProviderCapabilities.documentRename`）。
+   *
+   * 由调用方给：它手上才有 provider 的能力清单，而文档列表里只有文档。传给对话框是
+   * 为了**改之前**就把话说清楚，而不是改完才告诉用户"远端没变"。
+   */
+  remoteRenameSupported: boolean;
   onOpenDocument?: (documentId: string, repositoryId: string) => void;
 };
 
@@ -116,13 +139,17 @@ type RepositoryDocumentsProps = {
 export function RepositoryDocuments({
   repositoryId,
   repositoryName,
+  remoteRenameSupported,
   onOpenDocument,
 }: RepositoryDocumentsProps) {
   const documents = useDocumentsQuery(repositoryId);
   const archive = useArchiveDocumentsMutation(repositoryId);
+  const rename = useRenameDocumentMutation(repositoryId);
   const [selected, setSelected] = useState<string[]>([]);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
+  // 正在改名的那一篇。存整条 DocumentSummary：对话框的初值就是它当时的标题。
+  const [renaming, setRenaming] = useState<DocumentSummary | null>(null);
   // 折叠的目录。**必须和其余 hooks 一起放在 early return 之前** —— 放到下面会让
   // "正在读取 → 已加载"那次渲染多出一个 hook，React 直接抛
   // "Rendered more hooks than during the previous render"。
@@ -194,6 +221,7 @@ export function RepositoryDocuments({
           document={document}
           key={document.id}
           onOpen={onOpenDocument}
+          onRename={() => setRenaming(document)}
           onToggle={() => toggle(document.id)}
           repositoryId={repositoryId}
           selected={selected.includes(document.id)}
@@ -243,6 +271,7 @@ export function RepositoryDocuments({
                   document={document}
                   key={document.id}
                   onOpen={onOpenDocument}
+                  onRename={() => setRenaming(document)}
                   onToggle={() => toggle(document.id)}
                   repositoryId={repositoryId}
                   selected={selected.includes(document.id)}
@@ -271,6 +300,21 @@ export function RepositoryDocuments({
           }
           pending={archive.isPending}
           repositoryName={repositoryName}
+        />
+      ) : null}
+      {renaming ? (
+        <RenameDialog
+          initialValue={renaming.title}
+          key={`rename:${renaming.id}`}
+          kind="document"
+          onClose={() => setRenaming(null)}
+          onSubmit={async (title) => {
+            const result = await rename.mutateAsync({ documentId: renaming.id, title });
+            return result.scope === "remote"
+              ? null
+              : `已在 DocMind 中改名为「${result.document.title}」，但远端的标题没有跟着改，之后同步可能把它改回去。`;
+          }}
+          remoteRenameSupported={remoteRenameSupported}
         />
       ) : null}
     </div>

@@ -274,6 +274,17 @@ export const RemoteProviderCapabilitiesSchema = z.object({
    */
   documentPaths: z.boolean(),
   /**
+   * 这个来源能不能把改名写回远端。
+   *
+   * 声明为 false 时，界面在改名成功后必须提示"远端名字没跟着变" —— 远端绑定的
+   * 知识库下一次列表刷新会把远端旧名字写回来，不说的话用户会以为改名没生效。
+   *
+   * 带默认值而不是必填：老版本后端不含这两个字段，缺了就当"改不了"，比让整个
+   * provider 列表解析失败好。
+   */
+  repositoryRename: z.boolean().default(false),
+  documentRename: z.boolean().default(false),
+  /**
    * Error code this provider raises when its login browser is missing.
    * Declared by the provider so the install action never hardcodes a vendor.
    */
@@ -458,6 +469,22 @@ export const CreateRepositoryInputSchema = z.object({
 export const UpdateRepositoryInputSchema = z.object({
   remoteParentId: z.string().max(255).nullable(),
 });
+export const RenameRepositoryInputSchema = z.object({
+  name: text(120),
+});
+/**
+ * 一次改名到底改到了哪里。
+ *
+ * `local_only`：只有 DocMind 里的名字变了（本地知识库，或 provider 改不了远端名字）。
+ * 后者下一次列表刷新会把远端名字拉回来，所以界面**必须**把这件事说出来，否则用户
+ * 会以为远端也跟着改了。
+ * `remote`：远端名字也一起改了。
+ */
+export const RenameScopeSchema = z.enum(["local_only", "remote"]);
+export const RepositoryRenameResultSchema = z.object({
+  scope: RenameScopeSchema,
+  repository: RepositorySchema,
+});
 /**
  * 一个被用户从 DocMind 移除的远端知识库。
  *
@@ -475,6 +502,9 @@ export const RemovedRepositorySchema = z.object({
 export const DocumentInputSchema = z.object({
   title: text(240),
   content: bounded(2_000_000),
+});
+export const RenameDocumentInputSchema = z.object({
+  title: text(240),
 });
 export const DocumentSummarySchema = z.object({
   id,
@@ -625,6 +655,12 @@ export const DocumentDetailSchema = DocumentSummarySchema.extend({
   originalState: z.enum(["none", "available", "changed", "missing"]).default("none"),
   /** 没有图是常态，后端给空数组，客户端不必先判空再遍历。 */
   figures: DocumentFigureSchema.array().default([]),
+});
+
+/** 改名的结果 + 这个词条现在的样子（见 `RenameScopeSchema` 的说明）。 */
+export const DocumentRenameResultSchema = z.object({
+  scope: RenameScopeSchema,
+  document: DocumentDetailSchema,
 });
 
 /**
@@ -1349,6 +1385,7 @@ export type PluginDirectory = z.infer<typeof PluginDirectorySchema>;
 export type Repository = z.infer<typeof RepositorySchema>;
 export type CreateRepositoryInput = z.infer<typeof CreateRepositoryInputSchema>;
 export type UpdateRepositoryInput = z.infer<typeof UpdateRepositoryInputSchema>;
+export type RepositoryRenameResult = z.infer<typeof RepositoryRenameResultSchema>;
 export type RemovedRepository = z.infer<typeof RemovedRepositorySchema>;
 export type SyncOutcome = z.infer<typeof SyncOutcomeSchema>;
 export type SyncStatus = z.infer<typeof SyncStatusSchema>;
@@ -1360,6 +1397,7 @@ export type GraphEdge = z.infer<typeof GraphEdgeSchema>;
 export type DocumentInput = z.infer<typeof DocumentInputSchema>;
 export type DocumentSummary = z.infer<typeof DocumentSummarySchema>;
 export type DocumentDetail = z.infer<typeof DocumentDetailSchema>;
+export type DocumentRenameResult = z.infer<typeof DocumentRenameResultSchema>;
 export type DocumentRemovalResult = z.infer<typeof DocumentRemovalResultSchema>;
 export type RemovedDocument = z.infer<typeof RemovedDocumentSchema>;
 export type ArchivedDocument = z.infer<typeof ArchivedDocumentSchema>;
@@ -1516,6 +1554,14 @@ export interface DocMindApi {
     create(input: CreateRepositoryInput): Promise<Repository>;
     update(repositoryId: string, input: UpdateRepositoryInput): Promise<Repository>;
     /**
+     * 给知识库改名。远端支持时一并回写远端，并回 `scope: "remote"`。
+     *
+     * `scope: "local_only"` 时必须提示用户"远端名字没跟着变" —— provider 改不了
+     * 远端名字（飞书没有这个接口，语雀网页会话也没有），下一次列表刷新会把远端
+     * 旧名字拉回来。
+     */
+    rename(repositoryId: string, name: string): Promise<RepositoryRenameResult>;
+    /**
      * 从 DocMind 移除一个知识库。
      *
      * 远端（语雀 / 飞书）上的仓库与文档一律不动 —— 这里的语义是"从 DocMind
@@ -1563,6 +1609,13 @@ export interface DocMindApi {
     readAsset(documentId: string, assetName: string): Promise<string>;
     create(repositoryId: string, input: DocumentInput): Promise<DocumentDetail>;
     update(documentId: string, input: DocumentInput): Promise<DocumentDetail>;
+    /**
+     * 只改标题，**不动正文**。
+     *
+     * 与 `update` 分开：那条是"编辑保存"（重新分块、重新嵌入、写版本、整篇回写远端）。
+     * 改名只需要改一个字符串，走那条路等于为了改标题把用户没碰过的正文重做一遍。
+     */
+    rename(documentId: string, title: string): Promise<DocumentRenameResult>;
     /**
      * 归档一篇文档：**内容一概不动**，只让它从列表、检索、图谱、同步里消失。
      *
@@ -1707,9 +1760,13 @@ export const schemas = {
   SaveRemoteCredentialInputSchema,
   RepositorySchema,
   UpdateRepositoryInputSchema,
+  RenameRepositoryInputSchema,
+  RepositoryRenameResultSchema,
   RemovedRepositorySchema,
   DocumentSummarySchema,
   DocumentDetailSchema,
+  RenameDocumentInputSchema,
+  DocumentRenameResultSchema,
   DocumentRemovalResultSchema,
   RemovedDocumentSchema,
   RemovedDocumentRestoreSchema,

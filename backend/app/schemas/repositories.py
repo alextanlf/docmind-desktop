@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import Field, field_validator
 
@@ -28,6 +29,34 @@ class RepositoryUpdate(WireModel):
     remote_parent_id: str | None = Field(default=None, max_length=255)
 
 
+class RepositoryRename(WireModel):
+    #: 新的知识库名。本地库只改这里；绑定远端的库还要看 provider 有没有
+    #: ``repository_rename`` 能力 —— 没有就只改本地（见 ``RenameScope``）。
+    name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def name_is_not_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be blank")
+        return normalized
+
+
+class RenameScope(WireModel):
+    """一次改名到底改到了哪里。
+
+    **只说结果，不写文案**（文案住在前端）：界面据此决定要不要提示"远端名字没有
+    跟着变"。
+
+    * ``local_only``：只有 DocMind 里的名字变了。本地知识库、或 provider 不支持
+      改名时都是这个 —— 后者下一次列表刷新会把远端名字拉回来，所以必须说。
+    * ``remote``：远端名字也一起改了。
+    """
+
+    scope: Literal["local_only", "remote"]
+
+
 class RepositoryDelete(WireModel):
     # Same convention as document deletion: a destructive call must say so
     # explicitly, and a missing flag is a 400 rather than a silent default.
@@ -47,6 +76,10 @@ class RepositoryView(WireModel):
     sync_status: str
     created_at: datetime
     updated_at: datetime
+
+
+class RepositoryRenameResult(RenameScope):
+    repository: RepositoryView
 
 
 class RemovedRepositoryView(WireModel):

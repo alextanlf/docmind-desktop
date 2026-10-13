@@ -219,6 +219,26 @@ class RepositoryStore:
             session.expunge(record)
             return record
 
+    def rename(self, repository_id: str, name: str) -> RepositoryRecord:
+        """只改名字。
+
+        不碰 ``provider`` / ``remote_id``：改名不是重新绑定 —— 远端身份一变，同步的
+        判重会把它当成另一个知识库，那些文档会被重新下载并重新嵌入一遍。
+
+        绑定远端的库下一次 ``list_repositories`` 刷新会把远端名字写回来
+        （``upsert_remote`` 每次都用远端名字覆盖本地）。所以"改名"要真的成立就必须
+        回写远端，而那是调用方的决定 —— 这里只负责本地那一半。
+        """
+        with self.database.session() as session:
+            record = session.get(RepositoryRecord, repository_id)
+            if record is None:
+                raise DomainError("NOT_FOUND", "资源不存在", 404)
+            record.name = name
+            record.updated_at = utc_now()
+            session.flush()
+            session.expunge(record)
+            return record
+
     def upsert_remote(
         self,
         *,
@@ -975,6 +995,26 @@ class DocumentStore:
             document.remote_url = remote_url
             document.markdown_path = markdown_path
             document.source_url = source_url
+            document.updated_at = utc_now()
+            session.flush()
+            return document
+
+    def rename(self, document_id: str, title: str) -> DocumentRecord:
+        """只改标题，正文、分块、向量、原件绑定一概不动。
+
+        ``documents.title`` 是引用与检索结果里显示的那个标题（``retrieval`` 从
+        记录取，不从向量 metadata 取），所以改这一列就够了。
+
+        向量 metadata 里的 ``doc_title`` 会因此暂时留着旧值。它只用于给分块加一句
+        可读的标题，正文里已经带着标题本身，而且入库时的分块 id 也不依赖它 ——
+        不改不会让任何一次检索出错，下次重建索引（编辑保存 / 同步 / 重新转换）
+        自然会刷新它。为了改个标题去重新嵌入整篇文档，代价远大于这点不一致。
+        """
+        with self.database.session() as session:
+            document = session.get(DocumentRecord, document_id)
+            if document is None:
+                raise DomainError("NOT_FOUND", "资源不存在", 404)
+            document.title = title
             document.updated_at = utc_now()
             session.flush()
             return document

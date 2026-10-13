@@ -1258,6 +1258,56 @@ async def test_create_reads_back_when_save_confirmation_is_lost(
     assert page.clicked.count("[data-testid=editor-save]") == 1
 
 
+async def test_rename_document_fills_only_the_title_and_saves(
+    tmp_path: Path,
+) -> None:
+    """网页会话的文档改名：只填标题、只按一次保存，**一个字都不写进正文框**。
+
+    这条守的是"改名被实现成编辑保存"：`import_markdown` 会把整篇正文重新填进去再
+    保存，等于为了改个名字把用户没碰过的正文重发一次。断言 `fill_attempts` 里没有
+    editor-markdown，比断言"最终标题对了"更能抓到那件事。
+    """
+    gateway = WebDriverYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+    page = FixturePage(
+        {
+            "[data-testid=dashboard]",
+            "[data-testid=editor-title]",
+            "[data-testid=editor-markdown]",
+            "[data-testid=editor-save]",
+            "[data-testid=save-confirmation]",
+        }
+    )
+    page.values["[data-testid=editor-markdown]"] = "# 旧正文"
+
+    @asynccontextmanager
+    async def fake_new_page(*, visible_login: bool):
+        assert visible_login is False
+        yield page
+
+    gateway._new_page = fake_new_page  # type: ignore[method-assign]
+
+    renamed = await gateway.rename_document("swiftui/state", "State 2")
+
+    assert renamed.remote_id == "swiftui/state"
+    assert renamed.repository_id == "swiftui"
+    assert renamed.title == "State 2"
+    assert page.fill_attempts == [("[data-testid=editor-title]", "State 2")]
+    assert page.clicked.count("[data-testid=editor-save]") == 1
+
+
+async def test_rename_repository_is_refused_on_the_web_session(tmp_path: Path) -> None:
+    """网页会话没有"重命名知识库"这条路，必须明说做不到。
+
+    调用方（改名接口）据此把结果降级成"只改本地"，界面才不会谎称远端也改了。
+    """
+    gateway = WebDriverYuqueGateway(AppSettings(session_token=SecretStr("token"), data_dir=tmp_path))
+
+    with pytest.raises(DomainError) as error:
+        await gateway.rename_repository("swiftui", "新名字")
+
+    assert error.value.code == "REMOTE_CAPABILITY_UNSUPPORTED"
+
+
 async def test_update_reads_back_by_marker_when_confirmation_is_lost(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

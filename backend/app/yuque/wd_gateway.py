@@ -87,6 +87,12 @@ class WebDriverYuqueGateway:
         capabilities=ProviderCapabilities(
             browser_install=True,
             marker_lookup=True,
+            # 文档改名走编辑器（编辑器能只保存标题）；知识库改名做不到 —— 网页会话
+            # 没有 API 凭据，而语雀网页端没有稳定的"重命名知识库"入口。声明为真是因为
+            # 这个能力随后会按**当前生效的会话**再判一次（见 wd_gateway.rename_repository
+            # 抛出的 REMOTE_CAPABILITY_UNSUPPORTED），改名接口据此降级成"只改本地"。
+            repository_rename=True,
+            document_rename=True,
             browser_unavailable_code=YUQUE_BROWSER_UNAVAILABLE_CODE,
         ),
     )
@@ -516,6 +522,54 @@ class WebDriverYuqueGateway:
             raise
         except (*_WEBDRIVER_RETRYABLE, TimeoutError, ConnectionError, OSError):
             raise DomainError("YUQUE_PAGE_CHANGED", "语雀页面响应异常，请重新登录后重试", 503, True) from None
+
+    async def rename_document(self, document_id: str, title: str) -> RemoteDocument:
+        """改名走编辑器，**只填标题再保存**，不碰 Markdown 正文。
+
+        为什么不复用 ``update_document``：那条会 ``import_markdown``，等于把正文
+        整篇重新提交一遍。正文没变时那是一次没有意义的写入，变了则说明我们手里的
+        副本与远端不一致 —— 无论哪种，都不该由"改个名字"来触发。
+        """
+        self.write_calls.append("rename_document")
+        try:
+            async with self._background_page("rename-document") as operation:
+                page, request_id = operation
+                editor = EditorPage(
+                    page, self.settings.screenshots_dir, request_id, operation="rename-document"
+                )
+
+                async def rename() -> RemoteDocument:
+                    await _open_yuque_resource(page, document_id)
+                    await editor.set_title(title)
+                    await editor.save()
+                    return RemoteDocument(
+                        remote_id=document_id,
+                        repository_id=_repository_id_from_document_url(page.url),
+                        title=await editor.read_title(),
+                        url=page.url,
+                    )
+
+                return await editor.with_retry("rename-document", rename)
+        except DomainError:
+            raise
+        except (*_WEBDRIVER_RETRYABLE, TimeoutError, ConnectionError, OSError):
+            raise DomainError(
+                "YUQUE_PAGE_CHANGED", "语雀页面响应异常，请重新登录后重试", 503, True
+            ) from None
+
+    async def rename_repository(self, repository_id: str, name: str) -> RemoteRepository:
+        """网页会话里没有"重命名知识库"这条路。
+
+        语雀的网页端入口藏在设置菜单里，没有稳定的选择器可依；而 ``PUT /repos/:id``
+        只有带 Token 的 API 会话能发（网页会话没有 API 凭据）。做不到就要说做不到：
+        调用方（改名接口）会据此回 ``local_only``，界面如实告诉用户远端没跟着改。
+        """
+        raise DomainError(
+            "REMOTE_CAPABILITY_UNSUPPORTED",
+            "当前语雀连接方式不支持重命名知识库，请改用 API Token",
+            400,
+            False,
+        )
 
     async def delete_document(self, document_id: str, repository_id: str) -> None:
         self.write_calls.append("delete_document")

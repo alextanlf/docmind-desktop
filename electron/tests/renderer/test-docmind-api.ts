@@ -119,6 +119,9 @@ export const yuqueProviderSummaries: RemoteProviderSummary[] = [
       markerLookup: true,
       parentNodeWrite: false,
       documentPaths: false,
+      // 语雀走 API 会话时两条改名都做得到（走网页会话时知识库改名会降级成本地）。
+      repositoryRename: true,
+      documentRename: true,
       browserUnavailableCode: "YUQUE_BROWSER_UNAVAILABLE",
     },
   },
@@ -133,6 +136,9 @@ export const feishuProviderSummary: RemoteProviderSummary = {
     markerLookup: true,
     parentNodeWrite: true,
     documentPaths: true,
+    // 飞书开放平台没有重命名 wiki space 的接口，所以知识库只能改本地。
+    repositoryRename: false,
+    documentRename: true,
     browserUnavailableCode: null,
   },
 };
@@ -791,6 +797,14 @@ export function installDocMindApi(overrides?: {
       list: vi.fn().mockResolvedValue([repository]),
       create: vi.fn().mockResolvedValue(repository),
       update: vi.fn().mockResolvedValue(repository),
+      // 默认按"远端也改了"回答：绝大多数用例只关心名字变了，不需要再摆一个提示。
+      // 专门测"只在本地生效"的用例自己覆盖它。
+      rename: vi.fn().mockImplementation((_repositoryId: string, name: string) =>
+        Promise.resolve({
+          scope: "remote" as const,
+          repository: { ...repository, name },
+        }),
+      ),
       remove: vi.fn().mockResolvedValue(undefined),
       listRemoved: vi.fn().mockResolvedValue([]),
       restore: vi.fn().mockResolvedValue(repository),
@@ -830,6 +844,12 @@ export function installDocMindApi(overrides?: {
       readOriginalChunk: vi.fn().mockResolvedValue({ data: "", total: 0 }),
       create: vi.fn().mockResolvedValue(document),
       update: vi.fn().mockResolvedValue(document),
+      rename: vi.fn().mockImplementation((_documentId: string, title: string) =>
+        Promise.resolve({
+          scope: "remote" as const,
+          document: { ...document, title },
+        }),
+      ),
       remove: vi.fn().mockResolvedValue(undefined),
       archive: vi.fn().mockResolvedValue(undefined),
       unarchive: vi.fn().mockResolvedValue(undefined),

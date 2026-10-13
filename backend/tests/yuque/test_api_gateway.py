@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 import respx
@@ -194,6 +196,76 @@ async def test_creates_document_in_requested_repository() -> None:
     assert created.remote_id == "tan/product/release-notes"
     assert created.repository_id == "tan/product"
     assert route.called
+
+
+@respx.mock
+async def test_renames_repository_with_a_name_only_update() -> None:
+    """知识库改名：``PUT /repos/:id``，body 里**只有** name。
+
+    多送的字段（public 之类）在语雀那边是会生效的写入 —— 这里刻意断言整个 body，
+    而不是"包含 name"，否则将来谁顺手带上 `public: 0` 把知识库改成私有的，用例
+    也不会红。
+    """
+    route = respx.put("https://www.yuque.com/api/v2/repos/tan/product").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": {
+                    "name": "产品文档（新）",
+                    "namespace": "tan",
+                    "slug": "product",
+                    "items_count": 2,
+                }
+            },
+        )
+    )
+
+    repository = await gateway().rename_repository("tan/product", "产品文档（新）")
+
+    assert repository.name == "产品文档（新）"
+    assert repository.remote_id == "tan/product"
+    assert json.loads(route.calls[0].request.content) == {"name": "产品文档（新）"}
+
+
+@respx.mock
+async def test_renames_document_without_resending_the_body() -> None:
+    """文档改名只传 title。
+
+    语雀文档接口的 title/body 都是可选的，只传 title 就只改标题。整篇回写是另一种
+    语义（会覆盖远端正文），不该由"改个名字"触发 —— 所以断言 body 里**没有** body。
+    """
+    respx.get("https://www.yuque.com/api/v2/repos/tan/product/docs/requirements").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": {
+                    "id": 11,
+                    "title": "需求",
+                    "slug": "requirements",
+                    "body": "# 需求\n\n正文",
+                }
+            },
+        )
+    )
+    route = respx.put("https://www.yuque.com/api/v2/repos/tan/product/docs/11").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": {
+                    "id": 11,
+                    "title": "需求（新）",
+                    "slug": "requirements",
+                    "body": "# 需求\n\n正文",
+                }
+            },
+        )
+    )
+
+    renamed = await gateway().rename_document("tan/product/requirements", "需求（新）")
+
+    assert renamed.title == "需求（新）"
+    assert renamed.remote_id == "tan/product/requirements"
+    assert json.loads(route.calls[0].request.content) == {"title": "需求（新）"}
 
 
 @respx.mock

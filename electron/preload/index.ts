@@ -8,6 +8,8 @@ import {
   CreateImportInputSchema,
   CreateRepositoryInputSchema,
   UpdateRepositoryInputSchema,
+  RenameRepositoryInputSchema,
+  RepositoryRenameResultSchema,
   CreateSessionInputSchema,
   DocumentAssetNameSchema,
   DocumentDetailSchema,
@@ -15,6 +17,8 @@ import {
   RelinkOriginalInputSchema,
   DocumentVersionSchema,
   DocumentInputSchema,
+  RenameDocumentInputSchema,
+  DocumentRenameResultSchema,
   DocumentRemovalResultSchema,
   DocumentArchiveResultSchema,
   ArchivedDocumentSchema,
@@ -285,6 +289,13 @@ const api: DocMindApi = {
         uuid(repositoryId),
         UpdateRepositoryInputSchema.parse(input),
       ),
+    rename: (repositoryId, name) =>
+      invoke(
+        IPC_CHANNELS.repositoriesRename,
+        RepositoryRenameResultSchema,
+        uuid(repositoryId),
+        RenameRepositoryInputSchema.parse({ name }),
+      ),
     remove: (repositoryId, confirm) => {
       if (confirm !== true) return Promise.reject(new Error("INVALID_REQUEST"));
       return invoke(IPC_CHANNELS.repositoriesRemove, z.undefined(), uuid(repositoryId), true);
@@ -352,6 +363,13 @@ const api: DocMindApi = {
         DocumentDetailSchema,
         uuid(documentId),
         DocumentInputSchema.parse(input),
+      ),
+    rename: (documentId, title) =>
+      invoke(
+        IPC_CHANNELS.documentsRename,
+        DocumentRenameResultSchema,
+        uuid(documentId),
+        RenameDocumentInputSchema.parse({ title }),
       ),
     remove: (documentId, confirm) => {
       if (confirm !== true) return Promise.reject(new Error("INVALID_REQUEST"));

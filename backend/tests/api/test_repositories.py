@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.api.errors import DomainError
 from app.core.embedding import FakeEmbeddingProvider
 from app.remote.fake import FakeRemoteProvider
 from app.remote.provider import ProviderCapabilities, ProviderIdentity
@@ -206,6 +207,152 @@ def _delete(client, auth_headers, repository_id: str, *, confirm: bool = True): 
         headers=auth_headers,
         json={"confirm": confirm},
     )
+
+
+def _rename(client, auth_headers, repository_id: str, name: str):  # type: ignore[no-untyped-def]
+    return client.post(
+        f"/api/repositories/{repository_id}/rename",
+        headers=auth_headers,
+        json={"name": name},
+    )
+
+
+def test_rename_local_repository_changes_only_the_name(client, auth_headers) -> None:
+    """本地知识库改名：名字变了，库里的文档一篇都不能少。"""
+    repository_id, document_id = _local_repository_with_document(client, auth_headers)
+
+    response = _rename(client, auth_headers, repository_id, "新名字")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["scope"] == "local_only"
+    assert response.json()["repository"]["name"] == "新名字"
+    record = client.app.state.repository_store.get(repository_id)
+    assert record.name == "新名字"
+    assert record.provider is None
+    assert client.app.state.document_store.get(document_id) is not None
+    # 改名不是重新绑定：远端身份不能被动到（本地库本来就没有）。
+    assert record.remote_id is None
+
+
+def test_rename_repository_writes_back_when_the_provider_can(
+    client, auth_headers, remote_provider: FakeRemoteProvider
+) -> None:
+    """远端支持改名时，远端那一半必须真的改掉，并且以远端返回的名字为准。
+
+    只改本地的话，下一次列表刷新就会把远端旧名字拉回来 —— 用户看到"改名自己弹
+    回去了"。所以断言的是**远端状态**，不是响应体。
+    """
+    remote_provider.seed_repository("repo-remote", "SwiftUI")
+    listed = client.get("/api/repositories", headers=auth_headers).json()[0]
+
+    response = _rename(client, auth_headers, listed["id"], "SwiftUI 笔记")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["scope"] == "remote"
+    assert response.json()["repository"]["name"] == "SwiftUI 笔记"
+    assert remote_provider.write_calls == ["rename_repository"]
+    # 刷新列表（远端名字会被 upsert 回本地）之后名字仍然是我们改的那个。
+    refreshed = client.get("/api/repositories", headers=auth_headers).json()[0]
+    assert refreshed["name"] == "SwiftUI 笔记"
+
+
+def test_rename_repository_without_the_capability_stays_local(
+    client, auth_headers
+) -> None:
+    """provider 不支持改名时：本地改名要成功，但必须如实说"只在本地生效"。
+
+    报错是错的（名字其实已经改了），静默当成成功也是错的（刷新就变回去）。
+    """
+    provider = FakeRemoteProvider()
+    provider.identity = ProviderIdentity(
+        name="yuque",
+        label="语雀",
+        capabilities=ProviderCapabilities(
+            browser_install=True,
+            marker_lookup=True,
+            document_paths=True,
+            repository_rename=False,
+            document_rename=True,
+        ),
+    )
+    provider.seed_repository("repo-remote", "SwiftUI")
+    install_remote_provider(client.app, provider)
+    listed = client.get("/api/repositories", headers=auth_headers).json()[0]
+
+    response = _rename(client, auth_headers, listed["id"], "本地新名")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["scope"] == "local_only"
+    assert response.json()["repository"]["name"] == "本地新名"
+    assert provider.write_calls == []
+    # 远端没改，所以下一次刷新会把远端名字写回来 —— 这正是界面必须提示的后果。
+    refreshed = client.get("/api/repositories", headers=auth_headers).json()[0]
+    assert refreshed["name"] == "SwiftUI"
+
+
+def test_rename_repository_falls_back_to_local_when_the_live_session_cannot(
+    client, auth_headers
+) -> None:
+    """能力声明说"能改"，当前会话却改不了 —— 必须降级成"只改本地"，而不是报错。
+
+    这不是臆想的组合：语雀的 `repository_rename` 是**来源级**声明（API 会话能改），
+    而实际生效的可能是网页会话（没有 API 凭据，改不了）。provider 已经如实抛出
+    ``REMOTE_CAPABILITY_UNSUPPORTED``，接口就该退回 `local_only`：本地改名已经完成，
+    报一个失败框只会让用户以为名字没改。
+    """
+
+    class WebOnlyProvider(FakeRemoteProvider):
+        async def rename_repository(self, repository_id: str, name: str):  # type: ignore[no-untyped-def]
+            raise DomainError("REMOTE_CAPABILITY_UNSUPPORTED", "网页会话不支持重命名", 400, False)
+
+    provider = WebOnlyProvider()
+    provider.seed_repository("repo-remote", "SwiftUI")
+    install_remote_provider(client.app, provider)
+    listed = client.get("/api/repositories", headers=auth_headers).json()[0]
+
+    response = _rename(client, auth_headers, listed["id"], "本地新名")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["scope"] == "local_only"
+    assert response.json()["repository"]["name"] == "本地新名"
+    assert client.app.state.repository_store.get(listed["id"]).name == "本地新名"
+
+
+def test_rename_repository_reports_a_remote_failure_without_silently_succeeding(
+    client, auth_headers, remote_provider: FakeRemoteProvider
+) -> None:
+    """远端改名失败必须是一个错误，不能被"本地已经改了"糊过去。"""
+
+    async def refuse(_repository_id: str, _name: str):  # type: ignore[no-untyped-def]
+        raise RuntimeError("remote rejected the rename")
+
+    remote_provider.rename_repository = refuse  # type: ignore[method-assign]
+    remote_provider.seed_repository("repo-remote", "SwiftUI")
+    listed = client.get("/api/repositories", headers=auth_headers).json()[0]
+
+    response = _rename(client, auth_headers, listed["id"], "新名字")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "REMOTE_OPERATION_FAILED"
+    assert client.app.state.repository_store.get(listed["id"]).name == "SwiftUI"
+
+
+def test_rename_repository_rejects_a_blank_name(client, auth_headers) -> None:
+    created = client.post("/api/repositories", headers=auth_headers, json={"name": "本地"})
+
+    response = _rename(client, auth_headers, created.json()["id"], "   ")
+
+    assert response.status_code == 422
+    assert client.app.state.repository_store.get(created.json()["id"]).name == "本地"
+
+
+def test_rename_repository_is_not_found_for_unknown_id(client, auth_headers) -> None:
+    response = _rename(
+        client, auth_headers, "00000000-0000-4000-8000-000000000000", "新名字"
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
 
 
 def test_delete_repository_requires_explicit_confirmation(client, auth_headers) -> None:

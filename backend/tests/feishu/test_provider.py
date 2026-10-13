@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 import respx
@@ -438,6 +440,53 @@ async def test_update_document_replaces_body_and_renames_node(provider: FeishuPr
 
     assert _json.loads(delete_route.calls[0].request.content) == {"start_index": 0, "end_index": 2}
     assert _json.loads(rename_route.calls[0].request.content) == {"title": "新标题"}
+
+
+@respx.mock
+async def test_rename_document_calls_only_the_title_endpoint(provider: FeishuProvider) -> None:
+    """改名只打 update_title，**一个正文接口都不许碰**。
+
+    飞书重写正文是"删光所有块再重建"，为了改一个标题走那条路，会在远端留下一个
+    正文一模一样的新版本。所以这里把"没碰过正文"做成硬断言：正文接口根本没有 mock，
+    实现一旦走错路就会直接失败。
+    """
+    respx.get(f"{BASE}/wiki/v2/spaces/get_node").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "node": {
+                        "node_token": "wik1",
+                        "obj_token": "docx1",
+                        "obj_type": "docx",
+                        "space_id": "sp1",
+                        "title": "旧标题",
+                    }
+                },
+            },
+        )
+    )
+    rename_route = respx.post(f"{BASE}/wiki/v2/spaces/sp1/nodes/wik1/update_title").mock(
+        return_value=httpx.Response(200, json={"code": 0, "data": {}})
+    )
+
+    document = await provider.rename_document("wik1", "新标题")
+
+    assert document.title == "新标题"
+    assert document.repository_id == "sp1"
+    assert json.loads(rename_route.calls[0].request.content) == {"title": "新标题"}
+
+
+async def test_feishu_declares_it_cannot_rename_a_knowledge_base(
+    provider: FeishuProvider,
+) -> None:
+    """做不到就要在能力里说清楚，别让调用方以为它会改远端。
+
+    飞书开放平台只有 create/list wiki space，没有 update。
+    """
+    assert provider.identity.capabilities.repository_rename is False
+    assert provider.identity.capabilities.document_rename is True
 
 
 @respx.mock

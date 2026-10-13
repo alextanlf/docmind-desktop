@@ -7,7 +7,7 @@ from typing import cast
 
 from fastapi import APIRouter, Request, Response, status
 
-from app.api.documents import recover_document_mutations
+from app.api.documents import _remote_failure, recover_document_mutations
 from app.api.errors import DomainError
 from app.remote.registry import ProviderRegistry
 from app.schemas.remote import CreateRemoteRepositoryRequest, RemoteRepository
@@ -15,6 +15,8 @@ from app.schemas.repositories import (
     RemovedRepositoryView,
     RepositoryCreate,
     RepositoryDelete,
+    RepositoryRename,
+    RepositoryRenameResult,
     RepositoryUpdate,
     RepositoryView,
 )
@@ -183,6 +185,51 @@ async def update_repository(
         parent_id = body.remote_parent_id.strip() if body.remote_parent_id else None
         record = store.set_remote_parent(repository_id, parent_id or None)
     return _view(record)
+
+
+@router.post("/{repository_id}/rename", response_model=RepositoryRenameResult)
+async def rename_repository(
+    request: Request, repository_id: str, body: RepositoryRename
+) -> RepositoryRenameResult:
+    """给知识库改名：本地一定改；远端能改就一起改。
+
+    单独一条路由而不是复用 ``PATCH``：那条已经把 ``remoteParentId`` 当作"唯一可改
+    的东西"，而改名要如实回答**改到哪儿了** —— 本地库、以及不支持改名的 provider
+    都只改本地，界面必须知道该不该提示"远端名字没跟着变"。
+
+    provider **改不了**（没有这个能力，或当前的连接方式做不到）时只改本地并如实回
+    ``local_only``：本地改名本身就是用户要的结果，报一个失败框（其实名字已经变了）
+    只会骗人。远端**改了但失败**是另一回事，那种情况必须报错。
+    """
+    store = _store(request)
+    record = store.get(repository_id)
+    if record is None:
+        raise DomainError("NOT_FOUND", "资源不存在", 404)
+    name = body.name
+    scope = "local_only"
+    remote_name = name
+    if record.provider and record.remote_id:
+        provider = _registry(request).get(record.provider)
+        if provider.identity.capabilities.repository_rename:
+            try:
+                remote = await provider.rename_repository(record.remote_id, name)
+            except DomainError as error:
+                # 能力声明与**当前生效的会话**可能对不上：语雀既可能走带 Token 的
+                # API（能改名），也可能走网页会话（不能）。provider 已经如实说了
+                # "这条路走不通"，那就退回"只改本地"，而不是让用户看到一个失败框
+                # —— 本地改名本身已经完成了。
+                if error.code != "REMOTE_CAPABILITY_UNSUPPORTED":
+                    raise _remote_failure(error) from None
+            except Exception as error:  # noqa: BLE001 - 网关边界统一翻译
+                raise _remote_failure(error) from None
+            else:
+                # 用远端回给的名字，而不是我们请求的那个：远端可能规范化过（去空白、
+                # 截断、替换非法字符），本地存一份和远端不一致的名字，下一秒同步就会
+                # 把它改回来 —— 用户看到的是"改名自己弹回去了"。
+                remote_name = remote.name or name
+                scope = "remote"
+    renamed = store.rename(repository_id, remote_name)
+    return RepositoryRenameResult(scope=scope, repository=_view(renamed))
 
 
 def _remove_document_files(request: Request, document_id: str) -> None:

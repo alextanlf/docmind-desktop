@@ -1507,6 +1507,176 @@ def _create_local_documents(client, auth_headers, count: int) -> list[dict]:
     return documents
 
 
+def _rename_document(client, auth_headers, document_id: str, title: str):  # type: ignore[no-untyped-def]
+    return client.post(
+        f"/api/documents/{document_id}/rename",
+        headers=auth_headers,
+        json={"title": title},
+    )
+
+
+def test_rename_local_document_changes_only_the_title(client, auth_headers) -> None:
+    """本地文档改名：标题变了，正文、分块、向量、磁盘文件全都不动。
+
+    这条同时守着"改名被实现成编辑保存"：那样会重新分块、重新嵌入，chunk_count 与
+    id 都会变（正文里带着标题时尤其明显）。
+    """
+    repository = client.app.state.repository_store.create_local(name="本地库")
+    client.app.state.embedding_provider = FakeEmbeddingProvider(
+        client.app.state.settings.embedding_settings
+    )
+    created = client.post(
+        f"/api/repositories/{repository.id}/documents",
+        headers=auth_headers,
+        json={"title": "旧标题", "content": "# 旧标题\n\n正文段落一。\n\n正文段落二。"},
+    ).json()
+    document_id = created["id"]
+    store = client.app.state.document_store
+    before_chunks = [
+        (chunk.id, chunk.chunk_index, chunk.text) for chunk in store.list_chunks(document_id)
+    ]
+    before_path = store.get(document_id).markdown_path
+    before_content = Path(before_path).read_text(encoding="utf-8")
+
+    response = _rename_document(client, auth_headers, document_id, "新标题")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["scope"] == "local_only"
+    assert response.json()["document"]["title"] == "新标题"
+    assert store.get(document_id).title == "新标题"
+    # 正文一个字都没动 —— 包括文件内容与分块 id（重新分块会换 id，因为 id 里带着正文摘要）。
+    assert Path(before_path).read_text(encoding="utf-8") == before_content
+    after_chunks = [
+        (chunk.id, chunk.chunk_index, chunk.text) for chunk in store.list_chunks(document_id)
+    ]
+    assert after_chunks == before_chunks
+    assert response.json()["document"]["content"] == before_content
+
+
+def test_rename_remote_document_writes_back_without_rewriting_the_body(
+    client, auth_headers
+) -> None:
+    """远端文档改名：远端标题变了，但远端正文必须原样。
+
+    这是与"编辑保存"的关键区别：那条路会把整篇正文重新提交一遍（飞书那边等于删块
+    重建），而用户只是改了个名字。
+    """
+    repository_id, gateway = _seed_repository(client)
+    document_id, remote_id = _create_remote_document(client, auth_headers, repository_id, "旧标题")
+    remote_before = asyncio.run(gateway.read_document(remote_id)).content
+
+    response = _rename_document(client, auth_headers, document_id, "新标题")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["scope"] == "remote"
+    assert response.json()["document"]["title"] == "新标题"
+    assert "rename_document" in gateway.write_calls
+    # 只调了改名，没有走整篇更新。
+    assert "update_document" not in gateway.write_calls
+    remote_after = asyncio.run(gateway.read_document(remote_id))
+    assert remote_after.title == "新标题"
+    assert remote_after.content == remote_before
+    assert client.app.state.document_store.get(document_id).title == "新标题"
+
+
+def test_rename_remote_document_without_the_capability_stays_local(client, auth_headers) -> None:
+    """provider 不会只改标题时，不许为了改名把正文整篇重写一遍。
+
+    代价是本地名字会在下次同步被远端名字覆盖 —— 如实回 ``local_only`` 让界面说清楚，
+    比偷偷重写用户没碰过的正文好。
+    """
+    from app.remote.provider import ProviderCapabilities, ProviderIdentity
+    from tests.conftest import install_remote_provider
+
+    provider = FakeRemoteProvider()
+    provider.identity = ProviderIdentity(
+        name="yuque",
+        label="语雀",
+        capabilities=ProviderCapabilities(
+            browser_install=True,
+            marker_lookup=True,
+            document_paths=True,
+            repository_rename=True,
+            document_rename=False,
+        ),
+    )
+    install_remote_provider(client.app, provider)
+    repository_id, _ = _seed_repository(client)
+    document_id, _remote_id = _create_remote_document(client, auth_headers, repository_id, "旧标题")
+    provider.write_calls.clear()
+
+    response = _rename_document(client, auth_headers, document_id, "本地新名")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["scope"] == "local_only"
+    assert response.json()["document"]["title"] == "本地新名"
+    assert provider.write_calls == []
+    assert client.app.state.document_store.get(document_id).title == "本地新名"
+
+
+def test_rename_remote_document_falls_back_to_local_when_the_live_session_cannot(
+    client, auth_headers
+) -> None:
+    """provider 声明能改，当前会话却改不了 —— 降级成"只改本地"，不是报错。
+
+    与知识库那条同一个道理：语雀的 `document_rename` 是来源级声明，实际生效的可能是
+    网页会话。provider 抛出 ``REMOTE_CAPABILITY_UNSUPPORTED`` 就是明确说"这条路走不通"。
+    """
+    repository_id, gateway = _seed_repository(client)
+    document_id, _remote_id = _create_remote_document(client, auth_headers, repository_id, "旧标题")
+
+    async def refuse(_document_id: str, _title: str):  # type: ignore[no-untyped-def]
+        raise DomainError("REMOTE_CAPABILITY_UNSUPPORTED", "网页会话不支持只改标题", 400, False)
+
+    gateway.rename_document = refuse  # type: ignore[method-assign]
+
+    response = _rename_document(client, auth_headers, document_id, "本地新名")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["scope"] == "local_only"
+    assert response.json()["document"]["title"] == "本地新名"
+    assert client.app.state.document_store.get(document_id).title == "本地新名"
+
+
+def test_rename_remote_document_reports_a_remote_failure(client, auth_headers) -> None:
+    """远端改名失败必须报错，而且本地标题保持原样（不做半套）。"""
+    repository_id, gateway = _seed_repository(client)
+    document_id, _remote_id = _create_remote_document(client, auth_headers, repository_id, "旧标题")
+
+    async def refuse(_document_id: str, _title: str):  # type: ignore[no-untyped-def]
+        raise RuntimeError("remote rejected the rename")
+
+    gateway.rename_document = refuse  # type: ignore[method-assign]
+
+    response = _rename_document(client, auth_headers, document_id, "新标题")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "REMOTE_OPERATION_FAILED"
+    assert client.app.state.document_store.get(document_id).title == "旧标题"
+
+
+def test_rename_document_rejects_a_blank_title_and_unknown_id(client, auth_headers) -> None:
+    repository = client.app.state.repository_store.create_local(name="本地库")
+    client.app.state.embedding_provider = FakeEmbeddingProvider(
+        client.app.state.settings.embedding_settings
+    )
+    document_id = client.post(
+        f"/api/repositories/{repository.id}/documents",
+        headers=auth_headers,
+        json={"title": "标题", "content": "# 标题\n\n正文"},
+    ).json()["id"]
+
+    blank = _rename_document(client, auth_headers, document_id, "   ")
+    unknown = _rename_document(
+        client, auth_headers, "00000000-0000-4000-8000-000000000000", "新标题"
+    )
+
+    assert blank.status_code == 422
+    assert client.app.state.document_store.get(document_id).title == "标题"
+    assert unknown.status_code == 404
+    assert unknown.json()["error"]["code"] == "NOT_FOUND"
+
+
 def _seed_shared_graph(client, documents: list[dict]) -> None:
     """按 extractor 的真实形状给这些文档写图：都提到同一个主题「引言」。"""
     store = client.app.state.graph_store

@@ -102,6 +102,19 @@ class YuqueApiGateway:
             raise DomainError("YUQUE_API_ERROR", "语雀 API 返回的知识库数据无效", 502, True)
         return _repository_from_api(data)
 
+    async def rename_repository(self, repository_id: str, name: str) -> RemoteRepository:
+        self.write_calls.append("rename_repository")
+        token = self._token_required()
+        data = await _request_data(
+            token,
+            "PUT",
+            f"/repos/{_quote_path(repository_id)}",
+            json={"name": name},
+        )
+        if not isinstance(data, dict):
+            raise DomainError("YUQUE_API_ERROR", "语雀 API 返回的知识库数据无效", 502, True)
+        return _repository_from_api(data)
+
     async def list_documents(self, repository_id: str) -> list[RemoteDocument]:
         self.read_calls.append("list_documents")
         token = self._token_required()
@@ -217,6 +230,30 @@ class YuqueApiGateway:
             raise DomainError("YUQUE_API_ERROR", "语雀 API 返回的文档数据无效", 502, True)
         return _document_from_api(repository_id, data, fallback_id=request.document_id)
 
+    async def rename_document(self, document_id: str, title: str) -> RemoteDocument:
+        """只传 ``title``。
+
+        语雀文档接口的 ``title`` / ``body`` 都是可选字段，只传 title 就只改标题
+        （``body`` 缺席 = 不动正文）。所以这里刻意不读回正文再整篇回写：那条路会
+        为了改一个名字，把用户没碰过的正文重新提交一次。
+        """
+        self.write_calls.append("rename_document")
+        token = self._token_required()
+        repository_id, _ = _parse_document_id(document_id)
+        current = await self._fetch_document(document_id)
+        api_id = current.get("id")
+        if api_id is None:
+            raise DomainError("YUQUE_API_ERROR", "语雀 API 未返回文档标识", 502, True)
+        data = await _request_data(
+            token,
+            "PUT",
+            f"/repos/{_quote_path(repository_id)}/docs/{api_id}",
+            json={"title": title},
+        )
+        if not isinstance(data, dict):
+            raise DomainError("YUQUE_API_ERROR", "语雀 API 返回的文档数据无效", 502, True)
+        return _document_from_api(repository_id, data, fallback_id=document_id)
+
     async def delete_document(self, document_id: str, repository_id: str) -> None:
         self.write_calls.append("delete_document")
         token = self._token_required()
@@ -283,6 +320,10 @@ class YuqueProvider:
             browser_install=True,
             marker_lookup=True,
             document_paths=True,
+            # 知识库改名走 `PUT /repos/:id`，文档改名走只带 title 的 `PUT .../docs/:id`。
+            # 两条都是 API 与网页会话各自实现的（见两个 gateway）。
+            repository_rename=True,
+            document_rename=True,
             browser_unavailable_code=YUQUE_BROWSER_UNAVAILABLE_CODE,
         ),
     )
@@ -321,6 +362,9 @@ class YuqueProvider:
     async def create_repository(self, request: CreateRemoteRepositoryRequest) -> RemoteRepository:
         return await self._active().create_repository(request)
 
+    async def rename_repository(self, repository_id: str, name: str) -> RemoteRepository:
+        return await self._active().rename_repository(repository_id, name)
+
     async def list_documents(self, repository_id: str) -> list[RemoteDocument]:
         return await self._active().list_documents(repository_id)
 
@@ -340,6 +384,9 @@ class YuqueProvider:
 
     async def update_document(self, request: UpdateRemoteDocumentRequest) -> RemoteDocument:
         return await self._active().update_document(request)
+
+    async def rename_document(self, document_id: str, title: str) -> RemoteDocument:
+        return await self._active().rename_document(document_id, title)
 
     async def delete_document(self, document_id: str, repository_id: str) -> None:
         await self._active().delete_document(document_id, repository_id)

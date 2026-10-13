@@ -12,10 +12,14 @@ import {
   CreateImportInputSchema,
   CreateRepositoryInputSchema,
   UpdateRepositoryInputSchema,
+  RenameRepositoryInputSchema,
+  RepositoryRenameResultSchema,
   CreateSessionInputSchema,
   DocumentDetailSchema,
   DocumentVersionSchema,
   DocumentInputSchema,
+  RenameDocumentInputSchema,
+  DocumentRenameResultSchema,
   DocumentAssetNameSchema,
   DocumentRemovalResultSchema,
   DocumentArchiveResultSchema,
@@ -397,6 +401,12 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         jsonInit("PATCH", parse(UpdateRepositoryInputSchema, input)),
         RepositorySchema,
       ),
+    [IPC_CHANNELS.repositoriesRename]: (_event, repositoryId, input) =>
+      proxy.requestJson(
+        `/api/repositories/${parse(UUID, repositoryId)}/rename`,
+        jsonInit("POST", parse(RenameRepositoryInputSchema, input)),
+        RepositoryRenameResultSchema,
+      ),
     [IPC_CHANNELS.repositoriesRemove]: (_event, repositoryId, confirm) => {
       if (confirm !== true) throw new DocMindClientError("INVALID_REQUEST", "必须确认删除");
       return proxy.requestVoid(
@@ -499,6 +509,14 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         `/api/documents/${id}`,
         jsonInit("PUT", parse(DocumentInputSchema, input)),
         DocumentDetailSchema,
+      );
+    },
+    [IPC_CHANNELS.documentsRename]: (_event, documentId, input) => {
+      const id = parse(UUID, documentId);
+      return proxy.requestJson(
+        `/api/documents/${id}/rename`,
+        jsonInit("POST", parse(RenameDocumentInputSchema, input)),
+        DocumentRenameResultSchema,
       );
     },
     // async 是必需的，不是风格：`withSignedPath` 在未授权路径上**同步**抛错，

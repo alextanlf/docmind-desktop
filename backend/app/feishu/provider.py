@@ -55,6 +55,11 @@ class FeishuProvider:
             browser_install=False,
             marker_lookup=True,
             parent_node_write=True,
+            # 飞书开放平台没有"重命名知识库（wiki space）"这个接口 —— 只有 create
+            # 和 list，没有 update。所以知识库改名只落在本地，界面会如实提示。
+            repository_rename=False,
+            # 改标题有专门接口（`update_title`），不必重写正文。
+            document_rename=True,
         ),
     )
 
@@ -130,6 +135,13 @@ class FeishuProvider:
             remote_id=str(space["space_id"]),
             name=str(space.get("name") or request.name),
             url=None,
+        )
+
+    async def rename_repository(self, repository_id: str, name: str) -> RemoteRepository:
+        # 上面把 repository_rename 声明成 False，所以这条路径不该有人走到；
+        # 留着是为了让"做不到"有一个明确的说法，而不是 AttributeError。
+        raise DomainError(
+            "REMOTE_CAPABILITY_UNSUPPORTED", "飞书开放平台不支持重命名知识库", 400, False
         )
 
     # -- documents (wiki docx nodes) --------------------------------------------
@@ -208,6 +220,25 @@ class FeishuProvider:
             repository_id=str(node.get("space_id") or ""),
             title=title,
             content=content,
+            url=f"https://feishu.cn/wiki/{document_id}",
+        )
+
+    async def rename_document(self, document_id: str, title: str) -> RemoteDocument:
+        """只改标题。**不碰正文** —— 名字与内容是两件事，重写正文会多出一个版本。
+
+        刻意不调 ``_replace_document_body``：飞书那边是"删光所有块再重建"，
+        一次改名变成整篇重写，历史上就多出一版没有意义的正文。
+        """
+        token = await self._tokens.require_token()
+        node = await client.get_wiki_node(token, document_id)
+        space_id = str(node.get("space_id") or "")
+        if not space_id:
+            raise DomainError("FEISHU_API_ERROR", "飞书节点缺少知识库标识", 502, True)
+        await client.update_wiki_node_title(token, space_id, document_id, title)
+        return RemoteDocument(
+            remote_id=document_id,
+            repository_id=space_id,
+            title=title,
             url=f"https://feishu.cn/wiki/{document_id}",
         )
 

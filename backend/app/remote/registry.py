@@ -120,6 +120,9 @@ class ProviderRegistry:
                         browser_install=capabilities.browser_install,
                         marker_lookup=capabilities.marker_lookup,
                         parent_node_write=capabilities.parent_node_write,
+                        document_paths=capabilities.document_paths,
+                        repository_rename=capabilities.repository_rename,
+                        document_rename=capabilities.document_rename,
                         browser_unavailable_code=capabilities.browser_unavailable_code,
                     ),
                 )
