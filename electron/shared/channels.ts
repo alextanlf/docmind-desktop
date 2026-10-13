@@ -44,6 +44,8 @@ export const IPC_CHANNELS = {
   documentsCreate: "documents:create",
   documentsUpdate: "documents:update",
   documentsDelete: "documents:delete",
+  documentsRelinkOriginal: "documents:relinkOriginal",
+  documentsReconvert: "documents:reconvert",
   importsInspect: "imports:inspect",
   importsCreate: "imports:create",
   importsGet: "imports:get",
@@ -71,7 +73,25 @@ export const IPC_CHANNELS = {
   memoryList: "memory:list",
   memorySubscribeDistillation: "memory:subscribeDistillation",
   dialogsChooseSource: "dialogs:chooseSource",
-  sourcesStageDirectory: "sources:stageDirectory",
+  /**
+   * 后台扫描一个目录，边扫边推进度。
+   *
+   * 是**推送型**通道（见 PUSH_CHANNELS）：它立刻返回 scanId，结果与进度走
+   * `streamEventChannel(scanId)`；`streamCancel` 用来取消。
+   *
+   * 从前这里是 `sources:stageDirectory`（一问一答、扫完才返回）。改成推送是因为
+   * 扫描要把每个文件完整读一遍算摘要 —— 几百个文件就是几分钟，界面既看不到进度
+   * 也没法取消。
+   */
+  /**
+   * 用系统程序打开这篇文档的原件（Word、Preview……）。
+   *
+   * 渲染层**只发 documentId**：真正的路径由主进程向后端要、验签之后才交给系统程序。
+   * 若让渲染层把路径传下来，"渲染层不能指名任意文件"这条性质当场就没了 —— 而这个通道
+   * 的目的恰恰是去动用户的文件。
+   */
+  documentsOpenOriginal: "documents:openOriginal",
+  sourcesScanDirectory: "sources:scanDirectory",
   sourcesListFormats: "sources:listFormats",
   batchesCreate: "batches:create",
   batchesGet: "batches:get",
@@ -115,6 +135,7 @@ export const streamEventChannel = (requestId: string) => `${STREAM_EVENT_PREFIX}
  * 「凡在 preload 里 send 的通道，都在本集合内」。
  */
 export const PUSH_CHANNELS: ReadonlySet<string> = new Set<string>([
+  IPC_CHANNELS.sourcesScanDirectory,
   IPC_CHANNELS.importsSubscribe,
   IPC_CHANNELS.batchesSubscribe,
   IPC_CHANNELS.chatStream,

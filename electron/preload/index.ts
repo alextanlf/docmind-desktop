@@ -12,6 +12,7 @@ import {
   DocumentAssetNameSchema,
   DocumentDetailSchema,
   DocumentOriginalChunkSchema,
+  RelinkOriginalInputSchema,
   DocumentVersionSchema,
   DocumentInputSchema,
   DocumentSummarySchema,
@@ -34,8 +35,7 @@ import {
   SettingsViewSchema,
   SourcePreviewSchema,
   SourceRefSchema,
-  StagedCollectionSchema,
-  StagedSourceSchema,
+  LinkedSourceSchema,
   SourceFormatSchema,
   RemoteStatusSchema,
   RemoteProviderSummarySchema,
@@ -343,6 +343,17 @@ const api: DocMindApi = {
       if (confirm !== true) return Promise.reject(new Error("INVALID_REQUEST"));
       return invoke(IPC_CHANNELS.documentsDelete, z.undefined(), uuid(documentId), true);
     },
+    relinkOriginal: (documentId, path) =>
+      invoke(
+        IPC_CHANNELS.documentsRelinkOriginal,
+        DocumentDetailSchema,
+        uuid(documentId),
+        RelinkOriginalInputSchema.parse({ path }),
+      ),
+    openOriginal: (documentId) =>
+      invoke(IPC_CHANNELS.documentsOpenOriginal, z.void(), uuid(documentId)),
+    reconvert: (documentId) =>
+      invoke(IPC_CHANNELS.documentsReconvert, DocumentDetailSchema, uuid(documentId)),
   },
   imports: {
     inspect: (input) =>
@@ -455,12 +466,12 @@ const api: DocMindApi = {
     chooseSource: (format) => {
       if (typeof format !== "string" || format.length === 0 || format.length > 64)
         return Promise.reject(new Error("INVALID_REQUEST"));
-      return invoke(IPC_CHANNELS.dialogsChooseSource, StagedSourceSchema.nullable(), format);
+      return invoke(IPC_CHANNELS.dialogsChooseSource, LinkedSourceSchema.nullable(), format);
     },
   },
   sources: {
-    stageDirectory: () =>
-      invoke(IPC_CHANNELS.sourcesStageDirectory, StagedCollectionSchema.nullable()),
+    scanDirectory: (requestId, onEvent) =>
+      subscription(IPC_CHANNELS.sourcesScanDirectory, uuid(requestId), [uuid(requestId)], onEvent),
     listFormats: () => invoke(IPC_CHANNELS.sourcesListFormats, SourceFormatSchema.array()),
   },
   corpus: {

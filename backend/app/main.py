@@ -529,6 +529,8 @@ def create_app(
             batch_max_items=runtime_settings.batch_max_items,
             web_discovery=web_discovery,
             remote_discovery=remote_discovery,
+            # 目录批次也能"就地读"：授权校验要用与主进程共享的密钥。
+            secret=runtime_settings.session_token.get_secret_value(),
             formats=formats,
         )
         app.state.batch_service.recover_on_startup()

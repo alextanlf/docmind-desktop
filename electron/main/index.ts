@@ -1,4 +1,4 @@
-import { app } from "electron";
+import { app, shell } from "electron";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { BackendManager, BackendStartError } from "./backend-manager";
@@ -33,9 +33,12 @@ if (e2eRuntime && process.env.DOCMIND_E2E_DATA_DIR) {
   app.setPath("userData", process.env.DOCMIND_E2E_DATA_DIR);
 }
 
-function stagedFilesForRuntime(dataDir: string): StagedFileService {
+function stagedFilesForRuntime(dataDir: string, sessionToken: string): StagedFileService {
   return new StagedFileService({
     dataDir,
+    // 与后端共享的会话密钥：链接型导入的路径签名用它。没有它，"用户选过的路径"就
+    // 没法向后端证明 —— 而那是渲染层读不到任意文件的唯一依据。
+    sessionToken,
     ...(e2eRuntime
       ? {
           showOpenDialog: async () => {
@@ -106,14 +109,17 @@ app.whenReady().then(async () => {
       backendCwd: process.env.DOCMIND_BACKEND_CWD,
       bundledModelsDir: resolveBundledModelsDir(),
     });
-    await backend.start();
+    const connection = await backend.start();
     proxy = new BackendProxy({
       request: (path, init) => backend.request(path, init),
     });
     registerIpcHandlers({
       proxy,
-      stagedFiles: stagedFilesForRuntime(app.getPath("userData")),
+      stagedFiles: stagedFilesForRuntime(app.getPath("userData"), connection.token),
       app,
+      // 主进程要自己验后端发来的路径签名（"用系统程序打开原件"那一步），所以要有一份密钥。
+      sessionToken: connection.token,
+      shell,
     });
     rendererOrigin =
       process.env.ELECTRON_RENDERER_URL ?? `file://${__dirname}/../renderer/index.html`;

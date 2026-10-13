@@ -543,6 +543,13 @@ export const DocumentDetailSchema = DocumentSummarySchema.extend({
    */
   originalMediaType: z.string().max(255).nullable(),
   originalByteSize: z.number().int().nonnegative().nullable(),
+  /**
+   * 原件状态。`missing` 与 `none` 分开是刻意的：合成一个值，界面就只能说"没有原文"，
+   * 用户分不清是自己没导入原件，还是文件被挪走了（后者他能修）。
+   *
+   * 后端每次读文档时 `stat` 原件算出来，不落库 —— 存下来的状态列必然会在某一刻过期。
+   */
+  originalState: z.enum(["none", "available", "changed", "missing"]).default("none"),
   /** 没有图是常态，后端给空数组，客户端不必先判空再遍历。 */
   figures: DocumentFigureSchema.array().default([]),
 });
@@ -551,13 +558,46 @@ export const DocumentDetailSchema = DocumentSummarySchema.extend({
  * 原件分片。二进制以 base64 过 IPC：`contextBridge` 不保证透传 TypedArray，
  * 而本项目已有同款约定（见后端 `_document_snapshot` 的 `file_bytes_b64`）。
  */
+/**
+ * "任意受支持格式"的哨兵：传给 `dialogs.chooseSource` 表示"过滤器把所有格式都列上"。
+ *
+ * 用在**重新定位原件**上：那时原件可能已经不在磁盘上了（这正是最常见的情形），
+ * 文档记录里连媒体类型都没有，界面无从知道它原本是什么格式。
+ */
+export const ANY_FORMAT = "*";
+
+/**
+ * 重新定位原件：只改绑定，不转换。
+ *
+ * `pathToken` 与导入时同一条约束 —— 由**主进程**在转发前补上（见 `ipc-handlers.ts`），
+ * 渲染层拿不到也造不出来；否则"重新定位"就成了绕开导入那道门、把文档指到任意文件上的路。
+ */
+export const RelinkOriginalInputSchema = z.object({
+  path: bounded(4_000),
+  pathToken: bounded(255).nullable().optional(),
+});
+
 export const DocumentOriginalChunkSchema = z.object({
   data: z.string(),
   total: z.number().int().nonnegative(),
 });
 
+/**
+ * 导入来源的类别。**与后端 `app/schemas/imports.py` 的 `SOURCE_KINDS` 是一对**，
+ * `contracts.test.ts` 会去读那份 Python 源码逐字比对 —— 两边各说各话的代价不是报错，
+ * 而是运行时才炸的 ValidationError（`linked_file` 加进来时后端就真的踩过一次：
+ * `SourceRef` 与 `SourcePreview` 各自声明了一份枚举，只改了一处）。
+ */
+export const SOURCE_KINDS = ["url", "staged_file", "linked_file"] as const;
+
 export const SourceRefSchema = z.object({
-  kind: z.enum(["url", "staged_file"]),
+  kind: z.enum(SOURCE_KINDS),
+  /**
+   * url 是地址；staged_file 是暂存标识（UUID）；linked_file 是**用户磁盘上的绝对路径**。
+   *
+   * 路径由主进程在转发时签名（`path-token` 字段），渲染层拿不到也造不出来 ——
+   * 所以"渲染层不能指名任意文件"这条性质在链接型导入下依然成立。
+   */
   value: bounded(4_000),
   /**
    * 用户在选择器里看到的文件名（`报告.pdf`）。
@@ -571,17 +611,25 @@ export const SourceRefSchema = z.object({
    * 在 IPC 边界被拒（vitest 里的假 API 不带这个键，抓不到）。
    */
   name: bounded(255).nullable().optional(),
+  /**
+   * 路径签名，**只由主进程填**（IPC 处理器在转发给后端之前加上）。
+   *
+   * 后端只读签名对得上的路径；后端回显任务状态时也会把它清掉，所以渲染层从头到尾
+   * 见不到任何一个 token。这里声明它只是因为两个方向共用一份 schema。
+   */
+  pathToken: bounded(255).nullable().optional(),
 });
 export const SourcePreviewSchema = z.preprocess(
   (value) => {
     if (!value || typeof value !== "object") return value;
     const raw = value as Record<string, unknown>;
-    if (raw.sourceKind === "staged_file") return { ...raw, sourceUrl: null };
+    if (raw.sourceKind === "staged_file" || raw.sourceKind === "linked_file")
+      return { ...raw, sourceUrl: null };
     return raw;
   },
   z.object({
     title: text(240),
-    sourceKind: z.enum(["url", "staged_file"]),
+    sourceKind: z.enum(SOURCE_KINDS),
     sourceUrl: z.string().max(4_000).nullable().optional(),
     mediaType: z.string(),
     sizeBytes: z.number().int().nonnegative(),
@@ -706,14 +754,20 @@ export const BackendEventEnvelopeSchema = z.preprocess(
 );
 export const EventEnvelopeSchema = eventEnvelopeShape;
 
-export const StagedSourceSchema = z.object({
-  stagedSourceId: id,
-  kind: z.literal("staged_file"),
+/**
+ * 用户磁盘上的原件：对话框返回的**路径**，不复制任何字节。
+ *
+ * 渲染层把 `path` 原样送回 `imports.inspect` / `imports.create`，主进程在那两个处理器里
+ * 补上签名（见 `ipc-handlers.ts` 的 `withSignedPath`）—— 于是渲染层从不需要接触签名，
+ * 也无法凭空造出一个可用路径。
+ */
+export const LinkedSourceSchema = z.object({
+  kind: z.literal("linked_file"),
+  path: bounded(4_000),
   name: text(255),
   mediaType: z.string().max(255),
   sizeBytes: z.number().int().nonnegative(),
 });
-
 /**
  * One importable document format, as declared by the backend.
  *
@@ -738,6 +792,34 @@ export const StagedCollectionSchema = z.object({
     .int()
     .nonnegative()
     .max(2 * 1024 ** 3),
+});
+
+/**
+ * 原件在用户磁盘上的位置 —— **只在主进程内部流转**。
+ *
+ * 它不进 `DocMindApi`：渲染层既拿不到 `path`，也拿不到 `pathToken`。
+ */
+export const OriginalLocationSchema = z.object({
+  path: z.string().max(4_000).nullable(),
+  pathToken: z.string().max(200).nullable(),
+  state: z.enum(["none", "available", "changed", "missing"]),
+});
+
+/**
+ * 目录扫描的进度。
+ *
+ * `total` 来自遍历目录项（不读文件内容），所以它在第一个文件被读完之前就是准的 ——
+ * 界面因此能显示"已扫描 12/300"，而不是一个转不完的圈。
+ */
+export const ScanProgressPayloadSchema = z.object({
+  scanned: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+});
+
+/** 扫描成功时的落点：一份清单（`StagedCollection`），或者"用户取消了"。 */
+export const ScanResultPayloadSchema = z.object({
+  collection: StagedCollectionSchema.nullable(),
+  cancelled: z.boolean().optional(),
 });
 export const BatchImportSchema = z.object({
   id,
@@ -1216,7 +1298,7 @@ export type Citation = z.infer<typeof CitationSchema>;
 export type Message = z.infer<typeof MessageSchema>;
 export type EventEnvelope = z.infer<typeof EventEnvelopeSchema>;
 export type BackendEventEnvelope = z.infer<typeof BackendEventEnvelopeSchema>;
-export type StagedSource = z.infer<typeof StagedSourceSchema>;
+export type LinkedSource = z.infer<typeof LinkedSourceSchema>;
 export type StagedCollection = z.infer<typeof StagedCollectionSchema>;
 export type SourceFormat = z.infer<typeof SourceFormatSchema>;
 export type BatchImport = z.infer<typeof BatchImportSchema>;
@@ -1249,7 +1331,20 @@ export interface StreamSubscription {
 }
 
 export interface SourcesApi {
-  stageDirectory(): Promise<StagedCollection | null>;
+  /**
+   * 选一个目录并**在后台就地扫描**它，边扫边推进度。
+   *
+   * 立刻返回订阅句柄：`scanId` 由调用方生成（与聊天流同一套 `subscription` 机制），
+   * 进度是 `progress` 事件、结果是 `done`（`collection` 为 `null` 表示用户取消），
+   * `cancel()` 用来中止扫描。
+   *
+   * 从前这是一问一答的 `stageDirectory()`：扫完才返回，进度与取消都无从谈起。
+   * 扫描要把每个文件完整读一遍算摘要，几百个文件就是几分钟。
+   */
+  scanDirectory(
+    requestId: string,
+    onEvent: (event: EventEnvelope) => void,
+  ): { requestId: string; detach(): void; cancel(): void };
   /**
    * Formats the backend can import as a single file.
    *
@@ -1379,6 +1474,24 @@ export interface DocMindApi {
     create(repositoryId: string, input: DocumentInput): Promise<DocumentDetail>;
     update(documentId: string, input: DocumentInput): Promise<DocumentDetail>;
     delete(documentId: string, confirm: true): Promise<void>;
+    /**
+     * 把文档重新绑到磁盘上的另一个路径（文件被挪走/换了外接盘之后）。
+     *
+     * 只改绑定：如果新文件的 mtime/size 与当初记录的一致（改名、移动），状态会自动回到
+     * `available`；换成别的文件则显示 `changed` 并提示重新转换。转换是重操作，
+     * 由用户显式点「重新转换」触发。
+     */
+    relinkOriginal(documentId: string, path: string): Promise<DocumentDetail>;
+    /** 重新读取原件并转换一次（用户改了原件之后）。复用编辑保存那条流水线。 */
+    reconvert(documentId: string): Promise<DocumentDetail>;
+    /**
+     * 用系统程序打开原件（Word、Preview……）。
+     *
+     * 只传 `documentId`：路径由主进程向后端要、**验签之后**才落到文件系统上 —— 渲染层
+     * 从头到尾看不到它。原件不在原处时抛 `DOCUMENT_ORIGINAL_MISSING`，界面上的出口是
+     * 「重新定位原件」。
+     */
+    openOriginal(documentId: string): Promise<void>;
   };
   imports: {
     inspect(input: SourceRef): Promise<SourcePreview>;
@@ -1432,14 +1545,18 @@ export interface DocMindApi {
   };
   dialogs: {
     /**
-     * Open the file picker for one importable format and stage the choice.
+     * Open the file picker for one importable format and return the choice.
+     *
+     * **不复制字节**：返回的是用户在磁盘上的那个路径（`LinkedSource`），解析与原件视图
+     * 都直接读它。目录批次也一样（清单里只记相对路径 + sha256，见
+     * `docs/本地原件直读方案.md` 第五节），所以应用不再为用户文件保留任何副本。
      *
      * Takes the format's declared name rather than a fixed list of kinds: the
      * main process asks the backend for that format's extensions and size
      * ceiling, so the set of pickable formats is whatever the backend can
      * parse. A closed union here would silently exclude every plugin format.
      */
-    chooseSource(format: string): Promise<StagedSource | null>;
+    chooseSource(format: string): Promise<LinkedSource | null>;
   };
   sources: SourcesApi;
   batches: BatchesApi;
@@ -1473,7 +1590,6 @@ export const schemas = {
   MessageSchema,
   EventEnvelopeSchema,
   BackendEventEnvelopeSchema,
-  StagedSourceSchema,
   SourceFormatSchema,
   StagedCollectionSchema,
   PluginDiagnosticSchema,

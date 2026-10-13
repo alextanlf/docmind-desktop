@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { z } from "zod";
 import { BackendProxy, DocMindClientError, type StreamSender } from "./backend-proxy";
 import { StagedFileService } from "./staged-files";
+import { FILE_DOMAIN, pathTokenMatches } from "./path-tokens";
 import { redactSecrets } from "./redaction";
 import { IPC_CHANNELS, PUSH_CHANNELS, streamEventChannel } from "../shared/channels";
 import {
@@ -36,8 +37,9 @@ import {
   SettingsViewSchema,
   SourcePreviewSchema,
   SourceRefSchema,
-  StagedSourceSchema,
-  StagedCollectionSchema,
+  LinkedSourceSchema,
+  RelinkOriginalInputSchema,
+  ANY_FORMAT,
   SourceFormatSchema,
   RemoteStatusSchema,
   RemoteProviderSummarySchema,
@@ -74,6 +76,7 @@ import {
   LocalModelStatusSchema,
   LocalModelsSchema,
   RuntimeSettingsInputSchema,
+  OriginalLocationSchema,
 } from "../shared/contracts";
 
 const require = createRequire(import.meta.url);
@@ -84,7 +87,18 @@ let electronIpc: {
     relaunch?(): void;
     quit?(): void;
   };
-  shell?: { openExternal: (url: string) => Promise<void> };
+  shell?: {
+    openExternal: (url: string) => Promise<void>;
+    /** Electron 的 `shell.openPath`：成功返回空串，失败返回一句错误描述。 */
+    openPath?: (path: string) => Promise<string>;
+  };
+  /**
+   * 与后端共享的会话密钥：主进程用它**验**后端发来的路径签名。
+   *
+   * 验签这一步是"打开原件"能保住"渲染层不能指名任意文件"的关键 —— 见
+   * `pathTokenMatches` 的注释。
+   */
+  sessionToken?: string;
 } = {};
 try {
   electronIpc = require("electron");
@@ -102,11 +116,30 @@ export interface IpcDependencies {
   backendManager?: {
     request(path: string, init?: RequestInit): Promise<Response>;
   };
-  stagedFiles?: Pick<StagedFileService, "chooseAndStage" | "stageDirectory">;
-  files?: Pick<StagedFileService, "chooseAndStage" | "stageDirectory">;
-  stagedFileService?: Pick<StagedFileService, "chooseAndStage" | "stageDirectory">;
+  stagedFiles?: Pick<
+    StagedFileService,
+    "cancelScan" | "chooseAndLink" | "chooseAndLinkAny" | "scanDirectory" | "signGrantedPath"
+  >;
+  files?: Pick<
+    StagedFileService,
+    "cancelScan" | "chooseAndLink" | "chooseAndLinkAny" | "scanDirectory" | "signGrantedPath"
+  >;
+  stagedFileService?: Pick<
+    StagedFileService,
+    "cancelScan" | "chooseAndLink" | "chooseAndLinkAny" | "scanDirectory" | "signGrantedPath"
+  >;
   shellOpenExternal?: (url: string) => Promise<void>;
-  shell?: { openExternal(url: string): Promise<void> };
+  shell?: {
+    openExternal(url: string): Promise<void>;
+    /** Electron 的 `shell.openPath`：成功返回空串，失败返回一句错误描述。 */
+    openPath?(path: string): Promise<string>;
+  };
+  /**
+   * 与后端共享的会话密钥：主进程用它**验**后端发来的路径签名。
+   *
+   * 验签这一步是"打开原件"能保住"渲染层不能指名任意文件"的关键 —— 见 `pathTokenMatches`。
+   */
+  sessionToken?: string;
   ipcMain?: {
     handle(channel: string, listener: Handler): void;
     on(channel: string, listener: Handler): void;
@@ -190,6 +223,24 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
   const stagedFiles =
     dependencies.stagedFiles ?? dependencies.files ?? dependencies.stagedFileService;
   if (!stagedFiles) throw new Error("IPC handlers require staged file service");
+  /**
+   * 给链接型来源补上路径签名 —— **签名的位置就在这里**：渲染层送来的是"用户在对话框里
+   * 选的那个路径"，而主进程是唯一知道"这个路径真的来自一次对话框"的一方。
+   *
+   * 于是"渲染层不能指名任意文件"这条性质不依赖对渲染层的任何信任：它编一个路径过来，
+   * `signGrantedPath` 会因为没登记过而拒绝，后端也就拿不到可读的凭据。
+   */
+  const withSignedPath = <T extends { kind: string; value: string; pathToken?: string | null }>(
+    source: T,
+  ): T =>
+    source.kind === "linked_file"
+      ? { ...source, pathToken: stagedFiles.signGrantedPath(source.value) }
+      : source;
+
+  const withSignedLinkedSource = <T extends { source: { kind: string; value: string } }>(
+    input: T,
+  ): T => ({ ...input, source: withSignedPath(input.source) });
+
   const handlers: IpcHandlerMap = {
     [IPC_CHANNELS.localModelStatus]: () =>
       proxy.requestJson("/api/local-model/status", {}, LocalModelStatusSchema),
@@ -429,6 +480,56 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         DocumentDetailSchema,
       );
     },
+    // async 是必需的，不是风格：`withSignedPath` 在未授权路径上**同步**抛错，
+    // 而调用方（IPC 包装层）按 promise 处理失败。同步抛出去会绕过它。
+    [IPC_CHANNELS.documentsRelinkOriginal]: async (_event, documentId, input) => {
+      const id = parse(UUID, documentId);
+      const payload = parse(RelinkOriginalInputSchema, input);
+      // 与导入同一条门：主进程只给"对话框授权过的路径"签名（见 withSignedPath）。
+      return proxy.requestJson(
+        `/api/documents/${id}/original`,
+        jsonInit("POST", withSignedPath({ kind: "linked_file", value: payload.path })),
+        DocumentDetailSchema,
+      );
+    },
+    [IPC_CHANNELS.documentsReconvert]: (_event, documentId) =>
+      proxy.requestJson(
+        `/api/documents/${parse(UUID, documentId)}/reconvert`,
+        jsonInit("POST", {}),
+        DocumentDetailSchema,
+      ),
+    [IPC_CHANNELS.documentsOpenOriginal]: async (_event, documentId) => {
+      const id = parse(UUID, documentId);
+      // 路径由后端给（它知道这篇文档绑的是哪个文件），但**主进程自己验签**之后才用：
+      // 只把后端的话当"候选"，不当"授权"。少了这一步，真正去动文件系统的那一侧就没有
+      // 任何门槛，而渲染层能影响的正是这个 documentId。
+      const location = await proxy.requestJson(
+        `/api/documents/${id}/original-location`,
+        {},
+        OriginalLocationSchema,
+      );
+      if (location.path === null || location.pathToken === null) {
+        // 两种情形共用这条错误，但界面文案分开（`client-errors`）：missing 的出口是
+        // 「重新定位原件」，none 只是"这篇没绑原件"。
+        throw new DocMindClientError(
+          location.state === "missing"
+            ? "DOCUMENT_ORIGINAL_MISSING"
+            : "DOCUMENT_ORIGINAL_NOT_LINKED",
+          "该文档没有可打开的原件",
+        );
+      }
+      const token = dependencies.sessionToken ?? "";
+      if (!pathTokenMatches(token, FILE_DOMAIN, location.path, location.pathToken)) {
+        throw new DocMindClientError("DOCUMENT_ORIGINAL_MISSING", "原件路径签名无效");
+      }
+      const open = dependencies.shell?.openPath ?? electronIpc?.shell?.openPath;
+      if (!open) throw new DocMindClientError("DOCUMENT_OPEN_UNAVAILABLE", "无法打开原件");
+      const failure = await open.call(dependencies.shell ?? electronIpc?.shell, location.path);
+      // Electron 用"返回非空字符串"表示失败（例如没有关联的应用程序、文件权限）。
+      if (typeof failure === "string" && failure.length > 0) {
+        throw new DocMindClientError("DOCUMENT_OPEN_FAILED", failure);
+      }
+    },
     [IPC_CHANNELS.documentsDelete]: (_event, documentId, confirm) => {
       const id = parse(UUID, documentId);
       if (confirm !== true) throw new DocMindClientError("INVALID_REQUEST", "必须确认删除");
@@ -438,14 +539,14 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
       SourcePreviewSchema.parse(
         await proxy.requestJson(
           "/api/imports/inspect",
-          jsonInit("POST", parse(SourceRefSchema, input)),
+          jsonInit("POST", withSignedPath(parse(SourceRefSchema, input))),
           SourcePreviewSchema,
         ),
       ),
     [IPC_CHANNELS.importsCreate]: (_event, input) =>
       proxy.requestJson(
         "/api/imports",
-        jsonInit("POST", parse(CreateImportInputSchema, input)),
+        jsonInit("POST", withSignedLinkedSource(parse(CreateImportInputSchema, input))),
         ImportJobSchema,
       ),
     [IPC_CHANNELS.importsGet]: (_event, jobId) => {
@@ -753,10 +854,13 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         .requestJson("/api/imports/formats", {}, SourceFormatSchema.array())
         .then((formats) => {
           const format = formats.find((candidate) => candidate.name === name);
+          // 重新定位原件时不知道它原本是什么格式（文件可能已经没了），所以允许
+          // "任意受支持格式" —— 过滤条件由主进程把所有格式的扩展名拼出来。
+          if (name === ANY_FORMAT) return stagedFiles.chooseAndLinkAny(formats);
           if (!format) throw new DocMindClientError("INVALID_REQUEST", "来源类型无效");
-          return stagedFiles.chooseAndStage(format);
+          return stagedFiles.chooseAndLink(format);
         })
-        .then((value) => (value === null ? null : parse(StagedSourceSchema, value)))
+        .then((value) => (value === null ? null : parse(LinkedSourceSchema, value)))
         .catch((error: unknown) => {
           if (error instanceof DocMindClientError) throw error;
           const candidate = error as { code?: unknown; message?: unknown };
@@ -768,22 +872,52 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
           throw error;
         });
     },
-    [IPC_CHANNELS.sourcesStageDirectory]: (_event, ...args) => {
-      if (args.length !== 0) throw new DocMindClientError("INVALID_REQUEST", "请求参数无效");
-      return proxy
-        .requestJson("/api/imports/formats", {}, SourceFormatSchema.array())
-        .then((formats) => stagedFiles.stageDirectory(formats))
-        .then((value) => (value === null ? null : parse(StagedCollectionSchema, value)))
+    [IPC_CHANNELS.sourcesScanDirectory]: async (event, requestId) => {
+      // 推送型通道：立刻返回 scanId，进度与结果走 streamEventChannel(scanId)，
+      // 取消走既有的 streamCancel（见下面那个处理器）。
+      const id = parse(UUID, requestId);
+      // 格式列表在后端：插件贡献的格式也要能扫到，所以这里不维护第二份清单。
+      const formats = await proxy.requestJson(
+        "/api/imports/formats",
+        {},
+        SourceFormatSchema.array(),
+      );
+      let sequence = 0;
+      const send = (type: "progress" | "done" | "error", payload: Record<string, unknown>) => {
+        try {
+          event.sender?.send(streamEventChannel(id), {
+            requestId: id,
+            type,
+            sequence: sequence++,
+            payload,
+          });
+        } catch {
+          // 渲染层可能在扫描期间关了窗口：没人听进度不等于扫描出错。
+        }
+      };
+      await stagedFiles
+        .scanDirectory(formats, id, (scanEvent) => {
+          switch (scanEvent.type) {
+            case "progress":
+              send("progress", { scanned: scanEvent.scanned, total: scanEvent.total });
+              return;
+            case "done":
+              send("done", { collection: scanEvent.collection });
+              return;
+            case "cancelled":
+              send("done", { collection: null, cancelled: true });
+              return;
+            case "error":
+              send("error", serializeIpcError(scanEvent.error));
+              return;
+          }
+        })
         .catch((error: unknown) => {
-          if (error instanceof DocMindClientError) throw error;
-          const candidate = error as { code?: unknown; message?: unknown };
-          if (typeof candidate.code === "string")
-            throw new DocMindClientError(
-              candidate.code,
-              typeof candidate.message === "string" ? candidate.message : "目录操作失败",
-            );
-          throw error;
+          // 挑目录本身就失败（例如没有权限）：这时还没有 scanId 可用，但渲染层已经在等，
+          // 所以照样沿这条流回一个错误 —— 比让调用永远悬着好。
+          send("error", serializeIpcError(error));
         });
+      return id;
     },
     [IPC_CHANNELS.shellOpenExternal]: async (_event, url) => {
       if (typeof url !== "string") throw new DocMindClientError("INVALID_REQUEST", "链接无效");
@@ -819,7 +953,10 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
     },
     [IPC_CHANNELS.streamCancel]: (_event, requestId) => {
       const id = parse(UUID, requestId);
+      // 同一个 requestId 空间里有两种流：后端事件流（导入/批次/聊天）与主进程自己的
+      // 目录扫描。两个都问一遍，谁认识谁处理 —— 取消是幂等的，不认识就返回 false。
       proxy.cancel(id);
+      stagedFiles.cancelScan(id);
     },
   };
 
@@ -903,7 +1040,7 @@ function sanitizeSerialized(value: {
     SOURCE_TOO_LARGE: "文件超过大小限制",
     SOURCE_STAGE_FAILED: "文件暂存失败",
     BATCH_LIMIT_EXCEEDED: "目录超过批量导入限制",
-    BATCH_SOURCE_CHANGED: "目录内容在暂存期间发生变化",
+    BATCH_SOURCE_CHANGED: "目录内容在扫描期间发生变化",
   };
   const clean = (text: string) => redactSecrets(text);
   const result: {

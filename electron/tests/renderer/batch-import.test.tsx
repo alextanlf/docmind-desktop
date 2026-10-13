@@ -29,6 +29,27 @@ const batch = {
   updatedAt: "2026-09-01T00:00:00Z",
 };
 
+const COLLECTION = {
+  collectionId: "00000000-0000-0000-0000-000000000099",
+  displayName: "docs",
+  itemCount: 1,
+  totalBytes: 20,
+};
+
+/**
+ * 假的扫描订阅：立刻推一条 `done`（模拟"扫得很快"），并交回可断言的 cancel/detach。
+ *
+ * 扫描现在是推送型接口（进度 + 结果都走事件流），不再是"一问一答返回一个集合" ——
+ * 假体也必须按事件推，否则测到的就不是真实时序。
+ */
+function scanStub(collection: unknown, onStart?: () => void) {
+  return vi.fn((requestId: string, onEvent: (event: unknown) => void) => {
+    onStart?.();
+    onEvent({ requestId, type: "done", sequence: 1, payload: { collection } });
+    return { requestId, detach: vi.fn(), cancel: vi.fn() };
+  });
+}
+
 describe("批量导入", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -40,12 +61,7 @@ describe("批量导入", () => {
   it("reviews selected candidates and sends the discovery version with decisions", async () => {
     const api = installDocMindApi({
       sources: {
-        stageDirectory: vi.fn().mockResolvedValue({
-          collectionId: "00000000-0000-0000-0000-000000000099",
-          displayName: "docs",
-          itemCount: 1,
-          totalBytes: 20,
-        }),
+        scanDirectory: scanStub(COLLECTION),
       },
       batches: {
         create: vi.fn().mockResolvedValue(batch),
@@ -125,12 +141,7 @@ describe("批量导入", () => {
   it("keeps deselected persisted candidates unchecked", async () => {
     const api = installDocMindApi({
       sources: {
-        stageDirectory: vi.fn().mockResolvedValue({
-          collectionId: "00000000-0000-0000-0000-000000000099",
-          displayName: "docs",
-          itemCount: 1,
-          totalBytes: 20,
-        }),
+        scanDirectory: scanStub(COLLECTION),
       },
       batches: {
         create: vi.fn().mockResolvedValue(batch),
@@ -187,12 +198,7 @@ describe("批量导入", () => {
     const api = installDocMindApi({
       repositories: { list: vi.fn().mockReturnValue(repositories) },
       sources: {
-        stageDirectory: vi.fn().mockResolvedValue({
-          collectionId: "00000000-0000-0000-0000-000000000099",
-          displayName: "docs",
-          itemCount: 1,
-          totalBytes: 20,
-        }),
+        scanDirectory: scanStub(COLLECTION),
       },
       batches: { create: vi.fn().mockResolvedValue(batch) },
     });
@@ -223,7 +229,50 @@ describe("批量导入", () => {
         repositoryId: repository.id,
       }),
     );
-    expect(api.sources.stageDirectory).toHaveBeenCalledTimes(1);
+    // 扫描是订阅：断言"订阅了一次、并且用扫出来的集合建了批次"。
+    expect(api.sources.scanDirectory).toHaveBeenCalledTimes(1);
     expect(api.batches.create).toHaveBeenCalledTimes(1);
   });
+});
+
+it("shows scan progress and lets the user stop a long scan", async () => {
+  const cancel = vi.fn();
+  // 假体只推一条 progress，**不推 done**：扫描还在跑的状态才是这一条要测的。
+  const api = installDocMindApi({
+    sources: {
+      scanDirectory: vi.fn((requestId: string, onEvent: (event: unknown) => void) => {
+        onEvent({
+          requestId,
+          type: "progress",
+          sequence: 1,
+          payload: { scanned: 12, total: 300 },
+        });
+        return { requestId, detach: vi.fn(), cancel };
+      }),
+    },
+  });
+  render(
+    <AppProviders>
+      <ImportDialog open onClose={vi.fn()} />
+    </AppProviders>,
+  );
+  await fireEvent.click(screen.getByRole("radio", { name: "批量" }));
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "目标知识库" })).toHaveValue(repository.id),
+  );
+
+  await fireEvent.click(screen.getByRole("button", { name: "选择目录" }));
+
+  // 用户看到的是"读到哪了"，而不是一个转不完的圈。
+  // （进度文案出现两次：标题行与 <progress> 的 aria-valuetext，所以用容器断言。）
+  // TaskProgress 把同一个 label 同时给了容器和 <progress>，所以这里取第一个。
+  const regions = await screen.findAllByLabelText("目录扫描进度");
+  expect(regions[0]).toHaveTextContent("已扫描 12/300");
+  // 扫描期间不给"再选一次"的按钮：那会同时跑两个扫描，用户也分不清哪个在动。
+  expect(screen.queryByRole("button", { name: "选择目录" })).not.toBeInTheDocument();
+
+  await fireEvent.click(screen.getByRole("button", { name: "取消目录扫描进度" }));
+
+  expect(cancel).toHaveBeenCalledTimes(1);
+  expect(api.batches.create).not.toHaveBeenCalled();
 });

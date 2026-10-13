@@ -1,11 +1,21 @@
-import { Eye, Pencil, Save, Trash2, X } from "lucide-react";
+import {
+  Eye,
+  FileWarning,
+  Pencil,
+  RefreshCw,
+  Save,
+  SquareArrowOutUpRight,
+  Trash2,
+  X,
+} from "lucide-react";
 import { Suspense, lazy, useEffect, useState } from "react";
-import type { DocumentDetail } from "../../../../shared/contracts";
+import { ANY_FORMAT, type DocumentDetail } from "../../../../shared/contracts";
 import { appQueryClient } from "../../app/query-client";
 import { MarkdownBody } from "../../components/MarkdownBody";
 import { DocumentFigures } from "./DocumentFigures";
 import { clientErrorMessage } from "../settings/settings.queries";
 import { DeleteDocumentDialog } from "./DeleteDocumentDialog";
+import { ReconvertOriginalDialog } from "./ReconvertOriginalDialog";
 import { repositoryKeys } from "./repository.queries";
 
 /**
@@ -42,7 +52,10 @@ export function DocumentEditor({
   const [content, setContent] = useState(document.content);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmingReconvert, setConfirmingReconvert] = useState(false);
   const [error, setError] = useState("");
+  /** 重新定位/重新转换进行中：两者都会走网络与磁盘，按钮要能挡住重复点击。 */
+  const [busy, setBusy] = useState(false);
   /**
    * 从解析视图点图之后要定位的原件位置。
    *
@@ -53,6 +66,20 @@ export function DocumentEditor({
     page: number;
     bbox: [number, number, number, number] | null;
   } | null>(null);
+
+  /**
+   * 原件状态的提示语。
+   *
+   * `missing` 与 `none` 必须分开说：前者是"文件被挪走了"（用户能修，给他重新定位），
+   * 后者是"这篇本来就没有原件"（不需要任何操作，也不该出现提示）。
+   * 文案住在前端，后端只送状态码 —— 与全仓库同一条约定。
+   */
+  const originalNotice =
+    document.originalState === "changed"
+      ? "磁盘上的原件已经变过，当前正文是上一次转换的结果。"
+      : document.originalState === "missing"
+        ? "找不到原件了 —— 它可能被移动、改名或删除。正文仍然可用。"
+        : "";
 
   const dirty = title.trim() !== document.title || content !== document.content;
 
@@ -65,17 +92,84 @@ export function DocumentEditor({
         title: title.trim(),
         content,
       });
-      appQueryClient.setQueryData(repositoryKeys.document(document.id), updated);
-      await appQueryClient.invalidateQueries({
-        queryKey: repositoryKeys.documents(document.repositoryId),
-      });
-      await appQueryClient.invalidateQueries({ queryKey: repositoryKeys.root });
+      applyUpdated(updated);
       setMode("read");
     } catch (cause) {
       setError(clientErrorMessage(cause));
     } finally {
       setSaving(false);
     }
+  }
+
+  /**
+   * 用系统程序打开原件（Word、Preview……）。
+   *
+   * 这条路是"以原格式修改"的正式做法：应用没有 docx/pdf 的写入器，也不该有 ——
+   * 让 Word 去改 Word，改完回来点「重新转换」。这里只发 documentId，
+   * 路径由主进程向后端要、验签之后才交给系统程序。
+   */
+  async function openOriginal() {
+    setBusy(true);
+    setError("");
+    try {
+      await window.docmind.documents.openOriginal(document.id);
+    } catch (cause) {
+      setError(clientErrorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * 重新转换：重新读原件、重新解析。
+   *
+   * 它复用后端的"编辑保存"流水线，所以视图刷新与保存完全一致 —— 保存后要失效的那几个
+   * 查询在这里也一样要失效，否则树上的标题/字数会留着旧值。
+   *
+   * 入口一律先过确认弹窗：它整篇替换正文，而"原件已更新"的提示本身就在鼓励用户去原件里
+   * 改 —— 那条路最容易顺手抹掉应用内改过的东西。
+   */
+  async function reconvert() {
+    setBusy(true);
+    setError("");
+    try {
+      const updated = await window.docmind.documents.reconvert(document.id);
+      applyUpdated(updated);
+    } catch (cause) {
+      setError(clientErrorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * 重新定位：先让用户挑文件，再把绑定改过去。
+   *
+   * 用 `ANY_FORMAT` 而不是"原件的媒体类型"：原件不在磁盘上时后端给不出媒体类型，
+   * 而这恰恰是最需要重新定位的时候。文件对话框与签名都由主进程管 ——
+   * 这里拿到的只是一个路径，后端只认主进程为它签的名字。
+   */
+  async function relink() {
+    setBusy(true);
+    setError("");
+    try {
+      const picked = await window.docmind.dialogs.chooseSource(ANY_FORMAT);
+      if (!picked) return;
+      const updated = await window.docmind.documents.relinkOriginal(document.id, picked.path);
+      applyUpdated(updated);
+    } catch (cause) {
+      setError(clientErrorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function applyUpdated(updated: DocumentDetail) {
+    appQueryClient.setQueryData(repositoryKeys.document(document.id), updated);
+    void appQueryClient.invalidateQueries({
+      queryKey: repositoryKeys.documents(document.repositoryId),
+    });
+    void appQueryClient.invalidateQueries({ queryKey: repositoryKeys.root });
   }
 
   useEffect(() => {
@@ -155,6 +249,20 @@ export function DocumentEditor({
               <Eye aria-hidden="true" size={16} />
             </button>
           )}
+          {document.originalState === "available" || document.originalState === "changed" ? (
+            // 只在原件**够得着**时给这个入口。`missing` 时上面的横幅已经给出了唯一正确的
+            // 出口（重新定位原件），再摆一个灰掉的按钮只会让人试着点它。
+            <button
+              aria-label="用系统程序打开原件"
+              className="tree-icon-button"
+              disabled={busy}
+              onClick={() => void openOriginal()}
+              title="用系统程序打开原件（在原格式里修改，改完回来重新转换）"
+              type="button"
+            >
+              <SquareArrowOutUpRight aria-hidden="true" size={16} />
+            </button>
+          ) : null}
           <button
             aria-label="删除文档"
             className="tree-icon-button"
@@ -175,6 +283,33 @@ export function DocumentEditor({
           </button>
         </div>
       </header>
+      {originalNotice ? (
+        <div className={`original-notice is-${document.originalState}`} role="status">
+          <FileWarning aria-hidden="true" size={16} />
+          <p>{originalNotice}</p>
+          <div className="original-notice-actions">
+            {document.originalState === "changed" ? (
+              <button
+                className="button button-primary"
+                disabled={busy}
+                onClick={() => setConfirmingReconvert(true)}
+                type="button"
+              >
+                <RefreshCw aria-hidden="true" size={14} />
+                {busy ? "处理中…" : "重新转换"}
+              </button>
+            ) : null}
+            <button
+              className="button button-secondary"
+              disabled={busy}
+              onClick={() => void relink()}
+              type="button"
+            >
+              重新定位原件
+            </button>
+          </div>
+        </div>
+      ) : null}
       {mode === "read" ? (
         hasOriginal && source === "original" ? (
           <Suspense
@@ -233,6 +368,17 @@ export function DocumentEditor({
             {saving ? "保存中…" : "保存文档"}
           </button>
         </footer>
+      ) : null}
+      {confirmingReconvert ? (
+        <ReconvertOriginalDialog
+          documentTitle={document.title}
+          onClose={() => setConfirmingReconvert(false)}
+          onConfirm={() => {
+            setConfirmingReconvert(false);
+            void reconvert();
+          }}
+          pending={busy}
+        />
       ) : null}
       {deleting ? (
         <DeleteDocumentDialog

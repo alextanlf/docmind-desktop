@@ -9,9 +9,17 @@ from pydantic import Field
 
 from app.schemas.common import WireModel
 
+#: 导入来源的类别。**只在这里声明一次**：它原本散在 `SourceRef` 与 `SourcePreview` 两处，
+#: 于是加一种来源时很容易只改一处 —— 那样会在运行时抛 ValidationError（`linked_file`
+#: 加进来时就真的踩到了），而不是在测试里红。客户端的枚举由
+#: `electron/tests/shared/contracts.test.ts` 对着这行源码断言，两边因此不会各说各话。
+SOURCE_KINDS = ("url", "staged_file", "linked_file")
+SourceKind = Literal["url", "staged_file", "linked_file"]
+
 
 class SourceRef(WireModel):
-    kind: Literal["url", "staged_file"]
+    kind: SourceKind
+    #: url 是地址；staged_file 是暂存标识（UUID）；linked_file 是用户磁盘上的绝对路径。
     value: str
     #: 用户在选择器里看到的文件名（`报告.pdf`）。
     #:
@@ -19,6 +27,12 @@ class SourceRef(WireModel):
     #: 格式（PDF、docx）失去它就只剩 UUID 当标题 —— 实测本机 3 篇里 2 篇如此。
     #: 只用于显示：后端取 basename，绝不进入路径、chunk 或引用。
     name: str | None = None
+    #: `linked_file` 专用：主进程对 `value`（绝对路径）的签名。
+    #:
+    #: 后端只读签名对得上的路径，于是**渲染层依然不能指名任意文件**（插件的 UI 就是
+    #: 渲染层代码）。两边各一半的测试守着"跨语言逐字节一致"这件事，见
+    #: `document/path_tokens.py` 与 `electron/main/path-tokens.ts` 的模块注释。
+    path_token: str | None = None
 
 
 class SourceFormatView(WireModel):
@@ -39,7 +53,7 @@ class SourceFormatView(WireModel):
 
 class SourcePreview(WireModel):
     title: str
-    source_kind: Literal["url", "staged_file"]
+    source_kind: SourceKind
     source_url: str | None = None
     media_type: str
     size_bytes: int
@@ -48,7 +62,7 @@ class SourcePreview(WireModel):
 
     @classmethod
     def from_document(
-        cls, source_kind: Literal["url", "staged_file"], document: DownloadedDocument
+        cls, source_kind: SourceKind, document: DownloadedDocument
     ) -> SourcePreview:
         title = document.title
         if document.media_type == "text/markdown":
@@ -73,6 +87,14 @@ class DownloadedDocument(WireModel):
     media_type: str
     raw_bytes: bytes
     local_path: Path | None = None
+    #: 原件的**归属**：有值表示字节来自用户磁盘上的这个位置，应用不留副本。
+    #:
+    #: 与 `local_path` 的区别是"谁的东西"：暂存副本是应用自己拷进来的临时文件（用完就删），
+    #: 而这里是用户的文件 —— 只读、永不删、永不改，文档被删时也不许碰它。
+    #: 链接型文档据此长期绑定原件（原件视图、重新转换都读它）。
+    source_path: Path | None = None
+
+
 class ParsedFigure(WireModel):
     """一张插图，以及把它展示出来所需的一切。
 

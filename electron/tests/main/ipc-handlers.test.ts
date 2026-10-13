@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { FILE_DOMAIN, pathToken } from "../../main/path-tokens";
+import { streamEventChannel } from "../../shared/channels";
 import { registerIpcHandlers, serializeIpcError } from "../../main/ipc-handlers";
 
 function dependencies() {
@@ -14,7 +16,13 @@ function dependencies() {
       cancel: vi.fn(),
       cleanup: vi.fn(),
     },
-    stagedFiles: { chooseAndStage: vi.fn(), stageDirectory: vi.fn() },
+    stagedFiles: {
+      cancelScan: vi.fn(),
+      chooseAndLink: vi.fn(),
+      chooseAndLinkAny: vi.fn(),
+      scanDirectory: vi.fn(),
+      signGrantedPath: vi.fn(),
+    },
     shellOpenExternal: vi.fn(),
     ipcMain: {
       handle: vi.fn(),
@@ -303,25 +311,78 @@ describe("IPC handlers", () => {
     });
   });
 
-  it("stages a directory only through its fixed zero-argument IPC channel", async () => {
+  it("streams a directory scan back under the caller's own id", async () => {
     const deps = dependencies();
-    deps.stagedFiles.stageDirectory.mockResolvedValue({
-      collectionId: "00000000-0000-0000-0000-000000000021",
-      displayName: "docs",
-      itemCount: 2,
-      totalBytes: 12,
-      selectedPath: "/private/user/docs",
-    });
+    const scanId = "00000000-0000-4000-8000-0000000000aa";
+    let emit: ((event: unknown) => void) | null = null;
+    // 假的扫描：把 emit 抓下来，由用例决定推进度还是推结果 —— 这样"边扫边报"是被测的时序，
+    // 而不是被 mock 掉的实现细节。
+    deps.stagedFiles.scanDirectory.mockImplementation(
+      (_formats: unknown, id: string, onEvent: (event: unknown) => void) => {
+        emit = onEvent;
+        return Promise.resolve(id);
+      },
+    );
+    const sent: { channel: string; payload: any }[] = [];
+    const event = {
+      sender: { send: (channel: string, payload: unknown) => sent.push({ channel, payload }) },
+    };
     const handlers = registerIpcHandlers(deps);
 
-    await expect(handlers["sources:stageDirectory"]({})).resolves.toEqual({
-      collectionId: "00000000-0000-0000-0000-000000000021",
-      displayName: "docs",
-      itemCount: 2,
-      totalBytes: 12,
+    await expect(handlers["sources:scanDirectory"](event as never, scanId)).resolves.toBe(scanId);
+    expect(emit).not.toBeNull();
+
+    emit!({ type: "progress", scanned: 12, total: 300 });
+    emit!({
+      type: "done",
+      collection: {
+        collectionId: "00000000-0000-0000-0000-000000000021",
+        displayName: "docs",
+        itemCount: 2,
+        totalBytes: 12,
+      },
     });
-    expect(JSON.stringify(await handlers["sources:stageDirectory"]({}))).not.toContain("/private");
-    expect(() => handlers["sources:stageDirectory"]({}, "/attacker/path")).toThrow(/请求参数无效/);
+
+    // **一个 id 走完全程**：扫描拿到的、事件流路由用的、取消时用的都是同一个。
+    // 内部另生成一个 id 的话，"取消"会在另一张表里找不到东西，而只断言
+    // "cancelScan 被调用过"的用例发现不了 —— 它确实被调用了，只是找不到。
+    expect(deps.stagedFiles.scanDirectory).toHaveBeenCalledWith(
+      expect.anything(),
+      scanId,
+      expect.any(Function),
+    );
+    // 事件都走在同一个 id 的流上 —— 渲染层订阅的就是它。
+    expect(new Set(sent.map((entry) => entry.channel))).toEqual(
+      new Set([streamEventChannel(scanId)]),
+    );
+    expect(sent.map((entry) => entry.payload.type)).toEqual(["progress", "done"]);
+    expect(sent[0].payload.payload).toEqual({ scanned: 12, total: 300 });
+    // 结果里只有清单元数据：用户选的绝对路径不出主进程。
+    expect(JSON.stringify(sent[1].payload)).not.toContain("/private");
+  });
+
+  it("routes a scan cancel through the same id it started with", async () => {
+    const deps = dependencies();
+    deps.stagedFiles.scanDirectory.mockResolvedValue("scan-1");
+    const handlers = registerIpcHandlers(deps);
+    const scanId = "00000000-0000-4000-8000-0000000000aa";
+
+    await handlers["sources:scanDirectory"]({ sender: { send: vi.fn() } } as never, scanId);
+    handlers["stream:cancel"]({} as never, scanId);
+
+    // 关键：取消用的 id 必须就是开扫时用的那一个。内部另生成一个 id 的话，
+    // 这里会"调用了但取消失败"，而任何只断言"cancelScan 被调用过"的用例都发现不了。
+    expect(deps.stagedFiles.cancelScan).toHaveBeenCalledWith(scanId);
+  });
+
+  it("rejects a malformed scan id before touching the backend", async () => {
+    const deps = dependencies();
+    const handlers = registerIpcHandlers(deps);
+
+    await expect(
+      handlers["sources:scanDirectory"]({ sender: { send: vi.fn() } } as never, "not-a-uuid"),
+    ).rejects.toThrow(/请求参数无效/);
+    expect(deps.proxy.requestJson).not.toHaveBeenCalled();
   });
 
   it("maps directory staging failures without leaking a selected path", () => {
@@ -332,7 +393,7 @@ describe("IPC handlers", () => {
       }),
     ).toEqual({
       code: "BATCH_SOURCE_CHANGED",
-      message: "目录内容在暂存期间发生变化",
+      message: "目录内容在扫描期间发生变化",
       retryable: false,
     });
     expect(
@@ -368,5 +429,211 @@ describe("IPC handlers", () => {
     const handlers = registerIpcHandlers(dependencies());
 
     expect(() => handlers["app:restart"]({})).toThrowError(/无法重启应用/);
+  });
+});
+
+/**
+ * 链接型导入的签名发生在**主进程这一层**，所以它的性质也只能在这里测。
+ *
+ * 这里守的是"渲染层不能指名任意文件"：签名由主进程补，而主进程只给对话框登记过的
+ * 路径签。渲染层编一个路径过来，要么被 `signGrantedPath` 拒掉，要么根本没有签名 ——
+ * 两种情况下后端都读不到东西。
+ */
+describe("链接型导入的路径签名", () => {
+  const LINKED = {
+    kind: "linked_file",
+    value: "/Users/someone/论文/attention.pdf",
+    name: "attention.pdf",
+  };
+
+  /** `imports:inspect` 会把后端响应再校验一遍，所以假响应也必须是合法形状。 */
+  const PREVIEW = {
+    title: "attention.pdf",
+    sourceKind: "linked_file",
+    sourceUrl: null,
+    mediaType: "application/pdf",
+    sizeBytes: 12,
+    fingerprint: "a".repeat(64),
+    warnings: [],
+  };
+
+  it("carries the signed path into the backend request", async () => {
+    const deps = dependencies();
+    deps.proxy.requestJson.mockResolvedValue(PREVIEW);
+    deps.stagedFiles.signGrantedPath = vi.fn().mockReturnValue("signed-token");
+    const handlers = registerIpcHandlers(deps);
+
+    await handlers["imports:inspect"]({} as any, LINKED);
+
+    const body = JSON.parse((deps.proxy.requestJson as any).mock.calls.at(-1)[1].body as string);
+    expect(body.pathToken).toBe("signed-token");
+    expect(deps.stagedFiles.signGrantedPath).toHaveBeenCalledWith(LINKED.value);
+  });
+
+  it("refuses a path the dialog never granted", async () => {
+    const deps = dependencies();
+    // 真实的 signGrantedPath 对未登记的路径抛错；这里照原样模拟那个行为。
+    deps.stagedFiles.signGrantedPath = vi.fn(() => {
+      throw new Error("Path was not granted by a file dialog");
+    });
+    const handlers = registerIpcHandlers(deps);
+
+    await expect(handlers["imports:inspect"]({} as any, LINKED)).rejects.toThrow();
+
+    expect(deps.proxy.requestJson).not.toHaveBeenCalled();
+  });
+
+  it("signs on the create path too, not just on inspect", async () => {
+    const deps = dependencies();
+    deps.stagedFiles.signGrantedPath = vi.fn().mockReturnValue("signed-token");
+    const handlers = registerIpcHandlers(deps);
+
+    await handlers["imports:create"]({} as any, {
+      source: LINKED,
+      repositoryId: "00000000-0000-0000-0000-000000000001",
+      fingerprint: "a".repeat(64),
+    });
+
+    const body = JSON.parse((deps.proxy.requestJson as any).mock.calls.at(-1)[1].body as string);
+    expect(body.source.pathToken).toBe("signed-token");
+  });
+
+  it("leaves non-linked sources untouched", async () => {
+    const deps = dependencies();
+    deps.proxy.requestJson.mockResolvedValue({ ...PREVIEW, sourceKind: "url" });
+    deps.stagedFiles.signGrantedPath = vi.fn().mockReturnValue("signed-token");
+    const handlers = registerIpcHandlers(deps);
+
+    await handlers["imports:inspect"]({} as any, {
+      kind: "url",
+      value: "https://example.test/a.md",
+    });
+
+    const body = JSON.parse((deps.proxy.requestJson as any).mock.calls.at(-1)[1].body as string);
+    expect(body.pathToken).toBeUndefined();
+    expect(deps.stagedFiles.signGrantedPath).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 重新定位走的是第二条"把文档指向某个文件"的路 —— 它的门必须和导入一样严。
+ */
+describe("重新定位原件的签名", () => {
+  it("signs the path before forwarding, exactly like import does", async () => {
+    const deps = dependencies();
+    deps.stagedFiles.signGrantedPath = vi.fn().mockReturnValue("signed-token");
+    const handlers = registerIpcHandlers(deps);
+
+    await handlers["documents:relinkOriginal"]({} as any, "00000000-0000-0000-0000-000000000001", {
+      path: "/Users/someone/论文.pdf",
+    });
+
+    const body = JSON.parse((deps.proxy.requestJson as any).mock.calls.at(-1)[1].body as string);
+    expect(body.pathToken).toBe("signed-token");
+    expect(deps.stagedFiles.signGrantedPath).toHaveBeenCalledWith("/Users/someone/论文.pdf");
+  });
+
+  it("refuses a path no dialog ever granted", async () => {
+    const deps = dependencies();
+    deps.stagedFiles.signGrantedPath = vi.fn(() => {
+      throw new Error("Path was not granted by a file dialog");
+    });
+    const handlers = registerIpcHandlers(deps);
+
+    await expect(
+      handlers["documents:relinkOriginal"]({} as any, "00000000-0000-0000-0000-000000000001", {
+        path: "/etc/passwd",
+      }),
+    ).rejects.toThrow();
+
+    expect(deps.proxy.requestJson).not.toHaveBeenCalled();
+  });
+});
+
+describe("用系统程序打开原件", () => {
+  const DOCUMENT_ID = "00000000-0000-4000-8000-0000000000dd";
+  const TOKEN = "test-session-token";
+  const ORIGINAL = "/Users/someone/论文/attention.pdf";
+
+  function depsFor(openPath: (path: string) => Promise<string>) {
+    const deps = dependencies();
+    deps.sessionToken = TOKEN;
+    deps.shell = { openExternal: vi.fn(), openPath: vi.fn(openPath) };
+    deps.proxy.requestJson = vi.fn().mockResolvedValue({
+      path: ORIGINAL,
+      pathToken: pathToken(TOKEN, FILE_DOMAIN, ORIGINAL),
+      state: "available",
+    });
+    return deps;
+  }
+
+  it("verifies the backend's signature before letting the system open the file", async () => {
+    const deps = depsFor(async () => "");
+    const handlers = registerIpcHandlers(deps);
+
+    await handlers["documents:openOriginal"]({}, DOCUMENT_ID);
+
+    expect(deps.shell?.openPath).toHaveBeenCalledWith(ORIGINAL);
+  });
+
+  it("refuses a path whose signature does not match", async () => {
+    const deps = depsFor(async () => "");
+    // 后端（或中间人）换了个路径，却带着原来那个路径的签名。
+    (deps.proxy.requestJson as ReturnType<typeof vi.fn>).mockResolvedValue({
+      path: "/Users/someone/.ssh/id_rsa",
+      pathToken: pathToken(TOKEN, FILE_DOMAIN, ORIGINAL),
+      state: "available",
+    });
+    const handlers = registerIpcHandlers(deps);
+
+    await expect(handlers["documents:openOriginal"]({}, DOCUMENT_ID)).rejects.toThrow(/签名无效/);
+    // 关键：**没有被打开**。只断言"抛错了"会漏掉"先打开再报错"这种写法。
+    expect(deps.shell?.openPath).not.toHaveBeenCalled();
+  });
+
+  it("refuses a token signed for a different path in the same domain", async () => {
+    const deps = depsFor(async () => "");
+    (deps.proxy.requestJson as ReturnType<typeof vi.fn>).mockResolvedValue({
+      path: ORIGINAL,
+      // 同一个域、但为**另一个路径**签的：签名必须绑在路径上，不能只是一张通行证。
+      pathToken: pathToken(TOKEN, FILE_DOMAIN, "/Users/someone/别的.pdf"),
+      state: "available",
+    });
+    const handlers = registerIpcHandlers(deps);
+
+    await expect(handlers["documents:openOriginal"]({}, DOCUMENT_ID)).rejects.toThrow();
+    expect(deps.shell?.openPath).not.toHaveBeenCalled();
+  });
+
+  it("separates a missing original from a document that never had one", async () => {
+    const missing = depsFor(async () => "");
+    (missing.proxy.requestJson as ReturnType<typeof vi.fn>).mockResolvedValue({
+      path: null,
+      pathToken: null,
+      state: "missing",
+    });
+    await expect(
+      registerIpcHandlers(missing)["documents:openOriginal"]({}, DOCUMENT_ID),
+    ).rejects.toMatchObject({ code: "DOCUMENT_ORIGINAL_MISSING" });
+
+    const none = depsFor(async () => "");
+    (none.proxy.requestJson as ReturnType<typeof vi.fn>).mockResolvedValue({
+      path: null,
+      pathToken: null,
+      state: "none",
+    });
+    await expect(
+      registerIpcHandlers(none)["documents:openOriginal"]({}, DOCUMENT_ID),
+    ).rejects.toMatchObject({ code: "DOCUMENT_ORIGINAL_NOT_LINKED" });
+  });
+
+  it("surfaces the system's failure as a stable reason code", async () => {
+    const deps = depsFor(async () => "No application is associated with this file");
+    const handlers = registerIpcHandlers(deps);
+
+    // Electron 的约定：成功返回空串，失败返回描述。非空就当作失败 —— 不能吞掉。
+    await expect(handlers["documents:openOriginal"]({}, DOCUMENT_ID)).rejects.toMatchObject({
+      code: "DOCUMENT_OPEN_FAILED",
+    });
   });
 });

@@ -2,17 +2,22 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import shutil
 from pathlib import Path
 
+import pymupdf
 import pytest
 from starlette.requests import Request
 
 from app.api.documents import update_document
 from app.api.errors import DomainError
 from app.core.embedding import FakeEmbeddingProvider
+from app.document.path_tokens import FILE_DOMAIN, path_token, path_token_matches
 from app.remote.fake import FakeRemoteProvider
 from app.schemas.documents import DocumentInput
 from app.storage.models import DocumentChunkRecord, DocumentRecord
+from tests.conftest import RUNTIME_TOKEN
 
 
 class RecordingVectorStore:
@@ -922,3 +927,434 @@ def test_asset_reports_missing_file_as_not_found(client, auth_headers) -> None:
     assert response.status_code == 404
 
 
+def _seed_linked_document(client, original: Path, *, document_id: str = "doc-linked"):  # type: ignore[no-untyped-def]
+    """建一篇**链接型**文档：原件在用户磁盘上，我们只记路径。"""
+    repository = client.app.state.repository_store.create_local(name="Linked KB")
+    directory = client.app.state.settings.documents_dir / document_id
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    markdown_path = directory / "document.md"
+    markdown_path.write_text("# 标题\n\n正文", encoding="utf-8")
+    return client.app.state.document_store.create(
+        DocumentRecord(
+            id=document_id,
+            repository_id=repository.id,
+            title="链接的文档",
+            source_path=str(original),
+            original_revision=f"{original.stat().st_mtime_ns}:{original.stat().st_size}",
+            markdown_path=str(markdown_path),
+            source_type="import",
+        )
+    )
+
+
+def test_linked_original_is_served_from_the_users_own_file(
+    client, auth_headers, tmp_path: Path
+) -> None:
+    """链接型的原件视图直接读用户的文件 —— 应用里没有第二份字节。"""
+    original = tmp_path / "桌上的论文.pdf"
+    original.write_bytes(b"%PDF-1.7\nlinked body")
+    document = _seed_linked_document(client, original)
+
+    detail = client.get(f"/api/documents/{document.id}", headers=auth_headers)
+    assert detail.json()["originalMediaType"] == "application/pdf"
+    assert detail.json()["originalByteSize"] == len(b"%PDF-1.7\nlinked body")
+
+    response = client.get(f"/api/documents/{document.id}/raw", headers=auth_headers)
+    assert response.status_code == 200
+    assert response.content == b"%PDF-1.7\nlinked body"
+    # 原件视图靠 Range 分页，链接型不能例外。
+    assert response.headers["accept-ranges"] == "bytes"
+
+    # 关键：应用里没有留下副本。
+    assert not (client.app.state.settings.documents_dir / document.id / "raw.bin").exists()
+
+
+def test_linked_original_that_moved_away_is_not_an_error(
+    client, auth_headers, tmp_path: Path
+) -> None:
+    """文件被移走是**正常状态**：正文照读，只是没有原文可看。"""
+    original = tmp_path / "会被移走的.pdf"
+    original.write_bytes(b"%PDF-1.7\nbody")
+    document = _seed_linked_document(client, original)
+    original.unlink()
+
+    detail = client.get(f"/api/documents/{document.id}", headers=auth_headers)
+
+    assert detail.status_code == 200
+    assert detail.json()["content"] == "# 标题\n\n正文"
+    assert detail.json()["originalMediaType"] is None
+    assert (
+        client.get(f"/api/documents/{document.id}/raw", headers=auth_headers).status_code == 404
+    )
+
+
+def test_deleting_a_document_never_deletes_the_users_file(
+    client, auth_headers, tmp_path: Path
+) -> None:
+    """不变量：应用只读原件。删除文档只允许动它自己的目录。"""
+    original = tmp_path / "我的原件.pdf"
+    original.write_bytes(b"%PDF-1.7\nmine")
+    document = _seed_linked_document(client, original)
+
+    response = client.request(
+        "DELETE", f"/api/documents/{document.id}", headers=auth_headers, json={"confirm": True}
+    )
+
+    assert response.status_code == 204
+    assert original.exists()
+    assert original.read_bytes() == b"%PDF-1.7\nmine"
+    assert not (client.app.state.settings.documents_dir / document.id).exists()
+
+
+def test_linked_file_import_works_through_the_api(client, auth_headers, tmp_path: Path) -> None:
+    """整条后端链路：请求里带签名 → 直读用户的文件 → 不留副本。
+
+    这一条守的是**wire 上的字段名**：Python 侧是 `path_token`，线上是 `pathToken`
+    （alias_generator=to_camel），TS 侧发的正是后者。名字对不上不会报错，只会让签名
+    永远是 None —— 那意味着链接型导入在生产里彻底不可用，而单元测试全都还是绿的。
+    """
+    repository = client.app.state.repository_store.create_local(name="链接导入")
+    original = tmp_path / "论文" / "attention.pdf"
+    original.parent.mkdir(parents=True)
+    original.write_bytes(b"%PDF-1.7\nlinked")
+    token = path_token(RUNTIME_TOKEN, FILE_DOMAIN, str(original))
+
+    preview = client.post(
+        "/api/imports/inspect",
+        headers=auth_headers,
+        json={"kind": "linked_file", "value": str(original), "name": "attention.pdf", "pathToken": token},
+    )
+
+    assert preview.status_code == 200
+    body = preview.json()
+    assert body["mediaType"] == "application/pdf"
+    assert body["title"] == "attention.pdf"
+
+    accepted = client.post(
+        "/api/imports",
+        headers=auth_headers,
+        json={
+            "source": {
+                "kind": "linked_file",
+                "value": str(original),
+                "name": "attention.pdf",
+                "pathToken": token,
+            },
+            "repositoryId": repository.id,
+            "fingerprint": body["fingerprint"],
+        },
+    )
+
+    assert accepted.status_code == 202, accepted.text
+
+
+def test_linked_file_import_without_a_token_is_refused_through_the_api(
+    client, auth_headers, tmp_path: Path
+) -> None:
+    """没有签名的路径在 API 层就被挡下 —— 渲染层编不出可用的请求。"""
+    original = tmp_path / "id_rsa"
+    original.write_text("PRIVATE KEY", encoding="utf-8")
+
+    response = client.post(
+        "/api/imports/inspect",
+        headers=auth_headers,
+        json={"kind": "linked_file", "value": str(original)},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "SOURCE_UNSUPPORTED"
+
+
+def _pdf_with_text(text: str) -> bytes:
+    """一张有文字的 PDF。重新转换要能解析出不同的正文，所以不能只改字节数。
+
+    **只用 ASCII**：默认的 Helvetica 编码不了中文，插进去的字画不出来也抽不出文本，
+    那一页会被判成"需要 OCR"，于是这条用例开始跑视觉模型（实测从 0.1 秒变成几分钟）。
+    """
+    assert text.isascii(), "测试 PDF 用 ASCII 文本，避免踩到 OCR 那条慢路径"
+    document = pymupdf.open()
+    page = document.new_page()
+    page.insert_text((72, 96), text)
+    raw = document.tobytes()
+    document.close()
+    return raw
+
+
+@pytest.fixture
+def indexed_client(client):
+    """装上假嵌入 provider 的 client。
+
+    `client` fixture 起的是**真的** BGE provider，而任何触发索引的请求都要为它付一次
+    模型加载 —— 本机实测一次 **519 秒**，足以让"重新转换"这类用例看起来像是坏了。
+    多数既有用例跑得快，是因为同一个 pytest 进程里模型只会加载一次；单独跑某一条用例时
+    这笔钱就得它自己出。需要索引的用例显式依赖这个 fixture，把代价固定成 0。
+    """
+    client.app.state.embedding_provider = FakeEmbeddingProvider(
+        client.app.state.settings.embedding_settings
+    )
+    return client
+
+
+def _signed(path: Path) -> str:
+    return path_token(RUNTIME_TOKEN, FILE_DOMAIN, str(path))
+
+
+def _touch(path: Path, *, shift_seconds: int = 5) -> None:
+    """把 mtime 挪一下 —— 变更检测看的正是 mtime_ns:size。"""
+    info = path.stat()
+    os.utime(path, (info.st_atime, info.st_mtime + shift_seconds))
+
+
+def test_original_state_reports_a_linked_original_that_matches(
+    client, auth_headers, tmp_path: Path
+) -> None:
+    original = tmp_path / "论文.pdf"
+    original.write_bytes(b"%PDF-1.7\nbody")
+    document = _seed_linked_document(client, original)
+
+    body = client.get(f"/api/documents/{document.id}", headers=auth_headers).json()
+
+    assert body["originalState"] == "available"
+
+
+def test_original_state_flags_a_changed_original(
+    client, auth_headers, tmp_path: Path
+) -> None:
+    """原件被改过 —— 提示"要重新转换吗"，而不是继续假装正文是最新的。
+
+    这条用例因为「不做变更检测」而红（状态永远是 available）。
+    """
+    original = tmp_path / "论文.pdf"
+    original.write_bytes(b"%PDF-1.7\nbody")
+    document = _seed_linked_document(client, original)
+
+    _touch(original)
+
+    body = client.get(f"/api/documents/{document.id}", headers=auth_headers).json()
+    assert body["originalState"] == "changed"
+
+
+def test_original_state_separates_missing_from_none(
+    client, auth_headers, tmp_path: Path
+) -> None:
+    """「原件丢了」与「本来就没有原件」必须分得开。
+
+    合成一个状态的话，前端只能显示"没有原文"，用户分不清是自己没导入原件、
+    还是文件被挪走了（后者要给他一个重新定位的入口）。
+    """
+    original = tmp_path / "论文.pdf"
+    original.write_bytes(b"%PDF-1.7\nbody")
+    linked = _seed_linked_document(client, original)
+    plain = _seed_document_without_original(client, document_id="doc-no-original")
+
+    original.unlink()
+
+    assert (
+        client.get(f"/api/documents/{linked.id}", headers=auth_headers).json()["originalState"]
+        == "missing"
+    )
+    assert (
+        client.get(f"/api/documents/{plain.id}", headers=auth_headers).json()["originalState"]
+        == "none"
+    )
+
+
+def test_relinking_a_moved_file_returns_to_available(
+    client, auth_headers, tmp_path: Path
+) -> None:
+    """文件被挪走（内容没变）→ 重新定位之后应当直接可用，不该再喊"已更新"。
+
+    这就是重新定位**不更新** revision 的原因：内容还是一个字节没变的那一份。
+    """
+    folder = tmp_path / "论文"
+    folder.mkdir()
+    original = folder / "论文.pdf"
+    original.write_bytes(b"%PDF-1.7\nbody")
+    document = _seed_linked_document(client, original)
+
+    moved = tmp_path / "归档"
+    moved.mkdir()
+    relocated = moved / "论文.pdf"
+    # shutil.move 会保留 mtime；这正是"用户只是把文件挪了个地方"的形状。
+    shutil.move(str(original), str(relocated))
+    assert client.get(f"/api/documents/{document.id}", headers=auth_headers).json()[
+        "originalState"
+    ] == "missing"
+
+    response = client.post(
+        f"/api/documents/{document.id}/original",
+        headers=auth_headers,
+        json={"path": str(relocated), "pathToken": _signed(relocated)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["originalState"] == "available"
+
+
+def test_relinking_to_a_different_file_asks_for_reconversion(
+    client, auth_headers, tmp_path: Path
+) -> None:
+    """换成另一个文件 → 绑定成功，但状态是 changed：正文还是旧那一版转换出来的。"""
+    original = tmp_path / "旧.pdf"
+    original.write_bytes(b"%PDF-1.7\nold")
+    document = _seed_linked_document(client, original)
+    replacement = tmp_path / "新.pdf"
+    replacement.write_bytes(b"%PDF-1.7\nnew content here")
+
+    body = client.post(
+        f"/api/documents/{document.id}/original",
+        headers=auth_headers,
+        json={"path": str(replacement), "pathToken": _signed(replacement)},
+    ).json()
+
+    assert body["originalState"] == "changed"
+
+
+def test_relinking_without_a_signature_is_refused(
+    client, auth_headers, tmp_path: Path
+) -> None:
+    """重新定位是第二条"把文档指向某个文件"的路，门必须和导入一样严。"""
+    original = tmp_path / "论文.pdf"
+    original.write_bytes(b"%PDF-1.7\nbody")
+    document = _seed_linked_document(client, original)
+    # 扩展名必须是**受支持**的那一种：否则光是扩展名检查就能挡住它，
+    # 这条用例就测不到"没有签名"这一条了（而签名才是真正的门）。
+    secret_file = tmp_path / "其实不是论文.pdf"
+    secret_file.write_bytes(b"%PDF-1.7\nsecret")
+
+    response = client.post(
+        f"/api/documents/{document.id}/original",
+        headers=auth_headers,
+        json={"path": str(secret_file)},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "SOURCE_UNSUPPORTED"
+    stored = client.app.state.document_store.get(document.id)
+    assert stored is not None and stored.source_path == str(original)
+
+
+def test_reconvert_reads_the_original_again_and_clears_the_changed_flag(
+    indexed_client, auth_headers, tmp_path: Path
+) -> None:
+    """重新转换：重新读原件 → 走编辑保存那条流水线 → 状态回到 available。
+
+    三件事一起断言，因为它们各自都可能悄悄失效：正文真的变了、版本快照留下了、
+    状态没有继续喊"已更新"（那会让用户以为点了没用）。
+    """
+    original = tmp_path / "论文.pdf"
+    original.write_bytes(_pdf_with_text("version one"))
+    document = _seed_linked_document(indexed_client, original)
+    # 用户改了原件。
+    original.write_bytes(_pdf_with_text("version two completely different"))
+    assert indexed_client.get(f"/api/documents/{document.id}", headers=auth_headers).json()[
+        "originalState"
+    ] == "changed"
+
+    response = indexed_client.post(
+        f"/api/documents/{document.id}/reconvert", headers=auth_headers, json={}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "version two" in body["content"]
+    assert body["originalState"] == "available"
+    versions = indexed_client.app.state.version_store.list(document.id)
+    assert [version.content for version in versions] == ["# 标题\n\n正文"]
+
+
+def test_reconvert_refuses_a_document_without_a_bound_original(
+    indexed_client, auth_headers
+) -> None:
+    """拷贝型文档没有"原件被改"这回事：那份字节是我们自己管的。"""
+    document = _seed_document_without_original(indexed_client, document_id="doc-copy-only")
+
+    response = indexed_client.post(
+        f"/api/documents/{document.id}/reconvert", headers=auth_headers, json={}
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "DOCUMENT_ORIGINAL_NOT_LINKED"
+
+
+def test_reconvert_reports_a_missing_original_as_such(
+    indexed_client, auth_headers, tmp_path: Path
+) -> None:
+    """原件没了就说原件没了（404 + 原因码），不要退化成 500 或"解析失败"。"""
+    original = tmp_path / "论文.pdf"
+    original.write_bytes(_pdf_with_text("some content"))
+    document = _seed_linked_document(indexed_client, original)
+    original.unlink()
+
+    response = indexed_client.post(
+        f"/api/documents/{document.id}/reconvert", headers=auth_headers, json={}
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "DOCUMENT_ORIGINAL_MISSING"
+    # 正文仍然是可读的 —— 原件丢了不该让文档打不开。
+    assert (
+        indexed_client.get(f"/api/documents/{document.id}", headers=auth_headers).json()["content"]
+        == "# 标题\n\n正文"
+    )
+
+
+def test_original_location_gives_main_a_signed_path(
+    client, auth_headers, tmp_path: Path
+) -> None:
+    """主进程要的位置必须带**能验的签名**。
+
+    签名不是装饰：没有它，主进程就只是照着后端说的路径去打开文件，而"渲染层不能指名
+    任意文件"在最需要它的那一侧（真正去动文件系统的那个进程）变成空壳。
+    """
+    original = tmp_path / "论文.pdf"
+    original.write_bytes(b"%PDF-1.7\nbody")
+    document = _seed_linked_document(client, original)
+
+    body = client.get(
+        f"/api/documents/{document.id}/original-location", headers=auth_headers
+    ).json()
+
+    assert body["path"] == str(original)
+    assert body["state"] == "available"
+    # 用后端的验证函数验它自己发的签名：换路径就不该通过。
+    secret = client.app.state.settings.session_token.get_secret_value()
+    assert path_token_matches(secret, FILE_DOMAIN, str(original), body["pathToken"])
+    assert not path_token_matches(
+        secret, FILE_DOMAIN, str(tmp_path / "别的文件.pdf"), body["pathToken"]
+    )
+
+
+def test_original_location_separates_missing_from_never_linked(
+    client, auth_headers, tmp_path: Path
+) -> None:
+    """「本来没有原件」与「绑定过但丢了」必须继续可区分。
+
+    两者的界面出口不同：前者什么都不该给，后者要给「重新定位原件」。若这里对两者都报
+    404，那个区分就在最后一跳被抹掉了。
+    """
+    gone = tmp_path / "被移走的.pdf"
+    gone.write_bytes(b"%PDF-1.7\nbody")
+    linked = _seed_linked_document(client, gone)
+    gone.unlink()
+
+    missing = client.get(
+        f"/api/documents/{linked.id}/original-location", headers=auth_headers
+    ).json()
+    assert missing == {"path": None, "pathToken": None, "state": "missing"}
+
+    # 本地新建的文档：没有绑定过原件。
+    repository = client.app.state.repository_store.create_local(name="Plain KB")
+    plain = client.app.state.document_store.create(
+        DocumentRecord(
+            id="doc-plain",
+            repository_id=repository.id,
+            title="手写的",
+            markdown_path=str(tmp_path / "none.md"),
+            source_type="manual",
+        )
+    )
+    none = client.get(
+        f"/api/documents/{plain.id}/original-location", headers=auth_headers
+    ).json()
+    assert none == {"path": None, "pathToken": None, "state": "none"}

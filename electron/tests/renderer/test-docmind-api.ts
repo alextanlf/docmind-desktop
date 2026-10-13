@@ -17,7 +17,7 @@ import type {
   RemoteStatus,
   SourcePreview,
   SourceFormat,
-  StagedSource,
+  LinkedSource,
 } from "../../shared/contracts";
 import { vi } from "vitest";
 
@@ -560,6 +560,7 @@ export const document: DocumentDetail = {
   remoteDeleted: false,
   content: "# State 管理\n\n内容",
   originalMediaType: null,
+  originalState: "none",
   originalByteSize: null,
   figures: [],
   createdAt: "2026-08-31T00:00:00Z",
@@ -572,12 +573,17 @@ export const documentWithPdf: DocumentDetail = {
   id: "00000000-0000-0000-0000-000000000026",
   title: "导入的论文",
   originalMediaType: "application/pdf",
+  originalState: "available",
   originalByteSize: 2048,
 };
 
-export const source: StagedSource = {
-  stagedSourceId: "00000000-0000-0000-0000-000000000023",
-  kind: "staged_file",
+/**
+ * 单文件导入现在走**链接型**：假 API 返回的是用户磁盘上的路径，而不是暂存副本。
+ * 形状对不上的话，渲染层会拿着 `undefined` 去发给后端 —— 这正是这个假体要拦住的事。
+ */
+export const source: LinkedSource = {
+  kind: "linked_file",
+  path: "/Users/someone/Documents/guide.md",
   name: "guide.md",
   mediaType: "text/markdown",
   sizeBytes: 1024,
@@ -585,7 +591,7 @@ export const source: StagedSource = {
 
 export const preview: SourcePreview = {
   title: "guide.md",
-  sourceKind: "staged_file",
+  sourceKind: "linked_file",
   sourceUrl: null,
   mediaType: "text/markdown",
   sizeBytes: 1024,
@@ -595,7 +601,7 @@ export const preview: SourcePreview = {
 
 export const job: ImportJob = {
   id: "00000000-0000-0000-0000-000000000024",
-  source: { kind: "staged_file", value: source.stagedSourceId },
+  source: { kind: "linked_file", value: source.path },
   repositoryId: repository.id,
   state: "pending",
   currentStage: "准备导入",
@@ -795,6 +801,9 @@ export function installDocMindApi(overrides?: {
       create: vi.fn().mockResolvedValue(document),
       update: vi.fn().mockResolvedValue(document),
       delete: vi.fn().mockResolvedValue(undefined),
+      relinkOriginal: vi.fn().mockResolvedValue(document),
+      reconvert: vi.fn().mockResolvedValue(document),
+      openOriginal: vi.fn().mockResolvedValue(undefined),
       ...overrides?.documents,
     },
     imports: {

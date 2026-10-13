@@ -1,7 +1,13 @@
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir, realpath, rename, rm, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, realpath, rename, rm, stat, unlink } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { basename, extname, isAbsolute, join, relative, sep } from "node:path";
+
+import { DIRECTORY_DOMAIN, FILE_DOMAIN, pathToken } from "./path-tokens";
+import { DirectoryScanService, type ScanEvent } from "./directory-scans";
+
+// 扫描事件的类型从扫描生命周期那边来；这里转出去，调用方（含测试）只认一个入口。
+export type { ScanEvent };
 
 const MAX_DIRECTORY_FILES = 1_000;
 const MAX_DIRECTORY_BYTES = 2 * 1024 ** 3;
@@ -75,6 +81,20 @@ type DirectoryStagingOptions = {
   maxFileCount?: number;
   maxTotalBytes?: number;
   beforeSourceRecheck?: (sourcePath: string) => Promise<void> | void;
+  /** 与后端共享的会话密钥：写链接型清单时要给用户授权的目录签名。 */
+  sessionToken?: string;
+  /**
+   * 进度回调：`total` 来自遍历（读目录项，不读文件内容），所以它在第一个文件被读之前
+   * 就是准的 —— 界面因此能显示"已扫描 n/N"而不是一个转不完的圈。
+   */
+  onProgress?: (scanned: number, total: number) => void;
+  /**
+   * 每读完一个文件问一次"还要继续吗"。返回 true 就中止并**清掉半成品清单目录**。
+   *
+   * 用回调而不是 AbortSignal：这里的取消点是明确的循环边界，而 AbortSignal 在这个
+   * 代码库里没有先例（导入用的是状态机 + cancel_requested），保持一致更好懂。
+   */
+  shouldCancel?: () => boolean;
 };
 
 const registryLocks = new Map<string, Promise<void>>();
@@ -97,13 +117,20 @@ export class StagedFileError extends Error {
     this.name = "StagedFileError";
   }
 }
-export type StagedSource = {
-  stagedSourceId: string;
-  kind: "staged_file";
+/**
+ * 用户磁盘上的原件：**不复制**，只把路径交出去。
+ *
+ * 这里曾经还有一份"暂存副本"（`StagedSource`，把文件拷进应用目录再读副本）。单文件与
+ * 目录批次都改成就地读之后它整个下线了：应用不再为用户文件保留任何副本。
+ */
+export type LinkedSource = {
+  kind: "linked_file";
+  path: string;
   name: string;
   mediaType: string;
   sizeBytes: number;
 };
+
 export class StagedFileService {
   private readonly showOpenDialog: ShowOpenDialog;
   constructor(
@@ -113,150 +140,185 @@ export class StagedFileService {
       maxDirectoryBytes?: number;
       showOpenDialog?: ShowOpenDialog;
       copyFile?: never;
+      /** 与后端共享的会话密钥，用来给授权过的路径/目录签名。测试里可以缺省。 */
+      sessionToken?: string;
     },
   ) {
     this.showOpenDialog = opts.showOpenDialog ?? this.defaultDialog;
   }
+  /**
+   * 对话框真的返回过的路径。
+   *
+   * 这是"路径 = 能力"里**能力的那一半**：光有签名不够 —— 如果谁送来一个路径就签一个，
+   * 签名就成了一张空白支票，而渲染层（插件的 UI 就是渲染层代码）正是送路径的那个人。
+   *
+   * 只活在内存里，不需要跨重启：**每一个新路径都来自一次对话框**，而对话框只可能发生在
+   * 当前进程活着的时候。
+   */
+  private readonly grantedPaths = new Set<string>();
+
+  /** 目录扫描的生命周期（后台跑、报进度、可取消）：数据目录、限额、会话密钥与对话框
+   *  它都要用，而这几样本来就在这个服务手上。 */
+  private readonly scans = new DirectoryScanService();
+
   private async defaultDialog(options: Parameters<ShowOpenDialog>[0]): Promise<DialogResult> {
     const { dialog } = await import("electron");
     return dialog.showOpenDialog(options);
   }
   /**
-   * Open the picker for one format and stage whatever the user chose.
+   * 让用户挑一个文件，把它**当原件链接**进来 —— 不复制任何字节。
    *
-   * The format is passed in rather than selected from a list held here: it
-   * comes from the backend, which is the only thing that knows what it can
-   * parse. A closed set of kinds in this file would silently exclude every
-   * format a plugin contributes.
+   * 校验与 `stageSelected` 同一套（扩展名、普通文件、大小上限），区别只有一个：
+   * 这里不写盘。省下的是用户磁盘上一份完整的副本，以及导入结束后的清理。
    */
-  async chooseAndStage(format: ImportFormat): Promise<StagedSource | null> {
+  async chooseAndLink(format: ImportFormat): Promise<LinkedSource | null> {
+    return this.pickLinkedFile(format.label, format.extensions, (path) =>
+      format.extensions.includes(extname(path).toLowerCase()) ? format : null,
+    );
+  }
+
+  /**
+   * 让用户挑一个文件链接进来，但**不限定格式**。
+   *
+   * 重新定位原件时用：原件可能已经不在磁盘上了（这正是最常见的情形），所以文档记录里
+   * 连媒体类型都没有，界面无从知道它原本是什么格式。把所有受支持格式的扩展名拼成一个
+   * 过滤器，比让界面先猜一个格式名、再被"不支持的扩展名"拒掉要诚实。
+   */
+  async chooseAndLinkAny(formats: ImportFormat[]): Promise<LinkedSource | null> {
+    return this.pickLinkedFile(
+      "支持的文档",
+      formats.flatMap((format) => format.extensions),
+      (path) =>
+        formats.find((format) => format.extensions.includes(extname(path).toLowerCase())) ?? null,
+    );
+  }
+
+  private async pickLinkedFile(
+    label: string,
+    extensions: string[],
+    resolveFormat: (path: string) => ImportFormat | null,
+  ): Promise<LinkedSource | null> {
     const result = await this.showOpenDialog({
       properties: ["openFile"],
       filters: [
         {
-          name: format.label,
-          // The dialog wants bare extensions; the backend declares them
-          // leading-dot, so the one conversion lives here.
-          extensions: format.extensions.map((extension) => extension.replace(/^\./, "")),
+          name: label,
+          // 对话框要的是不带点的扩展名；后端声明的是带点的。
+          extensions: extensions.map((extension) => extension.replace(/^\./, "")),
         },
       ],
     });
     if (result.canceled || result.filePaths.length !== 1) return null;
-    return this.stageSelected(result.filePaths[0], format);
-  }
-  async stageDirectory(formats: ImportFormat[]): Promise<StagedCollection | null> {
-    const result = await this.showOpenDialog({ properties: ["openDirectory"] });
-    if (result.canceled || result.filePaths.length !== 1) return null;
-    return stageSelectedDirectory(result.filePaths[0], {
-      dataDir: this.opts.dataDir,
-      formats,
-      maxFileCount: this.opts.maxDirectoryFiles,
-      maxTotalBytes: this.opts.maxDirectoryBytes,
-    });
-  }
-  async stageSelected(source: string, format: ImportFormat): Promise<StagedSource> {
-    const noFollow = (constants as NodeJS.Dict<number>).O_NOFOLLOW;
-    if (typeof noFollow !== "number") {
-      throw new StagedFileError("SOURCE_UNSUPPORTED", "Secure file access unavailable");
-    }
-    const stat = await lstat(source).catch(() => {
+    const path = result.filePaths[0];
+    const format = resolveFormat(path);
+    if (format === null) throw new StagedFileError("SOURCE_UNSUPPORTED", "Unsupported extension");
+    // 用 stat（跟随符号链接）而不是 lstat：用户在对话框里选了一个指向别处的链接，
+    // 就该读它指向的东西 —— 他选的正是那串路径，签名保护的也是那串路径。
+    const stats = await stat(path).catch(() => {
       throw new StagedFileError("SOURCE_UNSUPPORTED", "Source unavailable");
     });
-    if (!stat.isFile()) throw new StagedFileError("SOURCE_UNSUPPORTED", "Regular file required");
-    const extension = extname(source).toLowerCase();
-    if (!format.extensions.includes(extension))
-      throw new StagedFileError("SOURCE_UNSUPPORTED", "Unsupported extension");
-    // The declared ceiling, clamped by the absolute outer bound so a bad
-    // declaration cannot ask this process to buffer something absurd.
+    if (!stats.isFile()) throw new StagedFileError("SOURCE_UNSUPPORTED", "Regular file required");
     const limit = Math.min(format.maxBytes, MAX_SINGLE_FILE_BYTES);
-    if (stat.size > limit)
+    if (stats.size > limit)
       throw new StagedFileError("SOURCE_TOO_LARGE", "Source exceeds size limit");
-    const id = randomUUID();
-    const directory = join(this.opts.dataDir, "imports", "staging");
-    const partial = join(directory, `${id}${extension}.partial`);
-    const final = join(directory, `${id}${extension}`);
-    try {
-      await mkdir(directory, { recursive: true });
-      const sourceHandle = await open(source, constants.O_RDONLY | noFollow);
-      try {
-        const openedStat = await sourceHandle.stat();
-        if (!openedStat.isFile() || openedStat.size !== stat.size || openedStat.size > limit)
-          throw new Error("source changed");
-        const destination = await open(
-          partial,
-          constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
-          0o600,
-        );
-        try {
-          const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, limit));
-          let position = 0;
-          while (position < openedStat.size) {
-            const { bytesRead } = await sourceHandle.read(
-              buffer,
-              0,
-              Math.min(buffer.length, openedStat.size - position),
-              position,
-            );
-            if (bytesRead === 0) throw new Error("source changed");
-            let written = 0;
-            while (written < bytesRead) {
-              const { bytesWritten } = await destination.write(
-                buffer,
-                written,
-                bytesRead - written,
-              );
-              if (
-                !Number.isInteger(bytesWritten) ||
-                bytesWritten <= 0 ||
-                bytesWritten > bytesRead - written
-              )
-                throw new Error("destination write failed");
-              written += bytesWritten;
-            }
-            position += bytesRead;
-            if (position > limit) throw new Error("source changed");
-          }
-          const finalStat = await sourceHandle.stat();
-          if (finalStat.size !== openedStat.size) throw new Error("source changed");
-          const destinationStat = await destination.stat();
-          if (destinationStat.size !== openedStat.size) throw new Error("destination write failed");
-          await destination.sync();
-        } finally {
-          await destination.close().catch(() => {});
-        }
-      } finally {
-        await sourceHandle.close().catch(() => {});
-      }
-      await rename(partial, final);
-    } catch {
-      await unlink(partial).catch(() => {});
-      throw new StagedFileError("SOURCE_STAGE_FAILED", "Unable to stage source");
-    }
+    this.grantedPaths.add(path);
     return {
-      stagedSourceId: id,
-      kind: "staged_file",
-      name: basename(source),
+      kind: "linked_file",
+      path,
+      name: basename(path),
       mediaType: format.mediaType,
-      sizeBytes: stat.size,
+      sizeBytes: stats.size,
     };
+  }
+
+  /**
+   * 给一个**对话框授权过的**路径签名；没授权过的直接拒绝。
+   *
+   * 拒绝而不是照签，是这套机制的关键：签名只证明"主进程认可这个路径"，
+   * 而主进程认可的依据只能是"它来自一次用户操作"。
+   */
+  signGrantedPath(path: string): string {
+    if (!this.grantedPaths.has(path)) {
+      throw new StagedFileError("SOURCE_UNSUPPORTED", "Path was not granted by a file dialog");
+    }
+    if (!this.opts.sessionToken) {
+      throw new StagedFileError("SOURCE_UNSUPPORTED", "Signing unavailable");
+    }
+    return pathToken(this.opts.sessionToken, FILE_DOMAIN, path);
+  }
+
+  /**
+   * 让用户挑一个目录，**在后台就地扫描**它（不复制任何字节），边扫边报进度。
+   *
+   * 立刻返回 scanId 供订阅；进度与结果走 `emit`。扫描要把每个文件完整读一遍算摘要，
+   * 几百个文件就是几分钟 —— 一问一答的形态会让界面只能干等，既看不到进度也没法取消。
+   *
+   * 只写一份清单（相对路径 + 大小 + sha256）；后端读取时重新核对摘要，所以
+   * "用户确认的内容 == 真正导入的内容"没有降级 —— 见 `docs/本地原件直读方案.md` 第五节。
+   */
+  async scanDirectory(
+    formats: ImportFormat[],
+    scanId: string,
+    emit: (event: ScanEvent) => void,
+  ): Promise<string | null> {
+    return this.scans.chooseAndScan(
+      {
+        dataDir: this.opts.dataDir,
+        formats,
+        sessionToken: this.opts.sessionToken,
+        maxFileCount: this.opts.maxDirectoryFiles,
+        maxTotalBytes: this.opts.maxDirectoryBytes,
+      },
+      scanId,
+      async () => {
+        const result = await this.showOpenDialog({ properties: ["openDirectory"] });
+        if (result.canceled || result.filePaths.length !== 1) return null;
+        return result.filePaths[0];
+      },
+      emit,
+    );
+  }
+
+  /** 取消一个在跑的扫描。返回 false 表示它已经结束了（取消是幂等的）。 */
+  cancelScan(scanId: string): boolean {
+    return this.scans.cancel(scanId);
   }
 }
 
-export async function stageDirectoryForTest(options: {
+export async function scanDirectoryForTest(options: {
   selectedPath: string;
   dataDir: string;
   formats: ImportFormat[];
   maxFileCount?: number;
   maxTotalBytes?: number;
   beforeSourceRecheck?: (sourcePath: string) => Promise<void> | void;
+  sessionToken?: string;
 }): Promise<StagedCollection> {
-  return stageSelectedDirectory(options.selectedPath, options);
+  return scanSelectedDirectory(options.selectedPath, options);
 }
 
-async function stageSelectedDirectory(
+type PreparedDirectoryScan = {
+  canonicalRoot: string;
+  rootId: string;
+  candidates: DirectoryCandidate[];
+  totalBytes: number;
+  collectionId: string;
+  partialCollection: string;
+  finalCollection: string;
+  maxFileCount: number;
+  maxTotalBytes: number;
+};
+
+/**
+ * 两条路（复制与就地扫描）共用的准备阶段：canonical 化、限额、候选清单、rootId。
+ *
+ * 抽出来是因为两条路**必须**在这些检查上完全一致 —— 放宽其中任何一条，
+ * "这个目录里到底什么会被导入"就会有两个答案。
+ */
+async function prepareDirectoryScan(
   selectedPath: string,
   options: DirectoryStagingOptions,
-): Promise<StagedCollection> {
+): Promise<PreparedDirectoryScan> {
   const selectedStat = await lstat(selectedPath, { bigint: true }).catch(() => {
     throw batchSourceChanged();
   });
@@ -300,44 +362,141 @@ async function stageSelectedDirectory(
   });
   const collectionId = randomUUID();
   const collectionsDir = join(options.dataDir, "imports", "staging", "collections");
-  const partialCollection = join(collectionsDir, `${collectionId}.partial`);
-  const finalCollection = join(collectionsDir, collectionId);
+  return {
+    canonicalRoot,
+    rootId,
+    candidates,
+    totalBytes,
+    collectionId,
+    partialCollection: join(collectionsDir, `${collectionId}.partial`),
+    finalCollection: join(collectionsDir, collectionId),
+    maxFileCount,
+    maxTotalBytes,
+  };
+}
 
+/**
+ * 就地扫描一个目录：**算摘要，不复制任何字节**。
+ *
+ * 清单因此从"一堆副本的索引"变成"一个指针"：
+ *
+ * ```
+ * { rootId, rootPath, rootToken, files: [{ relativePath, stagedId, mediaType, sizeBytes, sha256 }] }
+ * ```
+ *
+ * `rootPath` 是给后端读的绝对路径，必须带主进程签名（目录授权，域与单文件分开）——
+ * 渲染层既看不到它，也造不出可用的签名。清单由主进程直接写入暂存目录，
+ * 所以这条授权**不经过渲染层**，与单文件那条（走 IPC 时补签名）不同。
+ *
+ * `stagedId` 仍然给每一项分配一个 UUID：它只是个句柄，用来把清单条目与批次项
+ * （`cached_source_json`）对上；两种形态因此共用同一套批次数据结构。
+ */
+export async function scanSelectedDirectory(
+  selectedPath: string,
+  options: DirectoryStagingOptions,
+): Promise<StagedCollection> {
+  const prepared = await prepareDirectoryScan(selectedPath, options);
+  if (!options.sessionToken) throw batchSourceChanged();
+  const total = prepared.candidates.length;
+  // 遍历（读目录项）在 prepare 里已经完成，所以这里报的总数是准的。
+  // 先报一次 0/N：界面不必等到第一个文件读完才知道"要做多少"。
+  options.onProgress?.(0, total);
   try {
-    await mkdir(join(partialCollection, "items"), { recursive: true, mode: 0o700 });
+    await mkdir(prepared.partialCollection, { recursive: true, mode: 0o700 });
     const files: ManifestEntry[] = [];
-    for (const candidate of candidates) {
-      const stagedId = randomUUID();
-      const stagedPath = join(partialCollection, "items", stagedId);
-      const sha256 = await atomicCopyCandidate(
-        candidate,
-        canonicalRoot,
-        stagedPath,
-        options.beforeSourceRecheck,
-      );
+    for (const [index, candidate] of prepared.candidates.entries()) {
+      if (options.shouldCancel?.()) throw scanCancelled();
       files.push({
         relativePath: candidate.relativePath,
-        stagedId,
+        stagedId: randomUUID(),
         mediaType: candidate.mediaType,
         sizeBytes: candidate.sizeBytes,
-        sha256,
+        sha256: await hashCandidate(candidate, prepared.canonicalRoot, options.beforeSourceRecheck),
       });
+      options.onProgress?.(index + 1, total);
     }
-    validateManifestEntries(files, maxFileCount, maxTotalBytes, options.formats);
-    await atomicWriteJson(join(partialCollection, "manifest.json"), { rootId, files });
-    await rename(partialCollection, finalCollection);
+    // 写清单之前再看一眼：用户按取消之后不该还落下一份可用清单。
+    if (options.shouldCancel?.()) throw scanCancelled();
+    validateManifestEntries(files, prepared.maxFileCount, prepared.maxTotalBytes, options.formats);
+    await atomicWriteJson(join(prepared.partialCollection, "manifest.json"), {
+      rootId: prepared.rootId,
+      files,
+      rootPath: prepared.canonicalRoot,
+      rootToken: pathToken(options.sessionToken, DIRECTORY_DOMAIN, prepared.canonicalRoot),
+    });
+    await rename(prepared.partialCollection, prepared.finalCollection);
   } catch (error) {
-    await rm(partialCollection, { recursive: true, force: true }).catch(() => {});
+    // 半成品一律清掉 —— 取消与失败走同一条清理路径，不留 .partial 目录。
+    await rm(prepared.partialCollection, { recursive: true, force: true }).catch(() => {});
     if (error instanceof StagedFileError) throw error;
     throw batchSourceChanged();
   }
-
   return {
-    collectionId,
-    displayName: (basename(canonicalRoot).trim() || "Folder").slice(0, 255),
-    itemCount: candidates.length,
-    totalBytes,
+    collectionId: prepared.collectionId,
+    displayName: (basename(prepared.canonicalRoot).trim() || "Folder").slice(0, 255),
+    itemCount: prepared.candidates.length,
+    totalBytes: prepared.totalBytes,
   };
+}
+
+/** 用户在扫描途中按了取消。单独一个错误码，好让上层把"取消"和"失败"分开对待。 */
+export function scanCancelled(): StagedFileError {
+  return new StagedFileError("SCAN_CANCELLED", "Directory scan cancelled");
+}
+
+/**
+ * 只读一个候选文件并算出 sha256 —— `atomicCopyCandidate` 去掉"写副本"那半边。
+ *
+ * 安全检查一条不少：不跟随符号链接、打开前后都用描述符核对身份（设备号/inode/mtime/ctime、
+ * 大小），读完之后再从路径复查一次。少了这些，"扫描时算的摘要"就可能对应一个已经被换掉的
+ * 文件，而用户确认的内容与实际导入的内容就对不上了。
+ */
+async function hashCandidate(
+  candidate: DirectoryCandidate,
+  canonicalRoot: string,
+  beforeSourceRecheck?: (sourcePath: string) => Promise<void> | void,
+): Promise<string> {
+  const noFollow = (constants as NodeJS.Dict<number>).O_NOFOLLOW;
+  if (typeof noFollow !== "number") throw batchSourceChanged();
+  await assertInsideRoot(canonicalRoot, candidate.sourcePath);
+  const observed = await lstat(candidate.sourcePath, { bigint: true }).catch(() => {
+    throw batchSourceChanged();
+  });
+  if (!matchesCandidate(candidate, observed)) throw batchSourceChanged();
+
+  const source = await open(candidate.sourcePath, constants.O_RDONLY | noFollow).catch(() => {
+    throw batchSourceChanged();
+  });
+  try {
+    const opened = await source.stat({ bigint: true });
+    if (!matchesCandidate(candidate, opened)) throw batchSourceChanged();
+    const hash = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let position = 0;
+    while (position < candidate.sizeBytes) {
+      const { bytesRead } = await source.read(
+        buffer,
+        0,
+        Math.min(buffer.length, candidate.sizeBytes - position),
+        position,
+      );
+      if (bytesRead <= 0) throw batchSourceChanged();
+      hash.update(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+    const finalSourceStat = await source.stat({ bigint: true });
+    if (!matchesCandidate(candidate, finalSourceStat)) throw batchSourceChanged();
+    await beforeSourceRecheck?.(candidate.sourcePath);
+    const postStat = await lstat(candidate.sourcePath, { bigint: true }).catch(() => {
+      throw batchSourceChanged();
+    });
+    if (!matchesCandidate(candidate, postStat)) throw batchSourceChanged();
+    const digest = hash.digest("hex");
+    if (!SHA256_PATTERN.test(digest)) throw batchSourceChanged();
+    return digest;
+  } finally {
+    await source.close().catch(() => {});
+  }
 }
 
 async function collectCandidates(
@@ -443,87 +602,6 @@ async function assertInsideRoot(root: string, sourcePath: string): Promise<void>
   const relativePath = relative(root, canonicalPath);
   if (relativePath === "" || isAbsolute(relativePath) || relativePath.split(sep).includes(".."))
     throw batchSourceChanged();
-}
-
-async function atomicCopyCandidate(
-  candidate: DirectoryCandidate,
-  canonicalRoot: string,
-  destinationPath: string,
-  beforeSourceRecheck?: (sourcePath: string) => Promise<void> | void,
-): Promise<string> {
-  const noFollow = (constants as NodeJS.Dict<number>).O_NOFOLLOW;
-  if (typeof noFollow !== "number") throw batchSourceChanged();
-  await assertInsideRoot(canonicalRoot, candidate.sourcePath);
-  const observed = await lstat(candidate.sourcePath, { bigint: true }).catch(() => {
-    throw batchSourceChanged();
-  });
-  if (!matchesCandidate(candidate, observed)) throw batchSourceChanged();
-
-  const partialPath = `${destinationPath}.partial`;
-  try {
-    const source = await open(candidate.sourcePath, constants.O_RDONLY | noFollow).catch(() => {
-      throw batchSourceChanged();
-    });
-    try {
-      const opened = await source.stat({ bigint: true });
-      if (!matchesCandidate(candidate, opened)) throw batchSourceChanged();
-      const destination = await open(
-        partialPath,
-        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
-        0o600,
-      );
-      try {
-        const hash = createHash("sha256");
-        const buffer = Buffer.allocUnsafe(64 * 1024);
-        let position = 0;
-        while (position < candidate.sizeBytes) {
-          const { bytesRead } = await source.read(
-            buffer,
-            0,
-            Math.min(buffer.length, candidate.sizeBytes - position),
-            position,
-          );
-          if (bytesRead <= 0) throw batchSourceChanged();
-          hash.update(buffer.subarray(0, bytesRead));
-          let written = 0;
-          while (written < bytesRead) {
-            const result = await destination.write(buffer, written, bytesRead - written);
-            if (result.bytesWritten <= 0 || result.bytesWritten > bytesRead - written)
-              throw batchSourceChanged();
-            written += result.bytesWritten;
-          }
-          position += bytesRead;
-        }
-        const finalSourceStat = await source.stat({ bigint: true });
-        const destinationStat = await destination.stat();
-        if (
-          !matchesCandidate(candidate, finalSourceStat) ||
-          destinationStat.size !== candidate.sizeBytes
-        )
-          throw batchSourceChanged();
-        await destination.sync();
-        const digest = hash.digest("hex");
-        if (!SHA256_PATTERN.test(digest)) throw batchSourceChanged();
-        await beforeSourceRecheck?.(candidate.sourcePath);
-        const postCopyPathStat = await lstat(candidate.sourcePath, { bigint: true }).catch(() => {
-          throw batchSourceChanged();
-        });
-        if (!matchesCandidate(candidate, postCopyPathStat)) throw batchSourceChanged();
-        await destination.close();
-        await rename(partialPath, destinationPath);
-        return digest;
-      } catch (error) {
-        await destination.close().catch(() => {});
-        throw error;
-      }
-    } finally {
-      await source.close().catch(() => {});
-    }
-  } catch (error) {
-    await unlink(partialPath).catch(() => {});
-    if (error instanceof StagedFileError) throw error;
-    throw batchSourceChanged();
-  }
 }
 
 function matchesCandidate(candidate: DirectoryCandidate, stat: CandidateStat): boolean {

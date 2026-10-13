@@ -2,6 +2,9 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 const exposed: Record<string, any> = {};
 const invoke = vi.fn();
+const send = vi.fn();
+const on = vi.fn();
+const removeListener = vi.fn();
 
 vi.mock("electron", () => ({
   contextBridge: {
@@ -9,53 +12,38 @@ vi.mock("electron", () => ({
       exposed[key] = value;
     }),
   },
-  ipcRenderer: {
-    invoke,
-    on: vi.fn(),
-    removeListener: vi.fn(),
-    send: vi.fn(),
-  },
+  ipcRenderer: { invoke, on, removeListener, send },
 }));
 
-describe("batch preload API", () => {
+/**
+ * 目录扫描的 preload 边界。
+ *
+ * 它从前是"一问一答"的 `stageDirectory()`（扫完才返回）。现在是**订阅**：调用方给一个
+ * requestId，进度与结果从 `streamEventChannel(id)` 回来，取消走 `stream:cancel`。
+ * 这里守的是那条边界本身 —— 频道名、参数、以及订阅句柄的形状。
+ */
+describe("目录扫描的 preload API", () => {
+  const SCAN_ID = "00000000-0000-4000-8000-0000000000aa";
+
   beforeAll(async () => {
     await import("../../preload/index");
   });
 
-  it("exposes a frozen zero-argument directory staging method on a fixed channel", async () => {
-    invoke.mockResolvedValueOnce({
-      ok: true,
-      value: {
-        collectionId: "00000000-0000-0000-0000-000000000021",
-        displayName: "docs",
-        itemCount: 3,
-        totalBytes: 42,
-      },
-    });
+  it("subscribes on a fixed channel and hands the same id to main", () => {
+    const cancel = vi.fn();
+    const source = { requestId: SCAN_ID, detach: vi.fn(), cancel };
 
-    const result = await exposed.docmind.sources.stageDirectory();
+    exposed.docmind.sources.scanDirectory(SCAN_ID, vi.fn());
 
-    expect(invoke).toHaveBeenLastCalledWith("sources:stageDirectory");
-    expect(result).toEqual({
-      collectionId: "00000000-0000-0000-0000-000000000021",
-      displayName: "docs",
-      itemCount: 3,
-      totalBytes: 42,
-    });
+    // 订阅：先挂监听，再把同一个 id 发给主进程 —— 两边的键必须一致，否则事件永远收不到。
+    expect(on).toHaveBeenCalledWith(`stream:event:${SCAN_ID}`, expect.any(Function));
+    // 只断言前两个参数：共用的订阅助手会再补一个 afterSequence 槽（目录扫描用不到它）。
+    expect(send.mock.calls.at(-1)?.slice(0, 2)).toEqual(["sources:scanDirectory", SCAN_ID]);
     expect(Object.isFrozen(exposed.docmind.sources)).toBe(true);
+    expect(source.requestId).toBe(SCAN_ID);
   });
 
-  it("rejects a malformed collection response at the preload boundary", async () => {
-    invoke.mockResolvedValueOnce({
-      ok: true,
-      value: {
-        collectionId: "not-a-uuid",
-        displayName: "/private/user/docs",
-        itemCount: 3,
-        totalBytes: 42,
-      },
-    });
-
-    await expect(exposed.docmind.sources.stageDirectory()).rejects.toBeDefined();
+  it("refuses a malformed subscription id before touching main", () => {
+    expect(() => exposed.docmind.sources.scanDirectory("/private/user/docs", vi.fn())).toThrow();
   });
 });

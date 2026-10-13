@@ -13,9 +13,12 @@ from app.api.errors import DomainError
 from app.config import AppSettings
 from app.document.builtin_formats import builtin_registry
 from app.document.formats import FormatRegistry, size_limit_for
+from app.document.path_tokens import FILE_DOMAIN, path_token_matches
 from app.document.staging_manifest import (
     ManifestFile,
     StagingManifest,
+    entry_path,
+    linked_directory_root,
     load_manifest,
     read_file_snapshot,
     validate_manifest,
@@ -224,30 +227,133 @@ class StagedFileStore:
 
     @staticmethod
     def _read_limited(path: Path, size_limit: int) -> bytes:
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        try:
-            descriptor = os.open(path, flags)
-        except OSError:
-            raise _unsupported("暂存文件不可用") from None
-        try:
-            metadata = os.fstat(descriptor)
-            if not stat.S_ISREG(metadata.st_mode):
-                raise _unsupported("暂存文件不可用")
-            if metadata.st_size > size_limit:
+        return _read_bounded(
+            path, size_limit, follow_symlinks=False, unavailable="暂存文件不可用"
+        )
+
+
+def _read_bounded(
+    path: Path, size_limit: int, *, follow_symlinks: bool, unavailable: str
+) -> bytes:
+    """把一个文件读成字节，带上限与"必须是普通文件"的检查。
+
+    上限是配置里的绝对值，不是"相信调用方"：**先 fstat 描述符再读**，因此检查作用于真正
+    被打开的那个文件，而不是某个可能已经换掉的路径（TOCTOU）。
+    读的过程中再数一遍，防止文件在读完之前长大。
+
+    ``follow_symlinks`` 是两类调用者唯一的区别：暂存目录里的东西是**别人可能放过的**，
+    所以拒绝符号链接（`O_NOFOLLOW`）；而链接型原件是**用户自己在对话框里选的路径**，
+    他选一个指向别处的链接就该读那个目标 —— 签名保护的也正是他选的那串路径。
+    """
+    flags = os.O_RDONLY | (0 if follow_symlinks else getattr(os, "O_NOFOLLOW", 0))
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        raise _unsupported(unavailable) from None
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise _unsupported(unavailable)
+        if metadata.st_size > size_limit:
+            raise DomainError("DOCUMENT_TOO_LARGE", "文档超过大小限制", 413, False)
+        chunks: list[bytes] = []
+        size = 0
+        while True:
+            chunk = os.read(descriptor, min(64 * 1024, size_limit + 1 - size))
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > size_limit:
                 raise DomainError("DOCUMENT_TOO_LARGE", "文档超过大小限制", 413, False)
-            chunks: list[bytes] = []
-            size = 0
-            while True:
-                chunk = os.read(descriptor, min(64 * 1024, size_limit + 1 - size))
-                if not chunk:
-                    break
-                size += len(chunk)
-                if size > size_limit:
-                    raise DomainError("DOCUMENT_TOO_LARGE", "文档超过大小限制", 413, False)
-                chunks.append(chunk)
-            return b"".join(chunks)
-        finally:
-            os.close(descriptor)
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+class LinkedFileStore:
+    """读用户磁盘上的原件 —— 不留副本，只把路径记下来。
+
+    **签名是这里唯一的门。** 一个没有签名（或签名对不上）的路径一律
+    ``SOURCE_UNSUPPORTED``，而且**不区分"路径不存在"与"签名不对"**：分化这两种回答会让
+    这个接口变成一个任意路径的存在性探测器。签名由主进程出，密钥是它注入后端的
+    ``session_token``（见 :mod:`app.document.path_tokens`）。
+    """
+
+    def __init__(self, settings: AppSettings, formats: FormatRegistry | None = None) -> None:
+        self.secret = settings.session_token.get_secret_value()
+        self.html_markdown_max_bytes = settings.html_markdown_max_bytes
+        self.pdf_max_bytes = settings.pdf_max_bytes
+        self.formats = formats if formats is not None else builtin_registry()
+
+    def load(
+        self, value: str, token: str | None, display_name: str | None = None
+    ) -> DownloadedDocument:
+        if not path_token_matches(self.secret, FILE_DOMAIN, value, token):
+            raise _unsupported()
+        path = Path(value)
+        # 必须是绝对路径：主进程给的永远是对话框返回的绝对路径，相对路径说明请求不是它发的。
+        if not path.is_absolute():
+            raise _unsupported()
+        format = self.formats.for_pickable_extension(path.suffix)
+        if format is None:
+            raise _unsupported()
+        size_limit = size_limit_for(
+            format,
+            binary_max_bytes=self.pdf_max_bytes,
+            text_max_bytes=self.html_markdown_max_bytes,
+        )
+        raw_bytes = _read_bounded(
+            path, size_limit, follow_symlinks=True, unavailable="原件不可读"
+        )
+        if format.validate is not None:
+            problem = format.validate(raw_bytes)
+            if problem is not None:
+                raise _unsupported(problem)
+        return DownloadedDocument(
+            title=display_title(display_name) or path.name,
+            # 与暂存路径同一条约束：**绝对路径不许进预览、chunk 或引用**。
+            # 这里只带用户看得见的文件名。
+            source_url=f"linked://{display_title(display_name) or path.name}",
+            media_type=format.media_type,
+            raw_bytes=raw_bytes,
+            source_path=path,
+        )
+
+
+def load_stored_original(
+    path: Path,
+    *,
+    formats: FormatRegistry,
+    binary_max_bytes: int,
+    text_max_bytes: int,
+) -> DownloadedDocument:
+    """读一份**已经绑定在文档记录里**的原件（重新转换用）。
+
+    与 :meth:`LinkedFileStore.load` 的区别是这里**不验签**，因为路径不是这次请求带上来的，
+    而是数据库里存着的那一个 —— 它当初能存进去，就已经过了一次签名（导入或重新定位）。
+    换句话说：能力在"绑定"那一刻就授予了，到期时间就是这条绑定本身。
+
+    **不要拿它去读请求里的路径。** 那样做等于把刚刚那道门拆掉。
+    """
+    format = formats.for_pickable_extension(path.suffix)
+    if format is None:
+        raise _unsupported()
+    size_limit = size_limit_for(
+        format, binary_max_bytes=binary_max_bytes, text_max_bytes=text_max_bytes
+    )
+    raw_bytes = _read_bounded(path, size_limit, follow_symlinks=True, unavailable="原件不可读")
+    if format.validate is not None:
+        problem = format.validate(raw_bytes)
+        if problem is not None:
+            raise _unsupported(problem)
+    return DownloadedDocument(
+        title=path.name,
+        source_url=f"linked://{path.name}",
+        media_type=format.media_type,
+        raw_bytes=raw_bytes,
+        source_path=path,
+    )
 
 
 class CollectionCacheStore:
@@ -258,6 +364,8 @@ class CollectionCacheStore:
         self.manifest_max_bytes = settings.staging_manifest_max_bytes
         self.html_markdown_max_bytes = settings.html_markdown_max_bytes
         self.pdf_max_bytes = settings.pdf_max_bytes
+        # 链接型集合适用的目录授权校验密钥（见 path_tokens）。
+        self.secret = settings.session_token.get_secret_value()
         self.formats = formats if formats is not None else builtin_registry()
 
     def load_many(
@@ -275,7 +383,8 @@ class CollectionCacheStore:
         manifest = load_manifest(
             collection_root / "manifest.json", max_bytes=self.manifest_max_bytes
         )
-        entries = validate_manifest(manifest, collection_root)
+        entries = validate_manifest(manifest, collection_root, secret=self.secret)
+        linked_root = linked_directory_root(manifest, self.secret)
         entries_by_id = {entry.staged_id: entry for entry in entries}
         loaded: dict[str, DownloadedDocument] = {}
         for request in requests:
@@ -285,10 +394,12 @@ class CollectionCacheStore:
                 raise _batch_source_changed("暂存文件不在清单中")
             self._validate_descriptor(manifest, entry, request)
             loaded[request.key] = self._load_entry(
+                manifest,
                 collection_root,
                 canonical_collection_id,
                 entry,
                 request,
+                linked_root=linked_root,
             )
         return loaded
 
@@ -330,12 +441,22 @@ class CollectionCacheStore:
 
     def _load_entry(
         self,
+        manifest: StagingManifest,
         collection_root: Path,
         collection_id: str,
         entry: ManifestFile,
         request: CollectionCacheRequest,
+        *,
+        linked_root: Path | None = None,
     ) -> DownloadedDocument:
-        path = collection_root / "items" / entry.staged_id
+        # 路径只由 `entry_path` 回答 —— 校验、发现、导入三处各拼一次，
+        # 迟早会有一处忘记做包含性检查。
+        path = entry_path(manifest, collection_root, entry, linked_root=linked_root)
+        if linked_root is not None:
+            try:
+                path.resolve().relative_to(linked_root)
+            except (OSError, ValueError):
+                raise _batch_source_changed("目录内文件路径无效") from None
         format = self.formats.for_media_type(entry.media_type)
         if format is None:
             raise _batch_source_changed("暂存文件类型无效")
@@ -363,6 +484,12 @@ class CollectionCacheStore:
             media_type=entry.media_type,
             raw_bytes=raw_bytes,
             local_path=path,
+            # 链接型集合的字节就是**用户磁盘上的那个文件**：把归属一并交出去，导入那边才会
+            # 记 source_path（否则会把它当成我们的副本，给 PDF 再写一份 raw.bin），
+            # 后续"原件被改过吗"也才有依据。
+            #
+            # 少了这一行不会有任何报错 —— 只会静默地多存一份副本，并且永远显示不出变更。
+            source_path=path if linked_root is not None else None,
         )
 
 
@@ -376,6 +503,7 @@ class SourceInspector:
         registry = formats if formats is not None else builtin_registry()
         self.formats = registry
         self.staged_store = StagedFileStore(settings, registry)
+        self.linked_store = LinkedFileStore(settings, registry)
         self.collection_store = CollectionCacheStore(settings, registry)
         if downloader is None:
             from app.document.downloader import DocumentDownloader
@@ -390,6 +518,8 @@ class SourceInspector:
     async def load(self, ref: SourceRef) -> DownloadedDocument:
         if ref.kind == "url":
             return await self.downloader.download_url(ref.value)
+        if ref.kind == "linked_file":
+            return self.linked_store.load(ref.value, ref.path_token, ref.name)
         return self.staged_store.load(ref.value, ref.name)
 
     def load_collection_cache(

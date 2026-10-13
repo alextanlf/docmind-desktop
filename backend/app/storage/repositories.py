@@ -403,11 +403,13 @@ class DocumentStore:
         *,
         title: str,
         source_url: str,
-        raw_path: str,
+        raw_path: str | None,
         markdown_path: str,
         content_hash: str,
         source_identity: str | None = None,
         source_revision: str | None = None,
+        source_path: str | None = None,
+        original_revision: str | None = None,
     ) -> DocumentRecord:
         with self.database.session() as session:
             document = session.get(DocumentRecord, document_id)
@@ -416,6 +418,8 @@ class DocumentStore:
             document.title = title
             document.source_url = source_url
             document.raw_path = raw_path
+            document.source_path = source_path
+            document.original_revision = original_revision
             document.markdown_path = markdown_path
             document.content_hash = content_hash
             if source_identity is not None:
@@ -423,6 +427,30 @@ class DocumentStore:
             if source_revision is not None:
                 document.source_revision = source_revision
             document.source_type = "import"
+            document.updated_at = utc_now()
+            session.flush()
+            return document
+
+    def update_linked_original(
+        self,
+        document_id: str,
+        *,
+        source_path: str,
+        original_revision: str | None = None,
+    ) -> DocumentRecord:
+        """重新绑定原件路径（重新定位），或在重新转换后记下这一版。
+
+        `original_revision=None` 表示"只改绑定、不动 revision"—— 重新定位就是这样：
+        状态随后由"新文件的 mtime:size 是否等于当初记录的那一个"算出来，于是
+        改名/移动（内容没变）自动回到 available，换成另一个文件则显示 changed。
+        """
+        with self.database.session() as session:
+            document = session.get(DocumentRecord, document_id)
+            if document is None:
+                raise DomainError("IMPORT_STATE_CONFLICT", "导入文档不存在", 409)
+            document.source_path = source_path
+            if original_revision is not None:
+                document.original_revision = original_revision
             document.updated_at = utc_now()
             session.flush()
             return document

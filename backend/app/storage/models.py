@@ -196,7 +196,13 @@ class DocumentRecord(Base):
     remote_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     title: Mapped[str] = mapped_column(String(1024))
     source_url: Mapped[str | None] = mapped_column(Text, index=True, nullable=True)
+    #: 我们自己存的原件副本（历史字段：链接型文档不再写它）。
     raw_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 链接型原件：用户在磁盘上的那个文件的绝对路径。只读、永不删、永不改。
+    #: 绝对路径**不出后端**（不进任何 wire model），渲染层只知道"原件可用/已变更/已丢失"。
+    source_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 导入那一刻原件的 `mtime_ns:size`，用来回答"原件后来被改过吗"。
+    original_revision: Mapped[str | None] = mapped_column(String(128), nullable=True)
     markdown_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_type: Mapped[str] = mapped_column(
         String(64), default="remote", server_default=text("'remote'")

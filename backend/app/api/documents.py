@@ -20,6 +20,8 @@ from app.api.errors import DomainError
 from app.core.embedding import EmbeddingProvider, require_ready_embedding
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
+from app.document.path_tokens import FILE_DOMAIN, path_token
+from app.document.sources import load_stored_original
 from app.remote.provider import RemoteProvider
 from app.remote.registry import ProviderRegistry
 from app.schemas.documents import (
@@ -27,6 +29,8 @@ from app.schemas.documents import (
     DocumentDetail,
     DocumentInput,
     DocumentSummary,
+    LinkedOriginalInput,
+    OriginalLocation,
 )
 from app.schemas.imports import DownloadedDocument, ParsedFigure
 from app.schemas.remote import (
@@ -122,19 +126,73 @@ def _summary(document: DocumentRecord, remote: RemoteDocument | None = None) -> 
     )
 
 
+def original_path(document: DocumentRecord) -> Path | None:
+    """原件视图该去哪个文件读字节。
+
+    链接型（`source_path`）优先：用户磁盘上的那个文件就是原件，我们不留副本。
+    否则回落到我们自己存的那份（`raw_path`）—— 已导入的拷贝型文档仍在用它。
+
+    两处读取点（类型嗅探与 `/raw` 的 Range）都走这里。它们只关心"有没有字节可发"，
+    不关心字节在哪 —— 这也是链接型几乎不需要改动原件视图的原因。
+    """
+    for value in (document.source_path, document.raw_path):
+        if value:
+            return Path(value)
+    return None
+
+
+def original_revision_of(path: Path) -> str | None:
+    """一个路径的 `mtime_ns:size`；拿不到就返回 ``None``。
+
+    变更检测用 mtime 而不是内容哈希：为一次状态查询去重算 100 MB 的哈希是不合理的。
+    它的失真方向是安全的 —— 被 `touch` 只是多提醒一次"要重新转换吗"，
+    而真正的正确性由重新转换那一步重新读原件保证。
+    """
+    try:
+        info = path.stat()
+    except OSError:
+        return None
+    return f"{info.st_mtime_ns}:{info.st_size}"
+
+
+def original_state(document: DocumentRecord) -> str:
+    """原件现在是什么状态（见 `DocumentDetail.original_state` 的取值说明）。
+
+    在**读取时**算，不落库、不后台轮询：`stat` 是微秒级，而数据库里存一个"状态列"
+    必然会在某个时刻过期 —— 用户在我们两次检查之间移走了文件，那个列就开始说谎。
+    """
+    path = original_path(document)
+    if path is None:
+        return "none"
+    revision = original_revision_of(path)
+    if revision is None:
+        return "missing"
+    if document.source_path is None:
+        # 拷贝型：字节是我们自己管的，不会"被改"，只可能丢（或被外部删掉）。
+        return "available"
+    # revision 未记录（导入时就没 stat 到）也算无法确认 —— 不能假装它就是当初那一版。
+    if document.original_revision != revision:
+        return "changed"
+    return "available"
+
+
 def _original_info(document: DocumentRecord) -> tuple[str | None, int | None]:
     """探测原件是否可预览。
 
-    只读前几个字节做类型嗅探：`raw.bin` 落盘时不带扩展名与 media type
-    （见 `imports/service.py`），所以类型只能从内容判断。
-    任何 OSError 都当作「没有原件」——原件缺失不该让整篇文档读不出来。
+    只读前几个字节做类型嗅探：原本落盘的 `raw.bin` 不带扩展名与 media type
+    （见 `imports/service.py`），所以类型只能从内容判断；链接型原件同样按内容判断，
+    免得用户把一个 `.pdf` 改名成别的后缀就换了一种处理。
+
+    任何 OSError 都当作「没有原件」——原件缺失不该让整篇文档读不出来。链接型尤其如此：
+    用户随时可能把文件移走，那是正常状态，不是错误。
     """
-    if not document.raw_path:
+    path = original_path(document)
+    if path is None:
         return None, None
     try:
-        with open(document.raw_path, "rb") as handle:
+        with open(path, "rb") as handle:
             head = handle.read(len(_PDF_MAGIC))
-        size = os.stat(document.raw_path).st_size
+        size = os.stat(path).st_size
     except OSError:
         return None, None
     if head == _PDF_MAGIC:
@@ -159,6 +217,7 @@ def _detail(document: DocumentRecord, figures: list[ParsedFigure] | None = None)
         content=content,
         original_media_type=media_type,
         original_byte_size=byte_size,
+        original_state=original_state(document),
         figures=figures or [],
     )
 
@@ -1123,8 +1182,8 @@ async def read_document_original(request: Request, document_id: str) -> FileResp
     if document is None:
         raise _not_found()
     media_type, _ = _original_info(document)
-    path = Path(document.raw_path or "")
-    if media_type is None or not path.is_file():
+    path = original_path(document)
+    if media_type is None or path is None or not path.is_file():
         raise DomainError("DOCUMENT_ORIGINAL_MISSING", "该文档没有可预览的原件", 404, False)
     return FileResponse(
         path,
@@ -1295,3 +1354,118 @@ async def resolve_conflict(
 @router.get("/api/documents/{document_id}/versions", response_model=list[DocumentVersion])
 async def list_versions(request: Request, document_id: str) -> list[DocumentVersion]:
     return request.app.state.version_store.list(document_id)
+
+
+@router.get("/api/documents/{document_id}/original-location", response_model=OriginalLocation)
+async def original_location(request: Request, document_id: str) -> OriginalLocation:
+    """原件在磁盘上的位置 + 一份主进程能验的签名。
+
+    给"用系统程序打开原件"用：渲染层只发 documentId，主进程拿这个位置、验签之后
+    `shell.openPath`。**签名不是装饰**：没有它，主进程就只是照着后端说的路径去打开文件，
+    而"渲染层不能指名任意文件"这条性质会在主进程这一侧变成一个空壳（后端返回什么就打开
+    什么，而渲染层能影响的恰恰是 documentId）。
+
+    原件读不到时**不报错**：`state` 已经把"本来没有原件"和"绑定过但丢了"分开了，
+    界面据此决定是给「用系统程序打开」还是「重新定位原件」。报 404 会让这两种情形
+    在界面上长得一样，而那正是之前特意区分开的东西。
+    """
+    await _recover_for_request(request)
+    document = _document_store(request).get(document_id)
+    if document is None:
+        raise _not_found()
+    path = original_path(document)
+    state = original_state(document)
+    if path is None or state == "missing" or not path.is_file():
+        return OriginalLocation(state="missing" if document.source_path else "none")
+    secret = request.app.state.settings.session_token.get_secret_value()
+    return OriginalLocation(
+        path=str(path),
+        path_token=path_token(secret, FILE_DOMAIN, str(path)),
+        state=state,
+    )
+
+
+@router.post("/api/documents/{document_id}/original", response_model=DocumentDetail)
+async def relink_original(
+    request: Request, document_id: str, payload: LinkedOriginalInput
+) -> DocumentDetail:
+    """重新定位原件：把这篇文章重新绑到用户磁盘上的另一个路径。
+
+    **只改绑定，不自动重新转换。** 转换是一次会动索引、动版本、可能动远端文档的重操作，
+    应当由用户明确点"重新转换"来触发 —— 重新定位常常只是为了修一条断链（文件被挪走、
+    或换了外接盘），那时内容一个字都没变。
+
+    刻意**不更新** `original_revision`：绑定之后状态由"新文件的 mtime:size 是否等于当初
+    记录的那一个"算出来。于是改名/移动（内容没变）会自动回到 available，而换成另一个
+    文件则会显示 changed 并提示重新转换 —— 两种情形都不需要用户额外操作。
+    """
+    await _recover_for_request(request)
+    document = _document_store(request).get(document_id)
+    if document is None:
+        raise _not_found()
+    # 与导入同一条门：路径必须带主进程签名，否则渲染层就能把这篇文档指到任意文件上。
+    loaded = request.app.state.import_service.source_inspector.linked_store.load(
+        payload.path, payload.path_token, display_name=None
+    )
+    assert loaded.source_path is not None  # linked_store 一定带上它
+    _document_store(request).update_linked_original(
+        document.id, source_path=str(loaded.source_path)
+    )
+    refreshed = _document_store(request).get(document.id)
+    if refreshed is None:  # pragma: no cover - 记录刚刚才读到过
+        raise _not_found()
+    return _detail(refreshed, _document_figures(request, document.id))
+
+
+@router.post("/api/documents/{document_id}/reconvert", response_model=DocumentDetail)
+async def reconvert_original(request: Request, document_id: str) -> DocumentDetail:
+    """重新读取原件并转换一次（用户改了原件之后）。
+
+    复用**编辑保存**那条流水线（`update_document`）：版本快照、向量替换、失败回滚、
+    远端写回它都已经处理过。重新转换与"用户手改正文"在后果上是同一件事，
+    另写一条流水线只会多出一份会漂移的补偿逻辑。
+    """
+    await _recover_for_request(request)
+    document = _document_store(request).get(document_id)
+    if document is None:
+        raise _not_found()
+    if not document.source_path:
+        # 拷贝型没有"原件被改"这回事：那份字节是我们自己管的，只可能是丢失。
+        raise DomainError(
+            "DOCUMENT_ORIGINAL_NOT_LINKED", "这篇文档没有绑定磁盘上的原件，无法重新转换", 409, False
+        )
+    original = Path(document.source_path)
+    if original_state(document) == "missing":
+        # 用状态函数判断，而不是等下面的读取抛错：读不到原件与"这不是一个受支持的来源"
+        # 是两件事 —— 前者用户能修（重新定位），后者不能，两者的原因码不该混。
+        raise DomainError("DOCUMENT_ORIGINAL_MISSING", "原件已移动或删除，无法重新转换", 404, False)
+    settings = request.app.state.settings
+    try:
+        loaded = load_stored_original(
+            original,
+            formats=request.app.state.format_registry,
+            binary_max_bytes=settings.pdf_max_bytes,
+            text_max_bytes=settings.html_markdown_max_bytes,
+        )
+        parsed = await asyncio.to_thread(request.app.state.document_parser.parse, loaded)
+    except DomainError:
+        raise
+    except OSError:
+        raise DomainError(
+            "DOCUMENT_ORIGINAL_MISSING", "原件已移动或删除，无法重新转换", 404, False
+        ) from None
+    # 复用编辑保存那条流水线；返回的 detail 是"记下这一版之前"的状态，
+    # 所以下面重新读一次记录再构造响应。
+    await update_document(
+        request, document_id, DocumentInput(title=parsed.title, content=parsed.markdown)
+    )
+    revision = original_revision_of(original)
+    if revision is not None:
+        # 记下这一次转换的是哪一版：状态随回 available，否则会一直提示"原件已更新"。
+        _document_store(request).update_linked_original(
+            document_id, source_path=str(original), original_revision=revision
+        )
+    refreshed = _document_store(request).get(document_id)
+    if refreshed is None:  # pragma: no cover - 记录刚刚才更新过
+        raise _not_found()
+    return _detail(refreshed, _document_figures(request, document_id))

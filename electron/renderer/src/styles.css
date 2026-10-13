@@ -2479,6 +2479,11 @@ progress::-webkit-progress-bar {
   color: var(--muted);
   font-size: 12px;
 }
+.confirm-dialog-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .onboarding-steps {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -3132,4 +3137,34 @@ progress::-webkit-progress-bar {
   margin: 0;
   color: var(--muted);
   font-size: 12px;
+}
+
+/* 原件提示：原件被改过、或被移走时的横幅。
+   两种状态共用一个容器，只有动作不同 —— 「已更新」可以重新转换，「找不到」只能重新定位。 */
+.original-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-subtle);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* 「已更新」可以用 amber 提示（与设置页的既有提示同一套色），
+   「找不到」保持中性灰：它是既成事实，不是需要立刻处理的警告。 */
+.original-notice.is-changed {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.original-notice p {
+  margin: 0;
+  flex: 1;
+}
+
+.original-notice-actions {
+  display: flex;
+  gap: 8px;
 }

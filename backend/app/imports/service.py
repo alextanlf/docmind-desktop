@@ -141,6 +141,7 @@ class ImportService:
             job_record.source_value = _encode_source_metadata(
                 value=request.source.value,
                 name=request.source.name or "",
+                path_token=request.source.path_token or "",
                 fingerprint=request.fingerprint,
                 duplicate_decision=request.duplicate_decision or "create",
                 job_id=job_record.id,
@@ -349,6 +350,7 @@ class ImportService:
                     kind=job.source_kind,
             value=metadata["value"],
             name=metadata["name"] or None,
+            path_token=metadata["path_token"] or None,
                 )
                 preview = await self.inspect(ref)
                 duplicate = self.document_store.find_by_hash(
@@ -360,6 +362,7 @@ class ImportService:
                 metadata = {
                     "value": ref.value,
                     "name": ref.name or "",
+                    "path_token": ref.path_token or "",
                     "fingerprint": preview.fingerprint,
                     "duplicate_decision": decision,
                     "last_event_sequence": metadata["last_event_sequence"],
@@ -428,6 +431,7 @@ class ImportService:
             kind=job.source_kind,
             value=metadata["value"],
             name=metadata["name"] or None,
+            path_token=metadata["path_token"] or None,
         )
         try:
             collection_cache = metadata["collection_cache"]
@@ -944,16 +948,27 @@ class ImportService:
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         raw_path = directory / "raw.bin"
         markdown_path = directory / "document.md"
-        format = self.parser.formats.for_media_type(downloaded.media_type)
-        if format is not None and format.original_viewable:
-            raw_path.write_bytes(downloaded.raw_bytes)
-            stored_raw_path: str | None = str(raw_path)
-        else:
-            # 上一次导入（或历史版本）可能留过一份：这次的格式不需要它，就删掉，
-            # 否则记录说「没有原件」而磁盘上躺着一份，磁盘占用与数据库对不上。
+        source_path, original_revision = _linked_original(downloaded)
+        if source_path is not None:
+            # 链接型：原件在用户那里，我们一份都不留 —— 只记它在哪、以及导入那一刻长什么样。
+            # 顺手删掉同目录下可能的历史 raw.bin（同一篇文档从前是拷贝型导入的）。
             with suppress(FileNotFoundError):
                 raw_path.unlink()
-            stored_raw_path = None
+            stored_raw_path: str | None = None
+        else:
+            # 原件只为「有人能把它显示出来」而留。没有原件阅读器的格式（docx/.pages/
+            # markdown/网页）落盘之后没有任何读取点 —— 唯一读 raw.bin 的是 PDF 原件视图
+            # （api/documents.py 的 /raw）。转换已经完成，再存一份输入字节等于纯占空间。
+            format = self.parser.formats.for_media_type(downloaded.media_type)
+            if format is not None and format.original_viewable:
+                raw_path.write_bytes(downloaded.raw_bytes)
+                stored_raw_path = str(raw_path)
+            else:
+                # 上一次导入（或历史版本）可能留过一份：这次的格式不需要它，就删掉，
+                # 否则记录说「没有原件」而磁盘上躺着一份，磁盘占用与数据库对不上。
+                with suppress(FileNotFoundError):
+                    raw_path.unlink()
+                stored_raw_path = None
         markdown_path.write_text(parsed.markdown, encoding="utf-8")
         _write_figures(directory, parsed)
         if job.document_id is None and existing is None:
@@ -964,6 +979,8 @@ class ImportService:
                     title=parsed.title,
                     source_url=parsed.source_url,
                     raw_path=stored_raw_path,
+                    source_path=source_path,
+                    original_revision=original_revision,
                     markdown_path=str(markdown_path),
                     source_type="import",
                     content_hash=metadata["fingerprint"],
@@ -981,6 +998,8 @@ class ImportService:
                 content_hash=metadata["fingerprint"],
                 source_identity=metadata["source_identity"] or None,
                 source_revision=metadata["source_revision"] or None,
+                source_path=source_path,
+                original_revision=original_revision,
             )
 
     def _discard_staged_source(self, job_id: str) -> None:
@@ -1208,6 +1227,10 @@ def _job_view(job: ImportJobRecord) -> ImportJobView:
             kind=job.source_kind,
             value=metadata["value"],
             name=metadata["name"] or None,
+            # **不回显 token**：它是"能读这个路径"的能力凭据，只该在主进程与后端之间流转。
+            # 渲染层从来见不到任何一个 token，这条不变量比"省一次字段"值钱得多——
+            # 它让"渲染层不能指名任意文件"这件事不依赖于对渲染层的任何信任。
+            path_token=None,
         ),
         repository_id=job.repository_id or "",
         state=job.state.value,
@@ -1259,6 +1282,7 @@ def _encode_source_metadata(
     duplicate_decision: str,
     job_id: str,
     name: str = "",
+    path_token: str = "",
     last_event_sequence: int = 0,
     stale_vector_ids: list[str] | None = None,
     pending_created_vector_ids: list[str] | None = None,
@@ -1275,6 +1299,9 @@ def _encode_source_metadata(
             # _run_parsing），不存的话重试出来的标题会退回暂存 UUID。
             # 版本号不升：新增键对老记录只意味着「没有这个名字」，语义不变。
             "name": name,
+            # 与 name 同理：重试要能重建出一个能读原件的 SourceRef。链接型的 token 丢了，
+            # 重试会在签名校验那一步直接失败（表现为 SOURCE_UNSUPPORTED）。
+            "path_token": path_token,
             "fingerprint": fingerprint,
             "duplicate_decision": duplicate_decision,
             "upload_intent": {"marker": f"docmind-import:{job_id}"},
@@ -1289,6 +1316,25 @@ def _encode_source_metadata(
         ensure_ascii=False,
         separators=(",", ":"),
     )
+
+
+def _linked_original(downloaded: DownloadedDocument) -> tuple[str | None, str | None]:
+    """链接型原件的 (路径, 导入那一刻的 mtime_ns:size)；拷贝型返回 (None, None)。
+
+    revision 取 mtime 而不是内容哈希：回答"原件后来被改过吗"不该重算一次 100 MB 的哈希。
+    它的失真方向是安全的 —— 被 `touch` 只会多提醒一次，而真正的正确性由重新转换那一步
+    重新读原件保证，不依赖这个字段。
+    """
+    if downloaded.source_path is None:
+        return None, None
+    try:
+        info = downloaded.source_path.stat()
+    except OSError:
+        # 拿不到 stat 不是错误：原件在解析之后、落盘之前被移走是完全可能的。
+        # 这时仍要落库（正文已经解析出来了），只是 revision 留空 —— 于是它会被当作
+        # "无法确认原件状态"，读取时表现成 missing，而不是假装 available。
+        return str(downloaded.source_path), None
+    return str(downloaded.source_path), f"{info.st_mtime_ns}:{info.st_size}"
 
 
 def _write_figures(directory: Path, parsed: ParsedDocument) -> int:
@@ -1370,6 +1416,9 @@ def _source_metadata(job: ImportJobRecord) -> dict[str, Any]:
         return {
             "value": metadata["value"],
             "name": metadata["name"] if isinstance(metadata.get("name"), str) else "",
+            "path_token": (
+                metadata["path_token"] if isinstance(metadata.get("path_token"), str) else ""
+            ),
             "fingerprint": (
                 metadata["fingerprint"]
                 if isinstance(metadata.get("fingerprint"), str)
@@ -1394,6 +1443,7 @@ def _source_metadata(job: ImportJobRecord) -> dict[str, Any]:
     return {
         "value": job.source_value,
         "name": "",
+        "path_token": "",
         "fingerprint": "",
         "duplicate_decision": "create",
         "marker": f"docmind-import:{job.id}",

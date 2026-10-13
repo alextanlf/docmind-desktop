@@ -12,6 +12,9 @@ from app.document.formats import FormatRegistry, size_limit_for
 from app.document.markdown_sections import title_from_markdown
 from app.document.staging_manifest import (
     ManifestFile,
+    StagingManifest,
+    entry_path,
+    linked_directory_root,
     load_manifest,
     read_file_snapshot,
     validate_manifest,
@@ -86,10 +89,14 @@ class DirectoryDiscovery:
         staging_root: Path,
         manifest_max_bytes: int = 2 * 1024 * 1024,
         formats: FormatRegistry | None = None,
+        secret: str | None = None,
     ) -> None:
         self.root = Path(staging_root).resolve()
         self.manifest_max_bytes = manifest_max_bytes
         self.formats = formats if formats is not None else builtin_registry()
+        # 链接型集合的目录授权校验密钥。没有它，链接型清单会被拒绝 ——
+        # 那是刻意的：说不清目录是不是被授权的，就不该读它。
+        self.secret = secret
 
     def _manifest_path(self, collection_id: str) -> Path:
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", collection_id):
@@ -109,9 +116,15 @@ class DirectoryDiscovery:
             raise DomainError("BATCH_SOURCE_CHANGED", "暂存集合标识无效", 409, False)
         collection_root = self._manifest_path(collection_id).parent
         manifest = load_manifest(self._manifest_path(collection_id), max_bytes=self.manifest_max_bytes)
-        entries = validate_manifest(manifest, collection_root, self.formats)
+        entries = validate_manifest(
+            manifest, collection_root, self.formats, secret=self.secret
+        )
         entries.sort(key=lambda entry: (entry.ordinal if entry.ordinal is not None else 1_000_000, entry.relative_path))
-        sources = [self._candidate(entry, manifest.root_id, collection_root) for entry in entries]
+        linked_root = linked_directory_root(manifest, self.secret)
+        sources = [
+            self._candidate(entry, manifest, collection_root, linked_root)
+            for entry in entries
+        ]
         event = DiscoveryProgress(
             stage="awaiting_confirmation",
             visited=len(sources),
@@ -133,10 +146,19 @@ class DirectoryDiscovery:
     def _candidate(
         self,
         entry: ManifestFile,
-        root_id: str,
+        manifest: StagingManifest,
         collection_root: Path,
+        linked_root: Path | None,
     ) -> DiscoveredSource:
-        path = collection_root / "items" / str(entry.staged_id)
+        # 与校验、导入共用同一个解析器：链接型在用户目录下，拷贝型在暂存里。
+        path = entry_path(manifest, collection_root, entry, linked_root=linked_root)
+        if linked_root is not None:
+            try:
+                path.resolve().relative_to(linked_root)
+            except (OSError, ValueError):
+                raise DomainError(
+                    "BATCH_SOURCE_CHANGED", "目录内文件路径无效", 409, False
+                ) from None
         format = self.formats.for_media_type(entry.media_type)
         if format is None:
             raise DomainError("BATCH_SOURCE_CHANGED", "暂存文件类型无效", 409, False)
@@ -162,7 +184,7 @@ class DirectoryDiscovery:
             text = (snapshot.raw_bytes or b"").decode("utf-8-sig")
             title = title_from_markdown(text) or title
         return DiscoveredSource(
-            source_identity=f"folder:{root_id}:{entry.relative_path}",
+            source_identity=f"folder:{manifest.root_id}:{entry.relative_path}",
             source_revision=revision,
             title=title,
             display_path=entry.relative_path,

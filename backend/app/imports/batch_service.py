@@ -44,6 +44,7 @@ class BatchService:
         web_discovery: WebDiscovery | None = None,
         remote_discovery: RemoteDiscovery | None = None,
         formats: FormatRegistry | None = None,
+        secret: str | None = None,
     ) -> None:
         if max_concurrency != MAX_BATCH_CONCURRENCY:
             raise ValueError("batch concurrency is fixed at three")
@@ -57,6 +58,8 @@ class BatchService:
         self.web_discovery = web_discovery
         self.remote_discovery = remote_discovery
         self.formats = formats if formats is not None else builtin_registry()
+        # 链接型目录批次的授权校验密钥（见 path_tokens）：没有它，链接型清单会被拒绝。
+        self.secret = secret
         self._semaphores: dict[str, asyncio.Semaphore] = {}
         self._batch_locks: dict[str, asyncio.Lock] = {}
         self._batch_tasks: dict[str, dict[str, asyncio.Task[None]]] = {}
@@ -110,7 +113,7 @@ class BatchService:
             descriptor = json.loads(batch.source_descriptor_json)
             if batch.source_kind == "staged_directory":
                 discovery = DirectoryDiscovery(
-                    self.staging_root, self.manifest_max_bytes, self.formats
+                    self.staging_root, self.manifest_max_bytes, self.formats, self.secret
                 )
             elif batch.source_kind == "web":
                 discovery = self.web_discovery

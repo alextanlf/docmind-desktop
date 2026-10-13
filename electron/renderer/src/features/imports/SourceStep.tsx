@@ -34,10 +34,15 @@ export function SourceStep({ onContinue }: SourceStepProps) {
     if (active === null) return;
     setError("");
     try {
-      const staged = await window.docmind.dialogs.chooseSource(active);
-      if (staged) {
-        setSource({ kind: "staged_file", value: staged.stagedSourceId, name: staged.name });
-        setDisplayName(staged.name);
+      const picked = await window.docmind.dialogs.chooseSource(active);
+      if (picked) {
+        // 文件名要跟着一起进后端：上游自身不带标题的格式（PDF、docx）没有第二个地方
+        // 能知道用户选的是哪个文件，会拿路径里的临时名或 UUID 当标题。
+        //
+        // **路径就是原件本身**：主进程不复制字节，只把"用户授权过这个路径"这件事登记下来；
+        // 真正让后端敢读它的签名由主进程在转发时补上，这里拿不到也不需要。
+        setSource({ kind: "linked_file", value: picked.path, name: picked.name });
+        setDisplayName(picked.name);
       }
     } catch (cause) {
       setError(clientErrorMessage(cause));

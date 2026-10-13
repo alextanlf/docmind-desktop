@@ -17,10 +17,11 @@ from app.config import AppSettings, EmbeddingSettings
 from app.core.embedding import FakeEmbeddingProvider
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
+from app.document.path_tokens import DIRECTORY_DOMAIN, FILE_DOMAIN, path_token
 from app.document.sources import SourceInspector
 from app.imports.batch_service import BatchService
 from app.imports.events import InMemoryEventBroker
-from app.imports.service import ImportService
+from app.imports.service import ImportService, _encode_source_metadata
 from app.remote.notifications import (
     NOTIFY_ERROR,
     NOTIFY_SUCCESS,
@@ -1990,3 +1991,159 @@ async def test_an_unexpected_parser_failure_stays_generic(database, tmp_path: Pa
 
     failed = service.job_store.get(job.id)
     assert (failed.error_code, failed.error_message) == ("PARSE_FAILED", "文档解析失败")  # type: ignore[union-attr]
+
+
+async def test_linked_import_keeps_no_copy_and_remembers_the_path(database, tmp_path) -> None:
+    """链接型导入：原件留在用户那里，应用只记路径。
+
+    两条会红的线：`documents/<id>/raw.bin` 被写出来（说明又拷了一份 —— PDF 的
+    `original_viewable` 是 True，所以这条很容易复发），以及 `source_path` 没落库
+    （原件视图与将来的重新转换就都没有依据）。
+    """
+    service, _, _, _ = make_service(database, tmp_path)
+    # 换成真的 SourceInspector：链接型的签名校验就在它里面，用假体会绕过被测代码。
+    service.source_inspector = SourceInspector(service.settings, formats=service.parser.formats)
+    original = tmp_path / "用户磁盘上的报告.pdf"
+    # 只生成一次：pymupdf 每次序列化都会写进不同的元数据，两次调用得到的字节并不相同。
+    pdf_bytes = _pdf_bytes("Page one")
+    original.write_bytes(pdf_bytes)
+    token = path_token(
+        service.settings.session_token.get_secret_value(), FILE_DOMAIN, str(original)
+    )
+    ref = SourceRef(
+        kind="linked_file",
+        value=str(original),
+        name="用户磁盘上的报告.pdf",
+        path_token=token,
+    )
+    preview = await service.inspect(ref)
+    job = await service.create(
+        ImportCreateRequest(
+            source=ref, repository_id="repository-1", fingerprint=preview.fingerprint
+        )
+    )
+
+    await service.run(job.id)
+
+    completed = service.job_store.get(job.id)
+    assert completed.state == ImportStatus.COMPLETED  # type: ignore[union-attr]
+    document = service.document_store.get(completed.document_id)  # type: ignore[union-attr]
+    directory = service.settings.documents_dir / str(document.id)  # type: ignore[union-attr]
+    assert document.source_path == str(original)  # type: ignore[union-attr]
+    assert document.raw_path is None  # type: ignore[union-attr]
+    assert document.original_revision == (  # type: ignore[union-attr]
+        f"{original.stat().st_mtime_ns}:{original.stat().st_size}"
+    )
+    # 转换结果留着，原件一份都不留。
+    assert (directory / "document.md").is_file()
+    assert not (directory / "raw.bin").exists()
+    # 而且用户的文件原封不动。
+    assert original.read_bytes() == pdf_bytes
+
+
+async def test_a_forged_linked_token_cannot_be_imported(database, tmp_path) -> None:
+    """导入这条路上也一样：签不出名字的路径读不了。"""
+    service, _, _, _ = make_service(database, tmp_path)
+    service.source_inspector = SourceInspector(service.settings, formats=service.parser.formats)
+    secret_file = tmp_path / "id_rsa"
+    secret_file.write_text("PRIVATE KEY", encoding="utf-8")
+
+    with pytest.raises(DomainError) as error:
+        await service.inspect(
+            SourceRef(kind="linked_file", value=str(secret_file), path_token="forged")
+        )
+
+    assert error.value.code == "SOURCE_UNSUPPORTED"
+
+
+async def test_a_linked_directory_item_is_imported_without_a_copy(
+    database, tmp_path
+) -> None:
+    """目录批次里的 PDF 也必须"只留转换副本"。
+
+    这条是把链路走完：主进程写的链接型清单 → 批次子任务 → 解析落盘。只测
+    `CollectionCacheStore` 只能证明"加载器交出了 source_path"，而用户看到的结果是
+    `documents/<id>/` 里有没有那份 `raw.bin` —— 中间任何一层把归属丢掉（这正是
+    收尾时抓到的那个静默缺陷），这条用例都会红。
+    """
+    service, _, _, _ = make_service(database, tmp_path)
+    service.source_inspector = SourceInspector(service.settings, formats=service.parser.formats)
+
+    root = tmp_path / "用户的资料"
+    root.mkdir()
+    pdf_bytes = _pdf_bytes("Page one")
+    (root / "report.pdf").write_bytes(pdf_bytes)
+    collection_id = str(uuid4())
+    collection = service.settings.staging_dir / "collections" / collection_id
+    collection.mkdir(parents=True)
+    staged_id = str(uuid4())
+    (collection / "manifest.json").write_text(
+        json.dumps(
+            {
+                "rootId": "r1",
+                "rootPath": str(root),
+                "rootToken": path_token(
+                    service.settings.session_token.get_secret_value(),
+                    DIRECTORY_DOMAIN,
+                    str(root),
+                ),
+                "files": [
+                    {
+                        "relativePath": "report.pdf",
+                        "stagedId": staged_id,
+                        "mediaType": "application/pdf",
+                        "sizeBytes": len(pdf_bytes),
+                        "sha256": hashlib.sha256(pdf_bytes).hexdigest(),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    fingerprint = hashlib.sha256(pdf_bytes).hexdigest()
+    job_id = str(uuid4())
+    job = ImportJobRecord(
+        id=job_id,
+        source_kind="staged_file",
+        source_value=_encode_source_metadata(
+            value=staged_id,
+            fingerprint=fingerprint,
+            duplicate_decision="create",
+            job_id=job_id,
+            # 身份与修订在**任务元数据**这一层，不在 collection_cache 里 ——
+            # `_run_parsing` 从 metadata 取它们（`_validate_descriptor` 会逐项比对，
+            # 少一个就是 BATCH_SOURCE_CHANGED）。
+            source_identity="folder:r1:report.pdf",
+            source_revision=fingerprint,
+            collection_cache={
+                "collection_id": collection_id,
+                "cache_ref": {
+                    "cacheId": staged_id,
+                    "mediaType": "application/pdf",
+                    "byteSize": len(pdf_bytes),
+                    "sha256": fingerprint,
+                },
+                "display_path": "report.pdf",
+                "title": "report.pdf",
+            },
+        ),
+        repository_id="repository-1",
+    )
+    service.job_store.reserve(job, fingerprint=fingerprint)
+
+    await service.run(job_id)
+
+    completed = service.job_store.get(job_id)
+    # 失败时先把原因带出来：只断言状态会让这条用例在最需要信息的时候只给一个 "failed"。
+    assert completed is not None
+    assert (completed.state, completed.error_code, completed.error_message) == (
+        ImportStatus.COMPLETED,
+        None,
+        None,
+    )
+    document = service.document_store.get(completed.document_id)
+    directory = service.settings.documents_dir / str(document.id)  # type: ignore[union-attr]
+    assert document.source_path == str(root / "report.pdf")  # type: ignore[union-attr]
+    assert document.raw_path is None  # type: ignore[union-attr]
+    assert not (directory / "raw.bin").exists()
+    assert (directory / "document.md").is_file()

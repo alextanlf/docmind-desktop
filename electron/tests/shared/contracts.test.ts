@@ -5,6 +5,8 @@ import {
   BatchProgressPayloadSchema,
   MODEL_PRESET_IDS,
   PluginDiagnosticSchema,
+  SOURCE_KINDS,
+  SourceRefSchema,
 } from "../../shared/contracts";
 
 /**
@@ -164,5 +166,55 @@ describe("PluginDiagnosticSchema", () => {
     });
 
     expect(parsed.source).toBe("/tmp/acme");
+  });
+});
+
+/**
+ * 导入来源引用。`name` 是这一组里唯一由客户端上报、又必须原样收回来的字段
+ * （后端只把它当显示用），所以两边对「缺席」和「显式为 null」的理解必须一致。
+ */
+describe("SourceRefSchema", () => {
+  it("accepts the explicit null the backend sends for a URL import", () => {
+    // 后端 `SourceRef.name` 可空，且 FastAPI 不带 exclude_none：URL 导入与老记录的
+    // 响应里就是 `"name": null`。只写 `.optional()` 会卡住它，导入进度接口整个被拒 ——
+    // 而渲染层的假 API 根本不带这个键，vitest 抓不到，只有这条断言守着。
+    expect(
+      SourceRefSchema.safeParse({ kind: "staged_file", value: "0d17078a", name: null }).success,
+    ).toBe(true);
+  });
+
+  it("still accepts a payload without the key at all", () => {
+    expect(SourceRefSchema.safeParse({ kind: "url", value: "https://x.test/a" }).success).toBe(
+      true,
+    );
+  });
+
+  it("carries the file name the user picked through to the backend", () => {
+    const parsed = SourceRefSchema.parse({
+      kind: "staged_file",
+      value: "0d17078a",
+      name: "季度报告.pdf",
+    });
+
+    expect(parsed.name).toBe("季度报告.pdf");
+  });
+});
+
+/**
+ * 导入来源的类别跨语言对齐。
+ *
+ * 这条用例读的是后端源码本身（与 MODEL_PRESET_IDS 那组同一套做法）：两边各说各话的
+ * 代价不是报错，而是运行时才炸的 ValidationError —— 加 `linked_file` 时后端就踩过一次，
+ * 因为那份枚举当时在 `SourceRef` 与 `SourcePreview` 里各声明了一遍。
+ */
+describe("SOURCE_KINDS", () => {
+  it("matches the backend's declared kinds exactly, in order", () => {
+    const source = readRepoFile("../../../backend/app/schemas/imports.py");
+    const declared = source.match(/^SOURCE_KINDS = \(([^)]*)\)/m);
+    if (!declared) throw new Error("后端没有声明 SOURCE_KINDS");
+
+    const backendKinds = [...declared[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+
+    expect(backendKinds).toEqual([...SOURCE_KINDS]);
   });
 });

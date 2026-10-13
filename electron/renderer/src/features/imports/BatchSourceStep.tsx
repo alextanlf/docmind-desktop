@@ -1,8 +1,25 @@
 import { FolderOpen } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { clientErrorMessage, useRemoteProvidersQuery } from "../settings/settings.queries";
-import type { Repository } from "../../../../shared/contracts";
+import {
+  ScanProgressPayloadSchema,
+  ScanResultPayloadSchema,
+  type Repository,
+} from "../../../../shared/contracts";
+import { TaskProgress } from "../../components/TaskProgress";
 import { useCreateBatchMutation } from "./batch-import.queries";
+
+/**
+ * 订阅标识：与聊天流同一条约定 —— 由调用方生成，主进程只负责沿这个 id 回事件。
+ *
+ * 退路那串固定 UUID 是给"环境里没有 crypto"的情形用的（与 ChatPanel 同名函数一致，
+ * 那里已经踩过一次）。
+ */
+function createRequestId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+    return crypto.randomUUID();
+  return "00000000-0000-4000-8000-000000000030";
+}
 
 export function BatchSourceStep({
   repositories,
@@ -34,26 +51,54 @@ export function BatchSourceStep({
     if (!repositoryId && repositories[0]) setRepositoryId(repositories[0].id);
   }, [repositoryId, repositories]);
   const createBatch = useCreateBatchMutation();
-  async function chooseDirectory() {
+  /**
+   * 扫描进度。null 表示没在扫。
+   *
+   * 扫描要把目录里每个文件完整读一遍算摘要（不复制），几百个文件就是几分钟 —— 所以它
+   * 在后台跑、边跑边报"已扫描 n/N"，而不是让这个按钮停在"正在读取…"上。
+   */
+  const [scan, setScan] = useState<{ scanned: number; total: number } | null>(null);
+  const scanSubscription = useRef<{ cancel(): void; detach(): void } | null>(null);
+
+  function chooseDirectory() {
     const selectedRepositoryId = repositoryId || repositories[0]?.id;
     if (!selectedRepositoryId) {
       setError("请选择目标知识库");
       return;
     }
     setError("");
-    try {
-      const staged = await window.docmind.sources.stageDirectory();
-      if (!staged) return;
-      const batch = await createBatch.mutateAsync({
-        kind: "staged_directory",
-        sourceId: staged.collectionId,
-        repositoryId: selectedRepositoryId,
-      });
-      onCreated(batch.id, batch.discoveryVersion);
-    } catch (cause) {
-      setError(clientErrorMessage(cause));
-    }
+    setScan(null);
+    // 与聊天流同一套订阅机制：先订阅、再让主进程开扫；进度与结果都从这条流回来。
+    const subscription = window.docmind.sources.scanDirectory(createRequestId(), (event) => {
+      if (event.type === "progress") {
+        const payload = ScanProgressPayloadSchema.safeParse(event.payload);
+        if (payload.success) setScan(payload.data);
+        return;
+      }
+      if (event.type === "error") {
+        setScan(null);
+        setError(clientErrorMessage(event.payload));
+        return;
+      }
+      // done：要么拿到一份清单（继续建批次），要么是用户取消（什么都不做）。
+      setScan(null);
+      const result = ScanResultPayloadSchema.safeParse(event.payload);
+      if (!result.success || !result.data.collection) return;
+      void createBatch
+        .mutateAsync({
+          kind: "staged_directory",
+          sourceId: result.data.collection.collectionId,
+          repositoryId: selectedRepositoryId,
+        })
+        .then((batch) => onCreated(batch.id, batch.discoveryVersion))
+        .catch((cause) => setError(clientErrorMessage(cause)));
+    });
+    scanSubscription.current = subscription;
   }
+
+  // 组件消失就**取消**（不只是停止监听）：扫描在后台读用户磁盘，没人要的结果不该继续跑完
+  // —— 否则关掉对话框之后主进程还会读完整个目录，并留下一份没人引用的清单。
+  useEffect(() => () => scanSubscription.current?.cancel(), []);
   async function createRemote() {
     const selectedRepositoryId = repositoryId || repositories[0]?.id;
     if (!selectedRepositoryId) {
@@ -126,15 +171,25 @@ export function BatchSourceStep({
           ))}
         </select>
       </label>
-      {kind === "staged_directory" ? (
+      {kind === "staged_directory" && scan !== null ? (
+        // 扫描在后台跑，这里只显示进度并允许中止。取消之后不会留下半成品清单
+        // （主进程会把 .partial 目录删掉），所以"取消"是干净的。
+        <TaskProgress
+          label="目录扫描进度"
+          progress={scan.total > 0 ? Math.floor((scan.scanned / scan.total) * 100) : null}
+          progressText={`已扫描 ${scan.scanned}/${scan.total}`}
+          statusText="只读取文件算摘要，不复制"
+          onCancel={() => scanSubscription.current?.cancel()}
+        />
+      ) : kind === "staged_directory" ? (
         <button
           className="button button-secondary"
           disabled={createBatch.isPending}
-          onClick={() => void chooseDirectory()}
+          onClick={() => chooseDirectory()}
           type="button"
         >
           <FolderOpen aria-hidden="true" size={16} />
-          {createBatch.isPending ? "正在读取…" : "选择目录"}
+          {createBatch.isPending ? "正在创建批次…" : "选择目录"}
         </button>
       ) : null}
       {kind === "web" ? (
