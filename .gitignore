@@ -1,6 +1,12 @@
 .worktrees/
 .superpowers/
 docs/superpowers/
+# 本地助手的工作目录：memory/ 是对话笔记，backup-*/ 里是 docmind.sqlite3 与
+# chroma-dump.sql —— 后者含**真实文档正文、语雀 source_url 与文档标题**。
+# 它此前只靠 .git/info/exclude 挡着，那是**不随克隆走**的本机文件：换台机器或
+# 重新克隆后这层保护就没了，一次 `git add -A` 就会把私人资料推进公开仓库。
+# 所以规则必须落在会被提交的 .gitignore 里。
+.workbuddy/
 DocMind-架构设计文档*.md
 DocMind-业务流程图*.mermaid
 DocMind-架构图*.mermaid
