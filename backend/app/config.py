@@ -52,6 +52,13 @@ class AppSettings(BaseSettings):
     # 详见 memory/retriever.py 的过滤条件。
     memory_recall_min_similarity: float = Field(default=0.65, ge=-1.0, le=1.0)
     staging_manifest_max_bytes: int = Field(default=2 * 1024 * 1024, gt=0)
+    # 暂存副本的孤儿宽限期（秒）。超过它、又没有任何任务/批次引用的副本才会被清扫。
+    #
+    # 为什么是"宽限"而不是"没人引用就删"：staging 里的副本有两种**正常**的无人引用状态 ——
+    # 用户已经选好文件但还没点确认（可能停很久），以及导入失败后等用户点重试。
+    # 24 小时跨得过一次关机，也留得住"昨天失败、今天再试"的那一份；测试里设 0 可以直接
+    # 走到清扫分支，不必伪造时钟。
+    staging_orphan_grace_seconds: float = Field(default=24 * 3600.0, ge=0.0)
     batch_max_items: int = Field(default=1000, gt=0)
     sync_interval_seconds: float = Field(default=0.0, ge=0.0)
     # 同一主机两次网页请求之间的最小间隔（秒）。

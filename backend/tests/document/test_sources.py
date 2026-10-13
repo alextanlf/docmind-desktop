@@ -13,7 +13,12 @@ from pydantic import SecretStr
 from app.api.errors import DomainError
 from app.config import AppSettings
 from app.document.downloader import DocumentDownloader
-from app.document.sources import SourceInspector, SourceValidator, StagedFileStore
+from app.document.sources import (
+    SourceInspector,
+    SourceValidator,
+    StagedFileStore,
+    display_title,
+)
 from app.schemas.batches import CachedSourceRef
 from app.schemas.imports import SourceRef
 
@@ -336,6 +341,41 @@ async def test_source_inspector_previews_staged_markdown(staged_store: StagedFil
         len(b"# Local guide"),
     )
     assert preview.source_url == f"staged://{staged_id}"
+
+
+def test_staged_source_titles_from_the_file_name_the_user_chose(staged_store: StagedFileStore) -> None:
+    """暂存副本按 UUID 命名，所以「用户选的是哪个文件」只能由客户端上报。
+
+    上游自身不带标题的格式（PDF、docx）没有第二条路可走：这个名字丢了，用户看到的就是
+    `0d17078a-3664-4b9d-b2ee-….pdf`。这条用例因为「丢掉 display_name」而红。
+    """
+    staged_id = str(uuid4())
+    (staged_store.staging_dir / f"{staged_id}.md").write_text("无标题正文", encoding="utf-8")
+
+    assert staged_store.load(staged_id).title == f"{staged_id}.md"
+    assert staged_store.load(staged_id, "季度报告.md").title == "季度报告.md"
+    # 只认 basename：客户端说什么都不能把路径塞进标题，哪怕它看起来像绝对路径。
+    assert staged_store.load(staged_id, "/Users/someone/私密/季度报告.md").title == "季度报告.md"
+
+
+@pytest.mark.parametrize(
+    ("raw", "want"),
+    [
+        ("报告.pdf", "报告.pdf"),
+        ("/Users/someone/私密/报告.pdf", "报告.pdf"),
+        ("C:\\Users\\someone\\报告.pdf", "报告.pdf"),
+        ("../../etc/passwd", "passwd"),
+        ("报告\u0000.pdf", "报告 .pdf"),
+        ("  季度   报告.pdf  ", "季度 报告.pdf"),
+        ("x" * 400, "x" * 240),
+        ("", None),
+        ("   ", None),
+        ("..", None),
+        (None, None),
+    ],
+)
+def test_display_title_keeps_a_basename_and_drops_everything_else(raw: str | None, want: str | None) -> None:
+    assert display_title(raw) == want
 
 
 @pytest.mark.parametrize(

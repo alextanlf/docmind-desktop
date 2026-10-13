@@ -154,6 +154,9 @@ BUILTIN_FORMATS: tuple[DocumentFormat, ...] = (
         binary_payload=True,
         magic=_PDF_MAGIC,
         validate=_looks_like_pdf,
+        # 唯一有原件阅读器的格式：pdfjs 直接按字节 Range 分页（见
+        # api/documents.py 的 /raw 与 features/repositories/PdfOriginalView.tsx）。
+        original_viewable=True,
     ),
     DocumentFormat(
         name="markdown",

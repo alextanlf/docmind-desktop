@@ -74,6 +74,7 @@ from app.feishu.tokens import FeishuTokenManager
 from app.imports.batch_service import BatchService
 from app.imports.events import InMemoryEventBroker
 from app.imports.service import ImportService
+from app.imports.staging_cleanup import StagingReconciler
 from app.memory.distillation import DistillationService
 from app.memory.indexer import MemoryIndexer
 from app.memory.persistence import LocalKnowledgeStore
@@ -494,6 +495,15 @@ def create_app(
             formats=formats,
         )
         app.state.batch_service.recover_on_startup()
+        # 对账清扫必须排在两个 recover 之后：它们把"中断"改判成 FAILED/CANCELLED 之后，
+        # 磁盘上的暂存副本才对得上"谁还会再读它"这个问题。放在这里也就意味着
+        # staging 里的残留（单文件、目录集合、网页/远程缓存）不需要各自的流程去删。
+        app.state.staging_reconciler = StagingReconciler(
+            settings=runtime_settings,
+            job_store=ImportJobStore(database),
+            batch_store=app.state.batch_store,
+        )
+        app.state.staging_reconciler.reconcile()
 
         def _read_secret(name: str) -> str | None:
             try:

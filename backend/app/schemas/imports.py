@@ -13,6 +13,12 @@ from app.schemas.common import WireModel
 class SourceRef(WireModel):
     kind: Literal["url", "staged_file"]
     value: str
+    #: 用户在选择器里看到的文件名（`报告.pdf`）。
+    #:
+    #: 暂存副本按 UUID 命名（防路径注入），所以这个名字只在客户端手里；上游不带标题的
+    #: 格式（PDF、docx）失去它就只剩 UUID 当标题 —— 实测本机 3 篇里 2 篇如此。
+    #: 只用于显示：后端取 basename，绝不进入路径、chunk 或引用。
+    name: str | None = None
 
 
 class SourceFormatView(WireModel):

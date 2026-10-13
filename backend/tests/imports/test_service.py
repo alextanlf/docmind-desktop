@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import pymupdf
 import pytest
 
 from app.api.errors import DomainError
@@ -69,6 +70,7 @@ class FakeSourceInspector:
         self.inspect_started: asyncio.Event | None = None
         self.release_inspect: asyncio.Event | None = None
         self.inspected_refs: list[SourceRef] = []
+        self.loaded_refs: list[SourceRef] = []
 
     async def inspect(self, ref: SourceRef) -> SourcePreview:
         self.inspected_refs.append(ref)
@@ -79,7 +81,7 @@ class FakeSourceInspector:
         return SourcePreview.from_document("url", self.document)
 
     async def load(self, ref: SourceRef) -> DownloadedDocument:
-        del ref
+        self.loaded_refs.append(ref)
         if self.load_started is not None:
             self.load_started.set()
         if self.release_load is not None:
@@ -748,8 +750,140 @@ async def test_run_completes_full_import_with_exact_progress(database, tmp_path)
     assert len(vector_store.upserts) == 1
     document = service.document_store.get(completed.document_id)  # type: ignore[union-attr]
     assert document.remote_id == "remote-document-1"  # type: ignore[union-attr]
-    assert Path(document.raw_path).read_bytes() == source.document.raw_bytes  # type: ignore[arg-type,union-attr]
+    # markdown 没有原件阅读器，所以原件**不落盘**：写进去也没有任何读取点（唯一读
+    # raw.bin 的是 PDF 原件视图）。断言文件不存在，而不只是字段为空 —— 「字段说没有、
+    # 磁盘上却躺着一份」正是这次要消掉的形态。
+    assert document.raw_path is None  # type: ignore[union-attr]
+    document_directory = service.settings.documents_dir / str(document.id)  # type: ignore[union-attr]
+    assert not (document_directory / "raw.bin").exists()
     assert Path(document.markdown_path).read_text() == "# Imported\n\nUseful text"  # type: ignore[arg-type,union-attr]
+
+
+def _pdf_bytes(*pages: str) -> bytes:
+    document = pymupdf.open()
+    for text in pages:
+        page = document.new_page()
+        page.insert_text((72, 96), text)
+    raw = document.tobytes()
+    document.close()
+    return raw
+
+
+async def test_pdf_import_keeps_the_original_byte_for_byte(database, tmp_path) -> None:
+    """PDF 是唯一有原件阅读器的格式，也就是唯一该留原件的格式。
+
+    这条用例会因为「把 PDF 声明成 original_viewable=False」而红 —— 那会让 /raw 没有字节
+    可发，原件分页整块失效。它是 L1 的另一半：不是「都不留」，是「按有没有人读来留」。
+    """
+    service, source, _, _ = make_service(database, tmp_path)
+    pdf_bytes = _pdf_bytes("Page one")
+    source.document = DownloadedDocument(
+        title="报告.pdf",
+        source_url="https://example.test/report.pdf",
+        media_type="application/pdf",
+        raw_bytes=pdf_bytes,
+    )
+    job = await create_job(service, source)
+
+    await service.run(job.id)
+
+    completed = service.job_store.get(job.id)
+    assert completed.state == ImportStatus.COMPLETED  # type: ignore[union-attr]
+    document = service.document_store.get(completed.document_id)  # type: ignore[union-attr]
+    expected_path = service.settings.documents_dir / str(document.id) / "raw.bin"  # type: ignore[union-attr]
+    assert document.raw_path == str(expected_path)  # type: ignore[union-attr]
+    assert expected_path.read_bytes() == pdf_bytes
+
+
+async def test_retry_keeps_the_file_name_the_user_chose(database, tmp_path, monkeypatch) -> None:
+    """重试要重新解析时，显示名必须能从落库的元数据里重建出来。
+
+    丢了它，重试后的标题就退回暂存 UUID（本机实测正是这样丢了 2 篇的标题）。
+    这条用例因为「`_encode_source_metadata` 不存 name」而红：第一次解析带着名字
+    （它来自请求），第二次解析的 ref 才是从数据库重建的。
+    """
+    service, source, _, _ = make_service(database, tmp_path)
+    ref = SourceRef(kind="staged_file", value=str(uuid4()), name="季度报告.pdf")
+    preview = await source.inspect(ref)
+    job = await service.create(
+        ImportCreateRequest(
+            source=ref, repository_id="repository-1", fingerprint=preview.fingerprint
+        )
+    )
+    # 让解析失败一次，重试才会停在 PARSING 这一档（重试不重复已经做完的远端写入）；
+    # 必须是可重试的原因码，否则任务不可重试。
+    original_parse = service.parser.parse
+    failures = 1
+
+    def fail_once(document):  # type: ignore[no-untyped-def]
+        nonlocal failures
+        if failures:
+            failures -= 1
+            raise DomainError("SOURCE_DOWNLOAD_FAILED", "上游暂时不可用", 503, True)
+        return original_parse(document)
+
+    monkeypatch.setattr(service.parser, "parse", fail_once)
+
+    await service.run(job.id)
+    assert service.job_store.get(job.id).state == ImportStatus.FAILED  # type: ignore[union-attr]
+    await service.retry(job.id)
+    await service.run(job.id)
+
+    assert service.job_store.get(job.id).state == ImportStatus.COMPLETED  # type: ignore[union-attr]
+    assert [loaded.name for loaded in source.loaded_refs] == ["季度报告.pdf", "季度报告.pdf"]
+
+
+async def _staged_job(service, source, staged_id: str):
+    ref = SourceRef(kind="staged_file", value=staged_id, name="季度报告.pdf")
+    preview = await source.inspect(ref)
+    return await service.create(
+        ImportCreateRequest(
+            source=ref, repository_id="repository-1", fingerprint=preview.fingerprint
+        )
+    )
+
+
+async def test_completed_import_deletes_its_staged_copy(database, tmp_path) -> None:
+    """导入走完的那一刻，暂存副本就该消失 —— 它是输入，不是产物。
+
+    这条用例因为「不再调用清扫」而红。它守的是**即时**那一半：对账清扫能兜住崩溃残留，
+    但一个长跑的应用如果不即时删，就要攒到下次启动。
+    """
+    service, source, _, _ = make_service(database, tmp_path)
+    staged_id = str(uuid4())
+    staged_path = service.settings.staging_dir / f"{staged_id}.md"
+    staged_path.write_bytes(b"# Imported\n\nUseful text")
+    job = await _staged_job(service, source, staged_id)
+
+    await service.run(job.id)
+
+    assert service.job_store.get(job.id).state == ImportStatus.COMPLETED  # type: ignore[union-attr]
+    assert not staged_path.exists()
+
+
+async def test_failed_import_keeps_its_staged_copy_for_the_retry(
+    database, tmp_path, monkeypatch
+) -> None:
+    """失败**不能**删暂存副本：重试可能从 PARSING 这一档恢复，那时它还要被重新读。
+
+    这条用例因为「失败也删」而红 —— 那会让"应用重启导致任务中断"这类重试直接断在
+    `SOURCE_UNSUPPORTED`（暂存文件不存在），而用户看到的只是"重试又失败了"。
+    """
+    service, source, _, _ = make_service(database, tmp_path)
+    staged_id = str(uuid4())
+    staged_path = service.settings.staging_dir / f"{staged_id}.md"
+    staged_path.write_bytes(b"# Imported\n\nUseful text")
+    job = await _staged_job(service, source, staged_id)
+
+    def fail_parse(document):  # type: ignore[no-untyped-def]
+        raise DomainError("SOURCE_DOWNLOAD_FAILED", "上游暂时不可用", 503, True)
+
+    monkeypatch.setattr(service.parser, "parse", fail_parse)
+
+    await service.run(job.id)
+
+    assert service.job_store.get(job.id).state == ImportStatus.FAILED  # type: ignore[union-attr]
+    assert staged_path.exists()
 
 
 async def test_local_repository_import_skips_yuque_but_indexes_content(
@@ -1028,7 +1162,9 @@ async def test_update_cancellation_reaches_a_coherent_boundary_before_cancelling
     assert persisted_job is not None
     assert document is not None
     assert persisted_job.state == ImportStatus.CANCELLED
-    assert Path(document.raw_path or "").read_bytes() == b"# Imported\n\nUseful text"
+    # markdown 更新不再留原件（见 test_run_completes_full_import_with_exact_progress）；
+    # 「落盘走到了哪一步」由下一行的 document.md 断言守着。
+    assert document.raw_path is None
     assert Path(document.markdown_path or "").read_text(encoding="utf-8") == (
         "# Imported\n\nUseful text"
     )

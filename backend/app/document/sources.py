@@ -32,6 +32,33 @@ def _unsupported(message: str = "不支持的文档来源") -> DomainError:
     return DomainError("SOURCE_UNSUPPORTED", message, 400, False)
 
 
+#: 控制字符集合，按「字符」而不是字节判，免得把一个多字节字符劈成两半。
+_CONTROL_CHARACTERS = {chr(code) for code in (*range(32), 127)}
+
+
+def display_title(name: str | None) -> str | None:
+    """把客户端上报的文件名收敛成一个能安全当标题用的显示值。
+
+    这个名字会一路进预览、文档标题、chunk 与聊天引用，所以按「不可信的显示输入」对待：
+    只取 basename（客户端在 Windows 上给的是反斜杠路径），丢掉控制字符，压平空白，
+    截短到一个能安全过 IPC 的长度。**不保留任何路径成分** —— 暂存绝对路径不许出现在
+    引用里这条约束没有变，变的只是「用户自己给文件起的名字」可以出现了。
+
+    截断取 240 而不是标题列的 1024：客户端 `SourcePreviewSchema.title` 是 `text(240)`，
+    超过它会在 IPC 边界被拒，用户看到的是「导入失败」而不是一个长标题。
+    """
+    if not isinstance(name, str):
+        return None
+    candidate = name.replace("\\", "/").rsplit("/", 1)[-1]
+    flattened = "".join(
+        " " if character in _CONTROL_CHARACTERS else character for character in candidate
+    )
+    cleaned = " ".join(flattened.split()).strip()
+    if not cleaned or cleaned in {".", ".."}:
+        return None
+    return cleaned[:240]
+
+
 def _batch_source_changed(message: str = "暂存目录内容已变化") -> DomainError:
     return DomainError("BATCH_SOURCE_CHANGED", message, 409, False)
 
@@ -99,6 +126,63 @@ def _inet_number(value: str) -> int:
     return int(value, 10)
 
 
+def _validated_staged_path(staging_dir: Path, staged_id: str) -> Path:
+    """定位并校验一个单文件暂存副本；任何一种不可用都抛 ``SOURCE_UNSUPPORTED``。
+
+    这里做的是**安全**检查：id 必须是规范 UUID、目录里必须唯一匹配、解析后必须还在
+    暂存目录内、而且必须是普通文件。加载与清扫共用这一份 —— 两边各自实现一遍，
+    迟早会有一边忘了防符号链接逃逸。
+    """
+    try:
+        canonical_id = str(UUID(staged_id))
+    except (TypeError, ValueError, AttributeError):
+        raise _unsupported() from None
+    if canonical_id != staged_id.lower():
+        raise _unsupported()
+
+    root = staging_dir.resolve()
+    matches = [path for path in staging_dir.glob(f"{canonical_id}.*") if path.parent == staging_dir]
+    if len(matches) != 1:
+        raise _unsupported("暂存文件不存在或不唯一")
+    resolved = matches[0].resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        raise _unsupported("暂存文件不在允许目录内") from None
+    if not resolved.is_file():
+        raise _unsupported("暂存文件不可用")
+    return resolved
+
+
+def locate_staged_file(staging_dir: Path, staged_id: str) -> Path | None:
+    """按 staged id 定位单文件暂存副本，找不到或不唯一时返回 ``None``。
+
+    **刻意不查格式注册表**：清扫路径不能靠注册表判断"这是不是一个暂存文件" —— 一个插件
+    格式（`.pages`）在 builtin 注册表里查不到，会被误判成外来文件而永远留着。格式检查
+    只对"要解析它"的调用者有约束，所以它留在 :class:`StagedFileStore` 里。
+    """
+    try:
+        return _validated_staged_path(staging_dir, staged_id)
+    except DomainError:
+        return None
+
+
+def discard_staged_file(staging_dir: Path, staged_id: str) -> bool:
+    """删掉一个单文件暂存副本；返回是否真的删掉了。
+
+    删除失败只返回 ``False``：清扫是尽力而为的维护动作，不该让调用它的导入流程失败 ——
+    最坏的结果是这份副本留到下一次清扫。
+    """
+    path = locate_staged_file(staging_dir, staged_id)
+    if path is None:
+        return False
+    try:
+        path.unlink()
+    except OSError:
+        return False
+    return True
+
+
 class StagedFileStore:
     def __init__(self, settings: AppSettings, formats: FormatRegistry | None = None) -> None:
         self.staging_dir = settings.staging_dir
@@ -107,29 +191,12 @@ class StagedFileStore:
         self.formats = formats if formats is not None else builtin_registry()
 
     def resolve(self, staged_id: str) -> Path:
-        try:
-            canonical_id = str(UUID(staged_id))
-        except (TypeError, ValueError, AttributeError):
-            raise _unsupported() from None
-        if canonical_id != staged_id.lower():
+        path = _validated_staged_path(self.staging_dir, staged_id)
+        if self.formats.for_pickable_extension(path.suffix) is None:
             raise _unsupported()
+        return path
 
-        root = self.staging_dir.resolve()
-        matches = [path for path in self.staging_dir.glob(f"{canonical_id}.*") if path.parent == self.staging_dir]
-        if len(matches) != 1:
-            raise _unsupported("暂存文件不存在或不唯一")
-        if self.formats.for_pickable_extension(matches[0].suffix) is None:
-            raise _unsupported()
-        resolved = matches[0].resolve()
-        try:
-            resolved.relative_to(root)
-        except ValueError:
-            raise _unsupported("暂存文件不在允许目录内") from None
-        if not resolved.is_file():
-            raise _unsupported("暂存文件不可用")
-        return resolved
-
-    def load(self, staged_id: str) -> DownloadedDocument:
+    def load(self, staged_id: str, display_name: str | None = None) -> DownloadedDocument:
         path = self.resolve(staged_id)
         format = self.formats.for_pickable_extension(path.suffix)
         if format is None:
@@ -145,7 +212,7 @@ class StagedFileStore:
             if problem is not None:
                 raise _unsupported(problem)
         return DownloadedDocument(
-            title=path.name,
+            title=display_title(display_name) or path.name,
             # Preserve only the opaque staged identifier across the backend
             # boundary; never expose the absolute staging path in previews,
             # persisted chunks, or later chat citations.
@@ -323,7 +390,7 @@ class SourceInspector:
     async def load(self, ref: SourceRef) -> DownloadedDocument:
         if ref.kind == "url":
             return await self.downloader.download_url(ref.value)
-        return self.staged_store.load(ref.value)
+        return self.staged_store.load(ref.value, ref.name)
 
     def load_collection_cache(
         self,

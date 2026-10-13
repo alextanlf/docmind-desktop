@@ -36,7 +36,7 @@ export function SourceStep({ onContinue }: SourceStepProps) {
     try {
       const staged = await window.docmind.dialogs.chooseSource(active);
       if (staged) {
-        setSource({ kind: "staged_file", value: staged.stagedSourceId });
+        setSource({ kind: "staged_file", value: staged.stagedSourceId, name: staged.name });
         setDisplayName(staged.name);
       }
     } catch (cause) {

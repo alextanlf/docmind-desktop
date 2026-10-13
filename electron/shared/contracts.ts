@@ -515,6 +515,18 @@ export const DocumentOriginalChunkSchema = z.object({
 export const SourceRefSchema = z.object({
   kind: z.enum(["url", "staged_file"]),
   value: bounded(4_000),
+  /**
+   * 用户在选择器里看到的文件名（`报告.pdf`）。
+   *
+   * 暂存副本按 UUID 命名（防路径注入），后端因此拿不到这个名字；上游自身不带标题的
+   * 格式（PDF、docx）失去它就只剩 UUID 当标题。只用于显示：后端只取 basename。
+   *
+   * **必须是 `.nullable().optional()`**：后端 `SourceRef.name` 是可空字段，且
+   * FastAPI 不带 `exclude_none`，所以 URL 导入与老记录的响应里是显式的
+   * `"name": null` —— 只写 `.optional()` 会放过缺席、卡住 null，整个导入进度接口
+   * 在 IPC 边界被拒（vitest 里的假 API 不带这个键，抓不到）。
+   */
+  name: bounded(255).nullable().optional(),
 });
 export const SourcePreviewSchema = z.preprocess(
   (value) => {

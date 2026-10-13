@@ -35,6 +35,13 @@ class DocumentFormat:
 
     ``binary_payload`` selects which size ceiling applies. The ceilings
     themselves stay in configuration — a format names its *kind*, not a number.
+
+    ``original_viewable`` decides whether the imported bytes are kept on disk
+    after parsing. It is deliberately about the *reader*, not about the format's
+    value: a payload nobody can display is written once and read never, which is
+    most of an import's disk cost (实测非 PDF 文档的原件占其存储的 71%~96%，
+    见 docs/文档存储优化方案.md). A format that gains a viewer sets this flag;
+    until then its original bytes are the staging copy's business, not ours.
     """
 
     name: str
@@ -74,6 +81,9 @@ class DocumentFormat:
     #: store, the directory scanner and the downloader all reject the same
     #: payloads for the same reason instead of each testing for ``%PDF-``.
     validate: Callable[[bytes], str | None] | None = None
+    #: Whether the application can render these original bytes back to the user.
+    #: Only such a format's payload is persisted after parsing.
+    original_viewable: bool = False
 
     def __post_init__(self) -> None:
         if not self.extensions:

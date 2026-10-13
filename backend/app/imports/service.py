@@ -16,7 +16,7 @@ from app.config import AppSettings
 from app.core.embedding import EmbeddingProvider, require_ready_embedding
 from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
-from app.document.sources import CollectionCacheRequest
+from app.document.sources import CollectionCacheRequest, discard_staged_file
 from app.imports.events import EventType, ImportEventBroker
 from app.remote.notifications import (
     NOTIFY_ERROR,
@@ -121,6 +121,7 @@ class ImportService:
             )
             job_record.source_value = _encode_source_metadata(
                 value=request.source.value,
+                name=request.source.name or "",
                 fingerprint=request.fingerprint,
                 duplicate_decision=request.duplicate_decision or "create",
                 job_id=job_record.id,
@@ -250,18 +251,7 @@ class ImportService:
 
     @staticmethod
     def _collection_id(batch: Any) -> str:
-        try:
-            descriptor = json.loads(batch.source_descriptor_json)
-        except (TypeError, json.JSONDecodeError):
-            descriptor = None
-        collection_id = (
-            descriptor.get("collectionId") if isinstance(descriptor, dict) else None
-        )
-        if not isinstance(collection_id, str) and getattr(batch, "source_kind", None) in {"web", "remote_repository", "search_results"}:
-            return f"remote/{batch.id}"
-        if not isinstance(collection_id, str):
-            raise DomainError("BATCH_SOURCE_CHANGED", "暂存集合标识无效", 409, False)
-        return collection_id
+        return collection_id_for_batch(batch)
 
     @staticmethod
     def _collection_cache_requests(
@@ -336,7 +326,11 @@ class ImportService:
             job = self._job(job_id)
             metadata = _source_metadata(job)
             if not metadata["fingerprint"]:
-                ref = SourceRef(kind=job.source_kind, value=metadata["value"])
+                ref = SourceRef(
+                    kind=job.source_kind,
+            value=metadata["value"],
+            name=metadata["name"] or None,
+                )
                 preview = await self.inspect(ref)
                 duplicate = self.document_store.find_by_hash(
                     job.repository_id or "", preview.fingerprint
@@ -346,6 +340,7 @@ class ImportService:
                 decision = "update" if job.document_id or duplicate is not None else "create"
                 metadata = {
                     "value": ref.value,
+                    "name": ref.name or "",
                     "fingerprint": preview.fingerprint,
                     "duplicate_decision": decision,
                     "last_event_sequence": metadata["last_event_sequence"],
@@ -370,6 +365,8 @@ class ImportService:
         lock = self._job_locks.setdefault(job_id, asyncio.Lock())
         if job.state == ImportStatus.PENDING and not lock.locked():
             job = self.job_store.cancel(job_id)
+            # 还没轮到它跑就被取消了：这是终态，暂存副本同样不会再有读取点。
+            self._discard_staged_source(job_id)
             await self._publish_event(
                 job_id, "done", {"progress": job.progress, "state": job.state.value}
             )
@@ -408,7 +405,11 @@ class ImportService:
         if await self._cancel_if_requested(job_id):
             return False
         metadata = _source_metadata(job)
-        ref = SourceRef(kind=job.source_kind, value=metadata["value"])
+        ref = SourceRef(
+            kind=job.source_kind,
+            value=metadata["value"],
+            name=metadata["name"] or None,
+        )
         try:
             collection_cache = metadata["collection_cache"]
             if collection_cache:
@@ -679,6 +680,8 @@ class ImportService:
             progress=100,
             message="导入完成",
         )
+        # 任务走完了，暂存副本从此没有任何读取点：它在解析落盘之后就成了纯粹的占位。
+        self._discard_staged_source(job_id)
         await self._publish_event(
             job_id,
             "done",
@@ -842,7 +845,16 @@ class ImportService:
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         raw_path = directory / "raw.bin"
         markdown_path = directory / "document.md"
-        raw_path.write_bytes(downloaded.raw_bytes)
+        format = self.parser.formats.for_media_type(downloaded.media_type)
+        if format is not None and format.original_viewable:
+            raw_path.write_bytes(downloaded.raw_bytes)
+            stored_raw_path: str | None = str(raw_path)
+        else:
+            # 上一次导入（或历史版本）可能留过一份：这次的格式不需要它，就删掉，
+            # 否则记录说「没有原件」而磁盘上躺着一份，磁盘占用与数据库对不上。
+            with suppress(FileNotFoundError):
+                raw_path.unlink()
+            stored_raw_path = None
         markdown_path.write_text(parsed.markdown, encoding="utf-8")
         if job.document_id is None and existing is None:
             self.document_store.create(
@@ -851,7 +863,7 @@ class ImportService:
                     repository_id=job.repository_id or "",
                     title=parsed.title,
                     source_url=parsed.source_url,
-                    raw_path=str(raw_path),
+                    raw_path=stored_raw_path,
                     markdown_path=str(markdown_path),
                     source_type="import",
                     content_hash=metadata["fingerprint"],
@@ -864,12 +876,33 @@ class ImportService:
                 document_id,
                 title=parsed.title,
                 source_url=parsed.source_url,
-                raw_path=str(raw_path),
+                raw_path=stored_raw_path,
                 markdown_path=str(markdown_path),
                 content_hash=metadata["fingerprint"],
                 source_identity=metadata["source_identity"] or None,
                 source_revision=metadata["source_revision"] or None,
             )
+
+    def _discard_staged_source(self, job_id: str) -> None:
+        """任务**确定不会再跑**时，删掉它的单文件暂存副本。
+
+        暂存副本是导入的输入：解析落盘之后就没有读取点了（唯一读原件的是 PDF 原件视图，
+        读的是 documents/<id>/raw.bin）。所以调用点只该有两处语义 —— 走完了、被取消了。
+        **FAILED 不在其中**：重试可能从 PARSING 这一档恢复（应用重启导致的中断就是这样），
+        那时还要重新读这份文件；失败留下的副本交给启动时的对账清扫按宽限期回收。
+
+        删除失败不影响导入结果：最坏是这份副本留到下一次清扫。
+        """
+        job = self.job_store.get(job_id)
+        if job is None or job.source_kind != "staged_file":
+            return
+        metadata = _source_metadata(job)
+        # 批次子任务也是 staged_file，但它的字节在集合/远程缓存里，由批次的生命周期管。
+        if metadata["collection_cache"] is not None:
+            return
+        value = metadata["value"]
+        if isinstance(value, str) and value:
+            discard_staged_file(self.settings.staging_dir, value)
 
     def _parsed_from_persisted(self, document: DocumentRecord) -> ParsedDocument:
         markdown = Path(document.markdown_path or "").read_bytes()
@@ -951,6 +984,8 @@ class ImportService:
         if _source_metadata(job)["coherence_pending"]:
             return False
         cancelled = self.job_store.cancel(job_id)
+        # 取消是终态：`reset_for_retry` 只接受 FAILED，所以这份暂存副本不会再被读。
+        self._discard_staged_source(job_id)
         await self._publish_event(
             job_id,
             "done",
@@ -1068,7 +1103,11 @@ def _job_view(job: ImportJobRecord) -> ImportJobView:
     metadata = _source_metadata(job)
     return ImportJobView(
         id=job.id,
-        source=SourceRef(kind=job.source_kind, value=metadata["value"]),
+        source=SourceRef(
+            kind=job.source_kind,
+            value=metadata["value"],
+            name=metadata["name"] or None,
+        ),
         repository_id=job.repository_id or "",
         state=job.state.value,
         current_stage=job.current_stage,
@@ -1086,12 +1125,39 @@ def _job_view(job: ImportJobRecord) -> ImportJobView:
     )
 
 
+#: 批次来源里"内容不在暂存集合目录下、而在 staging/remote/<batchId>/"的那几种。
+#: 它们的标识别无选择：批次自己就是缓存的键（见 api/web_search.py 与 remote/discovery.py）。
+_REMOTE_CACHED_SOURCE_KINDS = frozenset({"web", "remote_repository", "search_results"})
+
+
+def collection_id_for_batch(batch: Any) -> str:
+    """一个批次的内容缓存在哪个集合里。
+
+    模块级函数而不是服务上的私有方法：**清扫**也要问同一个问题（批次的集合目录还有没有人
+    要）。两边各判一次，迟早有一边忘记 `remote/` 那条例外，于是在错误的目录上删东西。
+    """
+    try:
+        descriptor = json.loads(batch.source_descriptor_json)
+    except (TypeError, json.JSONDecodeError):
+        descriptor = None
+    collection_id = descriptor.get("collectionId") if isinstance(descriptor, dict) else None
+    if (
+        not isinstance(collection_id, str)
+        and getattr(batch, "source_kind", None) in _REMOTE_CACHED_SOURCE_KINDS
+    ):
+        return f"remote/{batch.id}"
+    if not isinstance(collection_id, str):
+        raise DomainError("BATCH_SOURCE_CHANGED", "暂存集合标识无效", 409, False)
+    return collection_id
+
+
 def _encode_source_metadata(
     *,
     value: str,
     fingerprint: str,
     duplicate_decision: str,
     job_id: str,
+    name: str = "",
     last_event_sequence: int = 0,
     stale_vector_ids: list[str] | None = None,
     pending_created_vector_ids: list[str] | None = None,
@@ -1104,6 +1170,10 @@ def _encode_source_metadata(
         {
             "version": 2,
             "value": value,
+            # 显示名与指纹并列存：重试要从这里重建 SourceRef（见 retry 与
+            # _run_parsing），不存的话重试出来的标题会退回暂存 UUID。
+            # 版本号不升：新增键对老记录只意味着「没有这个名字」，语义不变。
+            "name": name,
             "fingerprint": fingerprint,
             "duplicate_decision": duplicate_decision,
             "upload_intent": {"marker": f"docmind-import:{job_id}"},
@@ -1158,6 +1228,7 @@ def _source_metadata(job: ImportJobRecord) -> dict[str, Any]:
         remote_binding = metadata.get("remote_binding")
         return {
             "value": metadata["value"],
+            "name": metadata["name"] if isinstance(metadata.get("name"), str) else "",
             "fingerprint": (
                 metadata["fingerprint"]
                 if isinstance(metadata.get("fingerprint"), str)
@@ -1181,6 +1252,7 @@ def _source_metadata(job: ImportJobRecord) -> dict[str, Any]:
         }
     return {
         "value": job.source_value,
+        "name": "",
         "fingerprint": "",
         "duplicate_decision": "create",
         "marker": f"docmind-import:{job.id}",
