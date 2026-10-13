@@ -1,23 +1,26 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  PAGE_HEIGHT,
+  PAGE_WIDTH,
+  ensurePdfReady,
+  pageBox,
+  type PdfFixture,
+} from "./pdf-view-fixture";
 
 /**
  * 「适合宽度」的回归用例。
  *
- * 这条 bug 的形态是"没反应"，根因不在算法而在观察者装没装上：量宽度的 effect 只挂一次
+ * 这条 bug 的形态是"没反应"，根因不在算法而在观察者装没装上：量尺寸的 effect 只挂一次
  * （依赖 `[]`），而滚动容器是 pdf 加载完成后才渲染的 —— 挂载那一刻 ref 还是 null，直接
- * return，观察者再也不会被装上，`available` 永远是 0，页面停在 100%。真浏览器里实测到
- * 观察者回调数为 0。
+ * return，观察者再也不会被装上，可用尺寸永远是 0，页面停在 100%。真浏览器里实测到观察者
+ * 回调数为 0。
  *
- * 所以这里断言的是**行为**：滚动容器出现之后，观察者必须已经在观察它，而且量到的宽度
- * 要真的决定页面尺寸。只断言"渲染了工具栏"的用例在旧代码下照样绿。
+ * 所以这里断言的是**行为**：滚动容器出现之后，观察者必须已经在观察它，而且它报出来的
+ * 尺寸真的要决定页面大小。只断言"渲染了工具栏"的用例在旧代码下照样绿。
  */
-const FIXTURE_TEXT_WIDTH = 612;
-const FIXTURE_TEXT_HEIGHT = 792;
-/** 工作区给的可用宽度（父元素 clientWidth），比页面宽 —— 适合宽度要把页面缩到它以内。 */
-const AVAILABLE = 500;
-
 const getDocument = vi.fn();
+
 vi.mock("../../renderer/src/features/repositories/pdf-runtime", () => ({
   getDocument: (...args: unknown[]) => getDocument(...args),
   // 首片字节走的是 pdf.js 的 transport，它要模拟 Worker/主线程通信；这里只关心
@@ -33,49 +36,23 @@ vi.mock("../../renderer/src/features/repositories/pdf-runtime", () => ({
 
 const { PdfOriginalView } =
   await import("../../renderer/src/features/repositories/PdfOriginalView");
-const { installDocMindApi } = await import("./test-docmind-api");
 
 describe("PDF 适合宽度", () => {
+  let fixture: PdfFixture;
+
   beforeEach(() => {
-    getDocument.mockReset();
-    let resolveDocument: ((value: unknown) => void) | undefined;
-    const loaded = new Promise((resolve) => {
-      resolveDocument = resolve;
-    });
-    getDocument.mockReturnValue({ promise: loaded, destroy: vi.fn() });
-    // pdf.js 文档对象只需要 getPage(1).getViewport({scale:1}) 这一条路径。
-    resolveDocument?.({
-      numPages: 2,
-      getPage: async () => ({
-        getViewport: ({ scale }: { scale: number }) => ({
-          width: FIXTURE_TEXT_WIDTH * scale,
-          height: FIXTURE_TEXT_HEIGHT * scale,
-        }),
-      }),
-    });
-    // 滚动容器的父元素（.pdf-original）是测量对象：宽度由工作区决定，与页面无关。
-    Object.defineProperty(Element.prototype, "clientWidth", {
-      configurable: true,
-      get(this: Element) {
-        return this.classList.contains("pdf-original") ? AVAILABLE : 0;
-      },
-    });
+    fixture = ensurePdfReady({ getDocument });
+    fixture.installApi();
   });
 
-  it("滚动容器出现之后才装观察者，并按量到的宽度决定页宽", async () => {
-    const observed: Element[] = [];
-    const observe = vi.fn((element: Element) => {
-      observed.push(element);
-    });
-    const disconnect = vi.fn();
-    class TrackingResizeObserver {
-      constructor(private readonly callback: () => void) {}
-      observe = observe;
-      unobserve() {}
-      disconnect = disconnect;
-    }
-    vi.stubGlobal("ResizeObserver", TrackingResizeObserver);
-    installDocMindApi();
+  afterEach(() => {
+    fixture.cleanup();
+  });
+
+  it("滚动容器出现之后才装观察者，并按它报出的宽度决定页宽", async () => {
+    // 必须在 render 之前换成"手动通知"的观察者：ensurePdfReady 装的那个在注册时就
+    // 报一次尺寸，那样页面一开始就是 138%，"还没量到尺寸时停在 100%"这条就无从断言。
+    const observers = fixture.useManualResizeObservers();
 
     const view = render(
       <PdfOriginalView byteSize={1024} documentId="00000000-0000-0000-0000-000000000024" />,
@@ -83,24 +60,49 @@ describe("PDF 适合宽度", () => {
 
     // 加载完成之前没有滚动容器，观察者也不该观察一个不存在的东西。
     expect(screen.queryByRole("button", { name: "适合宽度" })).toBeNull();
-    const scroller = await screen.findByLabelText("跳转到页");
-    expect(scroller).toBeVisible();
+    await screen.findByLabelText("跳转到页");
 
-    await waitFor(() => expect(observe).toHaveBeenCalled());
-    // 观察的必须是那个能代表工作区宽度的盒子，不是被内容撑大的滚动容器。
-    expect(observed[0]).toHaveClass("pdf-original");
+    // 观察的必须是那个能代表工作区尺寸的盒子，不是被内容撑大的滚动容器。
+    expect(observers.observed[0]).toHaveClass("pdf-original");
+    // 量到的宽度还没进计算时，页面只能按 100% 铺；无论这一步跑到哪一帧，页宽都不能超过
+    // 工作区 —— 这条不变量与"effect 有没有被冲刷"无关，断言时机因此不脆。
+    expect(pageBox(view.container).width).toBeLessThanOrEqual(fixture.viewport.width);
 
-    // 100% 时页宽 612 > 可用 500；适合宽度要把它缩到可用宽度以内。
-    const wrapper = view.container.querySelector<HTMLElement>(".pdf-page");
+    // 100% 时页宽 612 < 可用宽 900，"适合宽度"会算出 100% —— 看不出差别，所以先
+    // 把工作区改窄再报一次，尺寸是否真的参与计算才看得出来。
+    fixture.viewport.width = 500;
+    act(() => observers.notify());
+
     await waitFor(() => {
-      const width = Number.parseFloat(wrapper?.style.width ?? "0");
+      const { height, width } = pageBox(view.container);
       expect(width).toBeGreaterThan(0);
-      expect(width).toBeLessThanOrEqual(AVAILABLE);
+      expect(width).toBeLessThanOrEqual(fixture.viewport.width);
+      // 高度由宽度推出，不受可用高度限制 —— 这正是与「适合页面」的分界。
+      expect(height).toBeCloseTo((width / PAGE_WIDTH) * PAGE_HEIGHT, 3);
     });
     expect(screen.getByRole("button", { name: "适合宽度" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    vi.unstubAllGlobals();
+    expect(screen.getByRole("button", { name: "适合页面" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("工作区变窄之后页面跟着变窄，而不是停在上一次的尺寸", async () => {
+    const observers = fixture.useManualResizeObservers();
+    const view = render(
+      <PdfOriginalView byteSize={1024} documentId="00000000-0000-0000-0000-000000000025" />,
+    );
+    await screen.findByLabelText("跳转到页");
+    act(() => observers.notify());
+    const before = pageBox(view.container).width;
+    expect(before).toBeGreaterThan(0);
+
+    fixture.viewport.width = 400;
+    act(() => observers.notify());
+
+    await waitFor(() => expect(pageBox(view.container).width).toBeLessThan(before));
   });
 });

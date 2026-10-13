@@ -12,8 +12,34 @@ import { getDocument } from "./pdf-runtime";
 const MIN_SCALE = 0.5;
 const MAX_SCALE = 4;
 const ZOOM_STEP = 1.2;
-/** 滚动容器左右留白，算「适合宽度」时要扣掉。 */
+/**
+ * 手动输入 / 方向键的百分比步长。
+ *
+ * 5 而不是 10：常见阅读器的档位间隔就是 25%，5 的倍数能保证从任意当前值都能落到
+ * 档位上（100 → 105 → … → 125），步长 10 遇到 103 这种值就永远差一点。
+ */
+const ZOOM_PERCENT_STEP = 5;
+/**
+ * 预设档位。与常见 PDF 阅读器（预览 / Acrobat / Chrome）取同一组百分比：用户在这里
+ * 记住的是档位本身，不是本应用特有的数字。
+ */
+const ZOOM_PERCENT_PRESETS = [50, 75, 100, 125, 150, 200, 300, 400] as const;
+/** 当前的缩放是怎么定出来的。 */
+const FIT_WIDTH = "fit-width";
+const FIT_PAGE = "fit-page";
+/** 既不适合宽度也不适合页面：比例就是用户自己给的那个值。 */
+const FREE_ZOOM = "free";
+const CUSTOM_VALUE = "custom";
+type ZoomMode = typeof FIT_WIDTH | typeof FIT_PAGE | typeof FREE_ZOOM;
+/**
+ * 滚动容器左右留白，算「适合宽度 / 适合页面」时要扣掉。
+ *
+ * 这与纵向留白都来自一条规则（`.pdf-scroller { padding: 20px 0 40px }`）：横向的 28
+ * 是页面自身 `margin: 0 auto` 之外留的视觉余量，纵向的上 20 / 下 40 就是后者。改那条
+ * CSS 就得改这两个常量，否则"适合页面"会把页面算得比可视区还高、一屏放不下。
+ */
 const PAGE_GUTTER = 28;
+const PAGE_GUTTER_VERTICAL = 60;
 /** 预览区域外多大范围就开始栅格化，避免快速滚动时出现空白。 */
 const RENDER_MARGIN = "320px";
 /** 尚未测出尺寸时的兜底页尺寸（US Letter @72dpi）。 */
@@ -47,10 +73,19 @@ export function PdfOriginalView({ documentId, byteSize, locate }: PdfOriginalVie
   // 打开就落在目标页：从解析视图点图进来时，用户要看的正是那一页。
   const [current, setCurrent] = useState(() => Math.max(locate?.page ?? 1, 1));
   const [pageSize, setPageSize] = useState<PageSize | null>(null);
-  const [fitWidth, setFitWidth] = useState(true);
+  const [zoomMode, setZoomMode] = useState<ZoomMode>(FIT_WIDTH);
   const [zoom, setZoom] = useState(1);
-  const [available, setAvailable] = useState(0);
+  const [available, setAvailable] = useState({ height: 0, width: 0 });
   const scrollerRef = useRef<HTMLDivElement>(null);
+  const zoomInputRef = useRef<HTMLInputElement>(null);
+  /**
+   * 输入框里正在编辑的文本。
+   *
+   * `type="number"` 的受控输入不能边打字边收敛：想输入 150，敲第一个字符就变成 50%，
+   * 第二个字符再被并进去就成了 505%，用户根本打不出目标值。所以打字只动这份草稿，
+   * 提交（回车 / 失焦 / 方向键）才落成 zoom。
+   */
+  const [zoomDraft, setZoomDraft] = useState<string | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -103,7 +138,7 @@ export function PdfOriginalView({ documentId, byteSize, locate }: PdfOriginalVie
   }, [documentId, byteSize]);
 
   /**
-   * 量"能画多宽"。
+   * 量"能画多大"。
    *
    * 依赖里有 `pdf`，因为滚动容器是**加载完成后才渲染**的：只挂一次（`[]`）的话，挂载
    * 那一刻 `scrollerRef.current` 还是 null，这里直接 return，观察者再也不会被装上 ——
@@ -112,12 +147,18 @@ export function PdfOriginalView({ documentId, byteSize, locate }: PdfOriginalVie
    *
    * 量父元素而不是滚动容器自己：滚动容器的 `clientWidth` 会被内容撑大（页面放大到超过
    * 视口时它跟着变宽），于是"适合宽度"会按被撑大的宽度去算，页面反而越缩越窄。父元素的
-   * 宽度由工作区决定，与页面无关。
+   * 尺寸由工作区决定，与页面无关。
    */
   useEffect(() => {
     const node = scrollerRef.current?.parentElement;
     if (!node) return;
-    const measure = () => setAvailable(node.clientWidth);
+    const measure = () =>
+      setAvailable((previous) => {
+        const next = { height: node.clientHeight, width: node.clientWidth };
+        // 每次都造新对象会让下面依赖 `available` 的 useMemo 每帧都重算，
+        // 于是每次测量都触发一次重渲染 —— 只在真的变了时才换引用。
+        return previous.height === next.height && previous.width === next.width ? previous : next;
+      });
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(node);
@@ -126,16 +167,59 @@ export function PdfOriginalView({ documentId, byteSize, locate }: PdfOriginalVie
 
   const page = pageSize ?? FALLBACK_PAGE;
   const scale = useMemo(() => {
-    if (fitWidth && available > 0) {
-      return clamp((available - PAGE_GUTTER * 2) / page.width);
-    }
-    return clamp(zoom);
-  }, [fitWidth, available, zoom, page.width]);
+    if (zoomMode === FREE_ZOOM) return clamp(zoom);
+    // 两种"适合"共用同一段：先按宽度定一个上限，适合页面再把高度这个上限并进来 ——
+    // 谁更紧谁说了算，取小的那个才不会溢出可视区。
+    const widthFit = (available.width - PAGE_GUTTER * 2) / page.width;
+    const heightFit = (available.height - PAGE_GUTTER_VERTICAL) / page.height;
+    const candidates = zoomMode === FIT_PAGE ? [widthFit, heightFit] : [widthFit];
+    if (!candidates.every((candidate) => candidate > 0)) return clamp(zoom);
+    return clamp(Math.min(...candidates));
+  }, [available, page.height, page.width, zoom, zoomMode]);
 
   const scaled = useMemo(
     () => ({ width: page.width * scale, height: page.height * scale }),
     [page.width, page.height, scale],
   );
+
+  /** 页宽是逐帧算出来的（适合档位下随窗口变），档位判断用整百分比。 */
+  const percent = Math.round(scale * 100);
+
+  const selectValue =
+    zoomMode !== FREE_ZOOM
+      ? zoomMode
+      : (ZOOM_PERCENT_PRESETS as readonly number[]).includes(percent)
+        ? String(percent)
+        : CUSTOM_VALUE;
+
+  // 缩放值变了就把草稿拉回真实值，但正在打字的那一格不动 —— 否则用户敲到一半就被重写。
+  useEffect(() => {
+    if (document.activeElement === zoomInputRef.current) return;
+    setZoomDraft(String(percent));
+  }, [percent]);
+
+  const commitZoomPercent = useCallback((raw: number) => {
+    if (!Number.isFinite(raw)) return;
+    setZoomMode(FREE_ZOOM);
+    setZoom(clamp(raw / 100));
+  }, []);
+
+  /** 档位按钮是开关：已经在适合宽度了，再点一次就交还手动缩放。 */
+  const toggleZoomMode = (mode: typeof FIT_WIDTH | typeof FIT_PAGE) =>
+    setZoomMode((current) => (current === mode ? FREE_ZOOM : mode));
+
+  const handleZoomPreset = (value: string) => {
+    if (value === FIT_WIDTH || value === FIT_PAGE) {
+      setZoomMode(value);
+      return;
+    }
+    // 「自定义」不是一个档位，只是输入框的入口：选中它等于邀请用户去打字。
+    if (value === CUSTOM_VALUE) {
+      zoomInputRef.current?.focus();
+      return;
+    }
+    commitZoomPercent(Number(value));
+  };
 
   const syncCurrentPage = useCallback(() => {
     const node = scrollerRef.current;
@@ -245,9 +329,9 @@ export function PdfOriginalView({ documentId, byteSize, locate }: PdfOriginalVie
           <button
             aria-label="缩小"
             className="tree-icon-button"
-            disabled={!fitWidth && zoom <= MIN_SCALE}
+            disabled={zoomMode === FREE_ZOOM && zoom <= MIN_SCALE}
             onClick={() => {
-              setFitWidth(false);
+              setZoomMode(FREE_ZOOM);
               setZoom(clamp(scale / ZOOM_STEP));
             }}
             title="缩小"
@@ -255,13 +339,59 @@ export function PdfOriginalView({ documentId, byteSize, locate }: PdfOriginalVie
           >
             <Minus aria-hidden="true" size={16} />
           </button>
-          <span className="pdf-zoom-label">{Math.round(scale * 100)}%</span>
+          {/* 预设档位与手动输入是两个控件而不是一个：下拉按「选择」的语义报出当前档位
+              （含两个"适合"档），输入框按「数字」的语义接受任意百分比。合成一个可输入的
+              select 在键盘与读屏下的行为在各平台并不一致。 */}
+          <select
+            aria-label="缩放档位"
+            className="pdf-zoom-select"
+            onChange={(event) => handleZoomPreset(event.target.value)}
+            value={selectValue}
+          >
+            <option value={FIT_WIDTH}>适合宽度</option>
+            <option value={FIT_PAGE}>适合页面</option>
+            {ZOOM_PERCENT_PRESETS.map((preset) => (
+              <option key={preset} value={String(preset)}>
+                {preset}%
+              </option>
+            ))}
+            {/* 「自定义」只在当前值不落在任何档位上时出现：它不是一个可选中的档位，
+                只是一个说明「下面输入框里的数字是手打的」的状态。 */}
+            {selectValue === CUSTOM_VALUE ? <option value={CUSTOM_VALUE}>自定义</option> : null}
+          </select>
+          <span className="pdf-zoom-input-group">
+            <input
+              aria-label="缩放百分比"
+              className="pdf-zoom-input"
+              max={MAX_SCALE * 100}
+              min={MIN_SCALE * 100}
+              onBlur={() => {
+                // 只把草稿落成真值；值没变时不写 store，免得重排一次页面。
+                if (zoomDraft !== null) commitZoomPercent(Number.parseInt(zoomDraft, 10));
+                setZoomDraft(String(percent));
+              }}
+              onChange={(event) => setZoomDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  commitZoomPercent(Number.parseInt(zoomDraft ?? "", 10));
+                  setZoomDraft(null);
+                } else if (event.key === "Escape") {
+                  setZoomDraft(null);
+                }
+              }}
+              ref={zoomInputRef}
+              step={ZOOM_PERCENT_STEP}
+              type="number"
+              value={zoomDraft ?? String(percent)}
+            />
+            <span aria-hidden="true">%</span>
+          </span>
           <button
             aria-label="放大"
             className="tree-icon-button"
-            disabled={!fitWidth && zoom >= MAX_SCALE}
+            disabled={zoomMode === FREE_ZOOM && zoom >= MAX_SCALE}
             onClick={() => {
-              setFitWidth(false);
+              setZoomMode(FREE_ZOOM);
               setZoom(clamp(scale * ZOOM_STEP));
             }}
             title="放大"
@@ -269,13 +399,23 @@ export function PdfOriginalView({ documentId, byteSize, locate }: PdfOriginalVie
           >
             <Plus aria-hidden="true" size={16} />
           </button>
+          {/* 两个"适合"各占一个按钮。它们是开关而不是单选项：再点一次当前档位就回到手动
+              缩放，与「档位属于缩放入口的一部分」这套心智一致。 */}
           <button
-            aria-pressed={fitWidth}
+            aria-pressed={zoomMode === FIT_WIDTH}
             className="button button-secondary pdf-fit-button"
-            onClick={() => setFitWidth(true)}
+            onClick={() => toggleZoomMode(FIT_WIDTH)}
             type="button"
           >
             适合宽度
+          </button>
+          <button
+            aria-pressed={zoomMode === FIT_PAGE}
+            className="button button-secondary pdf-fit-button"
+            onClick={() => toggleZoomMode(FIT_PAGE)}
+            type="button"
+          >
+            适合页面
           </button>
         </div>
       </div>
