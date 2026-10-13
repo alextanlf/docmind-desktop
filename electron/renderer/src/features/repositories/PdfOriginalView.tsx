@@ -201,19 +201,23 @@ export function PdfOriginalView({ documentId, byteSize, locate }: PdfOriginalVie
           >
             <ChevronLeft aria-hidden="true" size={16} />
           </button>
-          <input
-            aria-label="跳转到页"
-            className="pdf-page-input"
-            max={pageCount}
-            min={1}
-            onChange={(event) => {
-              const parsed = Number.parseInt(event.target.value, 10);
-              if (Number.isFinite(parsed)) goToPage(parsed);
-            }}
-            type="number"
-            value={current}
-          />
-          <span className="pdf-page-total">/ {pageCount}</span>
+          {/* 页数是一个整体：输入框、" / " 和总页数必须在同一行、同一条基线上。
+              分开摆的时候，输入框被全局 input 规则拉成整行宽，"/ 20" 就被挤到框沿上了。 */}
+          <span className="pdf-page-counter">
+            <input
+              aria-label="跳转到页"
+              className="pdf-page-input"
+              max={pageCount}
+              min={1}
+              onChange={(event) => {
+                const parsed = Number.parseInt(event.target.value, 10);
+                if (Number.isFinite(parsed)) goToPage(parsed);
+              }}
+              type="number"
+              value={current}
+            />
+            <span className="pdf-page-total">/ {pageCount}</span>
+          </span>
           <button
             aria-label="下一页"
             className="tree-icon-button"

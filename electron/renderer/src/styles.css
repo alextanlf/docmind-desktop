@@ -871,9 +871,21 @@ button:disabled {
   padding: 0 10px;
   font-size: 12px;
 }
-.pdf-page-input {
-  width: 52px;
-  padding: 3px 6px;
+/* 页码控件。选择器叠三次类名是有意的：`input:not([type="checkbox"]):not([type="radio"]),
+   select` 那条全局表单规则的特异性是 (0,2,1) —— 两个 :not() 各自把参数里的属性选择器
+   算了进来。所以 (0,1,0) 的单个类名、甚至 `input.pdf-page-input.pdf-page-input` 的
+   (0,2,2) 都低于它：width/height/font-size 全输，输入框被拉成整行宽、36px 高，"/ 20"
+   被挤到框沿上（就是这个 bug 的成因，实测确认过）。
+   三次类名是 (0,3,0)，高于全局规则，且不再依赖"必须写在它后面"。 */
+.pdf-page-counter {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.pdf-page-input.pdf-page-input.pdf-page-input {
+  width: 48px;
+  height: 28px;
+  padding: 0 6px;
   border: 1px solid var(--line);
   border-radius: 4px;
   background: var(--surface);
@@ -881,10 +893,22 @@ button:disabled {
   font-size: 12px;
   text-align: center;
 }
-.pdf-page-total,
+/* 控件被两侧按钮夹着，收起浏览器画在数字右侧的两个上下箭头：
+   48px 宽里它们要占掉 13px，而键盘上下键与两侧翻页按钮已经能做同样的事。 */
+.pdf-page-input.pdf-page-input.pdf-page-input::-webkit-outer-spin-button,
+.pdf-page-input.pdf-page-input.pdf-page-input::-webkit-inner-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.pdf-page-counter .pdf-page-total,
 .pdf-zoom-label {
   color: var(--muted);
   font-size: 12px;
+}
+/* 收进一个不可换行的盒子里：斜杠与总页数一旦分到两行，控件就比按钮高出一截。 */
+.pdf-page-counter .pdf-page-total {
+  white-space: nowrap;
 }
 .pdf-zoom-label {
   min-width: 40px;
