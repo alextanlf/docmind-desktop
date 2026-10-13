@@ -38,6 +38,8 @@ export class BackendManager {
   private readonly runtime: BackendRuntimeContract;
   private readonly configurationError?: BackendStartError;
   private readonly bundledModelsDir?: string;
+  /** packaged 态的后端随应用分发、目录是只读的。见下面 spawn 处的 PYTHONDONTWRITEBYTECODE。 */
+  private readonly packaged: boolean;
   /** Resolved once so every artifact write obeys the same E2E gate. */
   private readonly e2eRuntime: boolean;
   private lifecycleTail?: Promise<void>;
@@ -63,6 +65,7 @@ export class BackendManager {
     this.shutdownTimeout = opts.shutdownTimeoutMs ?? 3000;
     this.bundledModelsDir = opts.bundledModelsDir;
     const packaged = opts.packaged ?? false;
+    this.packaged = packaged;
     this.e2eRuntime = isE2ERuntime(process.env, packaged);
     try {
       this.runtime = resolveBackendRuntime(
@@ -123,6 +126,16 @@ export class BackendManager {
       DOCMIND_DATA_DIR: this.dataDir,
       DOCMIND_PORT: String(this.runtime.port),
       ...(this.bundledModelsDir ? { DOCMIND_BUNDLED_MODELS_DIR: this.bundledModelsDir } : {}),
+      // packaged 态的后端住在应用包里，**不许往自己身上写字节码**。
+      //
+      // 不加这一条的实测后果：后端每次启动（含打包脚本那次启动验证）都会在内置
+      // runtime 里写下几百个 .pyc，而装出来的 app 是 ad-hoc 签名的 —— 签名靠
+      // "封印资源清单"发现 bundle 被动过，于是 `codesign --verify --deep --strict`
+      // 从第一次启动起就永远红。它不再是一个信号：真出问题时也没人看得出区别。
+      //
+      // 只对 packaged 设：开发态从 backend/ 起后端，让解释器写 .pyc 是好事
+      // （改代码后重启更快），那里也没有任何签名会被写坏。
+      ...(this.packaged ? { PYTHONDONTWRITEBYTECODE: "1" } : {}),
     };
     let startError: Error | undefined;
     let exited = false;

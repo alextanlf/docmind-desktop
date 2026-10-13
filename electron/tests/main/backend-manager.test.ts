@@ -162,6 +162,47 @@ describe("BackendManager", () => {
     const options = spawn.mock.calls[0]?.[2] as { env: NodeJS.ProcessEnv } | undefined;
     expect(options?.env.DOCMIND_BUNDLED_MODELS_DIR).toBeUndefined();
   });
+
+  it("forbids bytecode writes only for the bundled backend", async () => {
+    // 打包态的后端住在应用包里：解释器往里写 .pyc 会让 ad-hoc 签名的封印资源
+    // 清单失效，`codesign --verify --deep --strict` 从第一次启动起就永远红。
+    // 开发态则相反 —— 让解释器写 .pyc 是好事（改代码后重启更快）。
+    const runtime = packagedRuntimeFixture();
+    try {
+      const bundledSpawn = vi.fn((...spawnArgs: unknown[]) => {
+        void spawnArgs;
+        return fakeProcess() as any;
+      });
+      await new BackendManager({
+        spawn: bundledSpawn,
+        fetch: vi.fn().mockResolvedValue(new Response("{}")),
+        packaged: true,
+        backendCommand: runtime.command,
+        backendArgs: ["-m", "app"],
+        backendCwd: runtime.cwd,
+        dataDir: "/tmp/docmind",
+        healthIntervalMs: 0,
+      }).start();
+      const bundledEnv = (bundledSpawn.mock.calls[0]?.[2] as { env: NodeJS.ProcessEnv } | undefined)
+        ?.env;
+      expect(bundledEnv?.PYTHONDONTWRITEBYTECODE).toBe("1");
+    } finally {
+      runtime.cleanup();
+    }
+
+    const devSpawn = vi.fn((...spawnArgs: unknown[]) => {
+      void spawnArgs;
+      return fakeProcess() as any;
+    });
+    await new BackendManager({
+      spawn: devSpawn,
+      fetch: vi.fn().mockResolvedValue(new Response("{}")),
+      dataDir: "/tmp/docmind",
+      healthIntervalMs: 0,
+    }).start();
+    const devEnv = (devSpawn.mock.calls[0]?.[2] as { env: NodeJS.ProcessEnv } | undefined)?.env;
+    expect(devEnv?.PYTHONDONTWRITEBYTECODE).toBeUndefined();
+  });
   it("fails fast when packaged backend command is not explicitly configured", async () => {
     const manager = new BackendManager({
       packaged: true,

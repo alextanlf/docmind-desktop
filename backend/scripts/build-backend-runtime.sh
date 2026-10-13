@@ -412,6 +412,18 @@ fi
 popd >/dev/null || true
 echo "  向量库自检通过（隔离模式，已确认用的是本次构建产物）"
 
+# 7) 最后再剔一次字节码。**必须放在所有探针之后**，而且必须做，不是顺手：
+#    第 6 步删完之后，6.1 的向量库自检会 `import app.storage.vectorstore`，解释器
+#    顺手把这几十个模块的 .pyc 写回 runtime —— 成品包里因此躺着几百个 .pyc，
+#    而它们出现在第 6 步之后，那一步的清理覆盖不到。
+#
+#    为什么这件事要紧：装好的 app 是 ad-hoc 签名，`codesign --verify --deep --strict`
+#    靠"封印资源清单"发现 bundle 被动过。包里带着 .pyc 时，后端第一次启动又会再写
+#    一批（打包链路上没有任何地方设 PYTHONDONTWRITEBYTECODE），于是每次启动都在改
+#    自己的 bundle，那条校验永远红 —— 真出问题时它就不再是一个信号。
+find "$runtime_dir" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+find "$runtime_dir" -name '*.pyc' -delete 2>/dev/null || true
+
 size="$(du -sh "$runtime_dir" 2>/dev/null | cut -f1 || echo '?')"
 # 注意：变量名后紧跟全角标点时必须写成 ${var}，否则 bash 会把全角字符并入变量名。
 echo "后端 runtime 构建完成：${runtime_dir}（${size}）"
