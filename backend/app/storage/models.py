@@ -241,6 +241,11 @@ class DocumentChunkRecord(Base):
     token_count: Mapped[int] = mapped_column(Integer)
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     vector_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: 这个 chunk 关联的插图，`ParsedFigure` 的 JSON 序列化结果。
+    #: 图片内容（图内文字、识别结果）已经随 ``text`` 进了全文索引；这里记的是「把图本身
+    #: 展示出来」所需的东西：磁盘文件名、页码、版面位置。没有它，引用面板只能把图当作
+    #: 全文插图列在最后 —— 用户点进一段正文，看不到它配的那张图。
+    images_json: Mapped[str] = mapped_column(Text, nullable=False, server_default="[]")
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utc_now, server_default=utc_timestamp_server_default()
     )

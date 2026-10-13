@@ -35,9 +35,28 @@ def test_all_settings_mutations_are_protected_by_runtime_token(client) -> None:
         client.post("/api/settings/diagnostics/clear"),
         client.delete("/api/settings/model/profiles/abc123"),
         client.post("/api/settings/model/activate", json={"profileId": "abc123"}),
+        client.post("/api/settings/figure-ocr", json={"enabled": False}),
     ]
 
-    assert [response.status_code for response in responses] == [401, 401, 401, 401, 401]
+    assert [response.status_code for response in responses] == [401, 401, 401, 401, 401, 401]
+
+
+def test_figure_ocr_defaults_to_on_and_can_be_turned_off(client, auth_headers) -> None:
+    """图片识别默认开；关掉之后设置视图如实反映，并且能再打开。
+
+    默认必须是开：关掉会让截图型课件的整页扫描内容从索引里消失（实测一份 53 页课件
+    关掉之后正文从 23447 字符降到 15486）。
+    """
+    assert client.get("/api/settings", headers=auth_headers).json()["figureOcr"] is True
+
+    off = client.post("/api/settings/figure-ocr", json={"enabled": False}, headers=auth_headers)
+    assert off.status_code == 200
+    assert off.json()["figureOcr"] is False
+    # 重新读一次：值要落库，不能只活在这次响应里。
+    assert client.get("/api/settings", headers=auth_headers).json()["figureOcr"] is False
+
+    on = client.post("/api/settings/figure-ocr", json={"enabled": True}, headers=auth_headers)
+    assert on.json()["figureOcr"] is True
 
 
 def test_settings_view_redacts_key_and_reports_absolute_data_path(

@@ -1,0 +1,47 @@
+{
+  "url": "https://en.wikipedia.org/wiki/Linear_regression",
+  "sections": 33,
+  "markdown_chars": 80360,
+  "pending": 4,
+  "fetched": 4,
+  "recognized": 3,
+  "merged": 2,
+  "figures": [
+    {
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e9/Thiel-Sen_estimator.svg/500px-Thiel-Sen_estimator.svg.png?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail",
+      "host": "thumb.wikimedia.org",
+      "asset": "ea38123d0a073bcb01a40748e50e1f126748c083ed3a91fdff0a15056a8609aa.png",
+      "bytes": 15992,
+      "text": "",
+      "alt": "",
+      "failure": ""
+    },
+    {
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b0/Linear_least_squares_example2.svg/500px-Linear_least_squares_example2.svg.png?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail",
+      "host": "thumb.wikimedia.org",
+      "asset": "9d942984f523550f6ad8aeeb5ead92581a3e5ed7f4c6ad84e9603817e26a4e12.png",
+      "bytes": 24984,
+      "text": "10\n•\n•Data\ncurve fit\n9\n8\n7\n6\n◎\n5\n4\n0\n1\n2\n3\n4\n5\n×",
+      "alt": "",
+      "failure": ""
+    },
+    {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/b/b2/Galton%27s_correlation_diagram_1875.jpg?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail_unscaled",
+      "host": "upload.wikimedia.org",
+      "asset": "0be075bc5946ae076a3fc91ddf9c70e26c7b9379b3d29e4de216808a5da0b155.png",
+      "bytes": 165585,
+      "text": "DIACRAM BASED ON TABLE I.\n（all female heights are multiplied by T08）\nADULT CHILDREN\nMID-PARENTS\ntheir Heights, and Deviations from 68& inches.\n64\n68\n66\n67\n-69\nHeights Dovatss\n泣\ninches\ninches\n-3\n-2\n•1\n+1\n+2\n+3\n•4\n72\n2\n2\nNinr\n+3\n71-\nS\n+2\npoints\n70-\n】\n2\n3\n5\n9\n9\n8\n子\nIonciot\nM\n+1\n69一\n2songerisal points\n2\n6\n10\n22\n30\n6\n68 -\n3\n''Toous ofyariee\n10\n7\n3\n13\n-1\n• ofhorizoncals\n67\n6\n8\n-2\nNaior ares\nLociss\n66\n2\n6\n4\n2",
+      "alt": "",
+      "failure": ""
+    },
+    {
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ec/Anscombe%27s_quartet_3.svg/1280px-Anscombe%27s_quartet_3.svg.png?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail",
+      "host": "thumb.wikimedia.org",
+      "asset": "b09fab1857ffe8579f4e4cd250d79ab9778c2fabc059b86dca70b7472587d6e3.png",
+      "bytes": 65975,
+      "text": "12\n12\n10\n10\n8\nYz\n8\n6\n6\n4\n4\n4\n6\n8\n10\n12\n14\n16\n18\n4\n6\n8\n10\n12\n14\n16\n18\nX1\nX2\n12\n12\n10\n10\nYs\n8\ny4\n8\n6\n6\n4\n4\n6\n10\n12\n14\n16\n18\n6\n10\n14\n16\n18\n4\n8\n4\n8\n12\nxs\nX4",
+      "alt": "",
+      "failure": ""
+    }
+  ]
+}

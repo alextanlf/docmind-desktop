@@ -1,0 +1,918 @@
+{
+  "path": "算法导论.pdf",
+  "pages_measured": 29,
+  "summary": {
+    "150": {
+      "pages": 29,
+      "mean_cer": 0.1736,
+      "median_cer": 0.136,
+      "mean_reference_chars": 1327.1,
+      "mean_render_seconds": 0.116,
+      "mean_recognize_seconds": 0.75
+    },
+    "200": {
+      "pages": 29,
+      "mean_cer": 0.1749,
+      "median_cer": 0.1339,
+      "mean_reference_chars": 1327.1,
+      "mean_render_seconds": 0.07,
+      "mean_recognize_seconds": 0.758
+    },
+    "300": {
+      "pages": 29,
+      "mean_cer": 0.1758,
+      "median_cer": 0.1316,
+      "mean_reference_chars": 1327.1,
+      "mean_render_seconds": 0.201,
+      "mean_recognize_seconds": 0.768
+    }
+  },
+  "paired": {
+    "200_vs_150": {
+      "pages": 29,
+      "mean_cer_delta": 0.0013,
+      "better_than_baseline": 6,
+      "worse_than_baseline": 5,
+      "indistinguishable": 18
+    },
+    "300_vs_150": {
+      "pages": 29,
+      "mean_cer_delta": 0.0022,
+      "better_than_baseline": 4,
+      "worse_than_baseline": 8,
+      "indistinguishable": 17
+    }
+  },
+  "pages": [
+    {
+      "page": 27,
+      "dpi": 150,
+      "reference_chars": 1588,
+      "recognized_chars": 1589,
+      "edits": 28,
+      "cer": 0.0176,
+      "render_seconds": 0.119,
+      "recognize_seconds": 0.963
+    },
+    {
+      "page": 27,
+      "dpi": 200,
+      "reference_chars": 1588,
+      "recognized_chars": 1587,
+      "edits": 30,
+      "cer": 0.0189,
+      "render_seconds": 0.079,
+      "recognize_seconds": 0.902
+    },
+    {
+      "page": 27,
+      "dpi": 300,
+      "reference_chars": 1588,
+      "recognized_chars": 1587,
+      "edits": 29,
+      "cer": 0.0183,
+      "render_seconds": 0.208,
+      "recognize_seconds": 0.918
+    },
+    {
+      "page": 53,
+      "dpi": 150,
+      "reference_chars": 1228,
+      "recognized_chars": 1123,
+      "edits": 192,
+      "cer": 0.1564,
+      "render_seconds": 0.115,
+      "recognize_seconds": 0.715
+    },
+    {
+      "page": 53,
+      "dpi": 200,
+      "reference_chars": 1228,
+      "recognized_chars": 1170,
+      "edits": 159,
+      "cer": 0.1295,
+      "render_seconds": 0.067,
+      "recognize_seconds": 0.747
+    },
+    {
+      "page": 53,
+      "dpi": 300,
+      "reference_chars": 1228,
+      "recognized_chars": 1161,
+      "edits": 170,
+      "cer": 0.1384,
+      "render_seconds": 0.192,
+      "recognize_seconds": 0.745
+    },
+    {
+      "page": 80,
+      "dpi": 150,
+      "reference_chars": 1546,
+      "recognized_chars": 1550,
+      "edits": 67,
+      "cer": 0.0433,
+      "render_seconds": 0.123,
+      "recognize_seconds": 0.867
+    },
+    {
+      "page": 80,
+      "dpi": 200,
+      "reference_chars": 1546,
+      "recognized_chars": 1549,
+      "edits": 60,
+      "cer": 0.0388,
+      "render_seconds": 0.079,
+      "recognize_seconds": 0.896
+    },
+    {
+      "page": 80,
+      "dpi": 300,
+      "reference_chars": 1546,
+      "recognized_chars": 1549,
+      "edits": 63,
+      "cer": 0.0408,
+      "render_seconds": 0.209,
+      "recognize_seconds": 0.882
+    },
+    {
+      "page": 106,
+      "dpi": 150,
+      "reference_chars": 892,
+      "recognized_chars": 883,
+      "edits": 96,
+      "cer": 0.1076,
+      "render_seconds": 0.112,
+      "recognize_seconds": 0.56
+    },
+    {
+      "page": 106,
+      "dpi": 200,
+      "reference_chars": 892,
+      "recognized_chars": 884,
+      "edits": 94,
+      "cer": 0.1054,
+      "render_seconds": 0.065,
+      "recognize_seconds": 0.563
+    },
+    {
+      "page": 106,
+      "dpi": 300,
+      "reference_chars": 892,
+      "recognized_chars": 884,
+      "edits": 95,
+      "cer": 0.1065,
+      "render_seconds": 0.2,
+      "recognize_seconds": 0.585
+    },
+    {
+      "page": 133,
+      "dpi": 150,
+      "reference_chars": 1260,
+      "recognized_chars": 1262,
+      "edits": 78,
+      "cer": 0.0619,
+      "render_seconds": 0.114,
+      "recognize_seconds": 0.762
+    },
+    {
+      "page": 133,
+      "dpi": 200,
+      "reference_chars": 1260,
+      "recognized_chars": 1257,
+      "edits": 79,
+      "cer": 0.0627,
+      "render_seconds": 0.068,
+      "recognize_seconds": 0.785
+    },
+    {
+      "page": 133,
+      "dpi": 300,
+      "reference_chars": 1260,
+      "recognized_chars": 1255,
+      "edits": 74,
+      "cer": 0.0587,
+      "render_seconds": 0.196,
+      "recognize_seconds": 0.786
+    },
+    {
+      "page": 159,
+      "dpi": 150,
+      "reference_chars": 1190,
+      "recognized_chars": 1204,
+      "edits": 130,
+      "cer": 0.1092,
+      "render_seconds": 0.125,
+      "recognize_seconds": 0.746
+    },
+    {
+      "page": 159,
+      "dpi": 200,
+      "reference_chars": 1190,
+      "recognized_chars": 1204,
+      "edits": 128,
+      "cer": 0.1076,
+      "render_seconds": 0.077,
+      "recognize_seconds": 0.741
+    },
+    {
+      "page": 159,
+      "dpi": 300,
+      "reference_chars": 1190,
+      "recognized_chars": 1188,
+      "edits": 131,
+      "cer": 0.1101,
+      "render_seconds": 0.214,
+      "recognize_seconds": 0.754
+    },
+    {
+      "page": 186,
+      "dpi": 150,
+      "reference_chars": 1008,
+      "recognized_chars": 1000,
+      "edits": 124,
+      "cer": 0.123,
+      "render_seconds": 0.115,
+      "recognize_seconds": 0.643
+    },
+    {
+      "page": 186,
+      "dpi": 200,
+      "reference_chars": 1008,
+      "recognized_chars": 994,
+      "edits": 119,
+      "cer": 0.1181,
+      "render_seconds": 0.072,
+      "recognize_seconds": 0.639
+    },
+    {
+      "page": 186,
+      "dpi": 300,
+      "reference_chars": 1008,
+      "recognized_chars": 984,
+      "edits": 130,
+      "cer": 0.129,
+      "render_seconds": 0.212,
+      "recognize_seconds": 0.665
+    },
+    {
+      "page": 212,
+      "dpi": 150,
+      "reference_chars": 1291,
+      "recognized_chars": 1183,
+      "edits": 258,
+      "cer": 0.1998,
+      "render_seconds": 0.111,
+      "recognize_seconds": 0.736
+    },
+    {
+      "page": 212,
+      "dpi": 200,
+      "reference_chars": 1291,
+      "recognized_chars": 1238,
+      "edits": 215,
+      "cer": 0.1665,
+      "render_seconds": 0.067,
+      "recognize_seconds": 0.762
+    },
+    {
+      "page": 212,
+      "dpi": 300,
+      "reference_chars": 1291,
+      "recognized_chars": 1195,
+      "edits": 257,
+      "cer": 0.1991,
+      "render_seconds": 0.189,
+      "recognize_seconds": 0.754
+    },
+    {
+      "page": 239,
+      "dpi": 150,
+      "reference_chars": 988,
+      "recognized_chars": 991,
+      "edits": 253,
+      "cer": 0.2561,
+      "render_seconds": 0.108,
+      "recognize_seconds": 0.719
+    },
+    {
+      "page": 239,
+      "dpi": 200,
+      "reference_chars": 988,
+      "recognized_chars": 912,
+      "edits": 312,
+      "cer": 0.3158,
+      "render_seconds": 0.059,
+      "recognize_seconds": 0.717
+    },
+    {
+      "page": 239,
+      "dpi": 300,
+      "reference_chars": 988,
+      "recognized_chars": 950,
+      "edits": 277,
+      "cer": 0.2804,
+      "render_seconds": 0.183,
+      "recognize_seconds": 0.752
+    },
+    {
+      "page": 265,
+      "dpi": 150,
+      "reference_chars": 1449,
+      "recognized_chars": 1377,
+      "edits": 197,
+      "cer": 0.136,
+      "render_seconds": 0.117,
+      "recognize_seconds": 0.848
+    },
+    {
+      "page": 265,
+      "dpi": 200,
+      "reference_chars": 1449,
+      "recognized_chars": 1432,
+      "edits": 194,
+      "cer": 0.1339,
+      "render_seconds": 0.072,
+      "recognize_seconds": 0.835
+    },
+    {
+      "page": 265,
+      "dpi": 300,
+      "reference_chars": 1449,
+      "recognized_chars": 1431,
+      "edits": 189,
+      "cer": 0.1304,
+      "render_seconds": 0.201,
+      "recognize_seconds": 0.859
+    },
+    {
+      "page": 292,
+      "dpi": 150,
+      "reference_chars": 1589,
+      "recognized_chars": 1592,
+      "edits": 72,
+      "cer": 0.0453,
+      "render_seconds": 0.13,
+      "recognize_seconds": 0.871
+    },
+    {
+      "page": 292,
+      "dpi": 200,
+      "reference_chars": 1589,
+      "recognized_chars": 1593,
+      "edits": 68,
+      "cer": 0.0428,
+      "render_seconds": 0.09,
+      "recognize_seconds": 0.894
+    },
+    {
+      "page": 292,
+      "dpi": 300,
+      "reference_chars": 1589,
+      "recognized_chars": 1591,
+      "edits": 66,
+      "cer": 0.0415,
+      "render_seconds": 0.249,
+      "recognize_seconds": 0.897
+    },
+    {
+      "page": 318,
+      "dpi": 150,
+      "reference_chars": 1490,
+      "recognized_chars": 1495,
+      "edits": 78,
+      "cer": 0.0523,
+      "render_seconds": 0.12,
+      "recognize_seconds": 0.843
+    },
+    {
+      "page": 318,
+      "dpi": 200,
+      "reference_chars": 1490,
+      "recognized_chars": 1492,
+      "edits": 81,
+      "cer": 0.0544,
+      "render_seconds": 0.073,
+      "recognize_seconds": 0.856
+    },
+    {
+      "page": 318,
+      "dpi": 300,
+      "reference_chars": 1490,
+      "recognized_chars": 1491,
+      "edits": 79,
+      "cer": 0.053,
+      "render_seconds": 0.204,
+      "recognize_seconds": 0.86
+    },
+    {
+      "page": 345,
+      "dpi": 150,
+      "reference_chars": 1287,
+      "recognized_chars": 1204,
+      "edits": 447,
+      "cer": 0.3473,
+      "render_seconds": 0.11,
+      "recognize_seconds": 0.722
+    },
+    {
+      "page": 345,
+      "dpi": 200,
+      "reference_chars": 1287,
+      "recognized_chars": 1207,
+      "edits": 437,
+      "cer": 0.3395,
+      "render_seconds": 0.061,
+      "recognize_seconds": 0.739
+    },
+    {
+      "page": 345,
+      "dpi": 300,
+      "reference_chars": 1287,
+      "recognized_chars": 1204,
+      "edits": 442,
+      "cer": 0.3434,
+      "render_seconds": 0.186,
+      "recognize_seconds": 0.748
+    },
+    {
+      "page": 371,
+      "dpi": 150,
+      "reference_chars": 1216,
+      "recognized_chars": 1227,
+      "edits": 132,
+      "cer": 0.1086,
+      "render_seconds": 0.122,
+      "recognize_seconds": 0.722
+    },
+    {
+      "page": 371,
+      "dpi": 200,
+      "reference_chars": 1216,
+      "recognized_chars": 1202,
+      "edits": 170,
+      "cer": 0.1398,
+      "render_seconds": 0.075,
+      "recognize_seconds": 0.735
+    },
+    {
+      "page": 371,
+      "dpi": 300,
+      "reference_chars": 1216,
+      "recognized_chars": 1193,
+      "edits": 160,
+      "cer": 0.1316,
+      "render_seconds": 0.209,
+      "recognize_seconds": 0.761
+    },
+    {
+      "page": 398,
+      "dpi": 150,
+      "reference_chars": 1214,
+      "recognized_chars": 1177,
+      "edits": 147,
+      "cer": 0.1211,
+      "render_seconds": 0.121,
+      "recognize_seconds": 0.717
+    },
+    {
+      "page": 398,
+      "dpi": 200,
+      "reference_chars": 1214,
+      "recognized_chars": 1186,
+      "edits": 135,
+      "cer": 0.1112,
+      "render_seconds": 0.074,
+      "recognize_seconds": 0.73
+    },
+    {
+      "page": 398,
+      "dpi": 300,
+      "reference_chars": 1214,
+      "recognized_chars": 1178,
+      "edits": 146,
+      "cer": 0.1203,
+      "render_seconds": 0.205,
+      "recognize_seconds": 0.74
+    },
+    {
+      "page": 424,
+      "dpi": 150,
+      "reference_chars": 728,
+      "recognized_chars": 681,
+      "edits": 180,
+      "cer": 0.2473,
+      "render_seconds": 0.115,
+      "recognize_seconds": 0.516
+    },
+    {
+      "page": 424,
+      "dpi": 200,
+      "reference_chars": 728,
+      "recognized_chars": 704,
+      "edits": 176,
+      "cer": 0.2418,
+      "render_seconds": 0.066,
+      "recognize_seconds": 0.54
+    },
+    {
+      "page": 424,
+      "dpi": 300,
+      "reference_chars": 728,
+      "recognized_chars": 701,
+      "edits": 182,
+      "cer": 0.25,
+      "render_seconds": 0.191,
+      "recognize_seconds": 0.541
+    },
+    {
+      "page": 450,
+      "dpi": 150,
+      "reference_chars": 1647,
+      "recognized_chars": 1442,
+      "edits": 435,
+      "cer": 0.2641,
+      "render_seconds": 0.128,
+      "recognize_seconds": 0.851
+    },
+    {
+      "page": 450,
+      "dpi": 200,
+      "reference_chars": 1647,
+      "recognized_chars": 1344,
+      "edits": 493,
+      "cer": 0.2993,
+      "render_seconds": 0.088,
+      "recognize_seconds": 0.861
+    },
+    {
+      "page": 450,
+      "dpi": 300,
+      "reference_chars": 1647,
+      "recognized_chars": 1332,
+      "edits": 490,
+      "cer": 0.2975,
+      "render_seconds": 0.242,
+      "recognize_seconds": 0.857
+    },
+    {
+      "page": 477,
+      "dpi": 150,
+      "reference_chars": 1270,
+      "recognized_chars": 1266,
+      "edits": 116,
+      "cer": 0.0913,
+      "render_seconds": 0.117,
+      "recognize_seconds": 0.786
+    },
+    {
+      "page": 477,
+      "dpi": 200,
+      "reference_chars": 1270,
+      "recognized_chars": 1267,
+      "edits": 110,
+      "cer": 0.0866,
+      "render_seconds": 0.072,
+      "recognize_seconds": 0.815
+    },
+    {
+      "page": 477,
+      "dpi": 300,
+      "reference_chars": 1270,
+      "recognized_chars": 1266,
+      "edits": 114,
+      "cer": 0.0898,
+      "render_seconds": 0.201,
+      "recognize_seconds": 0.809
+    },
+    {
+      "page": 503,
+      "dpi": 150,
+      "reference_chars": 1365,
+      "recognized_chars": 1294,
+      "edits": 191,
+      "cer": 0.1399,
+      "render_seconds": 0.117,
+      "recognize_seconds": 0.79
+    },
+    {
+      "page": 503,
+      "dpi": 200,
+      "reference_chars": 1365,
+      "recognized_chars": 1312,
+      "edits": 187,
+      "cer": 0.137,
+      "render_seconds": 0.071,
+      "recognize_seconds": 0.798
+    },
+    {
+      "page": 503,
+      "dpi": 300,
+      "reference_chars": 1365,
+      "recognized_chars": 1317,
+      "edits": 198,
+      "cer": 0.1451,
+      "render_seconds": 0.2,
+      "recognize_seconds": 0.805
+    },
+    {
+      "page": 530,
+      "dpi": 150,
+      "reference_chars": 948,
+      "recognized_chars": 908,
+      "edits": 158,
+      "cer": 0.1667,
+      "render_seconds": 0.109,
+      "recognize_seconds": 0.645
+    },
+    {
+      "page": 530,
+      "dpi": 200,
+      "reference_chars": 948,
+      "recognized_chars": 914,
+      "edits": 178,
+      "cer": 0.1878,
+      "render_seconds": 0.06,
+      "recognize_seconds": 0.636
+    },
+    {
+      "page": 530,
+      "dpi": 300,
+      "reference_chars": 948,
+      "recognized_chars": 922,
+      "edits": 164,
+      "cer": 0.173,
+      "render_seconds": 0.183,
+      "recognize_seconds": 0.644
+    },
+    {
+      "page": 556,
+      "dpi": 150,
+      "reference_chars": 545,
+      "recognized_chars": 548,
+      "edits": 29,
+      "cer": 0.0532,
+      "render_seconds": 0.098,
+      "recognize_seconds": 0.436
+    },
+    {
+      "page": 556,
+      "dpi": 200,
+      "reference_chars": 545,
+      "recognized_chars": 547,
+      "edits": 29,
+      "cer": 0.0532,
+      "render_seconds": 0.051,
+      "recognize_seconds": 0.453
+    },
+    {
+      "page": 556,
+      "dpi": 300,
+      "reference_chars": 545,
+      "recognized_chars": 546,
+      "edits": 28,
+      "cer": 0.0514,
+      "render_seconds": 0.164,
+      "recognize_seconds": 0.467
+    },
+    {
+      "page": 583,
+      "dpi": 150,
+      "reference_chars": 1525,
+      "recognized_chars": 1315,
+      "edits": 406,
+      "cer": 0.2662,
+      "render_seconds": 0.116,
+      "recognize_seconds": 0.813
+    },
+    {
+      "page": 583,
+      "dpi": 200,
+      "reference_chars": 1525,
+      "recognized_chars": 1341,
+      "edits": 404,
+      "cer": 0.2649,
+      "render_seconds": 0.069,
+      "recognize_seconds": 0.81
+    },
+    {
+      "page": 583,
+      "dpi": 300,
+      "reference_chars": 1525,
+      "recognized_chars": 1342,
+      "edits": 371,
+      "cer": 0.2433,
+      "render_seconds": 0.196,
+      "recognize_seconds": 0.837
+    },
+    {
+      "page": 609,
+      "dpi": 150,
+      "reference_chars": 1352,
+      "recognized_chars": 1305,
+      "edits": 204,
+      "cer": 0.1509,
+      "render_seconds": 0.118,
+      "recognize_seconds": 0.767
+    },
+    {
+      "page": 609,
+      "dpi": 200,
+      "reference_chars": 1352,
+      "recognized_chars": 1299,
+      "edits": 203,
+      "cer": 0.1501,
+      "render_seconds": 0.071,
+      "recognize_seconds": 0.774
+    },
+    {
+      "page": 609,
+      "dpi": 300,
+      "reference_chars": 1352,
+      "recognized_chars": 1261,
+      "edits": 238,
+      "cer": 0.176,
+      "render_seconds": 0.198,
+      "recognize_seconds": 0.776
+    },
+    {
+      "page": 636,
+      "dpi": 150,
+      "reference_chars": 1516,
+      "recognized_chars": 1491,
+      "edits": 220,
+      "cer": 0.1451,
+      "render_seconds": 0.119,
+      "recognize_seconds": 0.862
+    },
+    {
+      "page": 636,
+      "dpi": 200,
+      "reference_chars": 1516,
+      "recognized_chars": 1497,
+      "edits": 217,
+      "cer": 0.1431,
+      "render_seconds": 0.073,
+      "recognize_seconds": 0.865
+    },
+    {
+      "page": 636,
+      "dpi": 300,
+      "reference_chars": 1516,
+      "recognized_chars": 1504,
+      "edits": 219,
+      "cer": 0.1445,
+      "render_seconds": 0.206,
+      "recognize_seconds": 0.881
+    },
+    {
+      "page": 662,
+      "dpi": 150,
+      "reference_chars": 1461,
+      "recognized_chars": 1452,
+      "edits": 110,
+      "cer": 0.0753,
+      "render_seconds": 0.119,
+      "recognize_seconds": 0.851
+    },
+    {
+      "page": 662,
+      "dpi": 200,
+      "reference_chars": 1461,
+      "recognized_chars": 1448,
+      "edits": 114,
+      "cer": 0.078,
+      "render_seconds": 0.073,
+      "recognize_seconds": 0.83
+    },
+    {
+      "page": 662,
+      "dpi": 300,
+      "reference_chars": 1461,
+      "recognized_chars": 1450,
+      "edits": 112,
+      "cer": 0.0767,
+      "render_seconds": 0.202,
+      "recognize_seconds": 0.853
+    },
+    {
+      "page": 689,
+      "dpi": 150,
+      "reference_chars": 902,
+      "recognized_chars": 687,
+      "edits": 342,
+      "cer": 0.3792,
+      "render_seconds": 0.106,
+      "recognize_seconds": 0.53
+    },
+    {
+      "page": 689,
+      "dpi": 200,
+      "reference_chars": 902,
+      "recognized_chars": 753,
+      "edits": 332,
+      "cer": 0.3681,
+      "render_seconds": 0.058,
+      "recognize_seconds": 0.576
+    },
+    {
+      "page": 689,
+      "dpi": 300,
+      "reference_chars": 902,
+      "recognized_chars": 755,
+      "edits": 326,
+      "cer": 0.3614,
+      "render_seconds": 0.179,
+      "recognize_seconds": 0.596
+    },
+    {
+      "page": 715,
+      "dpi": 150,
+      "reference_chars": 1169,
+      "recognized_chars": 1021,
+      "edits": 406,
+      "cer": 0.3473,
+      "render_seconds": 0.109,
+      "recognize_seconds": 0.648
+    },
+    {
+      "page": 715,
+      "dpi": 200,
+      "reference_chars": 1169,
+      "recognized_chars": 1021,
+      "edits": 413,
+      "cer": 0.3533,
+      "render_seconds": 0.061,
+      "recognize_seconds": 0.678
+    },
+    {
+      "page": 715,
+      "dpi": 300,
+      "reference_chars": 1169,
+      "recognized_chars": 1001,
+      "edits": 424,
+      "cer": 0.3627,
+      "render_seconds": 0.184,
+      "recognize_seconds": 0.673
+    },
+    {
+      "page": 742,
+      "dpi": 150,
+      "reference_chars": 2677,
+      "recognized_chars": 2674,
+      "edits": 95,
+      "cer": 0.0355,
+      "render_seconds": 0.116,
+      "recognize_seconds": 0.929
+    },
+    {
+      "page": 742,
+      "dpi": 200,
+      "reference_chars": 2677,
+      "recognized_chars": 2669,
+      "edits": 106,
+      "cer": 0.0396,
+      "render_seconds": 0.081,
+      "recognize_seconds": 0.908
+    },
+    {
+      "page": 742,
+      "dpi": 300,
+      "reference_chars": 2677,
+      "recognized_chars": 2672,
+      "edits": 100,
+      "cer": 0.0374,
+      "render_seconds": 0.22,
+      "recognize_seconds": 0.92
+    },
+    {
+      "page": 768,
+      "dpi": 150,
+      "reference_chars": 2146,
+      "recognized_chars": 2141,
+      "edits": 1687,
+      "cer": 0.7861,
+      "render_seconds": 0.115,
+      "recognize_seconds": 0.88
+    },
+    {
+      "page": 768,
+      "dpi": 200,
+      "reference_chars": 2146,
+      "recognized_chars": 2141,
+      "edits": 1683,
+      "cer": 0.7842,
+      "render_seconds": 0.07,
+      "recognize_seconds": 0.891
+    },
+    {
+      "page": 768,
+      "dpi": 300,
+      "reference_chars": 2146,
+      "recognized_chars": 2144,
+      "edits": 1692,
+      "cer": 0.7884,
+      "render_seconds": 0.209,
+      "recognize_seconds": 0.897
+    }
+  ]
+}

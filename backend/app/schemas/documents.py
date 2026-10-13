@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import Field, field_validator
 
 from app.schemas.common import WireModel
+from app.schemas.imports import ParsedFigure
 
 DOCUMENT_CONTENT_MAX_CHARACTERS = 2_000_000
 DOCUMENT_CONTENT_MAX_BYTES = 4 * 1024 * 1024
@@ -55,3 +56,7 @@ class DocumentDetail(DocumentSummary):
     # 前端据此决定是否显示「原文」视图；为 None 表示只能看解析结果。
     original_media_type: str | None = None
     original_byte_size: int | None = None
+    #: 文档里的插图。图的内容（图内文字、识别结果）已经在 content 里参与检索；这里是
+    #: 展示所需的部分 —— 客户端据此把图渲染在它所属的那一段正文旁边。
+    #: 默认空列表而不是 None：没有图是常态，客户端不必先判空再遍历。
+    figures: list[ParsedFigure] = Field(default_factory=list)

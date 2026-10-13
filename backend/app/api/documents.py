@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 from base64 import b64decode, b64encode
 from contextlib import suppress
@@ -13,6 +14,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from fastapi import APIRouter, Request, Response, status
 from fastapi.responses import FileResponse
+from pydantic import ValidationError
 
 from app.api.errors import DomainError
 from app.core.embedding import EmbeddingProvider, require_ready_embedding
@@ -20,8 +22,13 @@ from app.document.chunker import SemanticChunker
 from app.document.parser import DocumentParser
 from app.remote.provider import RemoteProvider
 from app.remote.registry import ProviderRegistry
-from app.schemas.documents import DocumentDelete, DocumentDetail, DocumentInput, DocumentSummary
-from app.schemas.imports import DownloadedDocument
+from app.schemas.documents import (
+    DocumentDelete,
+    DocumentDetail,
+    DocumentInput,
+    DocumentSummary,
+)
+from app.schemas.imports import DownloadedDocument, ParsedFigure
 from app.schemas.remote import (
     CreateRemoteDocumentRequest,
     RemoteDocument,
@@ -41,6 +48,13 @@ from app.storage.vectorstore import PersistentVectorStore
 router = APIRouter(tags=["documents"])
 
 _PDF_MAGIC = b"%PDF-"
+
+#: 插图文件名白名单：64 位十六进制摘要 + 容器后缀，与 `ParsedFigure.asset` 的生成规则一致。
+#:
+#: 允许 png 与 jpeg：纯扫描页的内嵌位图多是已经压缩过的 JPEG，原样存比转 PNG 又快又小
+#: （实测 66 ms / 216 KB 对 72 ms / 437 KB）。`content-type` 由后缀决定，不靠猜。
+_ASSET_NAME = re.compile(r"[0-9a-f]{64}\.(?:png|jpe?g)")
+_ASSET_MEDIA_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg"}
 
 
 def _registry(request: Request) -> ProviderRegistry:
@@ -128,7 +142,13 @@ def _original_info(document: DocumentRecord) -> tuple[str | None, int | None]:
     return "application/octet-stream", size
 
 
-def _detail(document: DocumentRecord) -> DocumentDetail:
+def _detail(document: DocumentRecord, figures: list[ParsedFigure] | None = None) -> DocumentDetail:
+    """文档详情。
+
+    ``figures`` 由调用方从仓储取好传进来，默认空：只有「读文档」这条路径需要完整插图
+    清单，而每次写操作都去查一遍所有 chunk 的图片列是白花时间。默认空而不是缺省字段，
+    是为了让「没传」和「这篇没有图」在接口上可区分。
+    """
     try:
         content = Path(document.markdown_path or "").read_text(encoding="utf-8")
     except OSError:
@@ -139,6 +159,40 @@ def _detail(document: DocumentRecord) -> DocumentDetail:
         content=content,
         original_media_type=media_type,
         original_byte_size=byte_size,
+        figures=figures or [],
+    )
+
+
+def _document_figures(request: Request, document_id: str) -> list[ParsedFigure]:
+    """这篇文档的全部插图，按页码排序、同名去重。
+
+    从 chunk 的 ``images_json`` 汇总，而不是另存一份文档级清单：图与 chunk 的对应关系才是
+    检索时真正需要的那一份，再维护一份就会有第二份可能不一致的数据。
+
+    单条记录解析失败时跳过它，而不是让整个文档读不出来 —— 一条坏记录不该让文档打不开。
+    """
+    figures: dict[str, ParsedFigure] = {}
+    store = _document_store(request)
+    for raw in store.chunk_image_payloads(document_id):
+        if not raw or raw == "[]":
+            continue
+        try:
+            entries = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                figure = ParsedFigure.model_validate(entry)
+            except ValidationError:
+                continue
+            figures.setdefault(figure.asset, figure)
+    return sorted(
+        figures.values(),
+        key=lambda figure: (figure.page_number or 0, figure.asset),
     )
 
 
@@ -216,8 +270,12 @@ def _document_snapshot(request: Request, document: DocumentRecord) -> dict[str, 
         "updated_at": document.updated_at.isoformat() if document.updated_at else None,
         "content": content,
         "file_state": file_state,
-        "file_bytes_b64": b64encode(file_bytes).decode("ascii") if file_state == "present" else None,
-        "chunks": [_chunk_snapshot(chunk) for chunk in _document_store(request).list_chunks(document.id)],
+        "file_bytes_b64": b64encode(file_bytes).decode("ascii")
+        if file_state == "present"
+        else None,
+        "chunks": [
+            _chunk_snapshot(chunk) for chunk in _document_store(request).list_chunks(document.id)
+        ],
     }
 
 
@@ -237,7 +295,10 @@ def _record_from_snapshot(snapshot: dict[str, object]) -> DocumentChunkRecord:
 
 
 def _snapshot_chunks(snapshot: dict[str, object]) -> list[DocumentChunkRecord]:
-    return [_record_from_snapshot(item) for item in cast(list[dict[str, object]], snapshot.get("chunks", []))]
+    return [
+        _record_from_snapshot(item)
+        for item in cast(list[dict[str, object]], snapshot.get("chunks", []))
+    ]
 
 
 def _unowned_vector_ids(request: Request, vector_ids: list[str]) -> list[str]:
@@ -257,7 +318,9 @@ async def _vector_call(operation, *args):  # type: ignore[no-untyped-def]
         raise
 
 
-async def _restore_index(request: Request, snapshot: dict[str, object], current_ids: list[str]) -> bool:
+async def _restore_index(
+    request: Request, snapshot: dict[str, object], current_ids: list[str]
+) -> bool:
     """Restore vectors from the durable snapshot without deleting active ownership."""
     document_id = str(snapshot["id"])
     repository_id = str(snapshot["repository_id"])
@@ -326,7 +389,12 @@ async def _index(
     embeddings = await provider.embed_documents([chunk.text for chunk in chunks])
     records = [
         DocumentChunkRecord(
-            id=str(uuid5(NAMESPACE_URL, f"{document.id}:{chunk.chunk_index}:{sha256(chunk.text.encode()).hexdigest()}")),
+            id=str(
+                uuid5(
+                    NAMESPACE_URL,
+                    f"{document.id}:{chunk.chunk_index}:{sha256(chunk.text.encode()).hexdigest()}",
+                )
+            ),
             document_id=document.id,
             repository_id=document.repository_id,
             chunk_index=chunk.chunk_index,
@@ -377,14 +445,14 @@ async def _index(
         _document_store(request).replace_chunks(document.id, records)
         deletable_stale_ids = _unowned_vector_ids(request, stale_ids)
         if deletable_stale_ids:
-            await _vector_call(
-                vector_store.delete, document.repository_id, deletable_stale_ids
-            )
+            await _vector_call(vector_store.delete, document.repository_id, deletable_stale_ids)
     except BaseException as error:
         # Restore SQLite first, then vectors. Shared IDs are never deleted; they are
         # re-upserted from the old snapshot to restore metadata exactly.
         with suppress(BaseException):
-            _document_store(request).replace_chunks(document.id, _snapshot_chunks(old_chunk_snapshot))
+            _document_store(request).replace_chunks(
+                document.id, _snapshot_chunks(old_chunk_snapshot)
+            )
         restored = await _restore_index(request, old_chunk_snapshot, new_ids)
         if not restored:
             raise DomainError("INDEX_FAILED", "写入文档索引失败，等待恢复", 503, True) from error
@@ -450,9 +518,7 @@ async def _create_local_document(
         )
     )
     try:
-        indexed = await _index(
-            request, document, body.content, old_snapshot=None, mutation_id=None
-        )
+        indexed = await _index(request, document, body.content, old_snapshot=None, mutation_id=None)
         _persist_content(request, indexed, body.content, mutation_id=None)
     except BaseException:
         vector_ids = _document_store(request).vector_ids(document.id)
@@ -462,9 +528,7 @@ async def _create_local_document(
                     _vector_store(request).delete, document.repository_id, vector_ids
                 )
             except Exception:  # noqa: BLE001 - preserve cleanup for the next startup
-                _cleanup_store(request).create(
-                    document.repository_id, document.id, vector_ids
-                )
+                _cleanup_store(request).create(document.repository_id, document.id, vector_ids)
         _document_store(request).delete_local(document.id)
         _remove_local_files(request, document.id)
         raise
@@ -488,9 +552,7 @@ async def _update_local_document(
             request, document, body.content, old_snapshot=old_snapshot, mutation_id=None
         )
     except BaseException:
-        _document_store(request).restore_snapshot(
-            old_snapshot, _snapshot_chunks(old_snapshot)
-        )
+        _document_store(request).restore_snapshot(old_snapshot, _snapshot_chunks(old_snapshot))
         _restore_file(old_snapshot)
         raise
     persisted = _document_store(request).get(indexed.id)
@@ -659,9 +721,7 @@ async def _compensate_mutation_unshielded(request: Request, mutation_id: str) ->
                 old_content = str(old.get("remote_content", old.get("content", "")))
                 restore_remote = True
                 try:
-                    current = await _await_shielded(
-                        provider.read_document(remote_id)
-                    )
+                    current = await _await_shielded(provider.read_document(remote_id))
                     restore_remote = current.content != old_content
                 except asyncio.CancelledError:
                     raise
@@ -829,7 +889,9 @@ async def list_documents(request: Request, repository_id: str) -> list[DocumentS
     response_model=DocumentDetail,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_document(request: Request, repository_id: str, body: DocumentInput) -> DocumentDetail:
+async def create_document(
+    request: Request, repository_id: str, body: DocumentInput
+) -> DocumentDetail:
     await _recover_for_request(request)
     repository = _repository_store(request).get(repository_id)
     if repository is None:
@@ -974,18 +1036,32 @@ async def save_distillation_document(
                     parent_id=repository.remote_parent_id,
                 )
             )
-        _update_intent(request, mutation_id, phase="remote_applied", remote_applied=True, remote_id=remote.remote_id, remote_url=remote.url)
+        _update_intent(
+            request,
+            mutation_id,
+            phase="remote_applied",
+            remote_applied=True,
+            remote_id=remote.remote_id,
+            remote_url=remote.url,
+        )
         document = existing or _document_store(request).create(
             DocumentRecord(
-                id=str(uuid4()), repository_id=repository_id, remote_id=remote.remote_id,
-                title=remote.title, source_url=remote.url, source_type=repository.provider or "remote",
-                status="uploaded", remote_url=remote.url,
+                id=str(uuid4()),
+                repository_id=repository_id,
+                remote_id=remote.remote_id,
+                title=remote.title,
+                source_url=remote.url,
+                source_type=repository.provider or "remote",
+                status="uploaded",
+                remote_url=remote.url,
                 source_identity=f"distillation:{distillation_id}",
             )
         )
         _mutation_store(request).update(mutation_id, document_id=document.id)
         _update_intent(request, mutation_id, document_id=document.id)
-        indexed = await _index(request, document, content, old_snapshot=None, mutation_id=mutation_id)
+        indexed = await _index(
+            request, document, content, old_snapshot=None, mutation_id=mutation_id
+        )
         _update_intent(request, mutation_id, phase="file_pending")
         _persist_content(request, indexed, content, mutation_id=mutation_id)
         _mutation_store(request).delete(mutation_id)
@@ -1006,7 +1082,33 @@ async def read_document(request: Request, document_id: str) -> DocumentDetail:
     document = _document_store(request).get(document_id)
     if document is None:
         raise _not_found()
-    return _detail(document)
+    return _detail(document, _document_figures(request, document_id))
+
+
+@router.get("/api/documents/{document_id}/assets/{asset_name}", response_class=FileResponse)
+async def read_document_asset(request: Request, document_id: str, asset_name: str) -> FileResponse:
+    """返回一张插图的渲染图。
+
+    文件名先过白名单正则再看路径是否落在文档自己的目录内，两道都做：正则可以挡住绝大多数
+    构造，但「解析后仍在目录内」才是真正的边界 —— 只靠正则，等哪天规则放宽一个字符就成
+    了任意文件读取。
+    """
+    await _recover_for_request(request)
+    document = _document_store(request).get(document_id)
+    if document is None:
+        raise _not_found()
+    if not _ASSET_NAME.fullmatch(asset_name):
+        raise DomainError("DOCUMENT_ASSET_MISSING", "该插图不存在", 404, False)
+    directory = (request.app.state.settings.documents_dir / document.id / "assets").resolve()
+    path = (directory / asset_name).resolve()
+    if not path.is_relative_to(directory) or not path.is_file():
+        raise DomainError("DOCUMENT_ASSET_MISSING", "该插图不存在", 404, False)
+    return FileResponse(
+        path,
+        media_type=_ASSET_MEDIA_TYPES.get(path.suffix.lstrip(".").lower(), "image/png"),
+        content_disposition_type="inline",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/api/documents/{document_id}/raw", response_class=FileResponse)
@@ -1033,7 +1135,9 @@ async def read_document_original(request: Request, document_id: str) -> FileResp
 
 
 @router.put("/api/documents/{document_id}", response_model=DocumentDetail)
-async def update_document(request: Request, document_id: str, body: DocumentInput) -> DocumentDetail:
+async def update_document(
+    request: Request, document_id: str, body: DocumentInput
+) -> DocumentDetail:
     await _recover_for_request(request)
     document = _document_store(request).get(document_id)
     if document is None:
@@ -1122,7 +1226,10 @@ async def delete_document(request: Request, document_id: str, body: DocumentDele
     await _recover_for_request(request)
     document = _document_store(request).get(document_id)
     if document is None:
-        pending = next((item for item in _cleanup_store(request).list() if item.document_id == document_id), None)
+        pending = next(
+            (item for item in _cleanup_store(request).list() if item.document_id == document_id),
+            None,
+        )
         if pending is not None:
             if not body.confirm:
                 raise DomainError("CONFIRMATION_REQUIRED", "请确认删除文档", 400)
@@ -1154,9 +1261,7 @@ async def delete_document(request: Request, document_id: str, body: DocumentDele
                     _vector_store(request).delete, document.repository_id, deletable_ids
                 )
             except Exception:  # noqa: BLE001 - local cleanup remains retryable
-                _cleanup_store(request).create(
-                    document.repository_id, document.id, deletable_ids
-                )
+                _cleanup_store(request).create(document.repository_id, document.id, deletable_ids)
         return
     repository = _repository_store(request).get(document.repository_id)
     if repository is None or not repository.remote_id:
@@ -1176,9 +1281,7 @@ async def delete_document(request: Request, document_id: str, body: DocumentDele
                 _vector_store(request).delete, document.repository_id, deletable_ids
             )
     except Exception:  # noqa: BLE001 - local cleanup must continue after remote success
-        _cleanup_store(request).create(
-            document.repository_id, document.id, deletable_ids
-        )
+        _cleanup_store(request).create(document.repository_id, document.id, deletable_ids)
 
 
 @router.post("/api/documents/{document_id}/conflict", status_code=status.HTTP_204_NO_CONTENT)

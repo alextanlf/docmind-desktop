@@ -59,6 +59,7 @@ from app.corpus.service import CorpusCrawlService
 from app.corpus.vectors import CorpusVectorIndex
 from app.document.builtin_formats import builtin_registry
 from app.document.chunker import SemanticChunker
+from app.document.figure_description import VisionSettings
 from app.document.parser import DocumentParser
 from app.document.politeness import DomainRateLimiter
 from app.document.reachability import ReachabilityProbe
@@ -135,6 +136,36 @@ from app.yuque.wd_gateway import WebDriverYuqueGateway
 # 界面启动时会拉起语雀浏览器做"首次设置"检查；启动同步必须排在它后面，
 # 否则用户会看到几十秒的转圈。
 SYNC_STARTUP_DELAY_SECONDS = 5.0
+
+
+def _figure_description_settings(
+    settings_service: SettingsService, setting_store: SettingStore
+) -> VisionSettings | None:
+    """图描述要用的视觉模型设置，没配或用户没打开时返回 None。
+
+    **默认关闭，而且必须显式打开。** 这一步会把文档里的图片发到模型服务商，与"本地优先"
+    是相反的取舍 —— 默认启用会让用户在不知情的情况下把资料发出去。
+
+    复用**当前生效的对话模型**而不是另配一套凭据：用户已经为它存过 API Key，再要一份就是
+    重复配置。代价是"只看图"这件事没得单独选模型 —— 等到确实需要（对话模型不支持视觉，
+    而另一个支持）再加，那时才有真实的取舍要判断。
+    """
+    if not setting_store.figure_description_enabled():
+        return None
+    api_key = settings_service.saved_api_key()
+    if not api_key:
+        # 没有 key 就不发：本地无认证服务走的是另一条路（base_url 指向本机），那种情况
+        # 由用户把 key 留空即可 —— 但 `saved_api_key` 在这里代表"当前模型配没配好"。
+        return None
+    model = settings_service.model()
+    if not model.base_url or not model.model:
+        return None
+    return VisionSettings(
+        base_url=model.base_url,
+        model=model.model,
+        api_key=api_key,
+        timeout_seconds=float(model.timeout_seconds),
+    )
 
 
 class _RuntimeLLMProvider:
@@ -406,6 +437,18 @@ def create_app(
         document_store = DocumentStore(database)
         document_parser = DocumentParser(formats)
         app.state.document_parser = document_parser
+        class _SystemResolver:
+            async def resolve(self, host: str):
+                infos = await asyncio.to_thread(
+                    socket.getaddrinfo, host, None, type=socket.SOCK_STREAM
+                )
+                return list({info[4][0] for info in infos})
+
+        # 网页插图下载与语料抓取共用同一个客户端：SSRF 防护（连接前解析并拒绝非全局
+        # 地址）只有一份实现，两处都靠它。
+        safe_http_client = SafeHttpClient(
+            resolver=_SystemResolver(), transport=httpx.AsyncHTTPTransport()
+        )
         app.state.import_service = ImportService(
             settings=runtime_settings,
             source_inspector=SourceInspector(runtime_settings, formats=formats),
@@ -419,19 +462,13 @@ def create_app(
             job_store=ImportJobStore(database),
             event_broker=InMemoryEventBroker(),
             notifications=notifications,
+            safe_http_client=safe_http_client,
+            setting_store=SettingStore(database),
+            figure_description=lambda: _figure_description_settings(
+                app.state.settings_service, SettingStore(database)
+            ),
         )
         app.state.batch_store = BatchImportStore(database)
-
-        class _SystemResolver:
-            async def resolve(self, host: str):
-                infos = await asyncio.to_thread(
-                    socket.getaddrinfo, host, None, type=socket.SOCK_STREAM
-                )
-                return list({info[4][0] for info in infos})
-
-        safe_http_client = SafeHttpClient(
-            resolver=_SystemResolver(), transport=httpx.AsyncHTTPTransport()
-        )
         # 抓取条目单独挂到 app.state：诊断端点要按批次读"哪些 URL 没进来、为什么"，
         # 而那是 crawl_entries 里的数据，不是批次汇总里的数字。
         crawl_entries = CrawlEntryStore(database)

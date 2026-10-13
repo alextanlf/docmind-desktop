@@ -61,6 +61,9 @@ class SemanticChunker:
                         chunk_index=len(chunks),
                         token_count=self.counter.count(text),
                         source_url=document.source_url,
+                        # 图跟着它所属的 section 一起下去：这样「正文片段」与「它配的图」
+                        # 在检索结果里始终成对出现，而不是被堆在文档末尾。
+                        figures=list(section.figures),
                     )
                 )
         if not self.include_overview:

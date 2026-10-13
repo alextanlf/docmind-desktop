@@ -8,9 +8,11 @@ lives in metadata rather than the body.
 """
 from __future__ import annotations
 
+import hashlib
 import zipfile
 from io import BytesIO
 
+import pymupdf
 import pytest
 
 from app.api.errors import DomainError
@@ -368,3 +370,198 @@ def test_source_url_is_carried_through() -> None:
     raw = _docx(body=_paragraph("正文"))
 
     assert _parse(raw).source_url == "staged://abc"
+
+
+# -- 图片 ---------------------------------------------------------------------
+#
+# Word 的正文里没有任何图片内容，图片在 `word/media/` 下，正文只留一个关系 ID。
+# 不处理这条通路，图片里的文字（实测一份 Word 课件能识别出 135 行）对搜索完全不存在。
+
+_IMAGE_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+
+
+def _png_bytes(width: int = 400, height: int = 300) -> bytes:
+    """一张足够大的 PNG。
+
+    纯色小图压缩后只有几百字节，会被 `_MIN_FIGURE_BYTES`（4 KB）当图标滤掉 —— 所以这里
+    铺一层渐变，让它有真实插图的体积。
+    """
+    pixmap = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, width, height))
+    for y in range(height):
+        for x in range(0, width, 8):
+            pixmap.set_pixel(x, y, ((x * 7) % 256, (y * 5) % 256, ((x + y) * 3) % 256))
+    return pixmap.tobytes("png")
+
+
+def _drawing(rel_id: str, *, descr: str = "", name: str = "Picture 1") -> str:
+    return (
+        "<w:p><w:r><w:drawing>"
+        f'<wp:inline><wp:docPr id="1" name="{name}" descr="{descr}"/>'
+        f'<a:graphic><a:graphicData><pic:pic><pic:blipFill>'
+        f'<a:blip r:embed="{rel_id}"/>'
+        "</pic:blipFill></pic:pic></a:graphicData></a:graphic>"
+        "</wp:inline></w:drawing></w:r></w:p>"
+    )
+
+
+def _vml_picture(rel_id: str) -> str:
+    return f'<w:p><w:r><w:pict><v:shape><v:imagedata r:id="{rel_id}"/></v:shape></w:pict></w:r></w:p>'
+
+
+def _docx_with_images(
+    body: str, images: dict[str, bytes], *, rel_ids: list[str] | None = None
+) -> bytes:
+    """合成一份带图片的 .docx。"""
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            "word/document.xml",
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<w:document xmlns:w="{_W}"'
+            ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+            ' xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"'
+            ' xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+            ' xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"'
+            ' xmlns:v="urn:schemas-microsoft-com:vml">'
+            f"<w:body>{body}</w:body></w:document>",
+        )
+        relationships = "".join(
+            f'<Relationship Id="{rel_id}" Type="{_IMAGE_REL}" Target="media/{rel_id}.png"/>'
+            for rel_id in (rel_ids if rel_ids is not None else list(images))
+        )
+        archive.writestr(
+            "word/_rels/document.xml.rels",
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<Relationships xmlns="{_REL_NS}">{relationships}</Relationships>',
+        )
+        for rel_id, payload in images.items():
+            archive.writestr(f"word/media/{rel_id}.png", payload)
+    return buffer.getvalue()
+
+
+def _document_from(raw: bytes) -> DownloadedDocument:
+    return DownloadedDocument(
+        title="report.docx",
+        source_url="file:///report.docx",
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        raw_bytes=raw,
+    )
+
+
+def test_docx_image_is_extracted_as_a_figure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """图片必须变成 ParsedFigure，否则它永远不会出现在界面上。
+
+    显式设置替代文字是为了绕开识别：这条用例测的是**抽取与归属**，不是识别质量。
+    """
+    raw = _docx_with_images(
+        f"<w:p><w:r><w:t>系统结构说明</w:t></w:r></w:p>{_drawing('rId7', descr='系统结构说明')}",
+        {"rId7": _png_bytes()},
+    )
+    parsed = parse_docx(_document_from(raw))
+
+    assets = [figure.asset for section in parsed.sections for figure in section.figures]
+    assert len(assets) == 1
+    assert assets[0].endswith(".png")
+    assert "系统结构说明" in parsed.markdown
+
+
+def test_vml_picture_is_also_recognised() -> None:
+    """VML（旧式 `w:pict`）也要认。
+
+    实测一份 Word 文档里 226 个 `w:drawing`、207 个 `w:pict` —— 只认一种会漏掉一半。
+    """
+    raw = _docx_with_images(
+        f"<w:p><w:r><w:t>图注</w:t></w:r></w:p>{_vml_picture('rId9')}",
+        {"rId9": _png_bytes()},
+    )
+    parsed = parse_docx(_document_from(raw))
+
+    assert sum(len(section.figures) for section in parsed.sections) == 1
+
+
+def test_docx_image_alt_text_becomes_searchable_text() -> None:
+    """替代文字是零成本的人工描述，必须进正文 —— 有它就不必再识别。"""
+    raw = _docx_with_images(
+        f"<w:p><w:r><w:t>下面这张图</w:t></w:r></w:p>{_drawing('rId7', descr='模块依赖关系图')}",
+        {"rId7": _png_bytes()},
+    )
+    parsed = parse_docx(_document_from(raw))
+
+    assert "模块依赖关系图" in parsed.markdown
+
+
+def test_docx_image_text_is_not_indexed_twice() -> None:
+    """图内文字与正文重叠时不许重复并入 —— 与 PDF 那条通路同一门槛、同一理由。
+
+    实测图的文字常常就是正文的复制（图注、轴名来自同一段），整段并入会让同一内容被索引
+    两遍，检索时返回看起来完全相同的引用。
+    """
+    body = "Cache replacement policy affects the miss rate"
+    raw = _docx_with_images(
+        f"<w:p><w:r><w:t>{body}</w:t></w:r></w:p>{_drawing('rId7', descr=body)}",
+        {"rId7": _png_bytes()},
+    )
+    parsed = parse_docx(_document_from(raw))
+
+    assert parsed.markdown.count("Cache replacement policy") == 1
+
+
+def test_tiny_docx_images_are_not_figures() -> None:
+    """图标、项目符号、装饰线不该当内容图。"""
+    tinytag = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 8, 8)).tobytes("png")
+    raw = _docx_with_images(
+        f"<w:p><w:r><w:t>正文</w:t></w:r></w:p>{_drawing('rId7')}",
+        {"rId7": tinytag},
+    )
+    parsed = parse_docx(_document_from(raw))
+
+    assert sum(len(section.figures) for section in parsed.sections) == 0
+
+
+def test_unreferenced_media_is_not_a_figure() -> None:
+    """media 目录里有、正文没引用的文件不算图（模板残留、备用图）。"""
+    raw = _docx_with_images("<w:p><w:r><w:t>正文</w:t></w:r></w:p>", {"rId7": _png_bytes()})
+    parsed = parse_docx(_document_from(raw))
+
+    assert sum(len(section.figures) for section in parsed.sections) == 0
+
+
+def test_missing_ocr_capability_does_not_break_docx(monkeypatch: pytest.MonkeyPatch) -> None:
+    """没有识别能力时仍要能导入 Word —— 图内文字拿不到而已，正文不能因此丢掉。"""
+    from app.document import ocr
+
+    def unavailable(images):
+        raise ocr.OcrUnavailable("没有可用的识别后端")
+
+    monkeypatch.setattr(ocr, "recognize", unavailable)
+    raw = _docx_with_images(
+        f"<w:p><w:r><w:t>正文段落</w:t></w:r></w:p>{_drawing('rId7')}",
+        {"rId7": _png_bytes()},
+    )
+    parsed = parse_docx(_document_from(raw))
+
+    assert "正文段落" in parsed.markdown
+    # 图还是要在清单里，只是没有文字。
+    assert sum(len(section.figures) for section in parsed.sections) == 1
+
+
+def test_docx_figure_carries_bytes_for_disk_write() -> None:
+    """插图必须带着字节，否则落盘那一步写不出文件。
+
+    导入流程靠 `ParsedFigure.payload` 把图写到文档目录（见
+    `app/imports/service.py::_write_figures`）。这个字段 `exclude=True` 不参与序列化，
+    所以它是「只在内存里活一段」的 —— 一旦在某处被丢掉，图会静默地只剩一个文件名，
+    界面上什么都显示不出来。
+    """
+    raw = _docx_with_images(
+        f"<w:p><w:r><w:t>正文</w:t></w:r></w:p>{_drawing('rId7', descr='说明文字')}",
+        {"rId7": _png_bytes()},
+    )
+    parsed = parse_docx(_document_from(raw))
+
+    figures = [figure for section in parsed.sections for figure in section.figures]
+    assert len(figures) == 1
+    assert figures[0].payload.startswith(b"\x89PNG")
+    # 资产名由内容摘要决定：同一张图重复导入会得到同一个文件名。
+    assert figures[0].asset.startswith(hashlib.sha256(figures[0].payload).hexdigest())

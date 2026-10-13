@@ -1,0 +1,83 @@
+{
+  "url": "https://en.wikipedia.org/wiki/Operating_system",
+  "sections": 40,
+  "markdown_chars": 120941,
+  "pending": 8,
+  "fetched": 7,
+  "recognized": 7,
+  "merged": 5,
+  "figures": [
+    {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/9/95/System_1_File_Edit.png?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail_unscaled",
+      "host": "upload.wikimedia.org",
+      "asset": "",
+      "bytes": 0,
+      "text": "",
+      "alt": "",
+      "failure": "图片过小"
+    },
+    {
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/8f/Kernel_Layout.svg/500px-Kernel_Layout.svg.png?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail",
+      "host": "thumb.wikimedia.org",
+      "asset": "d58e95a36bf354b647eed3cb380910f65c39fda04c4efac8781accc71572df30.png",
+      "bytes": 18305,
+      "text": "Applications\nKernel\nCPU\nMemory\nDevices",
+      "alt": "",
+      "failure": ""
+    },
+    {
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6e/Virtual_memory.svg/500px-Virtual_memory.svg.png?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail",
+      "host": "thumb.wikimedia.org",
+      "asset": "994370ee031d8e538429a3229bfbf68834c6cabf62cec0fe06f1d6cc933c67e2.png",
+      "bytes": 81736,
+      "text": "Another\nprocess's\nmemory",
+      "alt": "",
+      "failure": ""
+    },
+    {
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d4/Layers_of_a_Linux_system.png/960px-Layers_of_a_Linux_system.png?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail",
+      "host": "thumb.wikimedia.org",
+      "asset": "143885a587627b1db9e3f01868f21980b5026dba4a9d9a150e635252e19814e5.png",
+      "bytes": 89178,
+      "text": "User\ninterface\nUsers\nLibrary\ninterface\nStandard utlity programs\n（shell, editors, compilers, etc.）\nSystem\nUser\ncall\nmode\ninterface\nStandard library\n（open, close, read, write, fork, etc.）\nLinux operating system\nKernel mode\n（process management, memory management，\nthe file system, V/O, etc.）\nHardware\n（CPU, memory, disks, terminals, etc.）",
+      "alt": "",
+      "failure": ""
+    },
+    {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/d/db/Diagram_of_a_security_descriptor_for_a_file_on_Windows.png?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail_unscaled",
+      "host": "upload.wikimedia.org",
+      "asset": "e116cb4077cba8ec94e2677c18a316e5ac4d839764cc2b43b32232b04b71dbfa.png",
+      "bytes": 62234,
+      "text": "Security\ndescriptor\nHeader\nFile\nDeny\nSecurity\nElvis\nACE\ndescriptor\n111111\nHeader\nAllow\nOwner's SID\nCathy\nGroup SID\n110000\nDACL\nAllow\nSACL\nIda\n111111\nAllow\nEveryone\n100000\nHeader\nAudit\nACE\nMarilyn\n111111",
+      "alt": "",
+      "failure": ""
+    },
+    {
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/39/IBM_system_360-50_console_-_MfK_Bern.jpg/500px-IBM_system_360-50_console_-_MfK_Bern.jpg?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail",
+      "host": "thumb.wikimedia.org",
+      "asset": "bcbda4d295fba1260f5568adb46d520aa7add7b912e5a34bff419396a9307047.png",
+      "bytes": 582728,
+      "text": "396\n1e（ou Cowbnrot",
+      "alt": "",
+      "failure": ""
+    },
+    {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/0/07/MS-Dos_screenshot.png?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail_unscaled",
+      "host": "upload.wikimedia.org",
+      "asset": "906888e0209af0ac82b4fa117e03005ddce97e5b2c07e2a5c4836000d519631c.png",
+      "bytes": 7286,
+      "text": "C:l>dir\nUolume\nin\ndrive\nC\nis\nMS-DOS_6\nVolume\nSerial Number\nis\n40B4-7F23\nC：\nDirectory of\nDOS\n〈<DIR>\n12.05.20\n15:57\n54 645\n94.05.31\nCOMMAND\nCOM\n6:22\nWINA20\n386\n9\n349\n94.05.31\n6:22\nCONFIG\nSYS\n144\n12.05.20\n15:57\nAUTOEXEC\nBAT\n188\n12.05.20\n15:57\n5\nfile（s）\n64\n326\nbytes\n24\n760\n320 bytes\nfree\nC:V>",
+      "alt": "",
+      "failure": ""
+    },
+    {
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/51/Dolphin_FileManager.png/500px-Dolphin_FileManager.png?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail",
+      "host": "thumb.wikimedia.org",
+      "asset": "79eeb1032839ec26d2266e44fc9a62ab082d75cf7426c35ce02c170565a384e7.png",
+      "bytes": 171291,
+      "text": "Twilgle-Defpein\n7 oourarts\n星 cowrkads\n308% ×0\n>Iontsfeund\nv12Res D.3NR",
+      "alt": "",
+      "failure": ""
+    }
+  ]
+}

@@ -71,6 +71,24 @@ reset_stage_dir() {
 echo "构建渲染/主进程产物..."
 npm run desktop:build >/dev/null
 
+# 图片文字识别小程序（仅 macOS）：编译成通用二进制（arm64 + x86_64）。
+#
+# **必须在打包后端 runtime 之前**：build-backend-runtime.sh 会把 backend/app 拷进
+# runtime，二进制要赶在那之前落到 app/document/ocr/ 里，否则包里就没有它 ——
+# 而缺失时后端只会静默降级成「识别不可用」，是那种不报错但功能消失的问题。
+#
+# 故意不给「编不出来就跳过」的静默分支：本应用声明支持 macOS，图片文字识别是文档功能的
+# 一部分，编不出来就该在打包阶段失败，而不是出一个半残的包。确实要出无识别能力的包时，
+# 显式设 DOCMIND_SKIP_VISION_OCR=1。
+if [[ "$is_windows" = 0 ]]; then
+  if [[ "${DOCMIND_SKIP_VISION_OCR:-0}" == "1" ]]; then
+    echo "跳过识别程序编译（DOCMIND_SKIP_VISION_OCR=1）—— 包内将没有图片文字识别能力"
+  else
+    echo "编译图片文字识别程序（通用二进制）..."
+    "$root/scripts/build-vision-ocr.sh"
+  fi
+fi
+
 # 自包含后端 runtime：独立 CPython + 依赖 + 应用代码，electron-builder 会把它
 # 放进 resources/backend-runtime。装好后的 app 不再依赖本机仓库的 backend/.venv。
 # DOCMIND_SKIP_BACKEND_BUNDLE=1 可跳过（此时包内无后端，会回退到开发态 venv 路径）。

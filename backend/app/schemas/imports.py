@@ -73,12 +73,52 @@ class DownloadedDocument(WireModel):
     media_type: str
     raw_bytes: bytes
     local_path: Path | None = None
+class ParsedFigure(WireModel):
+    """一张插图，以及把它展示出来所需的一切。
+
+    ``asset`` 是落盘后的文件名（相对文档自己的附件目录）。用内容摘要命名而不是自增序号：
+    同一次导入重复执行时文件名保持一致，不会在磁盘上留下两份同样的图。
+
+    ``bbox`` 是这张图在页面上的位置（PDF 点，原点左上）。原件是 PDF 时前端据此直接跳到
+    那一页并框出这块区域 —— 没有它，用户得自己在一份 500 页的扫描件里找。
+    """
+
+    asset: str
+    page_number: int | None = None
+    #: 图内已有的文字（图注、轴名、刻度、标注）。空字符串表示这张图只能靠识别补内容。
+    caption: str = ""
+    width: int = 0
+    height: int = 0
+    bbox: tuple[float, float, float, float] | None = None
+    #: 整页扫描件的整页渲染图，而不是页内某一张插图。
+    full_page: bool = False
+    #: 这张图来自哪个远程地址（网页插图才有）。
+    #:
+    #: 有地址、没有 `payload` 就表示「还没下载」—— 导入服务据此把待抓取的图挑出来。
+    #: 解析阶段刻意不做网络访问：那会让同步的解析器变成异步的，牵动整条链路。
+    source_url: str = ""
+    #: 图内识别出来的文字。
+    #:
+    #: 与 `caption` 分开：`caption` 是图注/替代文字（人工写的、给用户看的），`text` 是
+    #: 识别结果（机器产出的、用来并入正文参与检索）。两者都可能为空，语义也不同。
+    #: 不参与序列化：它的去处是正文，客户端不需要再拿一份。
+    text: str = Field(default="", exclude=True)
+    #: 抓取失败的原因。只在诊断时有用，不参与序列化 —— 客户端拿到一个空图没有意义。
+    failure: str = Field(default="", exclude=True)
+    #: 渲染出来的 PNG 字节，只在解析到落盘之间存活。
+    #:
+    #: 不参与序列化：它可能上百 KB，塞进 `images_json` 会让每个 chunk 行都背着一份图片；
+    #: 写盘之后它的使命就结束了，chunk 里只需要留下文件名。
+    payload: bytes = Field(default=b"", exclude=True)
 
 
 class ParsedSection(WireModel):
     heading_path: list[str]
     markdown: str
     page_number: int | None = None
+    #: 这一节关联的插图。挂在 section 上而不是文档上，是为了保住「这张图在第 3 页第 2 节」
+    #: 这个定位信息 —— 丢了它，引用面板就无法把图和它所在的正文对上。
+    figures: list[ParsedFigure] = Field(default_factory=list)
 
 
 class ParsedDocument(WireModel):
@@ -95,6 +135,9 @@ class DocumentChunkDraft(WireModel):
     chunk_index: int
     token_count: int
     source_url: str
+    #: 这个 chunk 关联的插图。切块时从所属 section 逐个带下来，让「正文片段」和
+    #: 「它配的图」在检索结果里始终成对出现。
+    figures: list[ParsedFigure] = Field(default_factory=list)
 
 
 class ImportCreateRequest(WireModel):

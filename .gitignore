@@ -36,3 +36,9 @@ backend/build/
 
 # vite 在沙箱/异常退出时会遗留带时间戳的临时配置文件
 electron.vite.config.*.mjs
+
+# 图片文字识别小程序：由 scripts/build-vision-ocr.sh 编译产出（通用二进制）。
+# 不提交二进制的原因：只提交一个架构会让另一个架构的机器在**执行时**才失败
+# （bad CPU type），而文件存在性与可执行位都检查不出来；换架构时也不该依赖
+# 有人记得重新提交。源码 vision_ocr.swift 在仓库里。
+backend/app/document/ocr/vision_ocr

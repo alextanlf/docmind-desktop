@@ -447,6 +447,18 @@ class ModelPresetCapabilities(WireModel):
     default_reasoning_effort: str = ""
 
 
+class FigureOcrInput(WireModel):
+    """图片文字识别的开关。"""
+
+    enabled: bool
+
+
+class FigureDescriptionInput(WireModel):
+    """图表语义描述的开关。"""
+
+    enabled: bool
+
+
 class SettingsView(WireModel):
     model: ModelSettingsView
     has_api_key: bool
@@ -463,6 +475,11 @@ class SettingsView(WireModel):
     models: list[ConfiguredModel] = Field(default_factory=list)
     data_path: str
     screenshot_count: int
+    #: 导入时是否识别图片里的文字。关掉换速度，代价是纯扫描页（截图型幻灯片、扫描书）
+    #: 没有文字层可读，会从索引里消失 —— 所以这是个要如实说明代价的开关，不是性能旋钮。
+    figure_ocr: bool = True
+    #: 是否用视觉模型描述图表语义。**默认关闭**：打开会把文档里的图片发到模型服务商。
+    figure_description: bool = False
     runtime: RuntimeSettingsInput | None = None
     # Curated per-preset catalogue so the model picker has choices on first
     # paint, before an API key is entered and before any live query.

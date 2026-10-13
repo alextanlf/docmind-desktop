@@ -9,6 +9,7 @@ import {
   CreateRepositoryInputSchema,
   UpdateRepositoryInputSchema,
   CreateSessionInputSchema,
+  DocumentAssetNameSchema,
   DocumentDetailSchema,
   DocumentOriginalChunkSchema,
   DocumentVersionSchema,
@@ -197,6 +198,10 @@ const api: DocMindApi = {
       ),
     skipModelSetup: () => invoke(IPC_CHANNELS.settingsSkipModelSetup, SettingsViewSchema),
     clearDiagnostics: () => invoke(IPC_CHANNELS.settingsClearDiagnostics, z.undefined()),
+    setFigureOcr: (enabled) =>
+      invoke(IPC_CHANNELS.settingsSetFigureOcr, SettingsViewSchema, { enabled }),
+    setFigureDescription: (enabled) =>
+      invoke(IPC_CHANNELS.settingsSetFigureDescription, SettingsViewSchema, { enabled }),
     saveRuntime: (input) =>
       invoke(
         IPC_CHANNELS.settingsSaveRuntime,
@@ -312,6 +317,13 @@ const api: DocMindApi = {
         uuid(documentId),
         byteOffset(begin),
         byteOffset(end),
+      ),
+    readAsset: (documentId, assetName) =>
+      invoke(
+        IPC_CHANNELS.documentsReadAsset,
+        z.string(),
+        uuid(documentId),
+        DocumentAssetNameSchema.parse(assetName),
       ),
     create: (repositoryId, input) =>
       invoke(

@@ -93,10 +93,26 @@ class SafeHttpClient:
         if not addresses or any(not ipaddress.ip_address(ip).is_global for ip in addresses):
             raise DomainError("CRAWL_SCOPE_REJECTED", "网页地址不在允许范围内", 400)
 
+    def _request_headers(self, headers: dict[str, str] | None) -> dict[str, str]:
+        """套上本客户端的 User-Agent，调用方给的优先。
+
+        **必须始终发出一个 UA。** 实测维基媒体的图片 CDN 对**完全没有 User-Agent** 的请求
+        返回 403：`DocMind/2` 能过，不带头就过不去。而 `self.user_agent` 在改写前是个死
+        字段 —— `headers=None` 时 httpx 一个 UA 都不发，于是网页里的图全部下载失败，错误
+        还只显示成"抓取失败"，看不出是 UA 的问题。
+
+        声明了身份就要把它发出去，这既是可用性也是基本礼貌：被访问的站点有权知道是谁在请求。
+        """
+        merged = {"user-agent": self.user_agent}
+        if headers:
+            merged.update(headers)
+        return merged
+
     async def get(self, url: str, *, max_bytes: int, redirect_limit: int = 5,
                   scope_origin: str | None = None, scope_prefix: str | None = None,
                   headers: dict[str, str] | None = None) -> HttpSnapshot:
         current = canonicalize_url(url)
+        headers = self._request_headers(headers)
         for hops in range(redirect_limit + 1):
             await self._check_host(current)
             try:

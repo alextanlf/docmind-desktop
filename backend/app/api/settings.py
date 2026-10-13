@@ -32,6 +32,8 @@ from app.schemas.settings import (
     MODEL_PRESETS,
     NEW_CUSTOM_PROVIDER_ID,
     ConfiguredModel,
+    FigureDescriptionInput,
+    FigureOcrInput,
     LegacyCustomProvider,
     ModelActivation,
     ModelConnectionResult,
@@ -665,6 +667,8 @@ class SettingsService:
             models=models,
 
             data_path=str(settings.data_dir.resolve()),
+            figure_ocr=self.setting_store.figure_ocr_enabled(),
+            figure_description=self.setting_store.figure_description_enabled(),
             screenshot_count=_screenshot_count(settings.screenshots_dir),
             runtime=self.runtime(),
             model_presets={
@@ -817,6 +821,20 @@ async def _optional_probe(request: Request) -> ModelListProbe | None:
 @router.post("/runtime", response_model=SettingsView)
 async def save_runtime(update: RuntimeSettingsInput, request: Request) -> SettingsView:
     await _service(request).save_runtime(update)
+    return _service(request).view(_settings(request))
+
+
+@router.post("/figure-ocr", response_model=SettingsView)
+async def save_figure_ocr(update: FigureOcrInput, request: Request) -> SettingsView:
+    _service(request).setting_store.set_figure_ocr(update.enabled)
+    return _service(request).view(_settings(request))
+
+
+@router.post("/figure-description", response_model=SettingsView)
+async def save_figure_description(
+    update: FigureDescriptionInput, request: Request
+) -> SettingsView:
+    _service(request).setting_store.set_figure_description(update.enabled)
     return _service(request).view(_settings(request))
 
 

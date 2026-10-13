@@ -111,6 +111,22 @@ export class BackendProxy {
     }
   }
 
+  /**
+   * 拉取整块二进制。与 `requestRange` 分开：插图是完整的小文件，不需要 Range 语义，
+   * 也不需要 `total` —— 借用 Range 方法会让人以为它支持分片。
+   */
+  async requestBytes(route: string, init: RequestInit = {}): Promise<Uint8Array> {
+    let response: Response;
+    try {
+      response = await this.requestFn(route, init);
+    } catch (error) {
+      if (error instanceof DocMindClientError) throw error;
+      throw new DocMindClientError("BACKEND_UNAVAILABLE", "后端暂不可用，请稍后重试", true);
+    }
+    if (!response.ok) await this.throwResponseError(response);
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
   async requestVoid(route: string, init: RequestInit = {}): Promise<void> {
     let response: Response;
     try {

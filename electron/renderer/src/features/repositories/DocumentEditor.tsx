@@ -1,8 +1,9 @@
 import { Eye, Pencil, Save, Trash2, X } from "lucide-react";
-import { Suspense, lazy, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import type { DocumentDetail } from "../../../../shared/contracts";
 import { appQueryClient } from "../../app/query-client";
 import { MarkdownBody } from "../../components/MarkdownBody";
+import { DocumentFigures } from "./DocumentFigures";
 import { clientErrorMessage } from "../settings/settings.queries";
 import { DeleteDocumentDialog } from "./DeleteDocumentDialog";
 import { repositoryKeys } from "./repository.queries";
@@ -42,6 +43,16 @@ export function DocumentEditor({
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
+  /**
+   * 从解析视图点图之后要定位的原件位置。
+   *
+   * 只在这次交互里有效：用户一旦自己滚走，就不该再被拽回去。切换文档时清掉（见下面的
+   * `useEffect`），否则会给新文档传一个属于旧文档的页码。
+   */
+  const [locate, setLocate] = useState<{
+    page: number;
+    bbox: [number, number, number, number] | null;
+  } | null>(null);
 
   const dirty = title.trim() !== document.title || content !== document.content;
 
@@ -65,6 +76,16 @@ export function DocumentEditor({
     } finally {
       setSaving(false);
     }
+  }
+
+  useEffect(() => {
+    setLocate(null);
+  }, [document.id]);
+
+  function locateFigure(target: { page: number; bbox: [number, number, number, number] | null }) {
+    setLocate(target);
+    setSource("original");
+    setMode("read");
   }
 
   function switchMode(next: ViewMode) {
@@ -163,7 +184,11 @@ export function DocumentEditor({
               </div>
             }
           >
-            <PdfOriginalView byteSize={document.originalByteSize ?? 0} documentId={document.id} />
+            <PdfOriginalView
+              byteSize={document.originalByteSize ?? 0}
+              documentId={document.id}
+              locate={locate}
+            />
           </Suspense>
         ) : (
           <article aria-label="文档内容" className="document-view">
@@ -172,6 +197,12 @@ export function DocumentEditor({
             ) : (
               <p className="document-view-empty">这篇文档还没有内容。</p>
             )}
+            <DocumentFigures
+              documentId={document.id}
+              figures={document.figures}
+              // 没有可定位的原件时不传回调，图就不可点 —— 而不是点下去什么也不发生。
+              onLocate={hasOriginal ? locateFigure : undefined}
+            />
           </article>
         )
       ) : (

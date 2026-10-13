@@ -15,6 +15,7 @@ import {
   DocumentDetailSchema,
   DocumentVersionSchema,
   DocumentInputSchema,
+  DocumentAssetNameSchema,
   DocumentSummarySchema,
   ErrorEnvelopeSchema,
   GraphEdgeSchema,
@@ -30,6 +31,8 @@ import {
   SyncOutcomeSchema,
   SyncStatusSchema,
   SessionSummarySchema,
+  FigureDescriptionInputSchema,
+  FigureOcrInputSchema,
   SettingsViewSchema,
   SourcePreviewSchema,
   SourceRefSchema,
@@ -227,6 +230,18 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
       proxy.requestJson("/api/settings/model/skip-setup", jsonInit("POST"), SettingsViewSchema),
     [IPC_CHANNELS.settingsClearDiagnostics]: () =>
       proxy.requestVoid("/api/settings/diagnostics/clear", jsonInit("POST")),
+    [IPC_CHANNELS.settingsSetFigureOcr]: (_event, input) =>
+      proxy.requestJson(
+        "/api/settings/figure-ocr",
+        jsonInit("POST", { enabled: FigureOcrInputSchema.parse(input).enabled }),
+        SettingsViewSchema,
+      ),
+    [IPC_CHANNELS.settingsSetFigureDescription]: (_event, input) =>
+      proxy.requestJson(
+        "/api/settings/figure-description",
+        jsonInit("POST", { enabled: FigureDescriptionInputSchema.parse(input).enabled }),
+        SettingsViewSchema,
+      ),
     [IPC_CHANNELS.settingsSaveRuntime]: (_event, input) =>
       proxy.requestJson(
         "/api/settings/runtime",
@@ -385,6 +400,18 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
       if (stop < start) throw new DocMindClientError("INVALID_REQUEST", "请求参数无效");
       const { data, total } = await proxy.requestRange(`/api/documents/${id}/raw`, start, stop);
       return { data: Buffer.from(data).toString("base64"), total };
+    },
+    /**
+     * 插图字节。与原件分片同样的理由走 IPC：渲染层不持有后端地址与令牌。
+     * 以 base64 回传是因为 contextBridge 不保证透传 TypedArray。
+     */
+    [IPC_CHANNELS.documentsReadAsset]: async (_event, documentId, assetName) => {
+      const id = parse(UUID, documentId);
+      const name = parse(DocumentAssetNameSchema, assetName);
+      const data = await proxy.requestBytes(
+        `/api/documents/${id}/assets/${encodeURIComponent(name)}`,
+      );
+      return Buffer.from(data).toString("base64");
     },
     [IPC_CHANNELS.documentsCreate]: (_event, repositoryId, input) => {
       const id = parse(UUID, repositoryId);

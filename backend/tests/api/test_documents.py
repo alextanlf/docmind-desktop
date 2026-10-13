@@ -12,7 +12,7 @@ from app.api.errors import DomainError
 from app.core.embedding import FakeEmbeddingProvider
 from app.remote.fake import FakeRemoteProvider
 from app.schemas.documents import DocumentInput
-from app.storage.models import DocumentRecord
+from app.storage.models import DocumentChunkRecord, DocumentRecord
 
 
 class RecordingVectorStore:
@@ -777,3 +777,148 @@ def test_raw_serves_non_pdf_original_as_octet_stream(client, auth_headers) -> No
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/octet-stream"
     assert response.content == payload
+
+
+# -- 插图（assets） -----------------------------------------------------------
+
+
+def _seed_document_with_figure(client, *, document_id: str = "doc-figure"):  # type: ignore[no-untyped-def]
+    """一篇带一张插图的文档：磁盘上有 PNG，chunk 里记着它。"""
+    document = _seed_document_with_original(client, b"%PDF-1.7\nx", document_id=document_id)
+    directory = client.app.state.settings.documents_dir / document.id / "assets"
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    asset = "a" * 64 + ".png"
+    (directory / asset).write_bytes(b"\x89PNG\r\n\x1a\nfigure")
+    chunk = DocumentChunkRecord(
+        id="chunk-1",
+        document_id=document.id,
+        repository_id=document.repository_id,
+        chunk_index=0,
+        text="正文",
+        section_path="",
+        page_number=3,
+        token_count=2,
+        source_url=None,
+        images_json=json.dumps(
+            [
+                {
+                    "asset": asset,
+                    "pageNumber": 3,
+                    "caption": "Voltage decay",
+                    "width": 120,
+                    "height": 80,
+                    "bbox": [10.0, 20.0, 130.0, 100.0],
+                    "fullPage": False,
+                }
+            ]
+        ),
+    )
+    client.app.state.document_store.save_with_chunks(document, [chunk])
+    return document, asset
+
+
+def test_detail_lists_figures_with_position(client, auth_headers) -> None:
+    """插图清单要带上页码与版面位置 —— 没有它们，前端无法把图和正文对上。"""
+    document, asset = _seed_document_with_figure(client)
+
+    response = client.get(f"/api/documents/{document.id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    figures = response.json()["figures"]
+    assert len(figures) == 1
+    assert figures[0]["asset"] == asset
+    assert figures[0]["pageNumber"] == 3
+    assert figures[0]["caption"] == "Voltage decay"
+    assert figures[0]["bbox"] == [10.0, 20.0, 130.0, 100.0]
+
+
+def test_detail_reports_no_figures_as_empty_list(client, auth_headers) -> None:
+    """没有图是常态，必须是空列表而不是 null —— 客户端不必先判空再遍历。"""
+    document = _seed_document_without_original(client)
+
+    response = client.get(f"/api/documents/{document.id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["figures"] == []
+
+
+def test_detail_skips_a_corrupt_figure_record(client, auth_headers) -> None:
+    """一条坏记录不该让整篇文档读不出来。"""
+    document, _ = _seed_document_with_figure(client, document_id="doc-corrupt")
+    original = client.app.state.document_store.list_chunks(document.id)[0]
+    # 重新构造一条记录而不是改内存里那条：脱离 session 的对象改完再 merge 会引发
+    # StaleDataError，那是测试自身的问题，与被测行为无关。
+    corrupt = DocumentChunkRecord(
+        id=original.id,
+        document_id=document.id,
+        repository_id=document.repository_id,
+        chunk_index=original.chunk_index,
+        text=original.text,
+        section_path=original.section_path,
+        page_number=original.page_number,
+        token_count=original.token_count,
+        source_url=original.source_url,
+        images_json="{not json",
+    )
+    client.app.state.document_store.save_with_chunks(document, [corrupt])
+
+    response = client.get(f"/api/documents/{document.id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["figures"] == []
+
+
+def test_asset_serves_the_rendered_figure(client, auth_headers) -> None:
+    document, asset = _seed_document_with_figure(client)
+
+    response = client.get(
+        f"/api/documents/{document.id}/assets/{asset}", headers=auth_headers
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.content.startswith(b"\x89PNG")
+
+
+def test_asset_rejects_a_traversal_name(client, auth_headers) -> None:
+    """路径穿越必须挡在文件名白名单上，不能等到读文件。
+
+    只在最后检查「解析后的路径是否在目录内」也能挡住，但白名单是第一道 —— 少了它，
+    哪天目录判断被改动一个字符就成了任意文件读取。
+    """
+    document, _ = _seed_document_with_figure(client)
+
+    for name in ("..%2F..%2Fraw.bin", "..%2fdocument.md", "....//raw.bin"):
+        response = client.get(
+            f"/api/documents/{document.id}/assets/{name}", headers=auth_headers
+        )
+        assert response.status_code == 404, name
+
+
+def test_asset_rejects_a_name_outside_the_document_directory(client, auth_headers) -> None:
+    """合法形状的文件名若指向别处，也必须拒绝 —— 第二道边界。"""
+    document, _ = _seed_document_with_figure(client)
+    outside = client.app.state.settings.documents_dir / "outside-asset.png"
+    outside.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    outside.write_bytes(b"\x89PNG\r\n\x1a\noutside")
+
+    response = client.get(
+        f"/api/documents/{document.id}/assets/{outside.name}", headers=auth_headers
+    )
+
+    assert response.status_code == 404
+
+
+def test_asset_reports_missing_file_as_not_found(client, auth_headers) -> None:
+    document, asset = _seed_document_with_figure(client, document_id="doc-asset-gone")
+    (
+        client.app.state.settings.documents_dir / document.id / "assets" / asset
+    ).unlink()
+
+    response = client.get(
+        f"/api/documents/{document.id}/assets/{asset}", headers=auth_headers
+    )
+
+    assert response.status_code == 404
+
+

@@ -1,0 +1,230 @@
+{
+  "path": "SURELY YOU'RE JOKING MISTER FEYNMAN - RICHARD FEYNMAN_text.pdf",
+  "reference_chars": 545550,
+  "pages_matched": 6,
+  "pages_unmatched": [],
+  "summary": {
+    "150": {
+      "pages": 6,
+      "mean_cer": 0.2354,
+      "median_cer": 0.2822,
+      "mean_alignment": 0.7646,
+      "mean_render_seconds": 0.036,
+      "mean_recognize_seconds": 0.741
+    },
+    "200": {
+      "pages": 5,
+      "mean_cer": 0.2531,
+      "median_cer": 0.2787,
+      "mean_alignment": 0.7469,
+      "mean_render_seconds": 0.063,
+      "mean_recognize_seconds": 0.762
+    },
+    "300": {
+      "pages": 5,
+      "mean_cer": 0.2136,
+      "median_cer": 0.2791,
+      "mean_alignment": 0.7864,
+      "mean_render_seconds": 0.123,
+      "mean_recognize_seconds": 0.771
+    }
+  },
+  "pages": [
+    {
+      "page": 70,
+      "dpi": 150,
+      "reference_chars": 1746,
+      "recognized_chars": 1746,
+      "alignment": 0.8723,
+      "cer": 0.1277,
+      "render_seconds": 0.037,
+      "recognize_seconds": 0.742
+    },
+    {
+      "page": 70,
+      "dpi": 300,
+      "reference_chars": 1751,
+      "recognized_chars": 1751,
+      "alignment": 0.8829,
+      "cer": 0.1171,
+      "render_seconds": 0.118,
+      "recognize_seconds": 0.769
+    },
+    {
+      "page": 71,
+      "dpi": 150,
+      "reference_chars": 1284,
+      "recognized_chars": 1284,
+      "alignment": 0.7072,
+      "cer": 0.2928,
+      "render_seconds": 0.031,
+      "recognize_seconds": 0.588
+    },
+    {
+      "page": 71,
+      "dpi": 200,
+      "reference_chars": 1282,
+      "recognized_chars": 1282,
+      "alignment": 0.7114,
+      "cer": 0.2886,
+      "render_seconds": 0.06,
+      "recognize_seconds": 0.64
+    },
+    {
+      "page": 71,
+      "dpi": 300,
+      "reference_chars": 1282,
+      "recognized_chars": 1282,
+      "alignment": 0.7067,
+      "cer": 0.2933,
+      "render_seconds": 0.116,
+      "recognize_seconds": 0.647
+    },
+    {
+      "page": 72,
+      "dpi": 150,
+      "reference_chars": 1899,
+      "recognized_chars": 1899,
+      "alignment": 0.8483,
+      "cer": 0.1517,
+      "render_seconds": 0.038,
+      "recognize_seconds": 0.789
+    },
+    {
+      "page": 72,
+      "dpi": 200,
+      "reference_chars": 1912,
+      "recognized_chars": 1912,
+      "alignment": 0.853,
+      "cer": 0.147,
+      "render_seconds": 0.063,
+      "recognize_seconds": 0.788
+    },
+    {
+      "page": 73,
+      "dpi": 150,
+      "reference_chars": 1718,
+      "recognized_chars": 1718,
+      "alignment": 0.7282,
+      "cer": 0.2718,
+      "render_seconds": 0.036,
+      "recognize_seconds": 0.74
+    },
+    {
+      "page": 73,
+      "dpi": 200,
+      "reference_chars": 1719,
+      "recognized_chars": 1719,
+      "alignment": 0.7213,
+      "cer": 0.2787,
+      "render_seconds": 0.062,
+      "recognize_seconds": 0.772
+    },
+    {
+      "page": 73,
+      "dpi": 300,
+      "reference_chars": 1717,
+      "recognized_chars": 1717,
+      "alignment": 0.7169,
+      "cer": 0.2831,
+      "render_seconds": 0.127,
+      "recognize_seconds": 0.78
+    },
+    {
+      "page": 74,
+      "dpi": 150,
+      "reference_chars": 1732,
+      "recognized_chars": 1732,
+      "alignment": 0.7136,
+      "cer": 0.2864,
+      "render_seconds": 0.037,
+      "recognize_seconds": 0.784
+    },
+    {
+      "page": 74,
+      "dpi": 200,
+      "reference_chars": 1740,
+      "recognized_chars": 1740,
+      "alignment": 0.7305,
+      "cer": 0.2695,
+      "render_seconds": 0.062,
+      "recognize_seconds": 0.775
+    },
+    {
+      "page": 74,
+      "dpi": 300,
+      "reference_chars": 1734,
+      "recognized_chars": 1734,
+      "alignment": 0.7209,
+      "cer": 0.2791,
+      "render_seconds": 0.122,
+      "recognize_seconds": 0.783
+    },
+    {
+      "page": 75,
+      "dpi": 150,
+      "reference_chars": 2009,
+      "recognized_chars": 2009,
+      "alignment": 0.7178,
+      "cer": 0.2822,
+      "render_seconds": 0.039,
+      "recognize_seconds": 0.802
+    },
+    {
+      "page": 75,
+      "dpi": 200,
+      "reference_chars": 2010,
+      "recognized_chars": 2010,
+      "alignment": 0.7184,
+      "cer": 0.2816,
+      "render_seconds": 0.066,
+      "recognize_seconds": 0.837
+    },
+    {
+      "page": 75,
+      "dpi": 300,
+      "reference_chars": 2016,
+      "recognized_chars": 2016,
+      "alignment": 0.9048,
+      "cer": 0.0952,
+      "render_seconds": 0.131,
+      "recognize_seconds": 0.875
+    }
+  ],
+  "reference": "Internet Archive item surely-youre-joking-mr.-feynman-adventures-of-a-curious-character-richard 的 _djvu.txt（682 KB，与 PDF 属不同条目的 digitization）",
+  "reference_note": "机器 OCR 但来自独立条目；不是人工校对文本，所以 CER 是上界而非精确值。",
+  "comparison": {
+    "book": "SURELY YOU'RE JOKING MISTER FEYNMAN（Internet Archive 扫描件，150 dpi 源）",
+    "design": "同书、同 6 页（70–75）、同 150 dpi 渲染，只换参考答案",
+    "per_page": {
+      "70": {
+        "self_referential": 0.1486,
+        "authoritative": 0.1277
+      },
+      "71": {
+        "self_referential": 0.0604,
+        "authoritative": 0.2928
+      },
+      "72": {
+        "self_referential": 0.144,
+        "authoritative": 0.1517
+      },
+      "73": {
+        "self_referential": 0.0807,
+        "authoritative": 0.2718
+      },
+      "74": {
+        "self_referential": 0.23,
+        "authoritative": 0.2864
+      },
+      "75": {
+        "self_referential": 0.0479,
+        "authoritative": 0.2822
+      }
+    },
+    "mean_self_referential": 0.1186,
+    "mean_authoritative": 0.2354,
+    "underestimation": "自指参考把真实错误率低估约 50%",
+    "caveat": "参考文本换行与页边界跟扫描书对不齐，逐页窗口按字符数截取会切偏（第 70、72 页明显偏低）。0.2354 是量级参考，不是精确值。"
+  }
+}

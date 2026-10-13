@@ -195,7 +195,7 @@ def test_upgrade_creates_exact_phase_one_columns(database: Database) -> None:
     }
     assert {column["name"] for column in inspector.get_columns("document_chunks")} == {
         "id", "document_id", "repository_id", "chunk_index", "text", "section_path", "page_number",
-        "token_count", "source_url", "vector_id", "created_at",
+        "token_count", "source_url", "vector_id", "images_json", "created_at",
     }
     assert {column["name"] for column in inspector.get_columns("import_jobs")} == {
         "id", "source_kind", "source_value", "repository_id", "state", "current_stage", "progress",

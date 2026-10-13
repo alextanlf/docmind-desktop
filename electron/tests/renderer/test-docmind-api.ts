@@ -52,6 +52,8 @@ export const readySettings: SettingsView = {
   ],
   dataPath: "/Users/test/Library/Application Support/DocMind",
   screenshotCount: 2,
+  figureOcr: true,
+  figureDescription: false,
   modelSetupSkipped: false,
   // Keyed by preset then model id, mirroring the backend's model-level table.
   // Values are the vendors' own effort levels (not a normalized scale), so they
@@ -559,6 +561,7 @@ export const document: DocumentDetail = {
   content: "# State 管理\n\n内容",
   originalMediaType: null,
   originalByteSize: null,
+  figures: [],
   createdAt: "2026-08-31T00:00:00Z",
   updatedAt: "2026-08-31T00:00:00Z",
 };

@@ -137,6 +137,12 @@ export const AvailableModelSchema = z.object({
   label: z.string().min(1).max(200),
 });
 
+/** 图片识别开关的入参。 */
+export const FigureOcrInputSchema = z.object({ enabled: z.boolean() });
+
+/** 图表语义描述开关的入参。 */
+export const FigureDescriptionInputSchema = z.object({ enabled: z.boolean() });
+
 export const SettingsViewSchema = z.object({
   model: ModelSettingsViewSchema,
   hasApiKey: z.boolean(),
@@ -150,6 +156,20 @@ export const SettingsViewSchema = z.object({
   models: z.array(ConfiguredModelSchema).default([]),
   dataPath: z.string(),
   screenshotCount: z.number().int().nonnegative(),
+  /**
+   * 导入时是否识别图片里的文字。默认开。
+   *
+   * 关掉换速度（实测 0.11~0.19 秒/页），代价是**纯扫描页从索引里消失** —— 截图型幻灯片
+   * 与扫描书没有文字层，识别是它们唯一的文字来源。所以这是要如实说明代价的开关。
+   */
+  figureOcr: z.boolean().default(true),
+  /**
+   * 是否用视觉模型描述图表语义。**默认关闭**。
+   *
+   * 打开它意味着把文档里的图片发到模型服务商 —— 与「本地优先」是相反的取舍，所以必须
+   * 由用户显式打开。它补的是 OCR 读不到的那一类图（状态转移图、曲线图、示意图）。
+   */
+  figureDescription: z.boolean().default(false),
   runtime: z
     .object({
       local: LocalModelRuntimeSchema,
@@ -493,6 +513,28 @@ export const GraphEdgeSchema = z.object({
   targetId: z.string(),
   relation: z.enum(["references", "mentions", "tags"]),
 });
+/**
+ * 一篇文档里的一张插图。图的内容（图内文字、识别结果）已经在正文里参与检索；这里带的
+ * 是展示所需的部分，其中 `bbox` 让客户端能在 PDF 原件上框出这张图。
+ */
+/**
+ * 插图文件名。与后端 `_ASSET_NAME` 的白名单一致（64 位十六进制摘要 + .png）。
+ *
+ * 渲染层传上来的名字一律先过这里再拼进 URL：文件名直接来自后端的插图清单，但把它当作
+ * 可信输入是没必要的 —— 一旦它被污染，拼出来的就是任意路径。
+ */
+export const DocumentAssetNameSchema = z.string().regex(/^[0-9a-f]{64}\.png$/);
+
+export const DocumentFigureSchema = z.object({
+  asset: z.string().regex(/^[0-9a-f]{64}\.png$/),
+  pageNumber: z.number().int().positive().nullable().default(null),
+  caption: z.string().default(""),
+  width: z.number().int().nonnegative().default(0),
+  height: z.number().int().nonnegative().default(0),
+  bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]).nullable().default(null),
+  fullPage: z.boolean().default(false),
+});
+
 export const DocumentDetailSchema = DocumentSummarySchema.extend({
   content: z.string().max(2_000_000),
   /**
@@ -501,6 +543,8 @@ export const DocumentDetailSchema = DocumentSummarySchema.extend({
    */
   originalMediaType: z.string().max(255).nullable(),
   originalByteSize: z.number().int().nonnegative().nullable(),
+  /** 没有图是常态，后端给空数组，客户端不必先判空再遍历。 */
+  figures: DocumentFigureSchema.array().default([]),
 });
 
 /**
@@ -1161,6 +1205,7 @@ export type DocumentInput = z.infer<typeof DocumentInputSchema>;
 export type DocumentSummary = z.infer<typeof DocumentSummarySchema>;
 export type DocumentDetail = z.infer<typeof DocumentDetailSchema>;
 export type DocumentOriginalChunk = z.infer<typeof DocumentOriginalChunkSchema>;
+export type DocumentFigure = z.infer<typeof DocumentFigureSchema>;
 export type SourceRef = z.infer<typeof SourceRefSchema>;
 export type SourcePreview = z.infer<typeof SourcePreviewSchema>;
 export type CreateImportInput = z.infer<typeof CreateImportInputSchema>;
@@ -1248,6 +1293,8 @@ export interface DocMindApi {
     listModels(input?: ModelProbe): Promise<ModelListView>;
     skipModelSetup(): Promise<SettingsView>;
     clearDiagnostics(): Promise<void>;
+    setFigureOcr(enabled: boolean): Promise<SettingsView>;
+    setFigureDescription(enabled: boolean): Promise<SettingsView>;
     saveRuntime(input: z.infer<typeof RuntimeSettingsInputSchema>): Promise<SettingsView>;
   };
   embedding: {
@@ -1322,6 +1369,13 @@ export interface DocMindApi {
       begin: number,
       end: number,
     ): Promise<DocumentOriginalChunk>;
+    /**
+     * 读取一张插图的字节，返回 base64。
+     *
+     * 用 base64 而不是 Uint8Array，与 `readOriginalChunk` 同一条约定：
+     * `contextBridge` 不保证透传 TypedArray。
+     */
+    readAsset(documentId: string, assetName: string): Promise<string>;
     create(repositoryId: string, input: DocumentInput): Promise<DocumentDetail>;
     update(documentId: string, input: DocumentInput): Promise<DocumentDetail>;
     delete(documentId: string, confirm: true): Promise<void>;

@@ -525,6 +525,24 @@ class DocumentStore:
             )
             return list(session.scalars(statement))
 
+    def chunk_image_payloads(self, document_id: str) -> list[str]:
+        """这篇文档所有 chunk 的 ``images_json``，按 chunk 顺序。
+
+        只取这一列，不取整个 chunk 行：文档详情要的是插图清单，而 ``text`` 列在几百个
+        chunk 上是几百 KB，取回来只为丢掉。
+
+        走仓储而不是在 API 层访问 ``document.chunks``：那是懒加载关系，session 一关就
+        detach，访问即抛 ``DetachedInstanceError``。仓储的 session 边界是明确的，这个坑
+        不该让每个调用点各自记着。
+        """
+        with self.database.session() as session:
+            statement = (
+                select(DocumentChunkRecord.images_json)
+                .where(DocumentChunkRecord.document_id == document_id)
+                .order_by(DocumentChunkRecord.chunk_index)
+            )
+            return [value or "" for value in session.scalars(statement)]
+
     def delete_local(self, document_id: str) -> None:
         with self.database.session() as session:
             document = session.get(DocumentRecord, document_id)
@@ -2860,9 +2878,44 @@ class DocumentMutationStore:
                 session.delete(record)
 
 
+#: 导入时是否识别图片里的文字。
+#:
+#: 键与读法放在 `SettingStore` 上，因为**两个调用方都要它**：设置页读写它，导入服务在解析
+#: 前读它落定进程开关。放在只有设置页能到的地方，导入服务就得反向依赖 API 层。
+FIGURE_OCR_KEY = "import.figure_ocr"
+
+#: 导入时是否用视觉模型描述图表语义。**默认关闭**。
+#:
+#: 打开它意味着把文档里的图片**发到模型服务商**。这与"本地优先"是相反的取舍，所以必须
+#: 由用户显式打开，而不是默认启用 —— 一个默认开启的联网功能会让用户在不知情的情况下把
+#: 资料发出去。只对"图里没有文字"的图发起：有文字的图 OCR 已经覆盖，再描述是白花钱。
+FIGURE_DESCRIPTION_KEY = "import.figure_description"
+
+
 class SettingStore:
     def __init__(self, database: Database) -> None:
         self.database = database
+
+    def figure_ocr_enabled(self) -> bool:
+        """导入时是否识别图片里的文字。**默认开** —— 关掉会让截图型课件失去内容。
+
+        实测代价（53 页截图型课件）：关掉之后 sections 从 53 降到 36、正文从 23447 字符
+        降到 15486，那 17 页没有文字层，识别是它们唯一的文字来源。
+        """
+        stored = self.get(FIGURE_OCR_KEY)
+        if stored is None:
+            return True
+        return stored == "1"
+
+    def set_figure_ocr(self, enabled: bool) -> None:
+        self.set(FIGURE_OCR_KEY, "1" if enabled else "0")
+
+    def figure_description_enabled(self) -> bool:
+        """是否用视觉模型描述图表。**默认关闭**：打开会把图片发到模型服务商。"""
+        return self.get(FIGURE_DESCRIPTION_KEY) == "1"
+
+    def set_figure_description(self, enabled: bool) -> None:
+        self.set(FIGURE_DESCRIPTION_KEY, "1" if enabled else "0")
 
     def get(self, key: str) -> str | None:
         with self.database.session() as session:

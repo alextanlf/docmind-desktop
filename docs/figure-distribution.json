@@ -1,0 +1,5404 @@
+{
+  "summary": {
+    "documents": 12,
+    "pages": 559,
+    "sampled_pages": 559,
+    "pages_without_text": 0,
+    "pages_without_text_ratio": 0.0,
+    "image_only_pages": 137,
+    "image_only_pages_ratio": 0.2451,
+    "documents_all_image_only": [
+      "reinforcement-learning.pdf",
+      "Semantic Communications.pdf"
+    ],
+    "figures": 346,
+    "figures_per_page": 0.619,
+    "full_page_figures": 3,
+    "raster_instances": 308,
+    "vector_figures": 101,
+    "vector_figures_with_text": 34,
+    "vector_with_text_ratio": 0.3366,
+    "figures_without_text": 231,
+    "figures_without_text_ratio": 0.6676,
+    "figures_with_internal_grid": 0,
+    "figures_with_grid_ratio": 0.0,
+    "excluded_backgrounds": 2397,
+    "repeated_raster_digests": 13,
+    "repeated_raster_instances": 81
+  },
+  "documents": [
+    {
+      "path": "01-Introduction2026.pdf",
+      "pages": 53,
+      "sampled_pages": 53,
+      "pages_without_text": 0,
+      "image_only_pages": 13,
+      "figures": [
+        {
+          "page": 4,
+          "area_ratio": 0.0244,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 60,
+              "width": 842,
+              "height": 91,
+              "digest": "42a60121d8a3faf8"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 5,
+          "area_ratio": 0.208,
+          "emptiness": 0.1554,
+          "visual_ratio": 0.8446,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 66,
+              "width": 584,
+              "height": 828,
+              "digest": "ea14e36320b9612b"
+            },
+            {
+              "xref": 67,
+              "width": 515,
+              "height": 834,
+              "digest": "e60931c501ffbdd8"
+            },
+            {
+              "xref": 68,
+              "width": 717,
+              "height": 902,
+              "digest": "d73175ddace07523"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 8,
+          "area_ratio": 0.0458,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 86,
+              "width": 461,
+              "height": 81,
+              "digest": "781eb926c4611840"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 14,
+          "area_ratio": 0.0284,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 109,
+              "width": 873,
+              "height": 104,
+              "digest": "528c66d24b94f8e0"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 14,
+          "area_ratio": 0.1161,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "Page.14",
+          "rasters": [
+            {
+              "xref": 111,
+              "width": 286,
+              "height": 270,
+              "digest": "058828a58853425d"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 16,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "4\nHistory of Info. Theory",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 16,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "3\nApplication of Info. Theory",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 16,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "2\nCommunication System",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 16,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1978,
+          "text": "1\nWhat is Information?",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 16,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1996,
+          "text": "5\nKey Knowledge",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 16,
+          "area_ratio": 0.0212,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 118,
+              "width": 730,
+              "height": 91,
+              "digest": "382bf0394895d7cb"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 17,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "4\nHistory of Info. Theory",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 17,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "3\nApplication of Info. Theory",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 17,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "2\nCommunication System",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 17,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1978,
+          "text": "1\nWhat is Information?",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 17,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1996,
+          "text": "5\nKey Knowledge",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 17,
+          "area_ratio": 0.0212,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 118,
+              "width": 730,
+              "height": 91,
+              "digest": "382bf0394895d7cb"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 20,
+          "area_ratio": 0.0371,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 146,
+              "width": 1089,
+              "height": 110,
+              "digest": "bffd94364dd92bbf"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 20,
+          "area_ratio": 0.1093,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 148,
+              "width": 600,
+              "height": 372,
+              "digest": "f8e6e3a262622348"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 20,
+          "area_ratio": 0.144,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 153,
+              "width": 640,
+              "height": 358,
+              "digest": "d11b198f7f2bfa5e"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 25,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "4\nHistory of Info. Theory",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 25,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "3\nApplication of Info. Theory",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 25,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "2\nCommunication System",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 25,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1978,
+          "text": "1\nWhat is Information?",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 25,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1996,
+          "text": "5\nKey Knowledge",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 25,
+          "area_ratio": 0.0212,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 118,
+              "width": 730,
+              "height": 91,
+              "digest": "382bf0394895d7cb"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 26,
+          "area_ratio": 0.2541,
+          "emptiness": 0.6226,
+          "visual_ratio": 0.3774,
+          "text": "Info. \nSource\nTx\nChannel\nRx\nInfo. \nDest.\nNoise",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 27,
+          "area_ratio": 0.5706,
+          "emptiness": 0.0,
+          "visual_ratio": 1.195,
+          "text": "Source \nEncoder\nEncryptor\nChannel \nEncoder\nModulator\nred\n0101\n0011\n00110\nTransmitter\nReceiver\nDe-\nmodulator\nChannel \nDecoder\nDecryptor\nSource \nDecoder",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 28,
+          "area_ratio": 0.0894,
+          "emptiness": 0.4449,
+          "visual_ratio": 0.5551,
+          "text": "0\nT",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 28,
+          "area_ratio": 0.0911,
+          "emptiness": 0.4109,
+          "visual_ratio": 0.5891,
+          "text": "0\nT",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 29,
+          "area_ratio": 0.1546,
+          "emptiness": 0.2221,
+          "visual_ratio": 0.7779,
+          "text": "Channel\nInfo.\nSource\nInfo.\nDest.",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 30,
+          "area_ratio": 0.025,
+          "emptiness": 0.0,
+          "visual_ratio": 1.047,
+          "text": "Transmission\nTransmission",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 31,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "4\nHistory of Info. Theory",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 31,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "3\nApplication of Info. Theory",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 31,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "2\nCommunication System",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 31,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1978,
+          "text": "1\nWhat is Information?",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 31,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1996,
+          "text": "5\nKey Knowledge",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 31,
+          "area_ratio": 0.0212,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 118,
+              "width": 730,
+              "height": 91,
+              "digest": "382bf0394895d7cb"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 32,
+          "area_ratio": 0.0417,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 218,
+              "width": 256,
+              "height": 105,
+              "digest": "3bcaa7c61e6625cd"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 33,
+          "area_ratio": 0.235,
+          "emptiness": 0.0,
+          "visual_ratio": 1.9567,
+          "text": "Information transmission rate of all \npossible communication schemes\nn",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 35,
+          "area_ratio": 0.5324,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0995,
+          "text": "Info. \nTheory\nPhysics\nCommunication \nTheory\nHypothesis \nTesting Fisher \nInformation\nInequalities\nPortfolio Theory \nKelly Gambling\nThermodynamics \nQuantum \nInformation \nTheory\nLimits of \nCommunication \nTheory\nKolmogorov \nComplexity\nProbability \nTheory\nLimit Theorems \nLarge Deviations\nStatistics\nMathematics\nEconomics\nComputer \nScience",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 37,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "4\nHistory of Info. Theory",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 37,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "3\nApplication of Info. Theory",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 37,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "2\nCommunication System",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 37,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1978,
+          "text": "1\nWhat is Information?",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 37,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1996,
+          "text": "5\nKey Knowledge",
+          "rasters": [
+            {
+              "xref": 120,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 37,
+          "area_ratio": 0.0212,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 118,
+              "width": 730,
+              "height": 91,
+              "digest": "382bf0394895d7cb"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 40,
+          "area_ratio": 0.0771,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 247,
+              "width": 284,
+              "height": 400,
+              "digest": "0f9ba816bac35a05"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 42,
+          "area_ratio": 0.2742,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0765,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 257,
+              "width": 581,
+              "height": 109,
+              "digest": "06a1578f135e4c64"
+            }
+          ],
+          "grid_markdown": ""
+        }
+      ],
+      "excluded_backgrounds": 176,
+      "repeated_digests": {
+        "dfacf43c4aa54025": 25,
+        "382bf0394895d7cb": 5
+      },
+      "error": null
+    },
+    {
+      "path": "03-Entropy.pdf",
+      "pages": 23,
+      "sampled_pages": 23,
+      "pages_without_text": 0,
+      "image_only_pages": 4,
+      "figures": [
+        {
+          "page": 1,
+          "area_ratio": 0.158,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "1",
+          "rasters": [
+            {
+              "xref": 24,
+              "width": 1284,
+              "height": 2283,
+              "digest": "98932d97598f9872"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "3\nProperties of Entropy",
+          "rasters": [
+            {
+              "xref": 35,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "2\nConditional and Joint Entropy",
+          "rasters": [
+            {
+              "xref": 35,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1978,
+          "text": "1\nEntropy of Discrete Info. Source",
+          "rasters": [
+            {
+              "xref": 35,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0212,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 33,
+              "width": 730,
+              "height": 91,
+              "digest": "382bf0394895d7cb"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 9,
+          "area_ratio": 0.0254,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 87,
+              "width": 743,
+              "height": 109,
+              "digest": "4a207428741b4859"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 11,
+          "area_ratio": 0.0312,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 121,
+              "width": 637,
+              "height": 931,
+              "digest": "9919f5bf5c48e3bb"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 15,
+          "area_ratio": 0.052,
+          "emptiness": 0.0,
+          "visual_ratio": 2.5236,
+          "text": "1\n−1\n0",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 15,
+          "area_ratio": 0.0549,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "1\n5",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 16,
+          "area_ratio": 0.0488,
+          "emptiness": 0.0346,
+          "visual_ratio": 0.9654,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 137,
+              "width": 966,
+              "height": 109,
+              "digest": "295abfeb4c0c8ffb"
+            },
+            {
+              "xref": 139,
+              "width": 489,
+              "height": 91,
+              "digest": "92f4ee427139b67d"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 19,
+          "area_ratio": 0.0909,
+          "emptiness": 0.0,
+          "visual_ratio": 2.6619,
+          "text": "�(�)",
+          "rasters": [],
+          "grid_markdown": ""
+        }
+      ],
+      "excluded_backgrounds": 85,
+      "repeated_digests": {
+        "dfacf43c4aa54025": 3
+      },
+      "error": null
+    },
+    {
+      "path": "04-Multi-Symbol-Entropy.pdf",
+      "pages": 23,
+      "sampled_pages": 23,
+      "pages_without_text": 0,
+      "image_only_pages": 2,
+      "figures": [
+        {
+          "page": 2,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "3\nMemory Information Source",
+          "rasters": [
+            {
+              "xref": 28,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 2,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "2\nMemoryless Information Source",
+          "rasters": [
+            {
+              "xref": 28,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 2,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1978,
+          "text": "1\nMulti-Symbol Information Source",
+          "rasters": [
+            {
+              "xref": 28,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 2,
+          "area_ratio": 0.0212,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 26,
+              "width": 730,
+              "height": 91,
+              "digest": "382bf0394895d7cb"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "3\nMemory Information Source",
+          "rasters": [
+            {
+              "xref": 28,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "2\nMemoryless Information Source",
+          "rasters": [
+            {
+              "xref": 28,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1978,
+          "text": "1\nMulti-Symbol Information Source",
+          "rasters": [
+            {
+              "xref": 28,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0212,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 26,
+              "width": 730,
+              "height": 91,
+              "digest": "382bf0394895d7cb"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 4,
+          "area_ratio": 0.1314,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 56,
+              "width": 846,
+              "height": 762,
+              "digest": "4676c5aebdc79f86"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 6,
+          "area_ratio": 0.0911,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 63,
+              "width": 1024,
+              "height": 1024,
+              "digest": "ef3075e07b179fb3"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 6,
+          "area_ratio": 0.187,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 64,
+              "width": 1010,
+              "height": 351,
+              "digest": "fe0e38109198c611"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 7,
+          "area_ratio": 0.0355,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "p\n{�",
+          "rasters": [
+            {
+              "xref": 69,
+              "width": 549,
+              "height": 72,
+              "digest": "ce7347dd13456f33"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 7,
+          "area_ratio": 0.0573,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "�\n�",
+          "rasters": [
+            {
+              "xref": 70,
+              "width": 874,
+              "height": 174,
+              "digest": "8ddab9e0e05fab4c"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 8,
+          "area_ratio": 0.0363,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "hift l\nd f\nll\n1 X2\nX\nX",
+          "rasters": [
+            {
+              "xref": 90,
+              "width": 1069,
+              "height": 200,
+              "digest": "e88bc30852c1cc4a"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 10,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "3\nMemory Information Source",
+          "rasters": [
+            {
+              "xref": 28,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 10,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "2\nMemoryless Information Source",
+          "rasters": [
+            {
+              "xref": 28,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 10,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1978,
+          "text": "1\nMulti-Symbol Information Source",
+          "rasters": [
+            {
+              "xref": 28,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 10,
+          "area_ratio": 0.0212,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 26,
+              "width": 730,
+              "height": 91,
+              "digest": "382bf0394895d7cb"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 15,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "3\nMemory Information Source",
+          "rasters": [
+            {
+              "xref": 28,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 15,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "2\nMemoryless Information Source",
+          "rasters": [
+            {
+              "xref": 28,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 15,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1978,
+          "text": "1\nMulti-Symbol Information Source",
+          "rasters": [
+            {
+              "xref": 28,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 15,
+          "area_ratio": 0.0212,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 26,
+              "width": 730,
+              "height": 91,
+              "digest": "382bf0394895d7cb"
+            }
+          ],
+          "grid_markdown": ""
+        }
+      ],
+      "excluded_backgrounds": 78,
+      "repeated_digests": {
+        "dfacf43c4aa54025": 12,
+        "382bf0394895d7cb": 4
+      },
+      "error": null
+    },
+    {
+      "path": "05-Markov-Source.pdf",
+      "pages": 32,
+      "sampled_pages": 32,
+      "pages_without_text": 0,
+      "image_only_pages": 1,
+      "figures": [
+        {
+          "page": 3,
+          "area_ratio": 0.0265,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 35,
+              "width": 775,
+              "height": 110,
+              "digest": "228dfc697f1c42cc"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.023,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 37,
+              "width": 793,
+              "height": 91,
+              "digest": "f81b268c5db44ae3"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 4,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "3\nCalculation of Entropy Rate",
+          "rasters": [
+            {
+              "xref": 43,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 4,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "2\nModel of Markov Source",
+          "rasters": [
+            {
+              "xref": 43,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 4,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1978,
+          "text": "1\nDefinition of Markov Source",
+          "rasters": [
+            {
+              "xref": 43,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 4,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1983,
+          "text": "4\nRedundancy of Info Source",
+          "rasters": [
+            {
+              "xref": 43,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 4,
+          "area_ratio": 0.0212,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 41,
+              "width": 730,
+              "height": 91,
+              "digest": "382bf0394895d7cb"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 7,
+          "area_ratio": 0.0233,
+          "emptiness": 0.0,
+          "visual_ratio": 1.5509,
+          "text": "�5, �1, �3, �5, �2, �4, �",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 7,
+          "area_ratio": 0.0322,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0279,
+          "text": "�3,  �5, �1, �3, �5, �2, �4, �1, ⋯",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 10,
+          "area_ratio": 0.0475,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "��= ��2, ⋯, ���, ���+1 \n�)",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 10,
+          "area_ratio": 0.0475,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "��= ��1, ��2, ⋯, ��� \n�(",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 11,
+          "area_ratio": 0.1541,
+          "emptiness": 0.2576,
+          "visual_ratio": 0.7424,
+          "text": "1\n0\n(0/0) = 0.8\n�(1/1) =",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 14,
+          "area_ratio": 0.2642,
+          "emptiness": 0.4607,
+          "visual_ratio": 0.5393,
+          "text": "00\n11\n10\n01\n�(1/00)\n= 0.2\n�(0/01)\n= 0.6\n�(1/01)\n= 0.4\n�(1/10)\n= 0.6\n�(0/11)\n= 0.2\n�(0/10)\n= 0.4",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 15,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "3\nCalculation of Entropy Limit",
+          "rasters": [
+            {
+              "xref": 43,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 15,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "2\nModel of Markov Source",
+          "rasters": [
+            {
+              "xref": 43,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 15,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1978,
+          "text": "1\nDefinition of Markov Source",
+          "rasters": [
+            {
+              "xref": 43,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 15,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1983,
+          "text": "4\nRedundancy of Info Source",
+          "rasters": [
+            {
+              "xref": 43,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 15,
+          "area_ratio": 0.0212,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 41,
+              "width": 730,
+              "height": 91,
+              "digest": "382bf0394895d7cb"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 17,
+          "area_ratio": 0.0201,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 126,
+              "width": 588,
+              "height": 109,
+              "digest": "94cbb74c8a3a393d"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 19,
+          "area_ratio": 0.2642,
+          "emptiness": 0.4607,
+          "visual_ratio": 0.5393,
+          "text": "00\n11\n10\n01\n�(1/00)\n= 0.2\n�(0/01)\n= 0.6\n�(1/01)\n= 0.4\n�(1/10)\n= 0.6\n�(0/11)\n= 0.2\n�(0/10)\n= 0.4",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 19,
+          "area_ratio": 0.0256,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 134,
+              "width": 881,
+              "height": 91,
+              "digest": "546b46f8f9bfd5e4"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 20,
+          "area_ratio": 0.1891,
+          "emptiness": 0.268,
+          "visual_ratio": 0.732,
+          "text": "1\n0\n) = 0.8\n�(1/1",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 21,
+          "area_ratio": 0.3798,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "g\n0.5\n0.5\n0.5\n0.5",
+          "rasters": [
+            {
+              "xref": 144,
+              "width": 715,
+              "height": 292,
+              "digest": "b11d5cd10fa43d0f"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 25,
+          "area_ratio": 0.3234,
+          "emptiness": 0.1876,
+          "visual_ratio": 0.8124,
+          "text": "Decide the states of the Markov source by considering \nthe legitimate symbol space and the memory length.\n \nSTEP 1\nSTEP 2 Decide the state transition probabilities by considering \nthe conditional sending probabilities of the symbols.",
+          "rasters": [
+            {
+              "xref": 168,
+              "width": 185,
+              "height": 114,
+              "digest": "11450333827ff51b"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 25,
+          "area_ratio": 0.4227,
+          "emptiness": 0.3335,
+          "visual_ratio": 0.6665,
+          "text": "STEP 3\nSTEP 4\nthe conditional sending probabilities of the symbols. \nObtain the stationary distribution of the source by using \nthe state space and the state transition probabilities.\nCalculate the entropy by using the stationary distribution \nand the state transition probabilities of the source.",
+          "rasters": [
+            {
+              "xref": 170,
+              "width": 185,
+              "height": 114,
+              "digest": "83d305c247b72f1e"
+            },
+            {
+              "xref": 172,
+              "width": 185,
+              "height": 114,
+              "digest": "b3ad0c7b3c04b9e5"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 25,
+          "area_ratio": 0.0364,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 166,
+              "width": 1071,
+              "height": 109,
+              "digest": "fdad15f66a04d971"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 27,
+          "area_ratio": 0.0331,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 180,
+              "width": 969,
+              "height": 110,
+              "digest": "80d5cf993aa96227"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 30,
+          "area_ratio": 0.0331,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 180,
+              "width": 969,
+              "height": 110,
+              "digest": "80d5cf993aa96227"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 31,
+          "area_ratio": 0.2259,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 196,
+              "width": 869,
+              "height": 258,
+              "digest": "0a4aa72414271549"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 31,
+          "area_ratio": 0.1092,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 197,
+              "width": 633,
+              "height": 95,
+              "digest": "5e5fca0fdc73c97b"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 32,
+          "area_ratio": 0.1306,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 202,
+              "width": 630,
+              "height": 420,
+              "digest": "03bbf7eaa2b46594"
+            }
+          ],
+          "grid_markdown": ""
+        }
+      ],
+      "excluded_backgrounds": 148,
+      "repeated_digests": {
+        "dfacf43c4aa54025": 8
+      },
+      "error": null
+    },
+    {
+      "path": "06-Source-Coding.pdf",
+      "pages": 51,
+      "sampled_pages": 51,
+      "pages_without_text": 0,
+      "image_only_pages": 9,
+      "figures": [
+        {
+          "page": 2,
+          "area_ratio": 0.0331,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 26,
+              "width": 969,
+              "height": 110,
+              "digest": "80d5cf993aa96227"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.039,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 49,
+              "width": 100,
+              "height": 100,
+              "digest": "7176a5a4d8423251"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0919,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 51,
+              "width": 1080,
+              "height": 1080,
+              "digest": "f256a9b16ea3acba"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.1609,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 52,
+              "width": 800,
+              "height": 800,
+              "digest": "4cf4086d6037ca3d"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 4,
+          "area_ratio": 0.2655,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 57,
+              "width": 476,
+              "height": 249,
+              "digest": "53d4fab2bda4abfc"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 5,
+          "area_ratio": 0.5706,
+          "emptiness": 0.0,
+          "visual_ratio": 1.195,
+          "text": "Source \nEncoder\nEncryp\ntor\nChannel \nEncoder\nModulat\nor\nred\n0101\n0011\n00110\nTransmitter\nReceiver\nDemod\nulator\nChannel \nDecoder\nDecryp\ntor\nSource \nDecoder",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 5,
+          "area_ratio": 0.0271,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 60,
+              "width": 790,
+              "height": 110,
+              "digest": "5f097de653b1a7fa"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 5,
+          "area_ratio": 0.0249,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 64,
+              "width": 729,
+              "height": 109,
+              "digest": "244cdcc0d95a8ac9"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 9,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "3\nClassic Source Coding Schemes",
+          "rasters": [
+            {
+              "xref": 83,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 9,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "2\nLossless Source Coding Theorems",
+          "rasters": [
+            {
+              "xref": 83,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 9,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1978,
+          "text": "1\nFundamental of Source Coding",
+          "rasters": [
+            {
+              "xref": 83,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 9,
+          "area_ratio": 0.0212,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 81,
+              "width": 730,
+              "height": 91,
+              "digest": "382bf0394895d7cb"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 10,
+          "area_ratio": 0.5706,
+          "emptiness": 0.0,
+          "visual_ratio": 1.195,
+          "text": "Source \nEncoder\nEncryp\ntor\nChannel \nEncoder\nModulat\nor\nred\n0101\n0011\n00110\nTransmitter\nReceiver\nDemod\nulator\nChannel \nDecoder\nDecryp\ntor\nSource \nDecoder",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 14,
+          "area_ratio": 0.0331,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 26,
+              "width": 969,
+              "height": 110,
+              "digest": "80d5cf993aa96227"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 18,
+          "area_ratio": 0.0235,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 130,
+              "width": 686,
+              "height": 109,
+              "digest": "281852b2e91ef0e6"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 20,
+          "area_ratio": 0.0311,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "�= �\n�log2 �≥",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 20,
+          "area_ratio": 0.0311,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "�= �\n�log2 �",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 20,
+          "area_ratio": 0.0243,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 153,
+              "width": 707,
+              "height": 110,
+              "digest": "4968775368661766"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 20,
+          "area_ratio": 0.0307,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 155,
+              "width": 899,
+              "height": 110,
+              "digest": "6d7a7bc40bd3fd86"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 21,
+          "area_ratio": 0.0224,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 159,
+              "width": 770,
+              "height": 91,
+              "digest": "70ad73c65b17bf1a"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 23,
+          "area_ratio": 0.1451,
+          "emptiness": 0.0,
+          "visual_ratio": 1.9734,
+          "text": "(1) Given � and �, calculate the length � of the symbol sequence generated by \nthe info source that need to be encoded together by exploiting �≥\n��� � ��  \n�2�\n.",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 23,
+          "area_ratio": 0.1451,
+          "emptiness": 0.0,
+          "visual_ratio": 1.9722,
+          "text": "(2) Given �, calculate the probabilities of all the possible symbol sequences \nhaving a length of �.",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 23,
+          "area_ratio": 0.1451,
+          "emptiness": 0.0,
+          "visual_ratio": 1.9725,
+          "text": "(3) Sort all the possible symbol sequences having a length of � by the \ndescending order of their sending probabilities.",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 23,
+          "area_ratio": 0.1451,
+          "emptiness": 0.0,
+          "visual_ratio": 1.9726,
+          "text": "(4) Encode the sorted symbol sequences. The encoded symbol sequences \nconstitute a set of ��. The encoding process continues until � �� ≥1 −�.",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 24,
+          "area_ratio": 0.0369,
+          "emptiness": 0.0096,
+          "visual_ratio": 0.9904,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 171,
+              "width": 1014,
+              "height": 110,
+              "digest": "0d0825229a51d13b"
+            },
+            {
+              "xref": 173,
+              "width": 72,
+              "height": 72,
+              "digest": "ac5ad930dc481cbd"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 25,
+          "area_ratio": 0.0325,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 177,
+              "width": 950,
+              "height": 110,
+              "digest": "8c3bfcaf1ba21a00"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 28,
+          "area_ratio": 0.0306,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 189,
+              "width": 900,
+              "height": 109,
+              "digest": "72ec95e1595cb71d"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 29,
+          "area_ratio": 0.0306,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 189,
+              "width": 900,
+              "height": 109,
+              "digest": "72ec95e1595cb71d"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 31,
+          "area_ratio": 0.1746,
+          "emptiness": 0.145,
+          "visual_ratio": 0.855,
+          "text": "0\n0\n0\n0\n1\n1\n1\n1\n2\n2\n2\n2\n0\n1\n2\n0\n1\n2",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 31,
+          "area_ratio": 0.1145,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0989,
+          "text": "0\n0\n0\n0\n1\n1\n1\n1\n2\n2\n2\n2",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 33,
+          "area_ratio": 0.0226,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 209,
+              "width": 699,
+              "height": 102,
+              "digest": "2bb012074ad1e4da"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 33,
+          "area_ratio": 0.2982,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 211,
+              "width": 1033,
+              "height": 577,
+              "digest": "66e9b3b18f212639"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 38,
+          "area_ratio": 0.8738,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0963,
+          "text": "Binary Shannon code has the following coding steps:\n(1) Sort the symbols of the info source by the descending order \nof their sending probabilities, e.g. � �1 ≥⋯≥� �� \n(2) Let � �0 = 0 and �� �� = �=0\n�−1 � �� ,  �= 1,2, ⋯, �\nrepresents the accumulate probability before the �-th symbol.\n(3) Decide the length �� of the i-th codeword to satisfy the \ninequalities of −log2 � �� ≤��≤1 −log2 � �� . \n(4) Represent �� ��  in its binary form and take �� numbers after \nthe decimal point as the codeword of the symbol ��.",
+          "rasters": [
+            {
+              "xref": 236,
+              "width": 830,
+              "height": 1031,
+              "digest": "c1a80066cea278f5"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 38,
+          "area_ratio": 0.023,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 234,
+              "width": 791,
+              "height": 91,
+              "digest": "805ee862c2fd3e1c"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 42,
+          "area_ratio": 0.8826,
+          "emptiness": 0.0126,
+          "visual_ratio": 0.9874,
+          "text": "M-ary Fano code has the following coding steps:\n(2) Divide the probabilities into M groups having similar sum \nprobabilities. \n(3) Each group is assigned a code-element chosen from M \npossible values. \n(4) Consider each group as a unity and repeat steps (2) and (3) \nuntil the probabilities is undividable. \n(1) Sort the symbols of the info source by the descending order \nof their sending probabilities, e.g. � �1 ≥⋯≥� ��",
+          "rasters": [
+            {
+              "xref": 252,
+              "width": 545,
+              "height": 491,
+              "digest": "7581284477911c66"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 43,
+          "area_ratio": 0.0212,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 256,
+              "width": 617,
+              "height": 110,
+              "digest": "ed1fcb963ffb57ee"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 44,
+          "area_ratio": 0.0212,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 256,
+              "width": 617,
+              "height": 110,
+              "digest": "ed1fcb963ffb57ee"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 45,
+          "area_ratio": 0.8771,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0372,
+          "text": "Binary Huffman code has the following coding steps: \n(1) Sort the symbols of the info source by the descending order of their sending \nprobabilities, e.g. � �1 ≥⋯≥� �� \n(2) Assign 0 and 1 to the symbols ��−1 and �� having the lowest probabilities, \nrespectively. Combine ��−1 and �� as a new symbol, whose probability is the \nsum probability of ��−1 and ��. The new source �1 has  �−1  symbols.\n(3) Sort the symbols in the new source �1 by the descending order of their \nsending probabilities. Repeat step (2) and obtain a new reduced source �2 \nhaving  �−2  symbols.  \n(4) Repeat the above steps until the info source is reduced to two symbols. Get \nback to the original symbol along the coding path and obtain the codewords.",
+          "rasters": [
+            {
+              "xref": 264,
+              "width": 221,
+              "height": 254,
+              "digest": "785f4477607564ca"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 45,
+          "area_ratio": 0.0227,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 262,
+              "width": 779,
+              "height": 92,
+              "digest": "8436a9973548ab3a"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 48,
+          "area_ratio": 0.0331,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 26,
+              "width": 969,
+              "height": 110,
+              "digest": "80d5cf993aa96227"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 49,
+          "area_ratio": 0.0227,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 283,
+              "width": 779,
+              "height": 92,
+              "digest": "d315dbfc582e1927"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 50,
+          "area_ratio": 0.0224,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 287,
+              "width": 655,
+              "height": 109,
+              "digest": "d0b84effba453f1c"
+            }
+          ],
+          "grid_markdown": ""
+        }
+      ],
+      "excluded_backgrounds": 342,
+      "repeated_digests": {
+        "80d5cf993aa96227": 3,
+        "dfacf43c4aa54025": 3
+      },
+      "error": null
+    },
+    {
+      "path": "07-Mutual-Information.pdf",
+      "pages": 31,
+      "sampled_pages": 31,
+      "pages_without_text": 0,
+      "image_only_pages": 3,
+      "figures": [
+        {
+          "page": 3,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "3\nMutual Information",
+          "rasters": [
+            {
+              "xref": 42,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "2\nMutual Self-Information",
+          "rasters": [
+            {
+              "xref": 42,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1978,
+          "text": "1\nSingle-Symbol Discrete Channel",
+          "rasters": [
+            {
+              "xref": 42,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0488,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1964,
+          "text": "4\nRelationship among entropies",
+          "rasters": [
+            {
+              "xref": 42,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0212,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 40,
+              "width": 730,
+              "height": 91,
+              "digest": "382bf0394895d7cb"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 6,
+          "area_ratio": 0.145,
+          "emptiness": 0.4522,
+          "visual_ratio": 0.5478,
+          "text": "Info \nSource �\nInfo \nChannel\nInfo\nDest. �\nInterfere\nnce",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 6,
+          "area_ratio": 0.032,
+          "emptiness": 0.2381,
+          "visual_ratio": 0.7619,
+          "text": "�(�/�)",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 7,
+          "area_ratio": 0.0493,
+          "emptiness": 0.2312,
+          "visual_ratio": 0.7688,
+          "text": "�(�/�)",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 7,
+          "area_ratio": 0.0493,
+          "emptiness": 0.2312,
+          "visual_ratio": 0.7688,
+          "text": "�(�/�)",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 8,
+          "area_ratio": 0.0245,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 13,
+          "area_ratio": 0.032,
+          "emptiness": 0.2381,
+          "visual_ratio": 0.7619,
+          "text": "�\n�(��|��)",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 13,
+          "area_ratio": 0.032,
+          "emptiness": 0.2381,
+          "visual_ratio": 0.7619,
+          "text": "�(��|��)",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 18,
+          "area_ratio": 0.0362,
+          "emptiness": 0.2029,
+          "visual_ratio": 0.7971,
+          "text": "= �(�) + �(�)\n,",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 23,
+          "area_ratio": 0.0378,
+          "emptiness": 0.0,
+          "visual_ratio": 2.0033,
+          "text": "�\n�\n�",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 25,
+          "area_ratio": 0.2281,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 141,
+              "width": 422,
+              "height": 153,
+              "digest": "205d5813dc8cd409"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 26,
+          "area_ratio": 0.0629,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 26,
+          "area_ratio": 0.0629,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 27,
+          "area_ratio": 0.032,
+          "emptiness": 0.2381,
+          "visual_ratio": 0.7619,
+          "text": "�(�/�)",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 27,
+          "area_ratio": 0.032,
+          "emptiness": 0.2381,
+          "visual_ratio": 0.7619,
+          "text": "�(�/�)",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 29,
+          "area_ratio": 0.032,
+          "emptiness": 0.2381,
+          "visual_ratio": 0.7619,
+          "text": "�(�/�)",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 29,
+          "area_ratio": 0.032,
+          "emptiness": 0.2381,
+          "visual_ratio": 0.7619,
+          "text": "�(�/�)",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 31,
+          "area_ratio": 0.0242,
+          "emptiness": 0.0,
+          "visual_ratio": 1.8547,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 31,
+          "area_ratio": 0.0242,
+          "emptiness": 0.0,
+          "visual_ratio": 2.4518,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 31,
+          "area_ratio": 0.0242,
+          "emptiness": 0.0,
+          "visual_ratio": 2.4518,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 31,
+          "area_ratio": 0.0242,
+          "emptiness": 0.0,
+          "visual_ratio": 1.8547,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 31,
+          "area_ratio": 0.0242,
+          "emptiness": 0.0,
+          "visual_ratio": 2.4514,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 31,
+          "area_ratio": 0.0242,
+          "emptiness": 0.0,
+          "visual_ratio": 1.6495,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        }
+      ],
+      "excluded_backgrounds": 136,
+      "repeated_digests": {
+        "dfacf43c4aa54025": 4
+      },
+      "error": null
+    },
+    {
+      "path": "08-Dicrete-Channel-Capacity-update.pdf",
+      "pages": 50,
+      "sampled_pages": 50,
+      "pages_without_text": 0,
+      "image_only_pages": 1,
+      "figures": [
+        {
+          "page": 3,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.199,
+          "text": "3\nCapacity of Multi-Symbol Channel",
+          "rasters": [
+            {
+              "xref": 31,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.199,
+          "text": "2\nCapacity of Classic Channels",
+          "rasters": [
+            {
+              "xref": 31,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1986,
+          "text": "1\nDefinition of Channel Capacity",
+          "rasters": [
+            {
+              "xref": 31,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0212,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 29,
+              "width": 730,
+              "height": 91,
+              "digest": "382bf0394895d7cb"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 4,
+          "area_ratio": 0.0474,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "�(��|��)\n�(��|��)\nor",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 8,
+          "area_ratio": 0.1586,
+          "emptiness": 0.0,
+          "visual_ratio": 1.4512,
+          "text": "�(�1/�1)\n�(�2/�2)\n�(��/��)\n⋮\n�1\n�2\n��\n�1\n�2\n��",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 11,
+          "area_ratio": 0.0454,
+          "emptiness": 0.0,
+          "visual_ratio": 3.1921,
+          "text": "⋮\n⋮",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 12,
+          "area_ratio": 0.0454,
+          "emptiness": 0.0,
+          "visual_ratio": 3.1921,
+          "text": "⋮\n⋮",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 13,
+          "area_ratio": 0.0454,
+          "emptiness": 0.0,
+          "visual_ratio": 3.1921,
+          "text": "⋮\n⋮",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 14,
+          "area_ratio": 0.1774,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 98,
+              "width": 663,
+              "height": 405,
+              "digest": "4ebaa6551edbe28e"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 15,
+          "area_ratio": 0.0377,
+          "emptiness": 0.0043,
+          "visual_ratio": 0.9957,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 15,
+          "area_ratio": 0.0345,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1781,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 16,
+          "area_ratio": 0.0377,
+          "emptiness": 0.0043,
+          "visual_ratio": 0.9957,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 17,
+          "area_ratio": 0.0377,
+          "emptiness": 0.0043,
+          "visual_ratio": 0.9957,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 18,
+          "area_ratio": 0.16,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 114,
+              "width": 458,
+              "height": 526,
+              "digest": "7c083ef18bad2b0b"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 19,
+          "area_ratio": 0.0272,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1882,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 20,
+          "area_ratio": 0.1259,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "e unreliable.",
+          "rasters": [
+            {
+              "xref": 121,
+              "width": 563,
+              "height": 393,
+              "digest": "4b73ecbd5ea840b1"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 20,
+          "area_ratio": 0.1404,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 122,
+              "width": 592,
+              "height": 357,
+              "digest": "64107838908f64ba"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 21,
+          "area_ratio": 0.0363,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 125,
+              "width": 1068,
+              "height": 109,
+              "digest": "acdac39469675979"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 22,
+          "area_ratio": 0.0434,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "i\nh\nh\nd h",
+          "rasters": [
+            {
+              "xref": 136,
+              "width": 415,
+              "height": 152,
+              "digest": "e4712bb86e5e7cc1"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 23,
+          "area_ratio": 0.0482,
+          "emptiness": 0.0,
+          "visual_ratio": 7.7969,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 23,
+          "area_ratio": 0.0862,
+          "emptiness": 0.3594,
+          "visual_ratio": 0.6406,
+          "text": "stribution is uniform. But",
+          "rasters": [
+            {
+              "xref": 139,
+              "width": 411,
+              "height": 167,
+              "digest": "0edadb8771e32e1b"
+            },
+            {
+              "xref": 140,
+              "width": 334,
+              "height": 86,
+              "digest": "b6f867a94cd23096"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 24,
+          "area_ratio": 0.1084,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 145,
+              "width": 1400,
+              "height": 186,
+              "digest": "6d476ff3099d2a89"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 24,
+          "area_ratio": 0.2138,
+          "emptiness": 0.2067,
+          "visual_ratio": 0.7933,
+          "text": "us for the channel with transition matrix below",
+          "rasters": [
+            {
+              "xref": 146,
+              "width": 1116,
+              "height": 146,
+              "digest": "7b4072d14ce467f7"
+            },
+            {
+              "xref": 136,
+              "width": 415,
+              "height": 152,
+              "digest": "e4712bb86e5e7cc1"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 26,
+          "area_ratio": 0.1259,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "e unreliable.",
+          "rasters": [
+            {
+              "xref": 121,
+              "width": 563,
+              "height": 393,
+              "digest": "4b73ecbd5ea840b1"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 26,
+          "area_ratio": 0.1404,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 122,
+              "width": 592,
+              "height": 357,
+              "digest": "64107838908f64ba"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 29,
+          "area_ratio": 0.0845,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 164,
+              "width": 606,
+              "height": 206,
+              "digest": "b20d4549d976fcd5"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 31,
+          "area_ratio": 0.5114,
+          "emptiness": 0.0,
+          "visual_ratio": 1.6849,
+          "text": "�=− \n�=1\n�\n���(��)log2 �(��) −�(�1, �2, ⋯, ��)\nDivide the columns of the channel transition matrix into s sub-\nmatrix, whose rows and columns are permutable. A sub-matrix \ncorresponds to ��,  �= 1,2, ⋯, � channel output symbols.\nFor every sub-matrix, calculate the probabilities of the corresp. \nchannel output symbols. Calculate the average �(��) of these \nprobabilities, when the source is equally distributed.",
+          "rasters": [
+            {
+              "xref": 173,
+              "width": 143,
+              "height": 165,
+              "digest": "2d1889a68f920a78"
+            },
+            {
+              "xref": 175,
+              "width": 143,
+              "height": 161,
+              "digest": "79bb7437bda763aa"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 32,
+          "area_ratio": 0.1347,
+          "emptiness": 0.0,
+          "visual_ratio": 1.9768,
+          "text": "�=− \n�=1\n�\n���(��)log2 �(��) −�(�1, �2, ⋯, ��)",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 33,
+          "area_ratio": 0.0341,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0909,
+          "text": "�\n�",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 34,
+          "area_ratio": 0.0341,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0909,
+          "text": "�\n�",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 34,
+          "area_ratio": 0.103,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 186,
+              "width": 690,
+              "height": 394,
+              "digest": "184dc06fc0586a1f"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 34,
+          "area_ratio": 0.0489,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "expansion",
+          "rasters": [
+            {
+              "xref": 192,
+              "width": 884,
+              "height": 100,
+              "digest": "1733c8d36b91856a"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 35,
+          "area_ratio": 0.1592,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "p\ny",
+          "rasters": [
+            {
+              "xref": 203,
+              "width": 928,
+              "height": 438,
+              "digest": "534cab4328a4ba18"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 40,
+          "area_ratio": 0.1292,
+          "emptiness": 0.0,
+          "visual_ratio": 1.974,
+          "text": "�(��) = \n�=1\n�\n�(��)�(��/��), get �(��);\nBy",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 40,
+          "area_ratio": 0.1292,
+          "emptiness": 0.0,
+          "visual_ratio": 1.9739,
+          "text": "�(��) = 2��−�, get �(��);\nBy",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 40,
+          "area_ratio": 0.1292,
+          "emptiness": 0.0,
+          "visual_ratio": 1.9739,
+          "text": "�=log2 \n�=1\n�\n2��, get �;\nBy",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 40,
+          "area_ratio": 0.1292,
+          "emptiness": 0.0,
+          "visual_ratio": 1.9749,
+          "text": "By \n�=1\n�\n�(��/��)��= \n�=1\n�\n�(��/��)log2 �(��/��), get ��;",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 43,
+          "area_ratio": 0.0366,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "1\n1\n(\n/\n)\nm\nj\nk\nj lbep y\nx\nlbe\n\n\n",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 48,
+          "area_ratio": 0.0321,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 272,
+              "width": 945,
+              "height": 109,
+              "digest": "33281ce5172053d4"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 49,
+          "area_ratio": 0.233,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 278,
+              "width": 1011,
+              "height": 349,
+              "digest": "750b319277aa7e13"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 50,
+          "area_ratio": 0.0755,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 283,
+              "width": 568,
+              "height": 125,
+              "digest": "ede09b57920aa22f"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 50,
+          "area_ratio": 0.0386,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 284,
+              "width": 390,
+              "height": 83,
+              "digest": "1f6e0147c88c7719"
+            }
+          ],
+          "grid_markdown": ""
+        }
+      ],
+      "excluded_backgrounds": 255,
+      "repeated_digests": {
+        "dfacf43c4aa54025": 3
+      },
+      "error": null
+    },
+    {
+      "path": "09-Channel-Coding.pdf",
+      "pages": 101,
+      "sampled_pages": 101,
+      "pages_without_text": 0,
+      "image_only_pages": 11,
+      "figures": [
+        {
+          "page": 2,
+          "area_ratio": 0.5706,
+          "emptiness": 0.0,
+          "visual_ratio": 1.195,
+          "text": "Source \nEncoder\nEncryp\ntor\nChannel \nEncoder\nModulat\nor\nred\n0101\n0011\n00110\nTransmitter\nReceiver\nDemod\nulator\nChannel \nDecoder\nDecryp\ntor\nSource \nDecoder",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.2521,
+          "emptiness": 0.0466,
+          "visual_ratio": 0.9534,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 35,
+              "width": 155,
+              "height": 53,
+              "digest": "f02c18a0744aa647"
+            },
+            {
+              "xref": 37,
+              "width": 288,
+              "height": 186,
+              "digest": "77b50322bbeb05af"
+            },
+            {
+              "xref": 39,
+              "width": 288,
+              "height": 188,
+              "digest": "4feb96da290a1695"
+            },
+            {
+              "xref": 40,
+              "width": 169,
+              "height": 43,
+              "digest": "62b69a43273b14f0"
+            },
+            {
+              "xref": 42,
+              "width": 149,
+              "height": 42,
+              "digest": "dc068fc444703393"
+            },
+            {
+              "xref": 50,
+              "width": 232,
+              "height": 61,
+              "digest": "00e02305334efb35"
+            },
+            {
+              "xref": 52,
+              "width": 152,
+              "height": 58,
+              "digest": "53b0b702bf5f711c"
+            },
+            {
+              "xref": 56,
+              "width": 149,
+              "height": 42,
+              "digest": "b6141c203ffcfdd6"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 4,
+          "area_ratio": 0.0365,
+          "emptiness": 0.0,
+          "visual_ratio": 1.9857,
+          "text": "n entropy\nte sources\nefficiency",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 4,
+          "area_ratio": 0.1615,
+          "emptiness": 0.0,
+          "visual_ratio": 1.9896,
+          "text": "p\nHow to improve the reliability of \ncommunication?",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 7,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "3\nChannel Coding Theorem",
+          "rasters": [
+            {
+              "xref": 144,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 7,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "2\nError Correction Code",
+          "rasters": [
+            {
+              "xref": 144,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 7,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1978,
+          "text": "1\nError Control System",
+          "rasters": [
+            {
+              "xref": 144,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 7,
+          "area_ratio": 0.0488,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1964,
+          "text": "4\nLinear Block Code",
+          "rasters": [
+            {
+              "xref": 144,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 7,
+          "area_ratio": 0.0212,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 142,
+              "width": 730,
+              "height": 91,
+              "digest": "382bf0394895d7cb"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 8,
+          "area_ratio": 0.1549,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1759,
+          "text": "Error\nDetection\nEncoder\nCoded \nChannel\nError\nDetection\nDecoder\nMessage \n�\nCodeword \n�\nReceive\nvector\n�\nMessage\n�",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 9,
+          "area_ratio": 0.1549,
+          "emptiness": 0.0,
+          "visual_ratio": 1.176,
+          "text": "Error\nCorrection \nEncoder\nCoded \nChannel\nMessage \n�\nCodeword \n�\nReceive\n�\nMessag\n�\nVector\nError\nCorrection \nDecoder",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 10,
+          "area_ratio": 0.2069,
+          "emptiness": 0.0152,
+          "visual_ratio": 0.9848,
+          "text": "�\n�\n�\n�/�\nError \nCorrectable?\nYes\nNo\nFeedback Link\nError\nCorrection \nEncoder\nCoded \nChannel\nError\nCorrection \nDecoder",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 12,
+          "area_ratio": 0.0333,
+          "emptiness": 0.0,
+          "visual_ratio": 1.5996,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 218,
+              "width": 614,
+              "height": 92,
+              "digest": "bbf36bfba301d7b9"
+            },
+            {
+              "xref": 220,
+              "width": 54,
+              "height": 89,
+              "digest": "64b2a4a278dbb213"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 12,
+          "area_ratio": 0.0219,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 212,
+              "width": 755,
+              "height": 91,
+              "digest": "693f1e9f3540fd92"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 13,
+          "area_ratio": 0.1691,
+          "emptiness": 0.3551,
+          "visual_ratio": 0.6449,
+          "text": "1\n1\n1\n1\n1\n1\n1\n1\n(\n/\n) ( )\n( (\n) /\n)\n(\n/\n)\n(\n)\np y\nx p x\np f y\ny\np x\ny\np y\n\n",
+          "rasters": [
+            {
+              "xref": 226,
+              "width": 797,
+              "height": 91,
+              "digest": "957f6bc4781bb83c"
+            },
+            {
+              "xref": 232,
+              "width": 67,
+              "height": 73,
+              "digest": "5f963ffb9fff44c1"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 15,
+          "area_ratio": 0.0231,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 250,
+              "width": 797,
+              "height": 91,
+              "digest": "6146c1060306bedc"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 18,
+          "area_ratio": 0.1955,
+          "emptiness": 0.0,
+          "visual_ratio": 1.6762,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 284,
+              "width": 741,
+              "height": 91,
+              "digest": "9c1ac778e0cfd366"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 19,
+          "area_ratio": 0.0463,
+          "emptiness": 0.0,
+          "visual_ratio": 1.9701,
+          "text": "*\nLikelihood probability",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 21,
+          "area_ratio": 0.0202,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 323,
+              "width": 697,
+              "height": 91,
+              "digest": "0adbe0068126f488"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 26,
+          "area_ratio": 0.035,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 425,
+              "width": 1027,
+              "height": 110,
+              "digest": "03688d29afd51ee6"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 29,
+          "area_ratio": 0.0328,
+          "emptiness": 0.084,
+          "visual_ratio": 0.916,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 439,
+              "width": 681,
+              "height": 85,
+              "digest": "d6272c7b94cb460d"
+            },
+            {
+              "xref": 445,
+              "width": 483,
+              "height": 70,
+              "digest": "20fe024cafe961da"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 31,
+          "area_ratio": 0.415,
+          "emptiness": 0.0619,
+          "visual_ratio": 0.9381,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 464,
+              "width": 676,
+              "height": 607,
+              "digest": "e2e1bad7684346d2"
+            },
+            {
+              "xref": 465,
+              "width": 643,
+              "height": 126,
+              "digest": "f9c784731ff55e4a"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 35,
+          "area_ratio": 0.1387,
+          "emptiness": 0.0,
+          "visual_ratio": 2.1246,
+          "text": "1%\n5% \n10%\n15%\n25%\n35%\n45%\n55%\n65%\n75%\n85%\n5\n5\n13\n15\n16\n10\n12\n11\n7\n3\n3",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 42,
+          "area_ratio": 0.0296,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 528,
+              "width": 865,
+              "height": 110,
+              "digest": "50adffe67f38c804"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 46,
+          "area_ratio": 0.0237,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 546,
+              "width": 695,
+              "height": 109,
+              "digest": "e9cffc172d42e60a"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 47,
+          "area_ratio": 0.0312,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 550,
+              "width": 916,
+              "height": 109,
+              "digest": "db4af20dace71a6f"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 49,
+          "area_ratio": 0.0479,
+          "emptiness": 0.3342,
+          "visual_ratio": 0.6658,
+          "text": "v\neceived \nd\n000\n001\n010\n011",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 49,
+          "area_ratio": 0.0242,
+          "emptiness": 0.1991,
+          "visual_ratio": 0.8009,
+          "text": "100\n101\n110\n111",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 55,
+          "area_ratio": 0.0279,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 587,
+              "width": 818,
+              "height": 109,
+              "digest": "9c0c6987eeddf6ed"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 56,
+          "area_ratio": 0.0244,
+          "emptiness": 0.001,
+          "visual_ratio": 0.999,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 591,
+              "width": 773,
+              "height": 91,
+              "digest": "6d24c215e7a046d2"
+            },
+            {
+              "xref": 593,
+              "width": 69,
+              "height": 70,
+              "digest": "6a564c5aa5f9660e"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 56,
+          "area_ratio": 0.0236,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 595,
+              "width": 812,
+              "height": 91,
+              "digest": "d9ae333499fd131d"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 57,
+          "area_ratio": 0.0825,
+          "emptiness": 0.0,
+          "visual_ratio": 1.5717,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 603,
+              "width": 54,
+              "height": 77,
+              "digest": "34e713a7e5b22065"
+            },
+            {
+              "xref": 604,
+              "width": 102,
+              "height": 77,
+              "digest": "f1a18ec4887847e7"
+            },
+            {
+              "xref": 607,
+              "width": 84,
+              "height": 76,
+              "digest": "23b56ae61143769d"
+            },
+            {
+              "xref": 609,
+              "width": 527,
+              "height": 68,
+              "digest": "db73182f8b638999"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 58,
+          "area_ratio": 0.0298,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 619,
+              "width": 874,
+              "height": 109,
+              "digest": "3f061486d49799bf"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 60,
+          "area_ratio": 0.022,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 649,
+              "width": 824,
+              "height": 83,
+              "digest": "b86e22fd62f7265f"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 61,
+          "area_ratio": 0.0662,
+          "emptiness": 0.0,
+          "visual_ratio": 1.2564,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 698,
+              "width": 345,
+              "height": 58,
+              "digest": "55526376560079f5"
+            },
+            {
+              "xref": 700,
+              "width": 327,
+              "height": 48,
+              "digest": "3c40b146cb715aac"
+            },
+            {
+              "xref": 702,
+              "width": 429,
+              "height": 70,
+              "digest": "60e13b56d5eb60f1"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 61,
+          "area_ratio": 0.1381,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 704,
+              "width": 659,
+              "height": 100,
+              "digest": "c6afe72788f37e48"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 62,
+          "area_ratio": 0.1344,
+          "emptiness": 0.2685,
+          "visual_ratio": 0.7315,
+          "text": "ility of \nProbability of transition",
+          "rasters": [
+            {
+              "xref": 776,
+              "width": 236,
+              "height": 60,
+              "digest": "89f42155bdfae7c3"
+            },
+            {
+              "xref": 780,
+              "width": 135,
+              "height": 47,
+              "digest": "f0b9f064bd3fe7b6"
+            },
+            {
+              "xref": 782,
+              "width": 123,
+              "height": 47,
+              "digest": "e3924382abdb3196"
+            },
+            {
+              "xref": 784,
+              "width": 122,
+              "height": 47,
+              "digest": "3702341f3dc7bf01"
+            },
+            {
+              "xref": 786,
+              "width": 155,
+              "height": 59,
+              "digest": "73705b7378c4fec1"
+            },
+            {
+              "xref": 792,
+              "width": 236,
+              "height": 60,
+              "digest": "16cbc069c8423b9c"
+            },
+            {
+              "xref": 794,
+              "width": 97,
+              "height": 46,
+              "digest": "7de74f194ba5fdf4"
+            },
+            {
+              "xref": 796,
+              "width": 109,
+              "height": 47,
+              "digest": "245629d06d9c4d2f"
+            },
+            {
+              "xref": 798,
+              "width": 110,
+              "height": 47,
+              "digest": "7221779af0862ab8"
+            },
+            {
+              "xref": 800,
+              "width": 142,
+              "height": 59,
+              "digest": "bd5a0e633101fc16"
+            },
+            {
+              "xref": 802,
+              "width": 491,
+              "height": 72,
+              "digest": "f638a1e566b1bbc4"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 63,
+          "area_ratio": 0.077,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0272,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 840,
+              "width": 353,
+              "height": 67,
+              "digest": "220853eba7d11e79"
+            },
+            {
+              "xref": 842,
+              "width": 191,
+              "height": 68,
+              "digest": "5048302463376bd7"
+            },
+            {
+              "xref": 844,
+              "width": 216,
+              "height": 68,
+              "digest": "930aebcd99acdf49"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 63,
+          "area_ratio": 0.0227,
+          "emptiness": 0.0919,
+          "visual_ratio": 0.9081,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 830,
+              "width": 291,
+              "height": 82,
+              "digest": "cf81afcdd101b943"
+            },
+            {
+              "xref": 832,
+              "width": 238,
+              "height": 82,
+              "digest": "48c151b18c63f6e9"
+            },
+            {
+              "xref": 834,
+              "width": 227,
+              "height": 82,
+              "digest": "02723d948da86323"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 67,
+          "area_ratio": 0.4616,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0155,
+          "text": "c\nchannel\nDecoding \nfailure",
+          "rasters": [
+            {
+              "xref": 942,
+              "width": 226,
+              "height": 50,
+              "digest": "082431efdfd86678"
+            },
+            {
+              "xref": 944,
+              "width": 238,
+              "height": 50,
+              "digest": "d1dc6333541659e1"
+            },
+            {
+              "xref": 950,
+              "width": 231,
+              "height": 61,
+              "digest": "cc26fca97a19bca4"
+            },
+            {
+              "xref": 952,
+              "width": 134,
+              "height": 39,
+              "digest": "7b3521b9c0096044"
+            },
+            {
+              "xref": 964,
+              "width": 63,
+              "height": 66,
+              "digest": "a2e553b5168ecaee"
+            },
+            {
+              "xref": 966,
+              "width": 153,
+              "height": 48,
+              "digest": "f05e6bf45247335a"
+            },
+            {
+              "xref": 964,
+              "width": 63,
+              "height": 66,
+              "digest": "a2e553b5168ecaee"
+            },
+            {
+              "xref": 968,
+              "width": 175,
+              "height": 46,
+              "digest": "6229fdd732f5d5b7"
+            },
+            {
+              "xref": 964,
+              "width": 63,
+              "height": 66,
+              "digest": "a2e553b5168ecaee"
+            },
+            {
+              "xref": 970,
+              "width": 126,
+              "height": 39,
+              "digest": "6846e6a7c4dfc8c0"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 68,
+          "area_ratio": 0.0318,
+          "emptiness": 0.093,
+          "visual_ratio": 0.907,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 1008,
+              "width": 233,
+              "height": 80,
+              "digest": "675951ca7504fdc7"
+            },
+            {
+              "xref": 1010,
+              "width": 836,
+              "height": 84,
+              "digest": "7181065961d06429"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 70,
+          "area_ratio": 0.0442,
+          "emptiness": 0.1434,
+          "visual_ratio": 0.8566,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 1110,
+              "width": 329,
+              "height": 97,
+              "digest": "4c0e0bf540d3b939"
+            },
+            {
+              "xref": 1112,
+              "width": 619,
+              "height": 97,
+              "digest": "e5a93c6e00735779"
+            },
+            {
+              "xref": 1120,
+              "width": 352,
+              "height": 70,
+              "digest": "69df82a587c7c127"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 70,
+          "area_ratio": 0.0513,
+          "emptiness": 0.2641,
+          "visual_ratio": 0.7359,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 1122,
+              "width": 448,
+              "height": 85,
+              "digest": "ab677e0220a5e930"
+            },
+            {
+              "xref": 1140,
+              "width": 143,
+              "height": 84,
+              "digest": "71bf20c5572cf08e"
+            },
+            {
+              "xref": 1142,
+              "width": 413,
+              "height": 83,
+              "digest": "215b5ee6a7401ad0"
+            },
+            {
+              "xref": 1144,
+              "width": 228,
+              "height": 70,
+              "digest": "6acb39f193864908"
+            },
+            {
+              "xref": 1146,
+              "width": 189,
+              "height": 67,
+              "digest": "14fe9fd4f7f583ea"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 71,
+          "area_ratio": 0.0322,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0308,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 1172,
+              "width": 311,
+              "height": 97,
+              "digest": "9a15b2b26dc19204"
+            },
+            {
+              "xref": 1174,
+              "width": 45,
+              "height": 92,
+              "digest": "fddad7b011f0413c"
+            },
+            {
+              "xref": 1176,
+              "width": 156,
+              "height": 95,
+              "digest": "d4047d892389f4bb"
+            },
+            {
+              "xref": 1178,
+              "width": 549,
+              "height": 95,
+              "digest": "397bb4005841ff6b"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 71,
+          "area_ratio": 0.0225,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 1190,
+              "width": 734,
+              "height": 97,
+              "digest": "38ea8cbd199df016"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 71,
+          "area_ratio": 0.041,
+          "emptiness": 0.0239,
+          "visual_ratio": 0.9761,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 1192,
+              "width": 529,
+              "height": 81,
+              "digest": "a40195c905ef9a32"
+            },
+            {
+              "xref": 1194,
+              "width": 360,
+              "height": 97,
+              "digest": "4555f8bf550fb98e"
+            },
+            {
+              "xref": 1196,
+              "width": 156,
+              "height": 95,
+              "digest": "e95ebc9bf04e31a7"
+            },
+            {
+              "xref": 1198,
+              "width": 319,
+              "height": 94,
+              "digest": "4cd7603895190c2b"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 72,
+          "area_ratio": 0.0322,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0314,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 1220,
+              "width": 366,
+              "height": 97,
+              "digest": "747bbfe846d50b88"
+            },
+            {
+              "xref": 1222,
+              "width": 156,
+              "height": 95,
+              "digest": "91edf7081ffb8281"
+            },
+            {
+              "xref": 1224,
+              "width": 549,
+              "height": 95,
+              "digest": "fabbadae1e1c16df"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 79,
+          "area_ratio": 0.025,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 1393,
+              "width": 866,
+              "height": 91,
+              "digest": "52954ab67d6f6a2b"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 80,
+          "area_ratio": 0.0384,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 1419,
+              "width": 1087,
+              "height": 114,
+              "digest": "477b50d0e469e554"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 82,
+          "area_ratio": 0.0346,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 1433,
+              "width": 977,
+              "height": 114,
+              "digest": "d4c22eeb0728b72c"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 93,
+          "area_ratio": 0.0224,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "s",
+          "rasters": [
+            {
+              "xref": 1613,
+              "width": 637,
+              "height": 112,
+              "digest": "1ff60b137e9e7346"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 94,
+          "area_ratio": 0.0255,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 1621,
+              "width": 871,
+              "height": 92,
+              "digest": "47ff03f2f30d3d62"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 94,
+          "area_ratio": 0.0214,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 1631,
+              "width": 599,
+              "height": 114,
+              "digest": "964226b40db82429"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 96,
+          "area_ratio": 0.0329,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 1649,
+              "width": 917,
+              "height": 116,
+              "digest": "2265597365802086"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 96,
+          "area_ratio": 0.0256,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 1665,
+              "width": 709,
+              "height": 116,
+              "digest": "c60761dada2aee73"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 98,
+          "area_ratio": 0.0285,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 1681,
+              "width": 832,
+              "height": 110,
+              "digest": "d91912d1a4f7a2fd"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 101,
+          "area_ratio": 0.0296,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 1693,
+              "width": 865,
+              "height": 110,
+              "digest": "03a0e743c4d06929"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 101,
+          "area_ratio": 0.0206,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 1695,
+              "width": 705,
+              "height": 92,
+              "digest": "7729adbbf5fca852"
+            }
+          ],
+          "grid_markdown": ""
+        }
+      ],
+      "excluded_backgrounds": 728,
+      "repeated_digests": {
+        "dfacf43c4aa54025": 4,
+        "a2e553b5168ecaee": 3
+      },
+      "error": null
+    },
+    {
+      "path": "10-Continuous-Source-Channel.pdf",
+      "pages": 39,
+      "sampled_pages": 39,
+      "pages_without_text": 0,
+      "image_only_pages": 0,
+      "figures": [
+        {
+          "page": 2,
+          "area_ratio": 0.5706,
+          "emptiness": 0.0,
+          "visual_ratio": 1.195,
+          "text": "Source \nEncoder\nEncryp\ntor\nChannel \nEncoder\nModulat\nor\nred\n0101\n0011\n00110\nTransmitter\nReceiver\nDemod\nulator\nChannel \nDecoder\nDecryp\ntor\nSource \nDecoder",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "3\nContinuous Channel and Capacity",
+          "rasters": [
+            {
+              "xref": 37,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1982,
+          "text": "2\nProperty of Continuous Entropy",
+          "rasters": [
+            {
+              "xref": 37,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0487,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1978,
+          "text": "1\nContinuous Info Source and Entropy",
+          "rasters": [
+            {
+              "xref": 37,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0488,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1964,
+          "text": "4\nAdditive Continuous Channel",
+          "rasters": [
+            {
+              "xref": 37,
+              "width": 125,
+              "height": 125,
+              "digest": "dfacf43c4aa54025"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 3,
+          "area_ratio": 0.0212,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 35,
+              "width": 730,
+              "height": 91,
+              "digest": "382bf0394895d7cb"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 7,
+          "area_ratio": 0.0861,
+          "emptiness": 0.083,
+          "visual_ratio": 0.917,
+          "text": "� � \n�\n�\n�\n+ �\n1 Δ\n+ �Δ",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 7,
+          "area_ratio": 0.0587,
+          "emptiness": 0.2104,
+          "visual_ratio": 0.7896,
+          "text": "=− \n�\n�\n� � log2 � � ��−\nThe differential entropy ℎ �",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 7,
+          "area_ratio": 0.0291,
+          "emptiness": 0.1985,
+          "visual_ratio": 0.8015,
+          "text": "−lim\n∆→0 log2 ∆\nI fi it",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 9,
+          "area_ratio": 0.0676,
+          "emptiness": 0.0677,
+          "visual_ratio": 0.9323,
+          "text": "b\na\n( )\ni\np",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 10,
+          "area_ratio": 0.0676,
+          "emptiness": 0.0677,
+          "visual_ratio": 0.9323,
+          "text": "b\na\n( )\ni\np",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 11,
+          "area_ratio": 0.025,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 11,
+          "area_ratio": 0.0337,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "Discrete \nRepresentation \nof Continuous \nSources",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 25,
+          "area_ratio": 0.035,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 184,
+              "width": 1030,
+              "height": 109,
+              "digest": "f6ae096cd8feb953"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 29,
+          "area_ratio": 0.035,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 184,
+              "width": 1030,
+              "height": 109,
+              "digest": "f6ae096cd8feb953"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 29,
+          "area_ratio": 0.0236,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 200,
+              "width": 809,
+              "height": 92,
+              "digest": "7758b8c44cbd8c2a"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 31,
+          "area_ratio": 0.0298,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "� �/�",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 32,
+          "area_ratio": 0.0392,
+          "emptiness": 0.0,
+          "visual_ratio": 1.1665,
+          "text": "�Channel Tran",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 33,
+          "area_ratio": 0.0337,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 216,
+              "width": 992,
+              "height": 109,
+              "digest": "2f58a6d66354dcc5"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 34,
+          "area_ratio": 0.0337,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 216,
+              "width": 992,
+              "height": 109,
+              "digest": "2f58a6d66354dcc5"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 39,
+          "area_ratio": 0.0266,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 238,
+              "width": 780,
+              "height": 109,
+              "digest": "ca8b0da46426da1b"
+            }
+          ],
+          "grid_markdown": ""
+        }
+      ],
+      "excluded_backgrounds": 201,
+      "repeated_digests": {
+        "dfacf43c4aa54025": 4
+      },
+      "error": null
+    },
+    {
+      "path": "7-Source-code.pdf",
+      "pages": 57,
+      "sampled_pages": 57,
+      "pages_without_text": 0,
+      "image_only_pages": 4,
+      "figures": [
+        {
+          "page": 4,
+          "area_ratio": 0.1703,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 30,
+              "width": 977,
+              "height": 1142,
+              "digest": "aa0b3637a633cd28"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 4,
+          "area_ratio": 0.153,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 31,
+              "width": 876,
+              "height": 1142,
+              "digest": "c8b0c37014cbfde2"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 5,
+          "area_ratio": 0.221,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 34,
+              "width": 1370,
+              "height": 1061,
+              "digest": "b64376ffbc915e44"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 5,
+          "area_ratio": 0.1307,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 35,
+              "width": 807,
+              "height": 1057,
+              "digest": "78d6abbcd03eaa10"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 8,
+          "area_ratio": 0.0239,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 59,
+              "width": 540,
+              "height": 275,
+              "digest": "1f2c586b113d6e7d"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 12,
+          "area_ratio": 0.024,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 74,
+              "width": 543,
+              "height": 274,
+              "digest": "d3956b4c9d750fd3"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 15,
+          "area_ratio": 0.2091,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 87,
+              "width": 1552,
+              "height": 886,
+              "digest": "68a664d1baa37e25"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 16,
+          "area_ratio": 0.0434,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "b\na",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 17,
+          "area_ratio": 0.0499,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "b\na",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 18,
+          "area_ratio": 0.0245,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "a",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 18,
+          "area_ratio": 0.0233,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "c",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 20,
+          "area_ratio": 0.1745,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 99,
+              "width": 1659,
+              "height": 687,
+              "digest": "75c74b30021bb8cd"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 25,
+          "area_ratio": 0.0797,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0021,
+          "text": "I\nG\nE\nB\nA\n( )",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 25,
+          "area_ratio": 0.0424,
+          "emptiness": 0.0041,
+          "visual_ratio": 0.9959,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 25,
+          "area_ratio": 0.0369,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0003,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 25,
+          "area_ratio": 0.0305,
+          "emptiness": 0.0177,
+          "visual_ratio": 0.9406,
+          "text": "0.2\n0.2",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 25,
+          "area_ratio": 0.0269,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "T\nS",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 25,
+          "area_ratio": 0.0239,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 25,
+          "area_ratio": 0.0218,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0244,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 25,
+          "area_ratio": 0.0239,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [],
+          "grid_markdown": ""
+        },
+        {
+          "page": 42,
+          "area_ratio": 0.0414,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 153,
+              "width": 966,
+              "height": 269,
+              "digest": "4ae6dd77f82fa258"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 43,
+          "area_ratio": 0.0307,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 157,
+              "width": 662,
+              "height": 290,
+              "digest": "50fbfcbaca2a2fe8"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 43,
+          "area_ratio": 0.0617,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 159,
+              "width": 1449,
+              "height": 269,
+              "digest": "a26c0125a64bba07"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 43,
+          "area_ratio": 0.0576,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 161,
+              "width": 1354,
+              "height": 269,
+              "digest": "5cf1f288aff4dcd6"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 44,
+          "area_ratio": 0.0513,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 167,
+              "width": 1174,
+              "height": 276,
+              "digest": "2cd89059d67184bc"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 44,
+          "area_ratio": 0.033,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 169,
+              "width": 696,
+              "height": 298,
+              "digest": "4b8cc0f7f57087fa"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 44,
+          "area_ratio": 0.0302,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "lk",
+          "rasters": [
+            {
+              "xref": 171,
+              "width": 636,
+              "height": 298,
+              "digest": "6f8d90085d04b2bd"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 45,
+          "area_ratio": 0.0451,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 177,
+              "width": 1071,
+              "height": 265,
+              "digest": "e8dca0187fc683d1"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 45,
+          "area_ratio": 0.1055,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 179,
+              "width": 2518,
+              "height": 265,
+              "digest": "467fdced5ff079f1"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 49,
+          "area_ratio": 0.0689,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "q",
+          "rasters": [
+            {
+              "xref": 189,
+              "width": 754,
+              "height": 588,
+              "digest": "01b5327b76ac33fd"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 52,
+          "area_ratio": 0.0838,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 198,
+              "width": 1925,
+              "height": 275,
+              "digest": "5ee78503dd3f8234"
+            }
+          ],
+          "grid_markdown": ""
+        }
+      ],
+      "excluded_backgrounds": 217,
+      "repeated_digests": {},
+      "error": null
+    },
+    {
+      "path": "reinforcement-learning.pdf",
+      "pages": 64,
+      "sampled_pages": 64,
+      "pages_without_text": 0,
+      "image_only_pages": 56,
+      "figures": [
+        {
+          "page": 24,
+          "area_ratio": 0.2897,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 112,
+              "width": 758,
+              "height": 257,
+              "digest": "447f85c3d737c980"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 27,
+          "area_ratio": 0.1994,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 123,
+              "width": 656,
+              "height": 203,
+              "digest": "6526991d6fe15f8b"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 38,
+          "area_ratio": 0.0251,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 162,
+              "width": 865,
+              "height": 91,
+              "digest": "8281c76fcd1c511a"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 38,
+          "area_ratio": 0.3682,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 164,
+              "width": 717,
+              "height": 347,
+              "digest": "68189b74d090e1f6"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 41,
+          "area_ratio": 0.0326,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 175,
+              "width": 960,
+              "height": 109,
+              "digest": "316dbae65a983540"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 41,
+          "area_ratio": 0.355,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 177,
+              "width": 756,
+              "height": 317,
+              "digest": "3dc34d07bb43bc8b"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 43,
+          "area_ratio": 0.32,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 185,
+              "width": 741,
+              "height": 291,
+              "digest": "5122ea6697d60e66"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 54,
+          "area_ratio": 0.3385,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 228,
+              "width": 812,
+              "height": 281,
+              "digest": "39976430edf52359"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 59,
+          "area_ratio": 0.02,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 243,
+              "width": 688,
+              "height": 91,
+              "digest": "6c9198deaf50831c"
+            }
+          ],
+          "grid_markdown": ""
+        },
+        {
+          "page": 59,
+          "area_ratio": 0.3101,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 245,
+              "width": 733,
+              "height": 285,
+              "digest": "ce46ea998df0ce83"
+            }
+          ],
+          "grid_markdown": ""
+        }
+      ],
+      "excluded_backgrounds": 25,
+      "repeated_digests": {},
+      "error": null
+    },
+    {
+      "path": "Semantic Communications.pdf",
+      "pages": 35,
+      "sampled_pages": 35,
+      "pages_without_text": 0,
+      "image_only_pages": 33,
+      "figures": [
+        {
+          "page": 35,
+          "area_ratio": 0.1593,
+          "emptiness": 0.0,
+          "visual_ratio": 1.0,
+          "text": "",
+          "rasters": [
+            {
+              "xref": 201,
+              "width": 630,
+              "height": 248,
+              "digest": "1efb024073671d99"
+            }
+          ],
+          "grid_markdown": ""
+        }
+      ],
+      "excluded_backgrounds": 6,
+      "repeated_digests": {},
+      "error": null
+    }
+  ]
+}

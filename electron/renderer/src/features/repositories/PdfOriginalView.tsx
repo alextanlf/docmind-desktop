@@ -24,6 +24,13 @@ type PageSize = { width: number; height: number };
 type PdfOriginalViewProps = {
   documentId: string;
   byteSize: number;
+  /**
+   * 要定位并高亮的图。
+   *
+   * `bbox` 是 PDF 点、原点左上的矩形（与后端 `ParsedFigure.bbox` 同一坐标系）。
+   * 为 null 时表示「只跳到这一页，不框任何东西」。
+   */
+  locate?: { page: number; bbox: [number, number, number, number] | null } | null;
 };
 
 /**
@@ -33,11 +40,12 @@ type PdfOriginalViewProps = {
  * 字节全部经 IPC 按 Range 拉取（见 pdf-range-transport），
  * 渲染层因此不需要后端地址、令牌，也不需要放开任何白名单。
  */
-export function PdfOriginalView({ documentId, byteSize }: PdfOriginalViewProps) {
+export function PdfOriginalView({ documentId, byteSize, locate }: PdfOriginalViewProps) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [failure, setFailure] = useState("");
   const [pageCount, setPageCount] = useState(0);
-  const [current, setCurrent] = useState(1);
+  // 打开就落在目标页：从解析视图点图进来时，用户要看的正是那一页。
+  const [current, setCurrent] = useState(() => Math.max(locate?.page ?? 1, 1));
   const [pageSize, setPageSize] = useState<PageSize | null>(null);
   const [fitWidth, setFitWidth] = useState(true);
   const [zoom, setZoom] = useState(1);
@@ -150,6 +158,19 @@ export function PdfOriginalView({ documentId, byteSize }: PdfOriginalViewProps) 
     }
   }, []);
 
+  // 载入完成后滚到目标页。只做一次：之后用户自己滚动，再把视口拽回去就成了骚扰。
+  const locatedRef = useRef(false);
+  useEffect(() => {
+    if (!pdf || locatedRef.current) return;
+    const target = locate?.page;
+    if (!target || target <= 1) return;
+    locatedRef.current = true;
+    // 等一帧，让各页占位 div 先按真实尺寸布局出来 —— 占位尺寸是用第 1 页量的，
+    // 在那之前 `offsetTop` 算出来是错的。
+    const handle = window.requestAnimationFrame(() => goToPage(target));
+    return () => window.cancelAnimationFrame(handle);
+  }, [pdf, locate?.page, goToPage]);
+
   if (failure) {
     return (
       <div className="pdf-original" role="status">
@@ -250,7 +271,13 @@ export function PdfOriginalView({ documentId, byteSize }: PdfOriginalViewProps) 
             key={index + 1}
             style={{ height: scaled.height, width: scaled.width }}
           >
-            <PdfPageCanvas pageNumber={index + 1} pdf={pdf} scale={scale} width={scaled.width} />
+            <PdfPageCanvas
+              highlight={locate?.page === index + 1 ? (locate?.bbox ?? null) : null}
+              pageNumber={index + 1}
+              pdf={pdf}
+              scale={scale}
+              width={scaled.width}
+            />
           </div>
         ))}
       </div>
@@ -267,16 +294,25 @@ function PdfPageCanvas({
   pageNumber,
   scale,
   width,
+  highlight,
 }: {
   pdf: PDFDocumentProxy;
   pageNumber: number;
   scale: number;
   width: number;
+  /** 要在这一页上框出来的矩形（PDF 点、原点左上），没有就为 null。 */
+  highlight: [number, number, number, number] | null;
 }) {
   const holderRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [visible, setVisible] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [box, setBox] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
 
   useEffect(() => {
     const node = holderRef.current;
@@ -313,6 +349,19 @@ function PdfPageCanvas({
         canvas.height = Math.floor(viewport.height * ratio);
         canvas.style.width = `${Math.floor(viewport.width)}px`;
         canvas.style.height = `${Math.floor(viewport.height)}px`;
+        if (highlight) {
+          // 换算交给 pdf.js 的 viewport：它已经处理了缩放与 /Rotate 旋转，自己算矩阵
+          // 在旋转页面上必然错。返回值是 [x0, y0, x1, y1]，原点左上、单位 CSS 像素。
+          const [x0, y0, x1, y1] = viewport.convertToViewportRectangle(highlight);
+          setBox({
+            left: Math.min(x0, x1),
+            top: Math.min(y0, y1),
+            width: Math.abs(x1 - x0),
+            height: Math.abs(y1 - y0),
+          });
+        } else {
+          setBox(null);
+        }
         task = page.render({
           canvasContext: context,
           transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0],
@@ -333,12 +382,26 @@ function PdfPageCanvas({
       task?.cancel();
       rendered?.cleanup();
     };
-  }, [pdf, pageNumber, scale, visible]);
+  }, [pdf, pageNumber, scale, visible, highlight]);
 
   return (
     <div className="pdf-page-canvas" ref={holderRef} style={{ width }}>
       {failed ? <p className="pdf-page-failed">第 {pageNumber} 页渲染失败</p> : null}
       <canvas hidden={failed} ref={canvasRef} />
+      {box && !failed ? (
+        // 描边而不是填充：填充会挡住图本身，而用户来这里正是为了看图。
+        // pointer-events: none 让这一层不拦截滚动与选择。
+        <span
+          aria-hidden="true"
+          className="pdf-page-highlight"
+          style={{
+            height: `${box.height}px`,
+            left: `${box.left}px`,
+            top: `${box.top}px`,
+            width: `${box.width}px`,
+          }}
+        />
+      ) : null}
     </div>
   );
 }

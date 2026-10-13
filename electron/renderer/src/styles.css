@@ -514,6 +514,91 @@ button:disabled {
   color: var(--muted);
   font-size: 13px;
 }
+.document-figures {
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.document-figures-title {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.document-figures-list {
+  display: grid;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.document-figure {
+  display: grid;
+  gap: 6px;
+}
+/* 扫描课件里的图很高，限高避免一张整页图把后面几张挤到看不见。 */
+.document-figure-image {
+  max-width: 100%;
+  max-height: 420px;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+/* 让图本身可点：去掉按钮默认外观，只留"可以点"的语义与指针形状。 */
+.document-figure-image-button {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+  border-radius: 6px;
+}
+.document-figure-image-button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.document-figure-locate {
+  justify-self: start;
+}
+.settings-toggle-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  grid-column: 1 / -1;
+}
+.settings-toggle-row .field-hint {
+  margin: 4px 0 0;
+  max-width: 52ch;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.settings-toggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+.document-figure-caption {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.document-figure-placeholder {
+  margin: 0;
+  padding: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
 .editor-actions {
   display: flex;
   gap: 4px;
@@ -631,12 +716,23 @@ button:disabled {
   margin: 0 auto 18px;
 }
 .pdf-page-canvas {
+  /* 高亮框是绝对定位的，这里的 relative 是它的定位基准 —— 少了它框会跑到页面外。 */
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 80px;
   background: var(--surface);
   box-shadow: 0 1px 4px rgba(24, 27, 32, 0.14);
+}
+.pdf-page-highlight {
+  position: absolute;
+  border: 2px solid var(--blue);
+  border-radius: 3px;
+  background: rgba(37, 99, 235, 0.12);
+  /* 不拦截鼠标：滚动、选字、拖拽都要照常穿透到下面的画布。 */
+  pointer-events: none;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.6);
 }
 .pdf-page-canvas canvas {
   display: block;

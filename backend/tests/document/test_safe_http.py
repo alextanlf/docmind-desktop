@@ -66,3 +66,40 @@ async def test_redirect_outside_scope_is_rejected_before_request() -> None:
                          scope_origin="https://docs.test/guide/", scope_prefix="/guide/")
     assert getattr(exc.value, "code", None) == "CRAWL_SCOPE_REJECTED"
     assert calls == ["https://docs.test/guide/start"]
+
+
+@pytest.mark.asyncio
+async def test_a_user_agent_is_always_sent() -> None:
+    """每次请求都要带 User-Agent，即使调用方一个头都没给。
+
+    **这不是风格问题。** 实测维基媒体的图片 CDN 对**完全没有 User-Agent** 的请求返回 403，
+    而带 `DocMind/2` 能过 —— 网页里的图片整整一类站点因此全部下载失败，错误还只显示成
+    "抓取失败"。`SafeHttpClient.user_agent` 在改写前是个死字段：声明了身份却从不发出去。
+    """
+    seen: list[dict[str, str]] = []
+
+    def handler(request):
+        seen.append(dict(request.headers))
+        return httpx.Response(200, headers={"content-type": "image/png"}, content=b"x")
+
+    client = SafeHttpClient(resolver=Resolver(), transport=httpx.MockTransport(handler))
+    await client.get("https://cdn.test/a.png", max_bytes=1024)
+
+    assert seen[0].get("user-agent") == "DocMind/2"
+
+
+@pytest.mark.asyncio
+async def test_a_caller_supplied_user_agent_wins() -> None:
+    """调用方给了就用自己的 —— 抓页面与抓它的图要用同一套身份。"""
+    seen: list[dict[str, str]] = []
+
+    def handler(request):
+        seen.append(dict(request.headers))
+        return httpx.Response(200, headers={"content-type": "image/png"}, content=b"x")
+
+    client = SafeHttpClient(resolver=Resolver(), transport=httpx.MockTransport(handler))
+    await client.get(
+        "https://cdn.test/a.png", max_bytes=1024, headers={"user-agent": "Custom/9"}
+    )
+
+    assert seen[0].get("user-agent") == "Custom/9"

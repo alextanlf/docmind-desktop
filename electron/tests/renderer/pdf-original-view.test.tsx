@@ -33,7 +33,18 @@ describe("文档原件视图", () => {
     hoisted.getPage.mockReset();
     hoisted.destroy.mockReset().mockResolvedValue(undefined);
     hoisted.getPage.mockResolvedValue({
-      getViewport: () => ({ width: 600, height: 800 }),
+      getViewport: () => ({
+        width: 600,
+        height: 800,
+        // 替身按「乘以 scale」换算：真实的 pdf.js 会做这个变换（还处理 /Rotate 旋转）。
+        // 用例断言的是**调用方把换算交给 viewport 了**，不是 pdf.js 的数学是否正确。
+        convertToViewportRectangle: ([x0, y0, x1, y1]: number[]) => [
+          x0 * 1,
+          y0 * 1,
+          x1 * 1,
+          y1 * 1,
+        ],
+      }),
       render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
       cleanup: vi.fn(),
     });
@@ -126,5 +137,85 @@ describe("文档原件视图", () => {
     await waitFor(() => expect(container.querySelector(".pdf-original-error")).not.toBeNull());
     expect(screen.queryByRole("toolbar", { name: "原件阅读工具" })).not.toBeInTheDocument();
     expect(hoisted.getDocument).not.toHaveBeenCalled();
+  });
+});
+
+describe("从插图定位到原件", () => {
+  const figureWithBox = {
+    asset: `${"c".repeat(64)}.png`,
+    pageNumber: 2,
+    caption: "Figure 3",
+    width: 300,
+    height: 200,
+    bbox: [72, 96, 372, 296] as [number, number, number, number],
+    fullPage: false,
+  };
+
+  it("点图切到原件视图，并按 bbox 画出高亮框", async () => {
+    installDocMindApi({
+      documents: {
+        readOriginalChunk: vi.fn().mockResolvedValue({ data: "AQID", total: 2048 }),
+        readAsset: vi
+          .fn()
+          .mockResolvedValue(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+          ),
+      },
+    });
+
+    const { container } = renderEditor({ ...documentWithPdf, figures: [figureWithBox] });
+
+    // 先切到解析视图，再点图 —— 模拟用户真实路径。
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "内容来源" })).getByRole("button", { name: "解析" }),
+    );
+    fireEvent.click(await screen.findByRole("img"));
+
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole("group", { name: "内容来源" })).getByRole("button", {
+          name: "原文",
+        }),
+      ).toHaveAttribute("aria-pressed", "true");
+    });
+    // 高亮框按 bbox 的四条边定位：换算交给 viewport，这里断言结果落到了页面上。
+    await waitFor(() => {
+      const highlight = container.querySelector(".pdf-page-highlight");
+      expect(highlight).not.toBeNull();
+      expect(highlight).toHaveStyle({ left: "72px", top: "96px", width: "300px", height: "200px" });
+    });
+  });
+
+  it("整页扫描图不画高亮框，只跳页", async () => {
+    installDocMindApi({
+      documents: {
+        readOriginalChunk: vi.fn().mockResolvedValue({ data: "AQID", total: 2048 }),
+        readAsset: vi
+          .fn()
+          .mockResolvedValue(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+          ),
+      },
+    });
+
+    const { container } = renderEditor({
+      ...documentWithPdf,
+      figures: [{ ...figureWithBox, bbox: null, fullPage: true }],
+    });
+
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "内容来源" })).getByRole("button", { name: "解析" }),
+    );
+    fireEvent.click(await screen.findByRole("img"));
+
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole("group", { name: "内容来源" })).getByRole("button", {
+          name: "原文",
+        }),
+      ).toHaveAttribute("aria-pressed", "true");
+    });
+    // 整页扫描件的 bbox 就是整个页面，画出来等于没画。
+    expect(container.querySelector(".pdf-page-highlight")).toBeNull();
   });
 });

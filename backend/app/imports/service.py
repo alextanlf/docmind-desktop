@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+from collections.abc import Callable, Iterable
 from contextlib import suppress
 from hashlib import sha256
 from pathlib import Path
@@ -14,8 +16,13 @@ from sqlalchemy.orm import Session
 from app.api.errors import DomainError
 from app.config import AppSettings
 from app.core.embedding import EmbeddingProvider, require_ready_embedding
+from app.document import ocr
 from app.document.chunker import SemanticChunker
+from app.document.figure_description import VisionSettings
+from app.document.figure_description import describe_all as describe_figures
+from app.document.html_figures import fetch_pending as fetch_pending_images
 from app.document.parser import DocumentParser
+from app.document.safe_http import SafeHttpClient
 from app.document.sources import CollectionCacheRequest, discard_staged_file
 from app.imports.events import EventType, ImportEventBroker
 from app.remote.notifications import (
@@ -49,7 +56,7 @@ from app.storage.models import (
     ImportStatus,
     RepositoryRecord,
 )
-from app.storage.repositories import DocumentStore, ImportJobStore, RepositoryStore
+from app.storage.repositories import DocumentStore, ImportJobStore, RepositoryStore, SettingStore
 from app.storage.vectorstore import PersistentVectorStore
 
 
@@ -69,6 +76,9 @@ class ImportService:
         job_store: ImportJobStore,
         event_broker: ImportEventBroker,
         notifications: NotificationHub | None = None,
+        safe_http_client: SafeHttpClient | None = None,
+        setting_store: SettingStore | None = None,
+        figure_description: Callable[[], VisionSettings | None] | None = None,
     ) -> None:
         self.settings = settings
         self.source_inspector = source_inspector
@@ -84,6 +94,15 @@ class ImportService:
         # Optional so tests and the fake harness can omit it; delivery is
         # best-effort and never affects the import itself.
         self.notifications = notifications
+        # 网页里的图片要联网下载。Optional 是为了让测试不必构造真实的解析器与传输层；
+        # 没有它时网页导入照常工作，只是不带图片。
+        self.safe_http_client = safe_http_client
+        # 用户设置。Optional 让测试不必造一个库；没有它时保持"识别开着"的默认行为。
+        self.setting_store = setting_store
+        # 图表语义描述（视觉模型）。传的是**可调用对象**而不是一份设置：模型配置与 API Key
+        # 在运行期才定（用户随时可能改），每次导入现读一次才能跟上。返回 None 表示"没配或
+        # 用户没打开"，那条通路整个不跑。
+        self.figure_description = figure_description
         self._job_locks: dict[str, asyncio.Lock] = {}
         self._event_locks: dict[str, asyncio.Lock] = {}
         self._reservation_lock = asyncio.Lock()
@@ -449,6 +468,8 @@ class ImportService:
             await self._fail(job_id, "SOURCE_CHANGED", "文档内容已变更，请重新预览", False)
             return False
 
+        await self._hydrate_images(parsed)
+        await self._describe_figures(parsed)
         await self._progress(job_id, ImportStatus.PARSING, 20, "文档解析完成")
         if await self._cancel_if_requested(job_id):
             return False
@@ -832,6 +853,84 @@ class ImportService:
             recovered += 1
         return recovered
 
+    def _apply_figure_ocr_setting(self) -> None:
+        """按用户设置决定这次解析要不要识别图片里的文字。
+
+        设置是**导入时读一次**、落进进程环境变量，而不是解析途中反复查库：解析是同步的、
+        会被走很多次的代码路径，每页查一次库既慢又没意义。改了设置影响的是之后发起的导入，
+        这与"导入是一次后台任务"的使用方式一致。
+
+        读取失败不改变行为（保持上一次的值）：拿不到设置不该让导入失败。
+        """
+        try:
+            enabled = self.setting_store.figure_ocr_enabled()
+        except Exception:  # noqa: BLE001 - 设置读不到不该让导入失败
+            return
+        os.environ[ocr.FIGURE_OCR_ENV] = "1" if enabled else "0"
+
+    async def _describe_figures(self, parsed: ParsedDocument) -> int:
+        """给「图里没有文字」的插图补一段视觉描述，并进正文。
+
+        **只对无文字的图发起。** 有文字的图 OCR 已经覆盖，再描述一次是白花用户的钱 ——
+        而这是唯一一处会按张数产生模型费用的地方。
+
+        **默认关闭**（`FigureDescriptionSettings` 为 None 时直接返回）。打开它意味着把图片
+        发到模型服务商，是个必须由用户显式选择的取舍，不能默认启用。
+
+        任何失败都只影响描述：图还是在的，检索也照旧 —— 少一段描述是遗憾，导入失败是事故。
+        """
+        if self.figure_description is None:
+            return 0
+        try:
+            settings = self.figure_description()
+        except Exception:  # noqa: BLE001 - 读配置失败不该让导入失败
+            return 0
+        if settings is None:
+            return 0
+        targets = [
+            figure
+            for section in parsed.sections
+            for figure in section.figures
+            if figure.payload and not figure.text.strip() and not figure.caption.strip()
+        ]
+        if not targets:
+            return 0
+        try:
+            descriptions = await describe_figures(
+                [figure.payload for figure in targets], settings=settings
+            )
+        except Exception:  # noqa: BLE001 - 富化失败不该让导入失败
+            return 0
+        described = 0
+        additions: list[str] = []
+        for figure, description in zip(targets, descriptions, strict=False):
+            text = description.strip()
+            if not text:
+                continue
+            figure.text = text
+            additions.append(text)
+            described += 1
+        if additions:
+            # 并进文档级正文。描述是模型对这张图的概括，与任何一节的原文都不重合，
+            # 所以不需要像图内文字那样做 novelty 去重。
+            parsed.markdown = "\n\n".join([parsed.markdown, *additions]).strip()
+        return described
+
+    async def _hydrate_images(self, parsed: ParsedDocument) -> int:
+        """补全网页插图：下载字节、识别图内文字、按内容重新归属。
+
+        PDF 与 Word 的图就在文档字节里，解析时已经拿到；只有网页需要这一步（图的字节在
+        别人的服务器上）。它放在解析与落盘之间 —— 落盘要写图片文件，那之前字节必须到位。
+
+        任何失败都只影响图片：抓不到图是遗憾，整篇文档导入失败是事故。
+        """
+        if self.safe_http_client is None:
+            return 0
+        try:
+            return await fetch_pending_images(parsed, client=self.safe_http_client)
+        except Exception:  # noqa: BLE001 - 图片补全不该让整篇文档导入失败
+            return 0
+
     def _persist_parsed_document(
         self, job_id: str, downloaded: DownloadedDocument, parsed: ParsedDocument
     ) -> None:
@@ -856,6 +955,7 @@ class ImportService:
                 raw_path.unlink()
             stored_raw_path = None
         markdown_path.write_text(parsed.markdown, encoding="utf-8")
+        _write_figures(directory, parsed)
         if job.document_id is None and existing is None:
             self.document_store.create(
                 DocumentRecord(
@@ -938,6 +1038,7 @@ class ImportService:
                     token_count=chunk.token_count,
                     source_url=chunk.source_url,
                     vector_id=identifier,
+                    images_json=_figures_json(getattr(chunk, "figures", ())),
                 )
             )
         return records
@@ -1188,6 +1289,46 @@ def _encode_source_metadata(
         ensure_ascii=False,
         separators=(",", ":"),
     )
+
+
+def _write_figures(directory: Path, parsed: ParsedDocument) -> int:
+    """把解析出来的插图写到文档自己的目录里，返回写出的张数。
+
+    文件名是像素内容的摘要，所以重复导入同一份文档不会留下两份同样的图 —— 也不需要先
+    查重：同名文件再写一次内容相同。
+
+    单张图写失败**不**中断：图看不到是遗憾，整篇文档导入失败是事故。已经写成功的图仍然
+    可用，只有失败的那张在引用面板里缺一张。
+    """
+    assets = directory / "assets"
+    written = 0
+    for section in parsed.sections:
+        for figure in section.figures:
+            if not figure.asset or not figure.payload:
+                continue
+            target = assets / figure.asset
+            if target.exists():
+                continue
+            try:
+                assets.mkdir(mode=0o700, parents=True, exist_ok=True)
+                target.write_bytes(figure.payload)
+            except OSError:
+                continue
+            written += 1
+    return written
+
+
+def _figures_json(figures: Iterable[Any]) -> str:
+    """chunk 的 ``images_json``。
+
+    只存展示所需的最小集合：文件名、页码、版面位置。图片内容已经在 ``text`` 里参与检索，
+    这里再存一份等于让每个 chunk 行都背着一份图片。
+    """
+    payload = [
+        figure.model_dump(mode="json") if hasattr(figure, "model_dump") else dict(figure)
+        for figure in figures
+    ]
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
 def _source_metadata(job: ImportJobRecord) -> dict[str, Any]:
