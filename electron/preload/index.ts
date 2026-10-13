@@ -16,6 +16,8 @@ import {
   DocumentVersionSchema,
   DocumentInputSchema,
   DocumentRemovalResultSchema,
+  DocumentArchiveResultSchema,
+  ArchivedDocumentSchema,
   DocumentSummarySchema,
   RemovedDocumentRestoreSchema,
   RemovedDocumentSchema,
@@ -355,6 +357,17 @@ const api: DocMindApi = {
       if (confirm !== true) return Promise.reject(new Error("INVALID_REQUEST"));
       return invoke(IPC_CHANNELS.documentsDelete, z.undefined(), uuid(documentId), true);
     },
+    archive: (documentId) => invoke(IPC_CHANNELS.documentsArchive, z.undefined(), uuid(documentId)),
+    unarchive: (documentId) =>
+      invoke(IPC_CHANNELS.documentsUnarchive, z.undefined(), uuid(documentId)),
+    listArchived: () => invoke(IPC_CHANNELS.documentsListArchived, ArchivedDocumentSchema.array()),
+    archiveMany: (repositoryId, documentIds) =>
+      invoke(
+        IPC_CHANNELS.documentsArchiveMany,
+        DocumentArchiveResultSchema,
+        uuid(repositoryId),
+        z.array(z.string().uuid()).min(1).max(500).parse(documentIds),
+      ),
     deleteRemote: (documentId, confirm) => {
       if (confirm !== true) return Promise.reject(new Error("INVALID_REQUEST"));
       return invoke(IPC_CHANNELS.documentsDeleteRemote, z.undefined(), uuid(documentId), true);
@@ -366,8 +379,7 @@ const api: DocMindApi = {
         uuid(repositoryId),
         z.array(z.string().uuid()).min(1).max(500).parse(documentIds),
       ),
-    listRemoved: (repositoryId) =>
-      invoke(IPC_CHANNELS.documentsListRemoved, RemovedDocumentSchema.array(), uuid(repositoryId)),
+    listRemoved: () => invoke(IPC_CHANNELS.documentsListRemoved, RemovedDocumentSchema.array()),
     restoreRemoved: (repositoryId, removalId) =>
       invoke(
         IPC_CHANNELS.documentsRestoreRemoved,

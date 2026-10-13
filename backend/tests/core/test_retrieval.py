@@ -4,8 +4,10 @@ import pytest
 
 from app.config import EmbeddingSettings, VectorStoreSettings
 from app.core.embedding import FakeEmbeddingProvider
-from app.core.retrieval import HybridRetriever, reciprocal_rank_fusion
+from app.core.retrieval import BM25Index, HybridRetriever, reciprocal_rank_fusion
+from app.document.chunker import OVERVIEW_SECTION_PATH
 from app.storage.models import DocumentChunkRecord, DocumentRecord, RepositoryRecord
+from app.storage.repositories import utc_now
 from app.storage.vectorstore import PersistentVectorStore, VectorHit
 
 
@@ -489,3 +491,138 @@ async def test_hybrid_search_max_sources_is_configurable(database) -> None:
     assert len((await build(8).search("needle", [repository.id], top_k=20)).hits) == 8
     # A raised ceiling still yields at most top_k.
     assert len((await build(8).search("needle", [repository.id], top_k=2)).hits) == 2
+
+
+async def test_archived_documents_are_not_retrieved_until_unarchived(database, tmp_path) -> None:
+    """归档的文档在两条通道上都检索不到，取消归档后立刻又能检索到。
+
+    归档只写一个时间戳、内容一概不动，所以"检索不到"完全依赖读路径的过滤 ——
+    这里守的正是那几处：BM25 的语料、向量与词法的收口、以及强制注入的概览块。
+    漏掉任何一处，用户归档的内容会继续出现在回答的引用里。
+    """
+    repository = RepositoryRecord(id="repo-1", name="Repository")
+    archived = DocumentRecord(
+        id="doc-archived", repository_id=repository.id, title="归档文档", archived_at=utc_now()
+    )
+    visible = DocumentRecord(id="doc-visible", repository_id=repository.id, title="可见文档")
+    archived_chunk = DocumentChunkRecord(
+        id="chunk-archived",
+        document_id=archived.id,
+        repository_id=repository.id,
+        chunk_index=0,
+        text="归档文档里的独特内容 Zebra",
+        token_count=6,
+        section_path="归档",
+    )
+    archived_overview = DocumentChunkRecord(
+        id="chunk-archived-overview",
+        document_id=archived.id,
+        repository_id=repository.id,
+        chunk_index=1,
+        text="归档文档的概览",
+        token_count=4,
+        section_path=OVERVIEW_SECTION_PATH,
+    )
+    visible_chunk = DocumentChunkRecord(
+        id="chunk-visible",
+        document_id=visible.id,
+        repository_id=repository.id,
+        chunk_index=0,
+        text="可见文档的内容 Alpha",
+        token_count=5,
+        section_path="可见",
+    )
+    with database.session() as session:
+        session.add_all([repository, archived, visible, archived_chunk, archived_overview, visible_chunk])
+    provider = FakeEmbeddingProvider(EmbeddingSettings(dimension=8))
+    store = PersistentVectorStore(VectorStoreSettings(directory=tmp_path / "vectors"))
+    for chunk in (archived_chunk, archived_overview, visible_chunk):
+        store.upsert(
+            repository.id,
+            [chunk.id],
+            [chunk.text],
+            [await provider.embed_query(chunk.text)],
+            [
+                {
+                    "doc_id": chunk.document_id,
+                    "doc_title": "x",
+                    "section_path": chunk.section_path,
+                }
+            ],
+        )
+    retriever = HybridRetriever(
+        database=database, vector_store=store, embedding_provider=provider
+    )
+
+    hits = await retriever.search("归档文档里的独特内容 Zebra", [repository.id])
+    # 断言"没有一条来自归档文档"，而不是"结果为空"：假嵌入对中文字面并不敏感，
+    # 可见文档可能以低分混进来 —— 那与归档是否泄漏无关，断言空结果会变成假红。
+    assert all(hit.document_id != archived.id for hit in hits.hits)
+
+    # 可见文档不受影响（顺带证明这次过滤没有把整个检索一起关掉）。
+    visible_hits = await retriever.search("可见文档的内容 Alpha", [repository.id])
+    assert [hit.chunk_id for hit in visible_hits.hits] == [visible_chunk.id]
+
+    with database.session() as session:
+        session.get(DocumentRecord, archived.id).archived_at = None  # type: ignore[union-attr]
+
+    restored = await retriever.search("归档文档里的独特内容 Zebra", [repository.id])
+    assert archived_chunk.id in {hit.chunk_id for hit in restored.hits}
+    assert archived_overview.id in {hit.chunk_id for hit in restored.hits}
+
+
+def test_bm25_corpus_excludes_archived_documents(database) -> None:
+    """词法通道的语料里不能有归档文档。
+
+    只按 chunk id 过滤是不够的：BM25 的分数来自整份语料。归档一篇文档会改变语料规模，
+    于是**没归档**的文档排序跟着变 —— 用户归档一篇，其它文档的检索结果静默重排。
+    """
+    repository = RepositoryRecord(id="repo-1", name="Repository")
+    archived = DocumentRecord(
+        id="doc-archived", repository_id=repository.id, title="归档", archived_at=utc_now()
+    )
+    visible = DocumentRecord(id="doc-visible", repository_id=repository.id, title="可见")
+    with database.session() as session:
+        session.add_all([repository, archived, visible])
+        session.add_all(
+            [
+                DocumentChunkRecord(
+                    id="chunk-archived",
+                    document_id=archived.id,
+                    repository_id=repository.id,
+                    chunk_index=0,
+                    text="State management archived",
+                    token_count=3,
+                ),
+                DocumentChunkRecord(
+                    id="chunk-visible",
+                    document_id=visible.id,
+                    repository_id=repository.id,
+                    chunk_index=0,
+                    text="State management visible",
+                    token_count=3,
+                ),
+                # 语料不能只有一篇：BM25 的 IDF 在小语料上会退化成 0 甚至负值，
+                # 那样"归档的 chunk 不在结果里"会因为结果本来就是空的而假绿。
+                DocumentChunkRecord(
+                    id="chunk-noise-1",
+                    document_id=visible.id,
+                    repository_id=repository.id,
+                    chunk_index=1,
+                    text="Cooking pasta and baking bread",
+                    token_count=5,
+                ),
+                DocumentChunkRecord(
+                    id="chunk-noise-2",
+                    document_id=visible.id,
+                    repository_id=repository.id,
+                    chunk_index=2,
+                    text="Mountain hiking trails in autumn",
+                    token_count=5,
+                ),
+            ]
+        )
+
+    hits = BM25Index(database).search("State management", [repository.id], top_k=10)
+
+    assert [identifier for identifier, _ in hits] == ["chunk-visible"]

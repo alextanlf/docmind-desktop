@@ -18,6 +18,8 @@ import {
   DocumentInputSchema,
   DocumentAssetNameSchema,
   DocumentRemovalResultSchema,
+  DocumentArchiveResultSchema,
+  ArchivedDocumentSchema,
   DocumentSummarySchema,
   RemovedDocumentRestoreSchema,
   RemovedDocumentSchema,
@@ -551,9 +553,21 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
     },
     [IPC_CHANNELS.documentsDelete]: (_event, documentId, confirm) => {
       const id = parse(UUID, documentId);
-      if (confirm !== true) throw new DocMindClientError("INVALID_REQUEST", "必须确认移除");
+      if (confirm !== true) throw new DocMindClientError("INVALID_REQUEST", "必须确认永久删除");
       return proxy.requestVoid(`/api/documents/${id}`, jsonInit("DELETE", { confirm: true }));
     },
+    [IPC_CHANNELS.documentsArchive]: (_event, documentId) =>
+      proxy.requestVoid(`/api/documents/${parse(UUID, documentId)}/archive`, jsonInit("POST")),
+    [IPC_CHANNELS.documentsUnarchive]: (_event, documentId) =>
+      proxy.requestVoid(`/api/documents/${parse(UUID, documentId)}/unarchive`, jsonInit("POST")),
+    [IPC_CHANNELS.documentsListArchived]: () =>
+      proxy.requestJson("/api/documents/archived", {}, z.array(ArchivedDocumentSchema)),
+    [IPC_CHANNELS.documentsArchiveMany]: (_event, repositoryId, documentIds) =>
+      proxy.requestJson(
+        `/api/repositories/${parse(UUID, repositoryId)}/documents/archive`,
+        jsonInit("POST", { documentIds: z.array(UUID).min(1).max(500).parse(documentIds) }),
+        DocumentArchiveResultSchema,
+      ),
     [IPC_CHANNELS.documentsDeleteRemote]: (_event, documentId, confirm) => {
       const id = parse(UUID, documentId);
       if (confirm !== true) throw new DocMindClientError("INVALID_REQUEST", "必须确认删除远端原文");
@@ -568,12 +582,8 @@ export function registerIpcHandlers(dependencies: IpcDependencies): IpcHandlerMa
         jsonInit("POST", { documentIds: z.array(UUID).min(1).max(500).parse(documentIds) }),
         DocumentRemovalResultSchema,
       ),
-    [IPC_CHANNELS.documentsListRemoved]: (_event, repositoryId) =>
-      proxy.requestJson(
-        `/api/repositories/${parse(UUID, repositoryId)}/removed-documents`,
-        {},
-        z.array(RemovedDocumentSchema),
-      ),
+    [IPC_CHANNELS.documentsListRemoved]: () =>
+      proxy.requestJson("/api/removed-documents", {}, z.array(RemovedDocumentSchema)),
     [IPC_CHANNELS.documentsRestoreRemoved]: (_event, repositoryId, removalId) =>
       proxy.requestJson(
         `/api/repositories/${parse(UUID, repositoryId)}/removed-documents/${parse(UUID, removalId)}/restore`,

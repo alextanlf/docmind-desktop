@@ -38,6 +38,31 @@ class DocumentDelete(WireModel):
     confirm: bool = False
 
 
+class DocumentArchiveRequest(WireModel):
+    """批量归档。与批量移除同一套输入形状，语义不同：归档不删任何数据。"""
+
+    document_ids: list[str] = Field(default_factory=list, max_length=500)
+
+
+class DocumentArchiveResult(WireModel):
+    archived: int
+
+
+class ArchivedDocumentView(WireModel):
+    """一篇已归档的文档。
+
+    带 ``repository_name`` 与 ``archived_at``：这份列表住在设置页，用户要在**跨
+    知识库**的一堆条目里认出想恢复的那一篇，只有 id 和标题是不够的。
+    """
+
+    id: str
+    repository_id: str
+    repository_name: str
+    title: str
+    remote_id: str | None
+    archived_at: datetime
+
+
 class DocumentRemoveRequest(WireModel):
     """批量把文档移出 DocMind。只删本地，远端原文不动。"""
 
@@ -51,16 +76,18 @@ class DocumentRemovalResult(WireModel):
 
 
 class RemovedDocumentView(WireModel):
-    """一篇被移出 DocMind 的远端文档。
+    """一篇被移出 DocMind 的远端文档（旧流程留下的记录）。
 
     带 ``title``：用户要凭它判断该不该恢复；只给一个远端 id 的话，这个列表就只是
-    一串看不懂的标识符。
+    一串看不懂的标识符。``repository_name`` 在设置页那份**跨知识库**的列表里用；
+    按知识库取的那条路由留空（调用方本来就知道是哪个库）。
     """
 
     id: str
     repository_id: str
     remote_id: str
     title: str
+    repository_name: str = ""
     removed_at: datetime
 
 

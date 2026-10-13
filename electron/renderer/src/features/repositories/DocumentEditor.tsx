@@ -1,22 +1,13 @@
-import {
-  Eye,
-  FileWarning,
-  Pencil,
-  RefreshCw,
-  Save,
-  SquareArrowOutUpRight,
-  Trash2,
-  X,
-} from "lucide-react";
+import { AppWindow, Archive, Eye, FileWarning, Pencil, RefreshCw, Save, X } from "lucide-react";
 import { Suspense, lazy, useEffect, useState } from "react";
 import { ANY_FORMAT, type DocumentDetail } from "../../../../shared/contracts";
 import { appQueryClient } from "../../app/query-client";
 import { MarkdownBody } from "../../components/MarkdownBody";
 import { DocumentFigures } from "./DocumentFigures";
 import { clientErrorMessage } from "../settings/settings.queries";
-import { DeleteDocumentDialog } from "./DeleteDocumentDialog";
+import { ArchiveDocumentsDialog } from "./ArchiveDocumentsDialog";
 import { ReconvertOriginalDialog } from "./ReconvertOriginalDialog";
-import { repositoryKeys } from "./repository.queries";
+import { repositoryKeys, useArchiveDocumentMutation } from "./repository.queries";
 
 /**
  * pdf.js 是 1.7MB 的独立依赖，绝大多数会话用不到。
@@ -51,7 +42,9 @@ export function DocumentEditor({
   const [title, setTitle] = useState(document.title);
   const [content, setContent] = useState(document.content);
   const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [archiveError, setArchiveError] = useState("");
+  const archiveMutation = useArchiveDocumentMutation();
   const [confirmingReconvert, setConfirmingReconvert] = useState(false);
   const [error, setError] = useState("");
   /** 重新定位/重新转换进行中：两者都会走网络与磁盘，按钮要能挡住重复点击。 */
@@ -82,6 +75,23 @@ export function DocumentEditor({
         : "";
 
   const dirty = title.trim() !== document.title || content !== document.content;
+
+  /**
+   * 归档这一篇。
+   *
+   * 归档成功后直接关掉文档面板：它还留在编辑区里会让人以为"还在库里"。真正的
+   * 撤销入口在设置页的「已归档的文档」。
+   */
+  async function archive() {
+    setArchiveError("");
+    try {
+      await archiveMutation.mutateAsync(document.id);
+      setArchiving(false);
+      onClose();
+    } catch (cause) {
+      setArchiveError(clientErrorMessage(cause));
+    }
+  }
 
   async function save() {
     if (!title.trim() || !content.trim()) return;
@@ -252,6 +262,9 @@ export function DocumentEditor({
           {document.originalState === "available" || document.originalState === "changed" ? (
             // 只在原件**够得着**时给这个入口。`missing` 时上面的横幅已经给出了唯一正确的
             // 出口（重新定位原件），再摆一个灰掉的按钮只会让人试着点它。
+            //
+            // 图标刻意**不用**方框加一支斜上箭头：那是系统级的"分享/导出"符号，而这个动作
+            // 是"把这份文件交给另一个程序"—— 一个窗口的符号才说的是这件事。
             <button
               aria-label="用系统程序打开原件"
               className="tree-icon-button"
@@ -260,17 +273,17 @@ export function DocumentEditor({
               title="用系统程序打开原件（在原格式里修改，改完回来重新转换）"
               type="button"
             >
-              <SquareArrowOutUpRight aria-hidden="true" size={16} />
+              <AppWindow aria-hidden="true" size={16} />
             </button>
           ) : null}
           <button
-            aria-label="移除文档"
+            aria-label="归档文档"
             className="tree-icon-button"
-            onClick={() => setDeleting(true)}
-            title="移除文档（远端原文不会被删除）"
+            onClick={() => setArchiving(true)}
+            title="归档文档（内容保留，可在设置里恢复）"
             type="button"
           >
-            <Trash2 aria-hidden="true" size={16} />
+            <Archive aria-hidden="true" size={16} />
           </button>
           <button
             aria-label="关闭文档"
@@ -380,12 +393,14 @@ export function DocumentEditor({
           pending={busy}
         />
       ) : null}
-      {deleting ? (
-        <DeleteDocumentDialog
-          document={document}
-          onClose={() => setDeleting(false)}
-          onDeleted={onClose}
+      {archiving ? (
+        <ArchiveDocumentsDialog
+          documents={[document]}
+          onClose={() => setArchiving(false)}
+          onConfirm={() => void archive()}
+          pending={archiveMutation.isPending}
           repositoryName={repositoryName ?? "知识库"}
+          error={archiveError}
         />
       ) : null}
     </section>

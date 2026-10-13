@@ -563,40 +563,56 @@ button:disabled {
 .document-directory-row .document-select {
   padding-left: 0;
 }
-/* 「已移除的文档」：与「已移除的知识库」同一套弱化样式。 */
-.removed-document-section {
-  margin-top: 6px;
+/* 「已归档的文档」（设置页）：与「已移除的知识库」同一套弱化样式。
+   每一条要能同时放下标题、它在哪个知识库、以及两个动作，所以标题负责省略号，
+   元信息与按钮不许被挤掉。 */
+.archived-documents {
+  display: grid;
+  gap: 10px;
 }
-.removed-document-list {
+.archived-documents .settings-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.archived-document-list {
   display: grid;
   gap: 2px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.removed-document-list li {
+.archived-document-list li {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 5px;
-  padding: 0 4px 0 16px;
-  color: var(--muted);
+  gap: 8px;
+  padding: 5px 6px;
+  border-top: 1px solid var(--line);
   font-size: 12px;
 }
-.removed-document-list li > span {
+.archived-document-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.removed-document-list .tree-retry {
+.archived-document-meta {
   flex: none;
-  margin-left: auto;
-  font-size: 11px;
+  color: var(--muted);
 }
-.removed-document-section .tree-message {
+.archived-document-actions {
   display: flex;
-  align-items: center;
+  flex: none;
   gap: 4px;
+  margin-left: auto;
+}
+.archived-document-list .tree-retry {
+  font-size: 11px;
 }
 /* 批量移除确认框里列出将被移除的文档：可能几十条，必须能滚，且不能把按钮顶出屏幕。 */
 .confirm-dialog-list {

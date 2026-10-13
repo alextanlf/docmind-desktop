@@ -63,36 +63,48 @@ test("requires a duplicate-content decision", async ({ electronApp, page }) => {
   await expect(page.getByText("导入完成")).toBeVisible();
 });
 
-test("removes a document only after title confirmation", async ({ electronApp, page }) => {
+test("archives a document without a title confirmation and restores it from settings", async ({
+  electronApp,
+  page,
+}) => {
   await completeFakeOnboarding(page);
   await importFixture(electronApp, page, "e2e/fixtures/state-guide.md");
   await expandRepository(page);
   await page.getByRole("button", { name: "状态管理", exact: true }).click();
-  await page.getByLabel("移除文档").click();
-  await page.getByLabel("输入文档标题以确认").fill("状态管理");
-  await page.getByRole("button", { name: "移除文档" }).click();
+  await page.getByLabel("归档文档").click();
+  // 归档可撤销，所以这里**没有**"输入标题以确认"那道门。
+  await expect(page.getByLabel("输入文档标题以确认")).toHaveCount(0);
+  await page.getByRole("button", { name: "归档", exact: true }).click();
   await expect(page.getByRole("button", { name: "状态管理", exact: true })).toHaveCount(0);
+
+  // 恢复入口在设置页：归档之后文档不在任何列表里，撤销入口不能跟着内容一起消失。
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "已归档的文档" }).click();
+  await expect(page.getByRole("list", { name: "已归档的文档" })).toContainText("状态管理");
+  await page.getByRole("button", { name: "恢复 状态管理" }).click();
+  await expect(page.getByRole("list", { name: "已归档的文档" })).toHaveCount(0);
 });
 
-test("removes selected documents and warns that local ones cannot come back", async ({
+test("archives selected documents and points at the restore entry", async ({
   electronApp,
   page,
 }) => {
-  // 走的是导入新建的本地知识库：本地文档没有「恢复」这条路，所以对话框必须单独
-  // 说明"无法恢复"，而不是和可恢复的远端文档混成一个总数。
   await completeFakeOnboarding(page);
   await importFixture(electronApp, page, "e2e/fixtures/state-guide.md");
   await expect(page.getByText("导入完成")).toBeVisible();
   await expandRepository(page);
 
   await page.getByLabel("选择 状态管理").check();
-  await page.getByRole("button", { name: "移除所选的 1 篇文档" }).click();
-  await expect(page.getByText(/1 篇是本地文档，移除后无法恢复/)).toBeVisible();
-  await page.getByRole("button", { name: "移除 1 篇" }).click();
+  await page.getByRole("button", { name: "归档所选的 1 篇文档" }).click();
+  // 文案要说清"东西去哪了、怎么回来"：只说"已归档"会让用户以为内容被删了。
+  await expect(page.getByText(/设置 →\s*已归档的文档/)).toBeVisible();
+  await page.getByRole("button", { name: "归档", exact: true }).click();
 
   await expect(page.getByRole("button", { name: "状态管理", exact: true })).toHaveCount(0);
-  // 本地文档不产生「已移除的文档」条目 —— 那条路只对远端身份有意义。
-  await expect(page.getByText("已移除的文档")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "已归档的文档" }).click();
+  await expect(page.getByRole("list", { name: "已归档的文档" })).toContainText("状态管理");
 });
 
 test("removes a knowledge base only after name confirmation", async ({ electronApp, page }) => {

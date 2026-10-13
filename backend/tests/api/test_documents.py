@@ -16,6 +16,7 @@ from app.core.embedding import FakeEmbeddingProvider
 from app.document.path_tokens import FILE_DOMAIN, path_token, path_token_matches
 from app.remote.fake import FakeRemoteProvider
 from app.schemas.documents import DocumentInput
+from app.schemas.graph import GraphEdge, GraphNode
 from app.storage.models import DocumentChunkRecord, DocumentRecord
 from tests.conftest import RUNTIME_TOKEN
 
@@ -1419,6 +1420,123 @@ def _create_remote_document(client, auth_headers, repository_id: str, title: str
     document = client.app.state.document_store.get(document_id)
     assert document is not None and document.remote_id
     return document_id, document.remote_id
+
+
+def _create_local_documents(client, auth_headers, count: int) -> list[dict]:
+    """建 ``count`` 篇本地文档（标题 第一篇/第二篇/…），返回创建响应。"""
+    titles = ["第一篇", "第二篇", "第三篇", "第四篇", "第五篇"]
+    repository = client.app.state.repository_store.create_local(name="本地库")
+    client.app.state.embedding_provider = FakeEmbeddingProvider(
+        client.app.state.settings.embedding_settings
+    )
+    documents = []
+    for title in titles[:count]:
+        created = client.post(
+            f"/api/repositories/{repository.id}/documents",
+            headers=auth_headers,
+            json={"title": title, "content": f"# 引言\n\n{title} 的正文"},
+        )
+        assert created.status_code == 201, created.text
+        documents.append(created.json())
+    return documents
+
+
+def _seed_shared_graph(client, documents: list[dict]) -> None:
+    """按 extractor 的真实形状给这些文档写图：都提到同一个主题「引言」。"""
+    store = client.app.state.graph_store
+    for document in documents:
+        store.replace_document_graph(
+            document["id"],
+            [
+                GraphNode(
+                    id=document["id"],
+                    kind="document",
+                    label=document["title"],
+                    document_id=document["id"],
+                ),
+                GraphNode(id="topic:引言", kind="topic", label="引言", document_id=document["id"]),
+            ],
+            [GraphEdge(source_id=document["id"], target_id="topic:引言", relation="mentions")],
+        )
+
+
+def test_removing_a_document_takes_its_version_history_and_graph_nodes(
+    client, auth_headers
+) -> None:
+    """移除必须带走版本历史与图谱节点 —— 两者都没有外键，漏了不会报任何错。
+
+    版本这一条是内容层面的：``/api/documents/{id}/versions`` 不检查文档是否存在，
+    少了这步，用户在界面上"移除"过的正文仍然读得出来。图谱这一条是可见层面的：
+    已移除文档的标题与页内标题会继续列在「图谱」页。共享节点必须留下 —— 它还在不在
+    取决于有没有别的文档引用它，而不是谁先写了它。
+    """
+    first, second = _create_local_documents(client, auth_headers, 2)
+    assert (
+        client.put(
+            f"/api/documents/{first['id']}",
+            headers=auth_headers,
+            json={"title": "第一篇", "content": "# 引言\n\n改过的正文"},
+        ).status_code
+        == 200
+    )
+    _seed_shared_graph(client, [first, second])
+
+    # 前置条件：确实有东西可丢。否则下面的断言在"本来就什么都没有"时也会绿。
+    assert client.get(f"/api/documents/{first['id']}/versions", headers=auth_headers).json()
+    assert len(client.get("/api/graph/nodes", headers=auth_headers).json()) == 3
+
+    response = client.request(
+        "DELETE", f"/api/documents/{first['id']}", headers=auth_headers, json={"confirm": True}
+    )
+
+    assert response.status_code == 204
+    assert client.get(f"/api/documents/{first['id']}/versions", headers=auth_headers).json() == []
+    assert {node["id"] for node in client.get("/api/graph/nodes", headers=auth_headers).json()} == {
+        second["id"],
+        "topic:引言",
+    }
+    assert [
+        edge["sourceId"]
+        for edge in client.get("/api/graph/nodes/topic:引言/adjacency", headers=auth_headers).json()
+    ] == [second["id"]]
+
+
+def test_batch_remove_takes_versions_and_graph_nodes_of_every_selected_document(
+    client, auth_headers
+) -> None:
+    """批量移除走的是另一条循环，派生数据同样一篇都不能漏。
+
+    只报一个"移除了 2 篇"而留下两篇的版本历史和图谱节点，是这条路径最容易出现的
+    半成品：界面看起来干净了，内容还在。
+    """
+    documents = _create_local_documents(client, auth_headers, 2)
+    for document in documents:
+        assert (
+            client.put(
+                f"/api/documents/{document['id']}",
+                headers=auth_headers,
+                json={"title": document["title"], "content": "# 引言\n\n改过的正文"},
+            ).status_code
+            == 200
+        )
+    _seed_shared_graph(client, documents)
+    repository_id = documents[0]["repositoryId"]
+
+    response = client.post(
+        f"/api/repositories/{repository_id}/documents/remove",
+        headers=auth_headers,
+        json={"documentIds": [document["id"] for document in documents]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["removed"] == 2
+    for document in documents:
+        assert (
+            client.get(f"/api/documents/{document['id']}/versions", headers=auth_headers).json()
+            == []
+        )
+    assert client.get("/api/graph/nodes", headers=auth_headers).json() == []
+
 
 
 def test_batch_remove_takes_the_selected_documents_and_records_each_removal(

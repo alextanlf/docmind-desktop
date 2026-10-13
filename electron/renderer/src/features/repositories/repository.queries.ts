@@ -6,10 +6,12 @@ export const repositoryKeys = {
   // 要能各走各的 —— 这些条目不是知识库，不能混进同一个列表。
   removed: ["repositories", "removed"] as const,
   documents: (repositoryId: string) => ["repositories", repositoryId, "documents"] as const,
-  // 「已移除的文档」和文档列表分开：它们不该出现在引用、范围或任何检索入口里，
-  // 只该出现在恢复入口里。
-  removedDocuments: (repositoryId: string) =>
-    ["repositories", repositoryId, "removedDocuments"] as const,
+  // 「已归档的文档」和文档列表分开：归档的文档不该出现在引用、范围或任何检索入口里，
+  // 只该出现在设置页那份恢复/永久删除清单里。跨知识库，所以不带 repositoryId。
+  archivedDocuments: ["documents", "archived"] as const,
+  // 「已移除的远端文档」是旧流程留下的那批记录（文档行当时就删了，只能靠重新同步
+  // 回来）。与归档分开存：两者的恢复方式不同 —— 归档是即时的，这批要重新下载。
+  removedDocuments: ["documents", "removed"] as const,
   document: (documentId: string) => ["documents", documentId] as const,
 };
 
@@ -161,64 +163,113 @@ export function useGraphAdjacencyQuery(nodeId: string | null) {
 }
 
 /**
- * 已从 DocMind 移除的远端文档（远端原文还在）。
+ * 已归档的文档（跨知识库，设置页那份列表）。
  *
- * 独立一条 query：这些文档不是"文档"，不该出现在引用、范围或检索里，只服务于
- * 「恢复」这一个动作。
+ * 独立一条 query：归档的文档不是"文档"，不该出现在引用、范围或检索里，只服务于
+ * 「恢复」与「永久删除」这两个动作。
  */
-export function useRemovedDocumentsQuery(repositoryId: string | null) {
+export function useArchivedDocumentsQuery() {
   return useQuery({
-    queryKey: repositoryId
-      ? repositoryKeys.removedDocuments(repositoryId)
-      : ["documents", "removedDocuments"],
-    queryFn: () => window.docmind.documents.listRemoved(repositoryId!),
-    enabled: repositoryId !== null,
+    queryKey: repositoryKeys.archivedDocuments,
+    queryFn: () => window.docmind.documents.listArchived(),
   });
 }
 
 /**
- * 批量把文档移出 DocMind（只删本地）。
+ * 旧流程留下的「已移除、可重新同步」记录（跨知识库）。
  *
- * 失效三个键：文档列表（选中的要消失）、已移除列表（远端文档会多出条目）、
- * root（知识库上的篇数统计跟着变）。
+ * 与归档分开一条 query：归档的文档行还在，恢复是即时的；这一批的文档行当时就被删了，
+ * 恢复要重新下载并重建索引。两者的文案与代价都不一样，混成一个列表就会骗人。
  */
-export function useRemoveDocumentsMutation(repositoryId: string) {
+export function useRemovedDocumentsQuery() {
+  return useQuery({
+    queryKey: repositoryKeys.removedDocuments,
+    queryFn: () => window.docmind.documents.listRemoved(),
+  });
+}
+
+/** 归档一处改动会影响的所有列表：可见文档、归档清单、知识库上的篇数统计。 */
+function invalidateDocumentViews(
+  queryClient: ReturnType<typeof useQueryClient>,
+  repositoryId?: string,
+) {
+  void queryClient.invalidateQueries({ queryKey: repositoryKeys.archivedDocuments });
+  void queryClient.invalidateQueries({ queryKey: repositoryKeys.root });
+  if (repositoryId) {
+    void queryClient.invalidateQueries({ queryKey: repositoryKeys.documents(repositoryId) });
+  } else {
+    // 单篇归档时手上只有文档 id，不知道它在哪个库；`documents` 这一层是
+    // `["repositories", <id>, "documents"]`，所以按公共前缀整片失效。
+    void queryClient.invalidateQueries({ queryKey: ["repositories"] });
+  }
+}
+
+/**
+ * 批量归档：把选中的文档从列表与检索里移出，数据全部保留。
+ *
+ * 与「永久删除」不同，它**不**需要打字确认 —— 恢复是即时的，误操作的代价是可撤销的。
+ */
+export function useArchiveDocumentsMutation(repositoryId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (documentIds: string[]) =>
-      window.docmind.documents.removeMany(repositoryId, documentIds),
+      window.docmind.documents.archiveMany(repositoryId, documentIds),
+    onSuccess: () => invalidateDocumentViews(queryClient, repositoryId),
+  });
+}
+
+/** 归档单篇（文档详情页那个按钮）。 */
+export function useArchiveDocumentMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (documentId: string) => window.docmind.documents.archive(documentId),
+    onSuccess: () => invalidateDocumentViews(queryClient),
+  });
+}
+
+/** 取消归档：数据一直都在，所以不需要重新下载，也不需要触发同步。 */
+export function useUnarchiveDocumentMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (documentId: string) => window.docmind.documents.unarchive(documentId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: repositoryKeys.root });
-      void queryClient.invalidateQueries({
-        queryKey: repositoryKeys.documents(repositoryId),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: repositoryKeys.removedDocuments(repositoryId),
-      });
+      invalidateDocumentViews(queryClient);
+      void queryClient.invalidateQueries({ queryKey: repositoryKeys.removedDocuments });
     },
   });
 }
 
 /**
- * 恢复一篇被移出的远端文档。
+ * 永久删除（只删本地）。远端原文由调用方决定要不要一起删 —— 那件事不可撤销，
+ * 必须是一次显式的选择，而不是删除的默认含义。
+ */
+export function usePurgeDocumentMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ documentId, alsoRemote }: { documentId: string; alsoRemote: boolean }) =>
+      alsoRemote
+        ? window.docmind.documents.deleteRemote(documentId, true)
+        : window.docmind.documents.remove(documentId, true),
+    onSuccess: () => invalidateDocumentViews(queryClient),
+  });
+}
+
+/**
+ * 恢复一篇被移出的远端文档（旧流程）。
  *
  * 后端只负责"允许它回来"（删移出记录 + 清陈旧同步快照）；内容要重新下载并重建
  * 索引。所以调用方紧接着要触发一次同步 —— 少了那一步，用户看到的是"恢复点了
- * 没反应"。
+ * 没反应"。同步是**那个知识库**的，所以这里必须知道 repositoryId（设置页那份
+ * 列表是跨库的，每一条各自不同）。
  */
-export function useRestoreRemovedDocumentMutation(repositoryId: string) {
+export function useRestoreRemovedDocumentMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (removalId: string) =>
+    mutationFn: ({ repositoryId, removalId }: { repositoryId: string; removalId: string }) =>
       window.docmind.documents.restoreRemoved(repositoryId, removalId),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: repositoryKeys.removedDocuments(repositoryId),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: repositoryKeys.documents(repositoryId),
-      });
-      void queryClient.invalidateQueries({ queryKey: repositoryKeys.root });
+    onSuccess: (_result, variables) => {
+      void queryClient.invalidateQueries({ queryKey: repositoryKeys.removedDocuments });
+      invalidateDocumentViews(queryClient, variables.repositoryId);
     },
   });
 }

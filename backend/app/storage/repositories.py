@@ -92,6 +92,63 @@ def _prune_scope(raw: str | None, repository_id: str) -> str | None:
     return json.dumps(kept)
 
 
+def _sweep_orphan_graph_nodes(session: Session) -> None:
+    """清掉既没有边、又不是「还活着的文档」的图谱节点。
+
+    孤儿判据刻意是"没有边 + 不是一个现存文档的节点"，而不是"``document_id`` 为
+    NULL"：这一列在旧数据里被写成了"谁先引进谁拥有"（共享节点也带着第一个文档的
+    id），只看 NULL 的话那些行永远清不掉。文档节点按 id 显式删，不指望这条清扫。
+    """
+    has_edge = (
+        select(GraphEdgeRecord.source_id)
+        .where(
+            or_(
+                GraphEdgeRecord.source_id == GraphNodeRecord.id,
+                GraphEdgeRecord.target_id == GraphNodeRecord.id,
+            )
+        )
+        .exists()
+    )
+    is_live_document = (
+        select(DocumentRecord.id).where(DocumentRecord.id == GraphNodeRecord.id).exists()
+    )
+    session.execute(delete(GraphNodeRecord).where(~has_edge, ~is_live_document))
+
+
+def _delete_document_graphs(session: Session, document_ids: Sequence[str]) -> None:
+    """摘掉这些文档的图：自己的边、自己的节点，以及因此变成孤儿的共享节点。
+
+    边两个方向都要摘 —— 漏掉 target 方向会留下指向已删节点的悬空边。
+    """
+    ids = list(document_ids)
+    if not ids:
+        return
+    session.execute(
+        delete(GraphEdgeRecord).where(
+            or_(GraphEdgeRecord.source_id.in_(ids), GraphEdgeRecord.target_id.in_(ids))
+        )
+    )
+    session.execute(delete(GraphNodeRecord).where(GraphNodeRecord.id.in_(ids)))
+    _sweep_orphan_graph_nodes(session)
+
+
+def _delete_document_derivatives(session: Session, document_ids: Sequence[str]) -> None:
+    """删掉按 ``document_id`` 挂、外键兜不住的衍生数据。
+
+    ``document_versions`` / ``graph_nodes`` / ``graph_edges`` / ``embedding_rebuild``
+    的 ``document_id`` 只是裸字符串列，schema 里根本没有 REFERENCES，删文档行时
+    SQLite 不会替我们带走它们。单篇移除漏走这一步的后果不是"多占点空间"：
+    ``/api/documents/{id}/versions`` 不检查文档是否存在，版本历史里的旧正文在移除
+    之后**仍然读得出来**；图谱也继续列着已移除文档的节点。
+    """
+    ids = list(document_ids)
+    if not ids:
+        return
+    for model in (DocumentVersionRecord, EmbeddingRebuildRecord):
+        session.execute(delete(model).where(model.document_id.in_(ids)))
+    _delete_document_graphs(session, ids)
+
+
 @dataclass(frozen=True)
 class RepositoryDeletion:
     """一次知识库删除之后，留在别处的东西。
@@ -217,6 +274,7 @@ class RepositoryStore:
         * **按 document_id 挂的衍生数据**：``document_versions`` /
           ``graph_nodes`` / ``graph_edges`` / ``embedding_rebuild``。不删它们，
           图谱会继续列着已删文档的节点，而那正是用户以为"删干净了"的地方。
+          共享节点的判定见 ``_delete_document_derivatives``。
         * **JSON 里的仓库范围**：会话范围、记忆摘要与蒸馏的范围（见
           ``_prune_scope``：那里留着悬空 id 会让下次索引撞外键）。
 
@@ -278,15 +336,10 @@ class RepositoryStore:
                 session.execute(delete(model).where(model.repository_id == repository_id))
 
             if document_ids:
-                for model in (DocumentVersionRecord, EmbeddingRebuildRecord):
-                    session.execute(delete(model).where(model.document_id.in_(document_ids)))
-                # 图的边按节点 id 挂，两个方向都要摘；漏掉 target 方向会留下
-                # 指向已删文档节点的悬空边。
-                for column in (GraphEdgeRecord.source_id, GraphEdgeRecord.target_id):
-                    session.execute(delete(GraphEdgeRecord).where(column.in_(document_ids)))
-                session.execute(
-                    delete(GraphNodeRecord).where(GraphNodeRecord.document_id.in_(document_ids))
-                )
+                # 与单篇移除走的是同一段逻辑。**不能只删 nodes.document_id 命中的行**：
+                # ``topic:`` / ``citation:`` / ``tag:`` 节点由正文生成、跨文档共享，
+                # 它们的 document_id 是 NULL，只有"没有边了"才说明真的没人再用它。
+                _delete_document_derivatives(session, document_ids)
 
             for model, column in (
                 (SessionRecord, SessionRecord.repository_scope_json),
@@ -440,12 +493,40 @@ class RemovedRemoteDocumentStore:
     def list_for_repository(
         self, repository_id: str
     ) -> list[RemovedRemoteDocumentRecord]:
+        """这个库里"已经找不回来、只能靠重新同步"的移除记录（见 ``list_orphaned``）。"""
+        return [
+            record for record in self.list_orphaned() if record.repository_id == repository_id
+        ]
+
+    def list_orphaned(self) -> list[RemovedRemoteDocumentRecord]:
+        """跨知识库的移除记录，**只含本地已经没有对应文档的那些**，最近移除的在前。
+
+        要这个过滤是因为同一张表现在装了两件事：
+
+        * **归档**一篇远端文档也会写一条记录（作用是让同步跳过它），但那篇文档行还在；
+        * **永久移除**写的记录，文档行已经不在了。
+
+        两者对用户的含义完全不同：归档的那篇在「已归档的文档」里恢复即可，而这一批
+        只能重新下载。不过滤的话，一篇归档的远端文档会同时出现在两份列表里 —— 一处说
+        "随时可恢复"，另一处说"要重新下载"，用户只能猜哪个是真的。
+        """
+        local_document = (
+            select(DocumentRecord.id)
+            .where(
+                DocumentRecord.repository_id == RemovedRemoteDocumentRecord.repository_id,
+                DocumentRecord.remote_id == RemovedRemoteDocumentRecord.remote_id,
+            )
+            .exists()
+        )
         with self.database.session() as session:
             return list(
                 session.scalars(
                     select(RemovedRemoteDocumentRecord)
-                    .where(RemovedRemoteDocumentRecord.repository_id == repository_id)
-                    .order_by(RemovedRemoteDocumentRecord.removed_at.desc())
+                    .where(~local_document)
+                    .order_by(
+                        RemovedRemoteDocumentRecord.removed_at.desc(),
+                        RemovedRemoteDocumentRecord.id,
+                    )
                 )
             )
 
@@ -462,6 +543,25 @@ class RemovedRemoteDocumentStore:
             session.delete(record)
             session.flush()
             return record
+
+    def discard_for_remote(self, repository_id: str, remote_id: str) -> bool:
+        """按 ``(知识库, 远端 id)`` 取消跳过 —— 取消归档时用。
+
+        取消归档时手上只有文档行，没有那条移除记录的 ``removal_id``（它当初是
+        归档时按远端身份写下的）。返回是否真的删掉了记录：没删到说明这篇文档当初
+        没有写过记录，那也不该报错，取消归档本身仍然成立。
+        """
+        with self.database.session() as session:
+            record = session.scalar(
+                select(RemovedRemoteDocumentRecord).where(
+                    RemovedRemoteDocumentRecord.repository_id == repository_id,
+                    RemovedRemoteDocumentRecord.remote_id == remote_id,
+                )
+            )
+            if record is None:
+                return False
+            session.delete(record)
+            return True
 
 
 class WebSearchRunStore:
@@ -559,17 +659,57 @@ class DocumentStore:
         self.database = database
 
     def list_all(self) -> list[DocumentRecord]:
+        """所有文档，**含已归档的**。
+
+        默认含归档是与 ``list_for_repository`` 相反的取舍，两个都是刻意的：这里的
+        唯一调用点是"嵌入维度变了，把有分块的文档标成待重建"（``main.py``）。归档
+        文档的分块与向量都还留着、恢复后要能直接检索，所以它们同样需要重建 ——
+        漏掉它们，恢复一篇归档文档会得到一批和当前模型不同维度的向量。
+        """
         with self.database.session() as session:
             return list(session.scalars(select(DocumentRecord)))
 
-    def list_for_repository(self, repository_id: str) -> list[DocumentRecord]:
+    def list_for_repository(
+        self, repository_id: str, *, include_archived: bool = False
+    ) -> list[DocumentRecord]:
+        """按仓库列文档，默认**不含**已归档的。
+
+        默认排除而不是默认包含：这个方法绝大多数调用点都是"用户要看见"的地方
+        （文档列表、篇数、冲突检测、同步的本地名单），漏过滤的代价是归档内容继续
+        出现在界面与检索里；少数确实要连归档一起看的（例如"这篇蒸馏是不是已经导入
+        过"的判重，漏了会重复建一篇），显式传 ``include_archived=True``。
+        """
         with self.database.session() as session:
-            statement = (
-                select(DocumentRecord)
-                .where(DocumentRecord.repository_id == repository_id)
-                .order_by(DocumentRecord.created_at.desc())
+            statement = select(DocumentRecord).where(
+                DocumentRecord.repository_id == repository_id
             )
-            return list(session.scalars(statement))
+            if not include_archived:
+                statement = statement.where(DocumentRecord.archived_at.is_(None))
+            return list(session.scalars(statement.order_by(DocumentRecord.created_at.desc())))
+
+    def list_archived(self) -> list[DocumentRecord]:
+        """所有已归档的文档，最近归档的在前。设置页那份列表的数据源。"""
+        with self.database.session() as session:
+            return list(
+                session.scalars(
+                    select(DocumentRecord)
+                    .where(DocumentRecord.archived_at.is_not(None))
+                    .order_by(DocumentRecord.archived_at.desc(), DocumentRecord.id)
+                )
+            )
+
+    def archive(self, document_id: str) -> None:
+        """归档：只写一个时间戳，内容一概不动 —— 所以恢复是即时的。"""
+        with self.database.session() as session:
+            document = session.get(DocumentRecord, document_id)
+            if document is not None and document.archived_at is None:
+                document.archived_at = utc_now()
+
+    def unarchive(self, document_id: str) -> None:
+        with self.database.session() as session:
+            document = session.get(DocumentRecord, document_id)
+            if document is not None:
+                document.archived_at = None
 
     def source_urls(self, *, limit: int = 500) -> list[str]:
         """最近 `limit` 篇文档的来源相关字段。
@@ -577,6 +717,9 @@ class DocumentStore:
         三个字段都要：`source_url` 是本地的来源、`remote_url` 是远端地址、
         `source_identity` 形如 `web:https://…`（网页导入）。少一个字段，那一类导入的
         文档就挖不出任何站点 —— 而"文档里的网址"正是这条信号的全部内容。
+
+        不含已归档的文档：这条信号服务于"给语料库挖来源"，而归档就是"别再从我的
+        文档里挖东西"。归档文档的来源仍然留在库里，取消归档后自然回来。
         """
         with self.database.session() as session:
             rows = session.execute(
@@ -585,15 +728,28 @@ class DocumentStore:
                     DocumentRecord.remote_url,
                     DocumentRecord.source_identity,
                 )
+                .where(DocumentRecord.archived_at.is_(None))
                 .order_by(DocumentRecord.created_at.desc(), DocumentRecord.id)
                 .limit(limit)
             ).all()
         return [value for row in rows for value in row if value]
 
     def indexed_count_for_repository(self, repository_id: str) -> int:
+        """这个仓库里有分块的文档数，**不含已归档的**。
+
+        调用点全是"这个库还有没有可检索的内容"（会话范围校验、对话前置检查、
+        界面上的计数）。归档文档的分块虽然还在库里，但检索侧已经把它们全部挡掉，
+        所以这里必须跟着一致：否则一个"文档全归档了"的知识库会被判成可用，
+        而检索一条都返回不了。
+        """
         with self.database.session() as session:
-            statement = select(func.count(func.distinct(DocumentChunkRecord.document_id))).where(
-                DocumentChunkRecord.repository_id == repository_id
+            statement = (
+                select(func.count(func.distinct(DocumentChunkRecord.document_id)))
+                .join(DocumentRecord, DocumentChunkRecord.document_id == DocumentRecord.id)
+                .where(
+                    DocumentChunkRecord.repository_id == repository_id,
+                    DocumentRecord.archived_at.is_(None),
+                )
             )
             return int(session.scalar(statement) or 0)
 
@@ -875,7 +1031,15 @@ class DocumentStore:
             return [value or "" for value in session.scalars(statement)]
 
     def delete_local(self, document_id: str) -> None:
+        """删掉文档行，以及按 ``document_id`` 挂的衍生数据（同一个事务）。
+
+        衍生数据跟着一起走是刻意的、不是顺手：分开写会留下"文档没了、内容还在"的
+        半状态 —— 版本历史仍能被 ``/api/documents/{id}/versions`` 读出来，图谱里
+        还列着它的节点，而那正是用户以为已经删干净的地方。放进同一个事务，则要么
+        两边都在，要么两边都不在，重试也不会撞上"行删了、衍生数据还在"。
+        """
         with self.database.session() as session:
+            _delete_document_derivatives(session, [document_id])
             document = session.get(DocumentRecord, document_id)
             if document is not None:
                 session.delete(document)
@@ -3454,7 +3618,17 @@ class VersionStore:
 
 
 class GraphStore:
-    """Persists rule-extracted knowledge graph nodes and edges."""
+    """Persists rule-extracted knowledge graph nodes and edges.
+
+    归属语义（删除逻辑全靠它）：
+
+    * **文档节点**（``id == document_id``）属于那一篇文档，随文档一起删。
+    * ``topic:`` / ``citation:`` / ``tag:`` 节点的 id 由正文生成，**跨文档共享** ——
+      两篇文档写了同一个标题就是同一个节点，这正是图谱有用的地方（原来不是：
+      第二篇文档写回同名节点时直接撞 ``graph_nodes.id`` 主键，整篇文档的图都写不进去）。
+      所以共享节点**不记主人**：``document_id`` 一律存 NULL。它的生死由 ``graph_edges``
+      决定，没有任何边再指向它就是孤儿。
+    """
 
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -3463,45 +3637,90 @@ class GraphStore:
         self, document_id: str, nodes: list[GraphNode], edges: list[GraphEdge]
     ) -> None:
         with self.database.session() as session:
-            session.execute(delete(GraphEdgeRecord).where(GraphEdgeRecord.source_id == document_id))
-            session.execute(
-                delete(GraphNodeRecord).where(GraphNodeRecord.document_id == document_id)
+            self._replace(session, document_id, nodes, edges)
+
+    def delete_document_graph(self, document_id: str) -> None:
+        with self.database.session() as session:
+            _delete_document_graphs(session, [document_id])
+
+    def _replace(
+        self,
+        session: Session,
+        document_id: str,
+        nodes: list[GraphNode],
+        edges: list[GraphEdge],
+    ) -> None:
+        # 先把这篇文档上次的边与自己的节点摘掉，再按这次的内容写回：于是"改了标题"
+        # 不会留下旧主题节点，重复同步也不会撞主键。
+        session.execute(
+            delete(GraphEdgeRecord).where(
+                or_(
+                    GraphEdgeRecord.source_id == document_id,
+                    GraphEdgeRecord.target_id == document_id,
+                )
             )
-            for node in nodes:
-                session.add(
-                    GraphNodeRecord(
-                        id=node.id,
-                        kind=node.kind,
-                        label=node.label,
-                        document_id=node.document_id,
-                    )
+        )
+        session.execute(delete(GraphNodeRecord).where(GraphNodeRecord.id == document_id))
+        for node in nodes:
+            session.execute(
+                sqlite_insert(GraphNodeRecord)
+                .values(
+                    id=node.id,
+                    kind=node.kind,
+                    label=node.label,
+                    # 不采信调用方给的 document_id：共享节点带上一个"主人"就是一条
+                    # 会撒谎的归属信息（谁先写谁拥有），删除时按它删会误删别人还在用的节点。
+                    document_id=document_id if node.id == document_id else None,
                 )
-            for edge in edges:
-                session.add(
-                    GraphEdgeRecord(
-                        source_id=edge.source_id,
-                        target_id=edge.target_id,
-                        relation=edge.relation,
-                    )
+                .on_conflict_do_nothing(index_elements=["id"])
+            )
+        for edge in edges:
+            session.execute(
+                sqlite_insert(GraphEdgeRecord)
+                .values(
+                    source_id=edge.source_id,
+                    target_id=edge.target_id,
+                    relation=edge.relation,
                 )
-            session.flush()
+                .on_conflict_do_nothing(index_elements=["source_id", "target_id"])
+            )
+        session.flush()
+        _sweep_orphan_graph_nodes(session)
 
     def list_nodes(self) -> list[GraphNode]:
+        """图谱里的节点，**不含已归档文档的文档节点**。
+
+        归档也是"从可见面消失"的一部分：文档节点（``id == document_id``）跟着文档
+        一起隐去。共享的主题/引用/标签节点照旧列出 —— 它们可能还被别的文档引用着，
+        而"哪个主题被哪些文档提到"正是图谱的用处；指向归档文档的边由 ``adjacency``
+        挡掉，所以点开一个共享节点不会看到归档文档。
+        """
         with self.database.session() as session:
-            records = session.scalars(select(GraphNodeRecord).order_by(GraphNodeRecord.label))
+            archived = select(DocumentRecord.id).where(
+                DocumentRecord.id == GraphNodeRecord.id,
+                DocumentRecord.archived_at.is_not(None),
+            )
+            records = session.scalars(
+                select(GraphNodeRecord).where(~archived.exists()).order_by(GraphNodeRecord.label)
+            )
             return [
                 GraphNode(id=r.id, kind=r.kind, label=r.label, document_id=r.document_id)
                 for r in records
             ]
 
     def adjacency(self, node_id: str) -> list[GraphEdge]:
+        """一个节点的相邻边，跳过两端任一端属于已归档文档的那些。"""
         with self.database.session() as session:
+            archived = select(DocumentRecord.id).where(DocumentRecord.archived_at.is_not(None))
+            archived_ids = archived.scalar_subquery()
             records = session.scalars(
                 select(GraphEdgeRecord).where(
                     or_(
                         GraphEdgeRecord.source_id == node_id,
                         GraphEdgeRecord.target_id == node_id,
-                    )
+                    ),
+                    GraphEdgeRecord.source_id.not_in(archived_ids),
+                    GraphEdgeRecord.target_id.not_in(archived_ids),
                 )
             )
             return [

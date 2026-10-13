@@ -1,102 +1,95 @@
 import { AlertTriangle } from "lucide-react";
 import { useRef, useState } from "react";
-import type { DocumentDetail } from "../../../../shared/contracts";
-import { appQueryClient } from "../../app/query-client";
 import { Modal } from "../../components/Modal";
 import { clientErrorMessage } from "../settings/settings.queries";
-import { repositoryKeys } from "./repository.queries";
+import { usePurgeDocumentMutation } from "./repository.queries";
 
-type DeleteDocumentDialogProps = {
-  document: DocumentDetail;
+/**
+ * 一篇准备永久删除的文档。
+ *
+ * 只取用得上的字段而不是整个 `DocumentDetail`：这份列表（设置页的「已归档的文档」）
+ * 只有归档摘要，没有正文 —— 而对话框不该假装自己有。
+ */
+export type PurgeTarget = {
+  id: string;
+  repositoryId: string;
+  title: string;
+  remoteId: string | null;
+};
+
+type PurgeDocumentDialogProps = {
+  document: PurgeTarget;
   repositoryName: string;
   onClose: () => void;
-  onDeleted?: () => void;
+  onPurged?: () => void;
 };
 
 /**
- * 移除 / 删除一篇文档。
+ * 永久删除一篇（已归档的）文档。
  *
- * 两个动作在这里被刻意分开：
+ * **打字确认留在这里，而不是留在归档上**：这是唯一不可撤销的动作 —— 正文、分块、
+ * 向量、版本历史、图谱节点与磁盘目录一起删；远端文档还可能把语雀/飞书上的原文也删掉。
+ * 从前这道门加在"删除"上，而那时的"删除"是可恢复的本地移除，于是摩擦和不可逆性正好
+ * 反了：可撤销的动作要打字，真的删远端只要勾一个框。
  *
- * * **移除**（默认）只清 DocMind 本地 —— 远端知识库里的原文保留。
- * * **连远端一起删除** 会真的删掉用户在语雀/飞书上的东西，不可撤销。
- *
- * 从前只有一个「删除文档」按钮，对远端文档它走的是后者，而文案只写「此操作无法
- * 撤销」—— 用户以为自己在本地清理，实际删掉了远端原文。远端文档必须让用户
- * 明确选一次，而不是替他选。
+ * 远端文档必须让用户**明确选一次**要不要连远端原文一起删，而不是替他选。
  */
-export function DeleteDocumentDialog({
+export function PurgeDocumentDialog({
   document,
   repositoryName,
   onClose,
-  onDeleted,
-}: DeleteDocumentDialogProps) {
+  onPurged,
+}: PurgeDocumentDialogProps) {
   const [confirmation, setConfirmation] = useState("");
   const [alsoRemote, setAlsoRemote] = useState(false);
-  const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const closeRef = useRef<HTMLButtonElement>(null);
+  const purge = usePurgeDocumentMutation();
+  const pending = purge.isPending;
   const confirmed = confirmation === document.title;
   // 只有从远端同步进来的文档才有远端原文可删。
   const remoteBound = Boolean(document.remoteId);
+  const destructive = remoteBound && alsoRemote;
 
   async function remove() {
     if (!confirmed) return;
-    setPending(true);
     setError("");
     try {
-      if (remoteBound && alsoRemote) {
-        await window.docmind.documents.deleteRemote(document.id, true);
-      } else {
-        await window.docmind.documents.remove(document.id, true);
-      }
-      appQueryClient.setQueryData<DocumentDetail[]>(
-        repositoryKeys.documents(document.repositoryId),
-        (documents) => documents?.filter((item) => item.id !== document.id),
-      );
-      await Promise.all([
-        appQueryClient.invalidateQueries({
-          queryKey: repositoryKeys.documents(document.repositoryId),
-        }),
-        appQueryClient.invalidateQueries({ queryKey: repositoryKeys.root }),
-      ]);
-      onDeleted?.();
+      await purge.mutateAsync({ documentId: document.id, alsoRemote: destructive });
+      onPurged?.();
       onClose();
     } catch (cause) {
       setError(clientErrorMessage(cause));
-    } finally {
-      setPending(false);
     }
   }
 
-  const destructive = remoteBound && alsoRemote;
   return (
     <Modal
       className="confirm-dialog"
       initialFocusRef={closeRef}
-      labelledBy="remove-document-title"
+      labelledBy="purge-document-title"
       onEscape={pending ? undefined : onClose}
     >
       <div className="dialog-title-row">
-        <h3 id="remove-document-title">
+        <h3 id="purge-document-title">
           <AlertTriangle aria-hidden="true" size={18} />
-          移除文档
+          永久删除文档
         </h3>
         <button
-          aria-label="关闭移除确认窗口"
+          aria-label="关闭永久删除确认窗口"
           className="tree-icon-button"
           disabled={pending}
           onClick={onClose}
           ref={closeRef}
-          title="关闭移除确认窗口"
+          title="关闭永久删除确认窗口"
           type="button"
         >
           ×
         </button>
       </div>
       <p>
-        将从「{repositoryName}」移除「{document.title}」及其本地索引。
-        {remoteBound ? null : "此操作无法撤销。"}
+        将永久删除「{repositoryName}」里的「{document.title}」及其正文、索引与版本历史。
+        此操作无法撤销。
       </p>
       {remoteBound ? (
         <>
@@ -146,7 +139,7 @@ export function DeleteDocumentDialog({
           onClick={() => void remove()}
           type="button"
         >
-          {pending ? "处理中…" : destructive ? "连远端一起删除" : "移除文档"}
+          {pending ? "处理中…" : destructive ? "连远端一起删除" : "永久删除"}
         </button>
       </div>
     </Modal>

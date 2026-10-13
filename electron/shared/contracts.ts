@@ -500,6 +500,26 @@ export const DocumentRemovalResultSchema = z.object({
   removed: z.number().int().nonnegative(),
 });
 
+export const DocumentArchiveResultSchema = z.object({
+  archived: z.number().int().nonnegative(),
+});
+
+/**
+ * 一篇已归档的文档。
+ *
+ * 带 `repositoryName` 与 `archivedAt`：这份列表住在设置页，用户要在**跨知识库**
+ * 的一堆条目里认出想恢复的那一篇，只有 id 和标题是不够的。`remoteId` 决定「永久
+ * 删除」里那个"连远端原文一起删"的选项该不该出现 —— 本地文档没有远端原文可删。
+ */
+export const ArchivedDocumentSchema = z.object({
+  id,
+  repositoryId: id,
+  repositoryName: text(240),
+  title: text(240),
+  remoteId: z.string().max(255).nullable(),
+  archivedAt: timestamp,
+});
+
 /**
  * 一篇被移出 DocMind 的远端文档。
  *
@@ -511,6 +531,8 @@ export const RemovedDocumentSchema = z.object({
   repositoryId: id,
   remoteId: z.string().max(255),
   title: text(240),
+  /** 跨知识库那份列表要显示它，用户才知道该去哪个库里找这篇文档。 */
+  repositoryName: text(240),
   removedAt: timestamp,
 });
 
@@ -1340,6 +1362,8 @@ export type DocumentSummary = z.infer<typeof DocumentSummarySchema>;
 export type DocumentDetail = z.infer<typeof DocumentDetailSchema>;
 export type DocumentRemovalResult = z.infer<typeof DocumentRemovalResultSchema>;
 export type RemovedDocument = z.infer<typeof RemovedDocumentSchema>;
+export type ArchivedDocument = z.infer<typeof ArchivedDocumentSchema>;
+export type DocumentArchiveResult = z.infer<typeof DocumentArchiveResultSchema>;
 export type RemovedDocumentRestore = z.infer<typeof RemovedDocumentRestoreSchema>;
 export type DocumentOriginalChunk = z.infer<typeof DocumentOriginalChunkSchema>;
 export type DocumentFigure = z.infer<typeof DocumentFigureSchema>;
@@ -1540,18 +1564,35 @@ export interface DocMindApi {
     create(repositoryId: string, input: DocumentInput): Promise<DocumentDetail>;
     update(documentId: string, input: DocumentInput): Promise<DocumentDetail>;
     /**
-     * 把文档移出 DocMind —— **只删本地，远端原文不动**。
+     * 归档一篇文档：**内容一概不动**，只让它从列表、检索、图谱、同步里消失。
      *
-     * 这是默认动作。想连语雀/飞书上的原文一起删，用 `deleteRemote`：那件事
-     * 不可撤销，不该是「删除」的默认含义。
+     * 这是默认动作，因为它是可撤销的：恢复是即时的（正文、向量、版本历史都还在）。
+     */
+    archive(documentId: string): Promise<void>;
+    /** 取消归档。远端文档会重新参与同步。 */
+    unarchive(documentId: string): Promise<void>;
+    /** 所有知识库里已归档的文档（设置页那份列表）。 */
+    listArchived(): Promise<ArchivedDocument[]>;
+    /** 批量归档，返回真正归档的篇数。 */
+    archiveMany(repositoryId: string, documentIds: string[]): Promise<DocumentArchiveResult>;
+    /**
+     * **永久**移出 DocMind —— 只删本地，远端原文不动。
+     *
+     * 不可撤销：正文、分块、向量、版本历史、图谱节点、磁盘目录一起删。归档之后的
+     * 永久删除走这里；界面把它放在设置页的「已归档的文档」里，而不是文档列表上。
      */
     remove(documentId: string, confirm: true): Promise<void>;
     /** 删除文档**并且**删除远端原文。不可撤销。 */
     deleteRemote(documentId: string, confirm: true): Promise<void>;
-    /** 批量移出（只删本地），返回真正移出的篇数。 */
+    /** 批量移出（只删本地），返回真正移出的篇数。不可撤销。 */
     removeMany(repositoryId: string, documentIds: string[]): Promise<DocumentRemovalResult>;
-    /** 已移出 DocMind 的远端文档，用于恢复。 */
-    listRemoved(repositoryId: string): Promise<RemovedDocument[]>;
+    /**
+     * 旧流程留下的「已移除、可重新同步」的远端文档（跨知识库）。
+     *
+     * 与「已归档」分开一趟请求：归档的文档行还在，恢复是即时的；这批的文档行当时
+     * 就被删了，恢复要重新下载并重建索引。
+     */
+    listRemoved(): Promise<RemovedDocument[]>;
     /**
      * 恢复一篇被移出的远端文档。
      *

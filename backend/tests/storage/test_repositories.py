@@ -14,6 +14,7 @@ from app.api.errors import DomainError
 from app.config import AppSettings
 from app.core.secrets import MemorySecretStore
 from app.main import create_app
+from app.schemas.graph import GraphEdge, GraphNode
 from app.storage.database import Database
 from app.storage.models import (
     BatchImportRecord,
@@ -33,9 +34,12 @@ from app.storage.repositories import (
     ConversationStore,
     CrawlEntryStore,
     DocumentStore,
+    EmbeddingRebuildStore,
+    GraphStore,
     ImportJobStore,
     RepositoryStore,
     SettingStore,
+    VersionStore,
 )
 
 
@@ -462,3 +466,55 @@ def test_app_lifespan_recovers_terminal_vector_cleanup(
     assert vector_store.ids == set()
     assert json.loads(persisted.source_value)["pending_created_vector_ids"] == []  # type: ignore[union-attr]
     database.engine.dispose()
+
+
+def test_delete_local_takes_derived_rows_but_leaves_other_documents_alone(
+    database: Database,
+) -> None:
+    """删一篇文档，要连它的版本历史、待重建标记与图谱节点一起带走。
+
+    这些表只存了一个裸 ``document_id``，schema 里没有外键，SQLite 不会替我们删。
+    漏掉的后果不是"多占几行"：``/api/documents/{id}/versions`` 不检查文档是否存在，
+    旧正文在移除之后仍然读得出来，图谱也继续列着已移除文档的节点。
+    """
+    repository = RepositoryStore(database).create_local(name="库")
+    document_store = DocumentStore(database)
+    version_store = VersionStore(database)
+    graph_store = GraphStore(database)
+    rebuild_store = EmbeddingRebuildStore(database)
+    with database.session() as session:
+        for document_id in ("doc-1", "doc-2"):
+            session.add(
+                DocumentRecord(
+                    id=document_id,
+                    repository_id=repository.id,
+                    title=document_id,
+                )
+            )
+    version_store.snapshot("doc-1", "第一篇", "第一篇正文")
+    version_store.snapshot("doc-2", "第二篇", "第二篇正文")
+    rebuild_store.mark_needs_rebuild("doc-1")
+    rebuild_store.mark_needs_rebuild("doc-2")
+    for document_id in ("doc-1", "doc-2"):
+        graph_store.replace_document_graph(
+            document_id,
+            [
+                GraphNode(
+                    id=document_id, kind="document", label=document_id, document_id=document_id
+                ),
+                GraphNode(id="topic:引言", kind="topic", label="引言", document_id=document_id),
+            ],
+            [GraphEdge(source_id=document_id, target_id="topic:引言", relation="mentions")],
+        )
+
+    document_store.delete_local("doc-1")
+
+    assert document_store.get("doc-1") is None
+    assert document_store.get("doc-2") is not None
+    assert version_store.list("doc-1") == []
+    assert [version.title for version in version_store.list("doc-2")] == ["第二篇"]
+    assert rebuild_store.needs_rebuild("doc-1") is False
+    assert rebuild_store.needs_rebuild("doc-2") is True
+    # 共享节点留下：doc-2 还在引用它。
+    assert {node.id for node in graph_store.list_nodes()} == {"doc-2", "topic:引言"}
+    assert [edge.source_id for edge in graph_store.adjacency("topic:引言")] == ["doc-2"]

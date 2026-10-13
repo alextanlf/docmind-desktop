@@ -192,7 +192,8 @@ def test_upgrade_creates_exact_phase_one_columns(database: Database) -> None:
         "id", "repository_id", "remote_id", "title", "remote_path_json", "source_url", "raw_path",
         "source_path", "original_revision", "markdown_path",
         "source_type", "content_hash", "chunk_count", "status", "remote_url", "source_identity",
-        "source_revision", "remote_deleted", "sync_state", "local_dirty", "created_at", "updated_at",
+        "source_revision", "remote_deleted", "archived_at", "sync_state", "local_dirty",
+        "created_at", "updated_at",
     }
     assert {column["name"] for column in inspector.get_columns("document_chunks")} == {
         "id", "document_id", "repository_id", "chunk_index", "text", "section_path", "page_number",
@@ -301,6 +302,7 @@ def test_migration_declares_defaults_indexes_and_foreign_key_actions(database: D
         "documents": {
             "ix_documents_repository_id": ["repository_id"],
             "ix_documents_source_url": ["source_url"],
+            "ix_documents_archived_at": ["archived_at"],
             "uq_documents_repository_source_identity": ["repository_id", "source_identity"],
         },
         "document_chunks": {

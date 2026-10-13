@@ -286,6 +286,10 @@ class DocumentRecord(Base):
     source_identity: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
     remote_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    #: 归档时间。归档 = 内容全部留下（行、分块、向量、本地文件、版本、图谱），只是从
+    #: 列表 / 检索 / 篇数 / 图谱 / 同步这些**可见面**消失；取消归档是即时的，不需要
+    #: 重新下载或重新索引。用可空时间戳而不是布尔：设置页要按"什么时候归档的"排序。
+    archived_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True, index=True)
     sync_state: Mapped[str] = mapped_column(
         String(32), default="synced", server_default=text("'synced'")
     )

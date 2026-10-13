@@ -50,7 +50,15 @@ class BM25Index:
         with self.database.session() as session:
             chunks = list(
                 session.scalars(
-                    select(DocumentChunkRecord).where(DocumentChunkRecord.repository_id.in_(repository_ids))
+                    select(DocumentChunkRecord)
+                    .join(DocumentRecord, DocumentChunkRecord.document_id == DocumentRecord.id)
+                    .where(
+                        DocumentChunkRecord.repository_id.in_(repository_ids),
+                        # 归档的文档不参与词法通道。只靠后面按 chunk id 过滤是不够的：
+                        # BM25 的分数来自整份语料，语料里混着归档文档会让没归档的文档
+                        # 排序跟着变 —— 用户归档一篇，其它文档的检索结果静默重排。
+                        DocumentRecord.archived_at.is_(None),
+                    )
                 )
             )
         tokens = [tokenize(chunk.text) or ["_"] for chunk in chunks]
@@ -200,6 +208,7 @@ class HybridRetriever:
                 .where(
                     DocumentChunkRecord.repository_id.in_(repository_ids),
                     DocumentChunkRecord.section_path == OVERVIEW_SECTION_PATH,
+                    DocumentRecord.archived_at.is_(None),
                     or_(
                         EmbeddingRebuildRecord.needs_rebuild.is_(None),
                         EmbeddingRebuildRecord.needs_rebuild.is_(False),
@@ -268,6 +277,10 @@ class HybridRetriever:
                 .where(
                     DocumentChunkRecord.id.in_(chunk_ids),
                     DocumentChunkRecord.repository_id.in_(repository_ids),
+                    # 这里是两条通道共用的收口：归档的文档在这里被挡掉，于是无论向量
+                    # 还是词法命中都进不了结果（向量与词法各自也过滤了一遍，那两处是
+                    # 为了不改变语料规模，这里是为了"漏一处也仍然安全"）。
+                    DocumentRecord.archived_at.is_(None),
                     or_(
                         EmbeddingRebuildRecord.needs_rebuild.is_(None),
                         EmbeddingRebuildRecord.needs_rebuild.is_(False),

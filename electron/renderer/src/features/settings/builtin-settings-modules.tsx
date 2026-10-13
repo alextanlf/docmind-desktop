@@ -11,9 +11,10 @@
  * tiebreaker; `order` decides the sequence.
  */
 import type { ReactNode } from "react";
-import { Cpu, Globe, KeyRound, Puzzle } from "lucide-react";
+import { Archive, Cpu, Globe, KeyRound, Puzzle } from "lucide-react";
 import type { SettingsView } from "../../../../shared/contracts";
 import { CorpusSettings } from "../corpus/CorpusSettings";
+import { ArchivedDocumentsSettings } from "./ArchivedDocumentsSettings";
 import { ModelSettings } from "./ModelSettings";
 import { PluginSettings } from "./PluginSettings";
 import { RuntimeModelSettings } from "./RuntimeModelSettings";
@@ -101,4 +102,13 @@ registerModule({
   icon: Puzzle,
   order: 30,
   render: () => <PluginSettings />,
+});
+
+registerModule({
+  id: "settings-archived",
+  label: "已归档的文档",
+  description: "归档的文档内容都还在，可以恢复或者永久删除",
+  icon: Archive,
+  order: 50,
+  render: () => <ArchivedDocumentsSettings />,
 });

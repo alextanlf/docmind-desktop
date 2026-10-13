@@ -1,4 +1,4 @@
-import { Trash2 } from "lucide-react";
+import { Archive } from "lucide-react";
 import { Fragment, useState, type ReactNode } from "react";
 import type { DocumentSummary } from "../../../../shared/contracts";
 import { clientErrorMessage } from "../settings/settings.queries";
@@ -9,9 +9,8 @@ import {
   selectionState,
   type DocumentTreeNode,
 } from "./documentTree";
-import { RemovedDocuments } from "./RemovedDocuments";
-import { RemoveDocumentsDialog } from "./RemoveDocumentsDialog";
-import { useDocumentsQuery, useRemoveDocumentsMutation } from "./repository.queries";
+import { ArchiveDocumentsDialog } from "./ArchiveDocumentsDialog";
+import { useArchiveDocumentsMutation, useDocumentsQuery } from "./repository.queries";
 
 function DocumentRow({
   document,
@@ -120,7 +119,7 @@ export function RepositoryDocuments({
   onOpenDocument,
 }: RepositoryDocumentsProps) {
   const documents = useDocumentsQuery(repositoryId);
-  const remove = useRemoveDocumentsMutation(repositoryId);
+  const archive = useArchiveDocumentsMutation(repositoryId);
   const [selected, setSelected] = useState<string[]>([]);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
@@ -222,17 +221,17 @@ export function RepositoryDocuments({
               <span>全选</span>
             </label>
             <button
-              aria-label={`移除所选的 ${selectedDocuments.length} 篇文档`}
+              aria-label={`归档所选的 ${selectedDocuments.length} 篇文档`}
               className="tree-retry"
-              disabled={selectedDocuments.length === 0 || remove.isPending}
+              disabled={selectedDocuments.length === 0 || archive.isPending}
               onClick={() => {
                 setError("");
                 setConfirming(true);
               }}
               type="button"
             >
-              <Trash2 aria-hidden="true" size={13} />
-              移除所选 ({selectedDocuments.length})
+              <Archive aria-hidden="true" size={13} />
+              归档所选 ({selectedDocuments.length})
             </button>
           </div>
           {tree ? (
@@ -253,14 +252,13 @@ export function RepositoryDocuments({
           )}
         </>
       )}
-      <RemovedDocuments repositoryId={repositoryId} />
       {confirming ? (
-        <RemoveDocumentsDialog
+        <ArchiveDocumentsDialog
           documents={selectedDocuments}
           error={error}
           onClose={() => setConfirming(false)}
           onConfirm={() =>
-            remove.mutate(
+            archive.mutate(
               selectedDocuments.map((document) => document.id),
               {
                 onSuccess: () => {
@@ -271,7 +269,7 @@ export function RepositoryDocuments({
               },
             )
           }
-          pending={remove.isPending}
+          pending={archive.isPending}
           repositoryName={repositoryName}
         />
       ) : null}

@@ -25,6 +25,9 @@ from app.document.sources import load_stored_original
 from app.remote.provider import RemoteProvider
 from app.remote.registry import ProviderRegistry
 from app.schemas.documents import (
+    ArchivedDocumentView,
+    DocumentArchiveRequest,
+    DocumentArchiveResult,
     DocumentDelete,
     DocumentDetail,
     DocumentInput,
@@ -1066,7 +1069,9 @@ async def save_distillation_document(
     existing = next(
         (
             document
-            for document in _document_store(request).list_for_repository(repository_id)
+            for document in _document_store(request).list_for_repository(
+                repository_id, include_archived=True
+            )
             if document.source_identity == f"distillation:{distillation_id}"
             or (remote is not None and document.remote_id == remote.remote_id)
         ),
@@ -1143,6 +1148,31 @@ async def save_distillation_document(
         raise
     finally:
         _release_mutation(app, mutation_id)
+
+
+@router.get("/api/documents/archived", response_model=list[ArchivedDocumentView])
+async def list_archived_documents(request: Request) -> list[ArchivedDocumentView]:
+    """所有知识库里已归档的文档，最近归档的在前。
+
+    全局一份而不是按知识库分：这份列表住在设置页，用户在那里做的是"翻一遍我归档过
+    什么、要不要放回去"，而不是"整理某个知识库"。跨库才能一眼看完。
+
+    这条路由**必须声明在 ``/api/documents/{document_id}`` 之前**：否则
+    ``archived`` 会被当成一篇文档的 id，返回一个"资源不存在"的 404。
+    """
+    names = {record.id: record.name for record in _repository_store(request).list()}
+    return [
+        ArchivedDocumentView(
+            id=document.id,
+            repository_id=document.repository_id,
+            repository_name=names.get(document.repository_id, ""),
+            title=document.title,
+            remote_id=document.remote_id,
+            archived_at=document.archived_at,
+        )
+        for document in _document_store(request).list_archived()
+        if document.archived_at is not None
+    ]
 
 
 @router.get("/api/documents/{document_id}", response_model=DocumentDetail)
@@ -1342,9 +1372,61 @@ async def _remove_locally(request: Request, document: DocumentRecord) -> None:
             _cleanup_store(request).create(document.repository_id, document.id, deletable_ids)
 
 
+async def _archive_document(request: Request, document: DocumentRecord) -> None:
+    """归档一篇文档：内容一概不动，只写时间戳。
+
+    远端文档要多写一条移出记录：同步的判重依据是"上次见到的远端状态"，所以一篇
+    还在远端更新的文档会在归档后自己回来（与移除同源，实测：远端未变时不回来，
+    一变就回来）。记录与时间戳不是同一个事务 —— 这与移除路径一样，代价是极端情况下
+    可能只写了记录没有时间戳（表现为"同步不再拉它，但列表里还在"），重试一次即可；
+    反过来先写时间戳再写记录则会漏掉同步跳过。
+    """
+    if document.remote_id:
+        _removed_document_store(request).add_many(
+            document.repository_id, [(document.remote_id, document.title)]
+        )
+    _document_store(request).archive(document.id)
+
+
+@router.post("/api/documents/{document_id}/archive", status_code=status.HTTP_204_NO_CONTENT)
+async def archive_document(request: Request, document_id: str) -> None:
+    """把一篇文档归档。
+
+    与永久删除分开是刻意的：归档可撤销、恢复即时（内容、向量、版本、图谱都还在），
+    所以它不需要"输入标题"那种重确认；真正不可撤销的是删除，那条路的确认留在
+    ``DELETE`` 上。
+    """
+    await _recover_for_request(request)
+    document = _document_store(request).get(document_id)
+    if document is None:
+        raise _not_found()
+    await _archive_document(request, document)
+
+
+@router.post("/api/documents/{document_id}/unarchive", status_code=status.HTTP_204_NO_CONTENT)
+async def unarchive_document(request: Request, document_id: str) -> None:
+    """取消归档。
+
+    远端文档还要删掉那条移出记录，否则同步会一直跳过它。
+
+    与「恢复已移除的文档」不同，这里**不清同步快照**：文档行没被删过，快照描述的
+    仍是"上次见到的远端状态"，留着它下次同步就能正确判断出"远端改过没改过"；
+    清掉反而会让它被当成新文档重新下载并重新索引一遍。
+    """
+    await _recover_for_request(request)
+    document = _document_store(request).get(document_id)
+    if document is None:
+        raise _not_found()
+    _document_store(request).unarchive(document_id)
+    if document.remote_id:
+        _removed_document_store(request).discard_for_remote(
+            document.repository_id, document.remote_id
+        )
+
+
 @router.delete("/api/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_document(request: Request, document_id: str, body: DocumentDelete) -> None:
-    """把一篇文档移出 DocMind（默认动作，只删本地）。
+    """把一篇文档**永久**移出 DocMind（只删本地）。
 
     远端知识库里的原文一律保留。想连远端一起删有单独的入口
     （``DELETE /api/documents/{id}/remote``），因为那件事不可撤销，不该是"删除"
@@ -1397,13 +1479,47 @@ async def delete_document_remote(
 
 
 @router.post(
+    "/api/repositories/{repository_id}/documents/archive",
+    response_model=DocumentArchiveResult,
+)
+async def archive_documents(
+    request: Request, repository_id: str, body: DocumentArchiveRequest
+) -> DocumentArchiveResult:
+    """批量归档（默认动作）。
+
+    一篇一个请求在几十篇时既慢又会在中途失败，留下"归档了一半"这种最难解释的结果；
+    这里把所有远端身份一次登记完，再逐篇写时间戳。列表里不存在的 id 直接跳过，不报错
+    —— 批量操作里"已经被别人删掉了"不该让整批失败。
+    """
+    await _recover_for_request(request)
+    repository = _repository_store(request).get(repository_id)
+    if repository is None:
+        raise _not_found()
+    store = _document_store(request)
+    documents = [
+        document
+        for document_id in dict.fromkeys(body.document_ids)
+        if (document := store.get(document_id)) is not None
+        and document.repository_id == repository_id
+    ]
+    remote_pairs = [
+        (document.remote_id, document.title) for document in documents if document.remote_id
+    ]
+    if remote_pairs:
+        _removed_document_store(request).add_many(repository_id, remote_pairs)
+    for document in documents:
+        store.archive(document.id)
+    return DocumentArchiveResult(archived=len(documents))
+
+
+@router.post(
     "/api/repositories/{repository_id}/documents/remove",
     response_model=DocumentRemovalResult,
 )
 async def remove_documents(
     request: Request, repository_id: str, body: DocumentRemoveRequest
 ) -> DocumentRemovalResult:
-    """批量把文档移出 DocMind（同样只删本地）。
+    """批量把文档**永久**移出 DocMind（同样只删本地）。
 
     一篇一个请求在几十篇时既慢又会在中途失败，留下"移除了一半"这种最难解释的
     结果；这里在一个事务里登记移除记录，逐篇清本地。列表里不存在的 id 直接跳过，
@@ -1443,6 +1559,31 @@ async def remove_documents(
         except Exception:  # noqa: BLE001 - 本地清理仍可重试
             _cleanup_store(request).create(repository_id, document.id, deletable_ids)
     return DocumentRemovalResult(removed=len(documents))
+
+
+@router.get("/api/removed-documents", response_model=list[RemovedDocumentView])
+async def list_all_removed_documents(request: Request) -> list[RemovedDocumentView]:
+    """所有知识库里的「已移除、可重新同步」记录（旧流程留下的那批）。
+
+    设置页那份「已归档」列表要能一并显示它们：这些远端文档是**旧版本**的移除动作
+    留下的记录（文档行当时就被删了），合并进同一处才不会让它们变成没人找得到的
+    孤儿 —— 同步会一直跳过它们，界面里却没有入口。
+
+    这条路由声明在 ``/api/repositories/{repository_id}/removed-documents`` 之前是
+    为了可读性，两者路径不同、不会互相遮蔽。
+    """
+    names = {record.id: record.name for record in _repository_store(request).list()}
+    return [
+        RemovedDocumentView(
+            id=record.id,
+            repository_id=record.repository_id,
+            remote_id=record.remote_id,
+            title=record.title,
+            repository_name=names.get(record.repository_id, ""),
+            removed_at=record.removed_at,
+        )
+        for record in _removed_document_store(request).list_orphaned()
+    ]
 
 
 @router.get(

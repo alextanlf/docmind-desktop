@@ -2,73 +2,47 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { AppProviders } from "../../renderer/src/app/AppProviders";
 import { appQueryClient } from "../../renderer/src/app/query-client";
-import { DeleteDocumentDialog } from "../../renderer/src/features/repositories/DeleteDocumentDialog";
+import { ArchiveDocumentsDialog } from "../../renderer/src/features/repositories/ArchiveDocumentsDialog";
 import { DocumentEditor } from "../../renderer/src/features/repositories/DocumentEditor";
 import { document, installDocMindApi, repository, source } from "./test-docmind-api";
 
 describe("文档编辑", () => {
   beforeEach(() => appQueryClient.clear());
 
-  it("keeps document removal disabled until the exact visible title is entered", () => {
+  it("archives without asking the title back, because archiving is undoable", () => {
     installDocMindApi();
     render(
-      <DeleteDocumentDialog
-        document={document}
-        repositoryName={repository.name}
+      <ArchiveDocumentsDialog
+        documents={[document]}
+        error=""
         onClose={() => undefined}
+        onConfirm={() => undefined}
+        pending={false}
+        repositoryName={repository.name}
       />,
     );
 
-    const remove = screen.getByRole("button", { name: "移除文档" });
-    expect(remove).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("输入文档标题以确认"), {
-      target: { value: document.title },
-    });
-    expect(remove).toBeEnabled();
+    // 摩擦与不可逆性成比例：归档可以在设置页一键恢复，所以这里不该有一道
+    // "把标题一字不差打一遍"的门。
+    expect(screen.queryByLabelText("输入文档标题以确认")).toBeNull();
+    expect(screen.getByRole("button", { name: "归档" })).toBeEnabled();
   });
 
-  it("never touches the remote unless the user opts in, once", async () => {
-    // 远端文档的默认动作必须是"只移出本地"。从前这个对话框对远端文档直接删远端
-    // 原文，而文案只写"此操作无法撤销" —— 用户以为在本地清理。
-    const api = installDocMindApi();
+  it("names the repository and says where the archived document can be restored", () => {
+    installDocMindApi();
     render(
-      <DeleteDocumentDialog
-        document={document}
-        repositoryName={repository.name}
+      <ArchiveDocumentsDialog
+        documents={[document]}
+        error=""
         onClose={() => undefined}
+        onConfirm={() => undefined}
+        pending={false}
+        repositoryName={repository.name}
       />,
     );
 
-    expect(screen.getByText(/远端知识库里的原文会保留/)).toBeVisible();
-    fireEvent.change(screen.getByLabelText("输入文档标题以确认"), {
-      target: { value: document.title },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "移除文档" }));
-
-    await waitFor(() => expect(api.documents.remove).toHaveBeenCalledWith(document.id, true));
-    expect(api.documents.deleteRemote).not.toHaveBeenCalled();
-  });
-
-  it("only deletes the remote original after an explicit opt-in", async () => {
-    const api = installDocMindApi();
-    render(
-      <DeleteDocumentDialog
-        document={document}
-        repositoryName={repository.name}
-        onClose={() => undefined}
-      />,
-    );
-
-    fireEvent.click(screen.getByLabelText("同时删除远端原文（不可撤销）"));
-    // 勾上之后必须出现不可撤销的警示，否则用户是"盲勾"。
-    expect(screen.getByText(/远端原文将被永久删除/)).toBeVisible();
-    fireEvent.change(screen.getByLabelText("输入文档标题以确认"), {
-      target: { value: document.title },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "连远端一起删除" }));
-
-    await waitFor(() => expect(api.documents.deleteRemote).toHaveBeenCalledWith(document.id, true));
-    expect(api.documents.remove).not.toHaveBeenCalled();
+    expect(screen.getByText(new RegExp(`将从「${repository.name}」归档`))).toBeVisible();
+    expect(screen.getByText(/设置 →\s*已归档的文档/)).toBeVisible();
   });
 
   it("renders the document as formatted content instead of raw Markdown", () => {
